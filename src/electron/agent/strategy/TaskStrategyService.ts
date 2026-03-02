@@ -31,14 +31,62 @@ export const STRATEGY_CONTEXT_OPEN = "[AGENT_STRATEGY_CONTEXT_V1]";
 export const STRATEGY_CONTEXT_CLOSE = "[/AGENT_STRATEGY_CONTEXT_V1]";
 
 export class TaskStrategyService {
+  private static inferArtifactKindFromTaskText(text: string): "none" | "canvas" | "document" | "file" {
+    if (!text) return "none";
+    if (/\b(canvas|artifact)\b/.test(text)) return "canvas";
+    if (/\b(docx|pdf|document|report|slide deck|presentation)\b/.test(text)) return "document";
+    if (
+      /\b(file|files|project|widget|source|code)\b/.test(text) ||
+      /\.(xcodeproj|xcworkspace|xcscheme|pbxproj|entitlements|plist|html|swift|ts|tsx|js|jsx|css)\b/.test(
+        text,
+      )
+    ) {
+      return "file";
+    }
+    return "none";
+  }
+
+  private static inferRequiresMutationFromTaskText(text: string): boolean {
+    if (!text) return false;
+    return /\b(scaffold|bootstrap|initialize|set up|create|build|write|edit|fix|implement|modify|generate|render)\b/.test(
+      text,
+    );
+  }
+
+  private static isStrictConstraintArtifactTask(taskText: string): boolean {
+    const text = String(taskText || "").toLowerCase();
+    if (!text.trim()) return false;
+
+    const hasStrictLengthConstraint =
+      /\bexact(?:ly)?\s+\d+\s*(characters?|chars?|words?)\b/.test(text) ||
+      /\b\d+\s*(characters?|chars?|words?)\s*(long|length)\b/.test(text) ||
+      /\blen\s*\(\s*text\s*\)\s*==\s*\d+\b/.test(text) ||
+      /\bstrict(?:ly)?\s+\d+\s*(characters?|chars?|words?)\b/.test(text);
+
+    if (!hasStrictLengthConstraint) return false;
+
+    const hasArtifactTarget =
+      /\b(docx|word document|word file|pdf|canvas|interactive html|web app|artifact|document)\b/.test(
+        text,
+      );
+    if (!hasArtifactTarget) return false;
+
+    return true;
+  }
+
   static deriveLlmProfile(
     strategy: Pick<DerivedTaskStrategy, "executionMode" | "preflightRequired">,
     taskContext: {
       intent?: IntentRoute["intent"];
       isVerificationTask?: boolean;
+      strictConstraintArtifactTask?: boolean;
     } = {},
   ): LlmProfile {
     if (taskContext.isVerificationTask) {
+      return "strong";
+    }
+
+    if (taskContext.strictConstraintArtifactTask) {
       return "strong";
     }
 
@@ -57,7 +105,11 @@ export class TaskStrategyService {
     return "cheap";
   }
 
-  static derive(route: IntentRoute, existing?: AgentConfig): DerivedTaskStrategy {
+  static derive(
+    route: IntentRoute,
+    existing?: AgentConfig,
+    taskContext?: { title?: string; prompt?: string; lastProgressScore?: number },
+  ): DerivedTaskStrategy {
     const defaults: Record<
       IntentRoute["intent"],
       Omit<
@@ -154,27 +206,106 @@ export class TaskStrategyService {
     const isWorkflowOrDeepWork = isDeepWork || route.intent === "workflow";
 
     const base = defaults[route.intent];
+    const taskText = `${taskContext?.title || ""}\n${taskContext?.prompt || ""}`.toLowerCase();
+    const executionVerbCount = (
+      taskText.match(
+        /\b(create|build|edit|write|fix|deploy|run|install|execute|configure|implement|update|modify|delete|remove|test|verify|research|analyze|summarize|generate|draft|prepare|export)\b/g,
+      ) || []
+    ).length;
+    const workflowLike =
+      /\b(then|after that|after this|next|and then|finally|once done|once that's done|step \d)\b/.test(
+        taskText,
+      ) && executionVerbCount >= 3;
+    const buildVerifyRenderArtifactRequested =
+      /\b(build|create|implement|scaffold|generate)\b/.test(taskText) &&
+      /\b(verify|validate|test|check)\b/.test(taskText) &&
+      /\b(render|show|preview|display)\b/.test(taskText) &&
+      /\b(canvas|artifact|widget|project|html|file|document)\b/.test(taskText);
+    const buildRenderArtifactRequested =
+      /\b(build|create|implement|scaffold|generate)\b/.test(taskText) &&
+      /\b(render|show|preview|display)\b/.test(taskText) &&
+      /\b(canvas|artifact|widget|project|html|file|document)\b/.test(taskText);
+    const hasHardExecutionSignal = route.signals.some((signal) =>
+      [
+        "path-or-command",
+        "needs-tool-inspection",
+        "cloud-storage-file-access",
+        "cloud-storage-query",
+      ].includes(signal),
+    );
+
+    // Strict execute gate:
+    // - Always execute for explicit execution/workflow/deep-work intents
+    // - For mixed intent, require hard execution cues; otherwise keep propose mode
     const inferredExecutionMode: ExecutionMode =
       route.intent === "execution" ||
       route.intent === "workflow" ||
       route.intent === "deep_work" ||
-      route.intent === "mixed"
+      (route.intent === "mixed" && hasHardExecutionSignal) ||
+      buildVerifyRenderArtifactRequested ||
+      buildRenderArtifactRequested
         ? "execute"
         : route.intent === "chat"
           ? "analyze"
           : "propose";
-    const executionMode = existing?.executionMode ?? inferredExecutionMode;
+    const existingExecutionMode = existing?.executionMode;
+    // Keep explicit non-execute overrides (propose/analyze), but do not let a
+    // stale default `execute` force non-execution intents into full task mode.
+    const executionMode =
+      existingExecutionMode && (existingExecutionMode !== "execute" || inferredExecutionMode === "execute")
+        ? existingExecutionMode
+        : inferredExecutionMode;
     const taskDomain =
       existing?.taskDomain && existing.taskDomain !== "auto" ? existing.taskDomain : route.domain;
-    const llmProfileHint = this.deriveLlmProfile(
+    const strictConstraintArtifactTask = this.isStrictConstraintArtifactTask(
+      `${taskContext?.title || ""}\n${taskContext?.prompt || ""}`,
+    );
+    const inferredArtifactKind = this.inferArtifactKindFromTaskText(taskText);
+    const inferredRequiresMutation =
+      this.inferRequiresMutationFromTaskText(taskText) && inferredArtifactKind !== "none";
+    const previousWindowLowProgress =
+      typeof taskContext?.lastProgressScore === "number" && taskContext.lastProgressScore < 0.15;
+
+    const baseLlmProfileHint = this.deriveLlmProfile(
       {
         executionMode,
         preflightRequired,
       },
       {
         intent: route.intent,
+        strictConstraintArtifactTask,
       },
     );
+    const llmProfileHint =
+      buildVerifyRenderArtifactRequested ||
+      buildRenderArtifactRequested ||
+      (baseLlmProfileHint === "cheap" &&
+        inferredRequiresMutation &&
+        ["canvas", "document", "file"].includes(inferredArtifactKind) &&
+        previousWindowLowProgress)
+        ? "strong"
+        : baseLlmProfileHint;
+    const mixedExecutionSignal =
+      route.intent === "mixed" &&
+      (route.signals.includes("path-or-command") ||
+        route.signals.includes("needs-tool-inspection") ||
+        executionVerbCount >= 3);
+    const mixedMaxTurns =
+      route.intent !== "mixed"
+        ? base.maxTurns
+        : workflowLike && route.complexity === "high"
+          ? 80
+          : mixedExecutionSignal
+            ? 60
+            : base.maxTurns;
+    const strategyMaxTurns = buildVerifyRenderArtifactRequested || buildRenderArtifactRequested
+      ? Math.max(mixedMaxTurns, 80)
+      : mixedMaxTurns;
+    const configuredMaxTurns =
+      typeof existing?.maxTurns === "number" ? existing.maxTurns : strategyMaxTurns;
+    const maxTurns = buildVerifyRenderArtifactRequested || buildRenderArtifactRequested
+      ? Math.max(configuredMaxTurns, 80)
+      : configuredMaxTurns;
 
     return {
       // Preserve explicit user-set modes (chat/task/think) but let intent-derived
@@ -186,7 +317,7 @@ export class TaskStrategyService {
           : base.conversationMode,
       executionMode,
       taskDomain,
-      maxTurns: typeof existing?.maxTurns === "number" ? existing.maxTurns : base.maxTurns,
+      maxTurns,
       qualityPasses: existing?.qualityPasses ?? base.qualityPasses,
       answerFirst: base.answerFirst,
       boundedResearch: base.boundedResearch,
@@ -208,6 +339,9 @@ export class TaskStrategyService {
       next.conversationMode = strategy.conversationMode;
     }
     if (!next.executionMode) {
+      next.executionMode = strategy.executionMode;
+    } else if (next.executionMode === "execute" && strategy.executionMode !== "execute") {
+      // Downshift stale execute defaults for non-execution intents (advice/chat/planning/thinking).
       next.executionMode = strategy.executionMode;
     }
     if (!next.taskDomain || next.taskDomain === "auto") {
@@ -353,6 +487,8 @@ export class TaskStrategyService {
       // Code search
       "glob",
       "grep",
+      "count_text",
+      "text_metrics",
       // Scratchpad
       "scratchpad_write",
       "scratchpad_read",
@@ -402,12 +538,15 @@ export class TaskStrategyService {
         "web_fetch",
         "generate_document",
         "generate_spreadsheet",
+        "generate_presentation",
         "use_skill",
         "skill_list",
         "skill_get",
       ];
       if (domain === "writing") {
         tools.push("create_document");
+        tools.push("create_presentation");
+        tools.push("create_spreadsheet");
       }
       return new Set(tools);
     }

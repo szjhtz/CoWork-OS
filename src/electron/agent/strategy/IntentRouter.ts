@@ -177,6 +177,24 @@ export class IntentRouter {
         lower,
       ),
     );
+    const cloudProviderMentioned =
+      /\b(box|dropbox|one[\s-]?drive|google drive|sharepoint|notion)\b/.test(lower);
+    const cloudFileObjectMentioned =
+      /\b(files?|folders?|documents?|docs?|pages?|items?|storage|content)\b/.test(lower);
+    const cloudQueryIntent =
+      /\b(list|show|find|search|fetch|read|get|open|what|which|where|have)\b/.test(lower);
+    add(
+      "execution",
+      3,
+      "cloud-storage-file-access",
+      cloudProviderMentioned && cloudFileObjectMentioned,
+    );
+    add(
+      "execution",
+      2,
+      "cloud-storage-query",
+      cloudProviderMentioned && cloudQueryIntent,
+    );
 
     // "Think with me" mode — Socratic reasoning, not task execution
     add(

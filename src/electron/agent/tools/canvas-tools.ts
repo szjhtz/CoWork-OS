@@ -261,16 +261,21 @@ export class CanvasTools {
     }
 
     const safeContent = this.normalizeCanvasPayload(String(resolvedContent));
+    const preparedContent = await this.inlineWorkspaceStylesheetsForCanvas(
+      safeContent,
+      sanitizeFilename,
+      resolvedSessionId,
+    );
 
     this.daemon.logEvent(this.taskId, "tool_call", {
       tool: "canvas_push",
       sessionId: resolvedSessionId,
       filename,
-      contentLength: safeContent.length,
+      contentLength: preparedContent.length,
     });
 
     try {
-      await this.manager.pushContent(resolvedSessionId, safeContent, filename);
+      await this.manager.pushContent(resolvedSessionId, preparedContent, filename);
 
       this.daemon.logEvent(this.taskId, "tool_result", {
         tool: "canvas_push",
@@ -286,6 +291,104 @@ export class CanvasTools {
       });
       throw error;
     }
+  }
+
+  private shouldInlineWorkspaceStylesheets(content: string, filename: string): boolean {
+    if (!String(content || "").trim()) return false;
+    if (/\.(html?)$/i.test(String(filename || ""))) return true;
+    return /<!doctype\s+html|<html[\s>]/i.test(content);
+  }
+
+  private isExternalCanvasAssetRef(ref: string): boolean {
+    const value = String(ref || "").trim().toLowerCase();
+    if (!value) return true;
+    if (value.startsWith("#")) return true;
+    if (value.startsWith("//")) return true;
+    if (
+      value.startsWith("http://") ||
+      value.startsWith("https://") ||
+      value.startsWith("data:") ||
+      value.startsWith("blob:") ||
+      value.startsWith("about:") ||
+      value.startsWith("javascript:")
+    ) {
+      return true;
+    }
+    return false;
+  }
+
+  private stripAssetQueryAndHash(ref: string): string {
+    const [withoutHash] = String(ref || "").split("#");
+    const [withoutQuery] = withoutHash.split("?");
+    return withoutQuery.trim();
+  }
+
+  private resolveWorkspaceAssetPath(ref: string): string | null {
+    const withoutQuery = this.stripAssetQueryAndHash(ref);
+    if (!withoutQuery || this.isExternalCanvasAssetRef(withoutQuery)) return null;
+
+    const workspaceRoot = path.resolve(String(this.workspace?.path || ""));
+    if (!workspaceRoot) return null;
+
+    const normalizedRef = withoutQuery.startsWith("/") ? withoutQuery.slice(1) : withoutQuery;
+    const absolutePath = path.resolve(workspaceRoot, normalizedRef);
+    const workspacePrefix = workspaceRoot.endsWith(path.sep) ? workspaceRoot : `${workspaceRoot}${path.sep}`;
+    if (absolutePath !== workspaceRoot && !absolutePath.startsWith(workspacePrefix)) {
+      return null;
+    }
+    return absolutePath;
+  }
+
+  private async inlineWorkspaceStylesheetsForCanvas(
+    content: string,
+    filename: string,
+    sessionId: string,
+  ): Promise<string> {
+    if (!this.shouldInlineWorkspaceStylesheets(content, filename)) {
+      return content;
+    }
+
+    const linkTagRegex = /<link\b[^>]*>/gi;
+    const tags = content.match(linkTagRegex);
+    if (!tags || tags.length === 0) return content;
+
+    let transformed = content;
+    let inlinedCount = 0;
+
+    for (const tag of tags) {
+      if (!/\brel\s*=\s*(?:"[^"]*stylesheet[^"]*"|'[^']*stylesheet[^']*'|stylesheet)/i.test(tag)) {
+        continue;
+      }
+
+      const hrefMatch = tag.match(/\bhref\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))/i);
+      const href = hrefMatch ? hrefMatch[1] || hrefMatch[2] || hrefMatch[3] || "" : "";
+      if (!href || this.isExternalCanvasAssetRef(href)) continue;
+
+      const absolutePath = this.resolveWorkspaceAssetPath(href);
+      if (!absolutePath) continue;
+
+      try {
+        const cssContent = await fs.readFile(absolutePath, "utf-8");
+        const escapedCss = cssContent.replace(/<\/style/gi, "<\\/style");
+        const inlineStyle = `<style data-canvas-inline-source="${this.sanitizeForCanvasText(href)}">\n${escapedCss}\n</style>`;
+        transformed = transformed.replace(tag, inlineStyle);
+        inlinedCount += 1;
+      } catch (error) {
+        console.warn(
+          `[CanvasTools] Failed to inline stylesheet "${href}" for session ${sessionId}:`,
+          error,
+        );
+      }
+    }
+
+    if (inlinedCount > 0) {
+      this.daemon.logEvent(this.taskId, "log", {
+        message: `Inlined ${inlinedCount} local stylesheet(s) for canvas preview compatibility.`,
+        sessionId,
+      });
+    }
+
+    return transformed;
   }
 
   private isCanvasPlaceholderContent(content: string): boolean {

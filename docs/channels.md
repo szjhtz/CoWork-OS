@@ -7,7 +7,7 @@ CoWork OS supports 15 messaging channels. All channels share these common featur
 - Session management
 - Rate limiting
 - Inbound attachment persistence (files saved to `.cowork/inbox/attachments/`)
-- Chat commands: `/schedule`, `/digest`, `/followups`, `/brief`
+- Chat commands: `/simplify`, `/batch`, `/schedule`, `/digest`, `/followups`, `/brief`
 - **Ambient mode**: Passively ingest all messages without responding; enable per-channel in settings
 - **Self-message capture**: Capture your own outgoing messages as context (`captureSelfMessages` on WhatsApp, iMessage, BlueBubbles)
 
@@ -23,10 +23,21 @@ These commands are available across all channels:
 | `/status` | Check bot status |
 | `/cancel` | Cancel running task |
 | `/pair <code>` | Pair with code |
+| `/simplify [objective]` | Run simplify workflow on current/specified task context |
+| `/batch <objective>` | Run parallel batch workflow with safety policy controls |
 | `/schedule <prompt>` | Schedule a recurring task |
 | `/digest [lookback]` | Digest of recent chat messages |
 | `/followups [lookback]` | Extract follow-ups/commitments |
 | `/brief [today\|week]` | Generate a brief summary (DM only) |
+
+### Slash-Skill Notes
+
+- `/simplify` and `/batch` are bundled global skills (enabled by default), available in desktop and gateway channels.
+- Inline chaining is supported in normal messages: `... then run /simplify` and `... then run /batch ...`.
+- WhatsApp natural phrase mapping supports both commands (for example, `simplify this`, `run batch migrate docs`).
+- `/batch` external policy defaults to `confirm`; `none` blocks known external side-effect actions for the run.
+
+See [Universal `/simplify` and `/batch`](simplify-batch.md) for full syntax, policy behavior, and edge-case handling.
 
 ---
 
@@ -347,7 +358,7 @@ IMAP/SMTP integration — works with any email provider.
 - Reply threading via In-Reply-To headers
 - Subject filtering and sender allowlist
 - Universal: works with any IMAP/SMTP provider
-- **[LOOM protocol](https://github.com/mesutgenai/loom-mvn)**: Dual-protocol email system (LOOM for agents, IMAP/SMTP for legacy)
+- **[LOOM protocol](https://github.com/AlmarionAI/loom-mvn)**: Dual-protocol email system (LOOM for agents, IMAP/SMTP for legacy)
 
 > **Notes:** Gmail/Outlook with 2FA require app passwords. Uses IMAP polling (default 30 seconds).
 

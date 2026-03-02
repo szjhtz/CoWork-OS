@@ -217,6 +217,8 @@ brief schedule morning/today/tomorrow/week - /brief schedule ...
 brief list - /brief list
 brief unschedule - /brief unschedule ...
 inbox - /inbox
+simplify - /simplify
+batch - /batch
 schedule - /schedule
 digest - /digest
 followups / follow ups - /followups
@@ -305,6 +307,8 @@ Example: "Add a login form"`,
 /brief list - List scheduled briefs (DM only)
 /brief unschedule [morning|today|tomorrow|week] - Disable scheduled briefs (DM only)
 /inbox [triage|autopilot|followups] [limit] - Run inbox manager workflow (DM only)
+/simplify [objective] - Simplify current or specified work
+/batch <objective> - Run parallel batch workflow
 /schedule help - Scheduling help
 /schedule list - List scheduled tasks for this chat
 /digest - Digest recent chat
@@ -490,6 +494,8 @@ disallow - /disallow <number>
 /task - Show current task snapshot
 /brief - Brief summary (morning/today/tomorrow/week)
 /inbox - Inbox manager (DM only)
+/simplify - Simplify current or specified work
+/batch - Run parallel batch workflow
 /schedule - Schedule a task
 /digest - Recent chat digest
 /followups - Follow-ups/commitments
@@ -547,6 +553,8 @@ Example: "Add a login form"`,
 /queue - View/clear queue
 /brief - Brief summary
 /inbox - Inbox manager (DM only)
+/simplify - Simplify current or specified work
+/batch - Run parallel batch workflow
 /schedule - Schedule a task
 /digest - Digest chat
 /followups - Follow-ups

@@ -56,6 +56,7 @@ const memoryEvents = new EventEmitter();
 
 // Minimum tokens before compression is worthwhile
 const MIN_TOKENS_FOR_COMPRESSION = 100;
+const MIN_TOKENS_FOR_OBSERVATION_COMPRESSION = 300;
 
 // Compression batch size
 const COMPRESSION_BATCH_SIZE = 10;
@@ -65,6 +66,8 @@ const CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 
 // Compression delay between items (avoid rate limits)
 const COMPRESSION_DELAY_MS = 200;
+const MAX_TEXT_IMPORT_ENTRIES = 3000;
+const MAX_TEXT_IMPORT_ENTRY_CHARS = 12000;
 
 export class MemoryService {
   private static memoryRepo: MemoryRepository;
@@ -88,6 +91,11 @@ export class MemoryService {
   private static compressionQueue: string[] = [];
   private static compressionInProgress = false;
   private static compressionPauseCount = 0;
+  private static sideChannelPolicyDepth = 0;
+  private static sideChannelDuringExecution: "paused" | "limited" | "enabled" = "enabled";
+  private static sideChannelMaxCallsPerWindow = 2;
+  private static sideChannelCallsRemaining: number | null = null;
+  private static sideChannelPolicyPaused = false;
   private static cleanupIntervalHandle?: ReturnType<typeof setInterval>;
 
   /**
@@ -228,8 +236,12 @@ export class MemoryService {
       // ignore
     }
 
-    // Queue for compression if enabled and large enough
-    if (settings.compressionEnabled && tokens > MIN_TOKENS_FOR_COMPRESSION && !finalIsPrivate) {
+    // Queue for compression if enabled and large enough.
+    // Observation memories are often verbose tool payloads; use a higher threshold
+    // to avoid a burst of low-value side LLM calls after heavy tool runs.
+    const compressionTokenThreshold =
+      type === "observation" ? MIN_TOKENS_FOR_OBSERVATION_COMPRESSION : MIN_TOKENS_FOR_COMPRESSION;
+    if (settings.compressionEnabled && tokens > compressionTokenThreshold && !finalIsPrivate) {
       this.compressionQueue.push(memory.id);
       this.processCompressionQueue();
     }
@@ -254,7 +266,7 @@ export class MemoryService {
     const lexicalLocal = this.memoryRepo.search(workspaceId, query, lexicalLimit, true);
     const lexicalImportedGlobal = this.memoryRepo.searchImportedGlobal(query, lexicalLimit, true);
 
-    // Kick off a background backfill for imported ChatGPT histories (and any other memories)
+    // Kick off a background backfill for imported histories (and any other memories)
     // so semantic recall improves over time without requiring re-import.
     this.kickoffEmbeddingBackfill(workspaceId);
     this.kickoffImportedEmbeddingBackfill();
@@ -262,7 +274,7 @@ export class MemoryService {
     // Hybrid (offline semantic + BM25):
     // - use lexical BM25 to get candidate set
     // - compute local embedding similarity as a second signal
-    // - merge + rerank for better recall on imported ChatGPT memories and natural language prompts
+    // - merge + rerank for better recall on imported memories and natural language prompts
     try {
       const tokens = tokenizeForLocalEmbedding(query);
       if (tokens.length < 2) {
@@ -293,7 +305,7 @@ export class MemoryService {
         }
       }
 
-      // Global semantic scan over imported ChatGPT embeddings.
+      // Global semantic scan over imported-memory embeddings.
       if (this.importedEmbeddings.size > 0) {
         for (const [memoryId, entry] of this.importedEmbeddings.entries()) {
           const score = cosineSimilarity(queryEmbedding, entry.embedding);
@@ -450,11 +462,59 @@ export class MemoryService {
 
   private static normalizeForEmbedding(summary: string | undefined, content: string): string {
     let text = (summary || content || "").trim();
-    // Strip ChatGPT import tag to reduce noise in semantic space.
-    text = text.replace(/^\[Imported from ChatGPT[^\]]*\]\s*/i, "");
+    // Strip import tags to reduce noise in semantic space.
+    text = text.replace(/^\[Imported from [^\]]+\]\s*/i, "");
     // Keep a bounded prefix for speed and to avoid pathological inputs.
     if (text.length > 12000) text = text.slice(0, 12000);
     return text;
+  }
+
+  private static extractFirstCodeBlock(text: string): string | null {
+    const match = text.match(/```(?:[a-zA-Z0-9_-]+)?\s*([\s\S]*?)```/);
+    const block = match?.[1]?.trim();
+    return block && block.length > 0 ? block : null;
+  }
+
+  private static extractTextImportEntries(pastedText: string): string[] {
+    const source = this.extractFirstCodeBlock(pastedText) || pastedText;
+    const lines = source.split(/\r?\n/);
+    const entries: string[] = [];
+    let current: string | null = null;
+    const entryWithDatePattern = /^(?:[-*]\s*)?\[([^\]]{1,120})\]\s*[-—]\s*(.+)$/;
+
+    for (const rawLine of lines) {
+      const trimmed = rawLine.trim();
+      if (!trimmed) continue;
+
+      if (trimmed.startsWith("```")) continue;
+
+      const datedMatch = trimmed.match(entryWithDatePattern);
+      if (datedMatch) {
+        if (current) entries.push(current);
+        const date = datedMatch[1].trim();
+        const content = datedMatch[2].trim();
+        current = `[${date}] - ${content}`;
+        continue;
+      }
+
+      // If a line is indented, treat it as a continuation for the previous memory.
+      if (current && /^\s+/.test(rawLine)) {
+        current = `${current} ${trimmed}`;
+        continue;
+      }
+
+      if (current) {
+        entries.push(current);
+        current = null;
+      }
+
+      const fallback = trimmed.replace(/^[-*]\s+/, "").trim();
+      if (fallback) entries.push(fallback);
+    }
+
+    if (current) entries.push(current);
+
+    return entries;
   }
 
   private static ensureImportedEmbeddingsLoaded(): void {
@@ -642,7 +702,7 @@ export class MemoryService {
   }
 
   /**
-   * Get statistics for imported ChatGPT memories
+   * Get statistics for imported memories
    */
   static getImportedStats(workspaceId: string): { count: number; totalTokens: number } {
     this.ensureInitialized();
@@ -650,7 +710,7 @@ export class MemoryService {
   }
 
   /**
-   * Find imported ChatGPT memories with pagination
+   * Find imported memories with pagination
    */
   static findImported(workspaceId: string, limit = 50, offset = 0): Memory[] {
     this.ensureInitialized();
@@ -658,7 +718,7 @@ export class MemoryService {
   }
 
   /**
-   * Delete all imported ChatGPT memories for a workspace
+   * Delete all imported memories for a workspace
    */
   static deleteImported(workspaceId: string): number {
     this.ensureInitialized();
@@ -675,6 +735,109 @@ export class MemoryService {
     this.embeddingBackfillInProgress.delete(workspaceId);
     memoryEvents.emit("memoryChanged", { type: "importedDeleted", workspaceId });
     return deleted;
+  }
+
+  static importFromText(options: {
+    workspaceId: string;
+    provider: string;
+    pastedText: string;
+    forcePrivate?: boolean;
+  }): {
+    success: boolean;
+    entriesDetected: number;
+    memoriesCreated: number;
+    duplicatesSkipped: number;
+    truncated: number;
+    errors: string[];
+  } {
+    this.ensureInitialized();
+
+    const settings = this.settingsRepo.getOrCreate(options.workspaceId);
+    if (!settings.enabled) {
+      throw new Error("Memory system is disabled for this workspace. Enable it in settings first.");
+    }
+
+    const providerLabel = options.provider.trim().replace(/\s+/g, " ").slice(0, 80) || "Other AI";
+    const parsedEntries = this.extractTextImportEntries(options.pastedText);
+
+    if (parsedEntries.length === 0) {
+      throw new Error("No memory entries found. Paste the exported memories and try again.");
+    }
+
+    const entries = parsedEntries.slice(0, MAX_TEXT_IMPORT_ENTRIES);
+    const truncated = Math.max(0, parsedEntries.length - entries.length);
+
+    let memoriesCreated = 0;
+    let duplicatesSkipped = 0;
+    const errors: string[] = [];
+    const seen = new Set<string>();
+    const markPrivate = options.forcePrivate ?? true;
+
+    for (const entry of entries) {
+      const signature = entry.replace(/\s+/g, " ").trim().toLowerCase();
+      if (!signature) {
+        duplicatesSkipped += 1;
+        continue;
+      }
+      if (seen.has(signature)) {
+        duplicatesSkipped += 1;
+        continue;
+      }
+      seen.add(signature);
+
+      try {
+        const sanitized = InputSanitizer.sanitizeMemoryContent(entry).trim();
+        if (!sanitized) {
+          duplicatesSkipped += 1;
+          continue;
+        }
+
+        const bounded =
+          sanitized.length > MAX_TEXT_IMPORT_ENTRY_CHARS
+            ? `${sanitized.slice(0, MAX_TEXT_IMPORT_ENTRY_CHARS)}\n[... truncated]`
+            : sanitized;
+
+        const content = `[Imported from ${providerLabel} — "Memory export (pasted)"]\n${bounded}`;
+
+        const memory = this.memoryRepo.create({
+          workspaceId: options.workspaceId,
+          taskId: undefined,
+          type: "insight",
+          content,
+          tokens: estimateTokens(content),
+          isCompressed: false,
+          isPrivate: markPrivate,
+        });
+
+        // Best-effort: keep hybrid search quality high for imported memories.
+        try {
+          const embedText = this.normalizeForEmbedding(memory.summary, memory.content);
+          const embedding = createLocalEmbedding(embedText);
+          this.embeddingRepo.upsert(options.workspaceId, memory.id, embedding, memory.updatedAt);
+          this.cacheEmbedding(options.workspaceId, memory.id, embedding, memory.updatedAt);
+        } catch {
+          // ignore
+        }
+
+        memoriesCreated += 1;
+      } catch (error) {
+        errors.push(error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    if (memoriesCreated > 0) {
+      memoryEvents.emit("memoryChanged", { type: "created", workspaceId: options.workspaceId });
+      this.enforceStorageLimit(options.workspaceId, settings.maxStorageMb);
+    }
+
+    return {
+      success: errors.length === 0,
+      entriesDetected: parsedEntries.length,
+      memoriesCreated,
+      duplicatesSkipped,
+      truncated,
+      errors,
+    };
   }
 
   /**
@@ -724,6 +887,61 @@ export class MemoryService {
     return this.compressionPauseCount > 0;
   }
 
+  static applyExecutionSideChannelPolicy(
+    mode: "paused" | "limited" | "enabled",
+    maxCallsPerWindow = 2,
+  ): void {
+    this.sideChannelPolicyDepth += 1;
+    this.sideChannelDuringExecution = mode;
+    this.sideChannelMaxCallsPerWindow = Math.max(0, Math.floor(maxCallsPerWindow));
+    this.sideChannelCallsRemaining = mode === "limited" ? this.sideChannelMaxCallsPerWindow : null;
+
+    if (mode === "paused") {
+      if (!this.sideChannelPolicyPaused) {
+        this.pauseCompression();
+        this.sideChannelPolicyPaused = true;
+      }
+      return;
+    }
+
+    if (this.sideChannelPolicyPaused) {
+      this.sideChannelPolicyPaused = false;
+      this.resumeCompression();
+    }
+    if (this.compressionQueue.length > 0) {
+      void this.processCompressionQueue();
+    }
+  }
+
+  static clearExecutionSideChannelPolicy(): void {
+    if (this.sideChannelPolicyDepth > 0) {
+      this.sideChannelPolicyDepth -= 1;
+    }
+    if (this.sideChannelPolicyDepth > 0) return;
+
+    this.sideChannelDuringExecution = "enabled";
+    this.sideChannelCallsRemaining = null;
+    if (this.sideChannelPolicyPaused) {
+      this.sideChannelPolicyPaused = false;
+      this.resumeCompression();
+    }
+    if (this.compressionQueue.length > 0) {
+      void this.processCompressionQueue();
+    }
+  }
+
+  private static canExecuteSideChannelCall(): boolean {
+    if (this.sideChannelPolicyDepth <= 0) return true;
+    if (this.sideChannelDuringExecution === "enabled") return true;
+    if (this.sideChannelDuringExecution === "paused") return false;
+    if (this.sideChannelCallsRemaining === null) {
+      this.sideChannelCallsRemaining = this.sideChannelMaxCallsPerWindow;
+    }
+    if (this.sideChannelCallsRemaining <= 0) return false;
+    this.sideChannelCallsRemaining -= 1;
+    return true;
+  }
+
   /**
    * Process compression queue asynchronously
    */
@@ -742,9 +960,17 @@ export class MemoryService {
       // Process in batches
       const batch = this.compressionQueue.splice(0, COMPRESSION_BATCH_SIZE);
 
-      for (const memoryId of batch) {
+      for (let i = 0; i < batch.length; i += 1) {
+        const memoryId = batch[i];
         // Check pause flag between items to yield promptly when a task starts.
-        if (this.isCompressionPaused()) break;
+        if (this.isCompressionPaused()) {
+          this.compressionQueue.unshift(...batch.slice(i));
+          break;
+        }
+        if (!this.canExecuteSideChannelCall()) {
+          this.compressionQueue.unshift(...batch.slice(i));
+          break;
+        }
         await this.compressMemory(memoryId);
         // Small delay to avoid overwhelming the LLM
         await new Promise((resolve) => setTimeout(resolve, COMPRESSION_DELAY_MS));

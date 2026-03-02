@@ -1,6 +1,7 @@
 import { EventEmitter } from "events";
 import * as fs from "fs";
 import * as crypto from "crypto";
+import * as path from "path";
 import { DatabaseManager } from "../database/schema";
 import type Database from "better-sqlite3";
 import {
@@ -20,6 +21,7 @@ import {
   Task,
   TaskStatus,
   TaskEvent,
+  EventType,
   TaskOutputSummary,
   IPC_CHANNELS,
   QueueSettings,
@@ -44,11 +46,24 @@ import {
   AgentTeamItem,
   StepFeedbackAction,
   TASK_ERROR_CODES,
+  EvidenceRef,
+  TimelineStage,
+  VerificationOutcome,
+  VerificationScope,
+  VerificationEvidenceMode,
 } from "../../shared/types";
+import {
+  extractTimelineEvidenceRefs,
+  inferTimelineStageForLegacyType,
+  isTimelineEventType,
+  normalizeTaskEventToTimelineV2,
+} from "../../shared/timeline-v2";
+import { createTimelineEmitter } from "./timeline-emitter";
 import { TaskExecutor } from "./executor";
 import { TaskQueueManager } from "./queue-manager";
 import { approvalIdempotency, taskIdempotency as _taskIdempotency, IdempotencyManager } from "../security/concurrency";
 import { MemoryService } from "../memory/MemoryService";
+import { GuardrailManager } from "../guardrails/guardrail-manager";
 import { PlaybookService } from "../memory/PlaybookService";
 import { UserProfileService } from "../memory/UserProfileService";
 import { RelationshipMemoryService } from "../memory/RelationshipMemoryService";
@@ -183,6 +198,23 @@ export class AgentDaemon extends EventEmitter {
   private worktreeManager: WorktreeManager;
   /** Comparison service for agent comparison mode. */
   private comparisonService: ComparisonService | null = null;
+  private taskSeqById: Map<string, number> = new Map();
+  private activeTimelineStageByTask: Map<string, TimelineStage> = new Map();
+  private activeStepIdsByTask: Map<string, Set<string>> = new Map();
+  private failedPlanStepsByTask: Map<string, Set<string>> = new Map();
+  private timelineErrorsByTask: Map<string, Set<string>> = new Map();
+  private knownPlanStepIdsByTask: Map<string, Set<string>> = new Map();
+  private evidenceRefsByTask: Map<string, Map<string, EvidenceRef>> = new Map();
+  private timelineMetrics = {
+    totalEvents: 0,
+    droppedEvents: 0,
+    orderViolations: 0,
+    stepStateMismatches: 0,
+    completionGateBlocks: 0,
+    evidenceGateFails: 0,
+  };
+  private completionTelemetryBackfilledTaskIds: Set<string> = new Set();
+  private readonly verificationOutcomeV2Enabled: boolean;
 
   constructor(private dbManager: DatabaseManager) {
     super();
@@ -205,6 +237,9 @@ export class AgentDaemon extends EventEmitter {
         this.taskRepo.update(taskId, { status }),
       onTaskTimeout: (taskId: string) => this.handleTaskTimeout(taskId),
     });
+    this.verificationOutcomeV2Enabled =
+      parseBooleanEnv("COWORK_VERIFICATION_OUTCOME_V2", false) ||
+      parseBooleanEnv("verification_outcome_v2", false);
 
     // Initialize worktree manager
     this.worktreeManager = new WorktreeManager(db);
@@ -343,6 +378,7 @@ export class AgentDaemon extends EventEmitter {
     prompt: string;
     routingPrompt?: string;
     agentConfig?: AgentConfig;
+    lastProgressScore?: number;
   }): {
     route: IntentRoute;
     strategy: DerivedTaskStrategy;
@@ -352,7 +388,11 @@ export class AgentDaemon extends EventEmitter {
     agentConfigChanged: boolean;
   } {
     const route = IntentRouter.route(input.title, input.routingPrompt ?? input.prompt);
-    const strategy = TaskStrategyService.derive(route, input.agentConfig);
+    const strategy = TaskStrategyService.derive(route, input.agentConfig, {
+      title: input.title,
+      prompt: input.prompt,
+      lastProgressScore: input.lastProgressScore,
+    });
     const agentConfig = TaskStrategyService.applyToAgentConfig(input.agentConfig, strategy);
     const hasExplicitModelOverride =
       typeof input.agentConfig?.modelKey === "string" && input.agentConfig.modelKey.trim().length > 0;
@@ -446,6 +486,7 @@ export class AgentDaemon extends EventEmitter {
       prompt: task.prompt,
       routingPrompt: task.rawPrompt || task.userPrompt || task.prompt,
       agentConfig: task.agentConfig,
+      lastProgressScore: task.lastProgressScore,
     });
     let nextAgentConfig = derived.agentConfig;
     let agentConfigChanged = derived.agentConfigChanged;
@@ -493,6 +534,26 @@ export class AgentDaemon extends EventEmitter {
    * Initialize the daemon - call after construction to set up queue
    */
   async initialize(): Promise<void> {
+    // Hard-switch migration: eagerly normalize active/incomplete task events to timeline v2.
+    const activeAndIncompleteTasks = this.taskRepo.findByStatus([
+      "queued",
+      "planning",
+      "executing",
+      "interrupted",
+      "paused",
+      "blocked",
+    ]);
+    const eagerMigrationCount = this.eventRepo.migrateLegacyEventsForTasks(
+      activeAndIncompleteTasks.map((task) => task.id),
+    );
+    if (eagerMigrationCount > 0) {
+      console.log(`[AgentDaemon] Migrated ${eagerMigrationCount} legacy event(s) to timeline v2`);
+    }
+    for (const task of activeAndIncompleteTasks) {
+      this.backfillTaskCompletionTelemetry(task.id);
+      this.completionTelemetryBackfilledTaskIds.add(task.id);
+    }
+
     // Find queued tasks from database for queue recovery
     const queuedTasks = this.taskRepo.findByStatus("queued");
 
@@ -513,9 +574,11 @@ export class AgentDaemon extends EventEmitter {
         `[AgentDaemon] Found ${orphanedTasks.length} orphaned task(s) from previous session`,
       );
       for (const task of orphanedTasks) {
-        const events = this.eventRepo.findByTaskId(task.id);
-        const hasSnapshot = events.some((e) => e.type === "conversation_snapshot");
-        const hasPlan = events.some((e) => e.type === "plan_created" && e.payload?.plan);
+        const events = this.getTaskEventsForReplay(task.id);
+        const hasSnapshot = events.some((e) => this.isLegacyEventType(e, "conversation_snapshot"));
+        const hasPlan = events.some(
+          (e) => this.isLegacyEventType(e, "plan_created") && e.payload?.plan,
+        );
 
         if (hasSnapshot || hasPlan) {
           // Recoverable: mark as interrupted and add to the resume list
@@ -782,22 +845,23 @@ export class AgentDaemon extends EventEmitter {
     this.logEvent(effectiveTask.id, "task_created", { task: executionTask });
     console.log(`[AgentDaemon] Task status updated to 'planning', starting execution...`);
 
-    // Pause background memory compression to avoid contention with the executor's
-    // LLM calls — compression creates its own provider instance and its API calls
-    // interleave with the executor's, adding latency and cost.
-    MemoryService.pauseCompression();
+    const guardrails = GuardrailManager.loadSettings();
+    MemoryService.applyExecutionSideChannelPolicy(
+      guardrails.sideChannelDuringExecution,
+      guardrails.sideChannelMaxCallsPerWindow,
+    );
 
     // Start execution (non-blocking)
     executor
       .execute()
       .then(() => {
-        MemoryService.resumeCompression();
+        MemoryService.clearExecutionSideChannelPolicy();
         // After execution completes, process any follow-ups that were queued
         // while the executor was running but arrived too late for the loop to pick up.
         this.processOrphanedFollowUps(effectiveTask.id, executor);
       })
       .catch((error) => {
-        MemoryService.resumeCompression();
+        MemoryService.clearExecutionSideChannelPolicy();
         console.error(`[AgentDaemon] Task ${effectiveTask.id} execution failed:`, error);
         this.taskRepo.update(effectiveTask.id, {
           status: "failed",
@@ -857,11 +921,11 @@ export class AgentDaemon extends EventEmitter {
     }
 
     // Fetch all events for this task
-    const events = this.eventRepo.findByTaskId(task.id);
+    const events = this.getTaskEventsForReplay(task.id);
 
     // Check if we have meaningful state to restore from
-    const hasSnapshot = events.some((e) => e.type === "conversation_snapshot");
-    const planEvent = events.filter((e) => e.type === "plan_created").pop();
+    const hasSnapshot = events.some((e) => this.isLegacyEventType(e, "conversation_snapshot"));
+    const planEvent = events.filter((e) => this.isLegacyEventType(e, "plan_created")).pop();
     const hasPlan = planEvent && planEvent.payload?.plan;
 
     if (!hasSnapshot && !hasPlan) {
@@ -903,10 +967,10 @@ export class AgentDaemon extends EventEmitter {
       const completedStepIds = new Set<string>();
       const failedStepIds = new Set<string>();
       for (const event of events) {
-        if (event.type === "step_completed" && event.payload?.step?.id) {
+        if (this.isLegacyEventType(event, "step_completed") && event.payload?.step?.id) {
           completedStepIds.add(event.payload.step.id);
         }
-        if (event.type === "step_failed" && event.payload?.step?.id) {
+        if (this.isLegacyEventType(event, "step_failed") && event.payload?.step?.id) {
           failedStepIds.add(event.payload.step.id);
         }
       }
@@ -959,13 +1023,21 @@ export class AgentDaemon extends EventEmitter {
       hadPlan: !!hasPlan,
     });
 
+    const guardrails = GuardrailManager.loadSettings();
+    MemoryService.applyExecutionSideChannelPolicy(
+      guardrails.sideChannelDuringExecution,
+      guardrails.sideChannelMaxCallsPerWindow,
+    );
+
     // Start execution (non-blocking, same pattern as startTaskImmediate)
     executor
       .resumeAfterInterruption()
       .then(() => {
+        MemoryService.clearExecutionSideChannelPolicy();
         this.processOrphanedFollowUps(effectiveTask.id, executor);
       })
       .catch((error) => {
+        MemoryService.clearExecutionSideChannelPolicy();
         console.error(`[AgentDaemon] Resumed task ${effectiveTask.id} failed:`, error);
         this.taskRepo.update(effectiveTask.id, {
           status: "failed",
@@ -986,7 +1058,9 @@ export class AgentDaemon extends EventEmitter {
    * resumes execution from where the plan left off.
    */
   private isTurnLimitContinuationEligible(task: Task, events: TaskEvent[]): boolean {
-    const latestErrorEvent = [...events].reverse().find((event) => event.type === "error");
+    const latestErrorEvent = [...events]
+      .reverse()
+      .find((event) => this.isLegacyEventType(event, "error"));
     if (latestErrorEvent) {
       const errorCode = latestErrorEvent.payload?.errorCode;
       const actionHintType = latestErrorEvent.payload?.actionHint?.type;
@@ -1017,8 +1091,10 @@ export class AgentDaemon extends EventEmitter {
       return false;
     }
 
-    const events = this.eventRepo.findByTaskId(task.id);
-    const latestQueueEvent = [...events].reverse().find((event) => event.type === "task_queued");
+    const events = this.getTaskEventsForReplay(task.id);
+    const latestQueueEvent = [...events]
+      .reverse()
+      .find((event) => this.isLegacyEventType(event, "task_queued"));
     const wasQueuedForContinuation =
       latestQueueEvent?.payload?.reason === "continuation_concurrency";
     if (!wasQueuedForContinuation) {
@@ -1033,9 +1109,9 @@ export class AgentDaemon extends EventEmitter {
     for (const event of events) {
       const stepId = event.payload?.step?.id;
       if (!stepId) continue;
-      if (event.type === "step_completed") {
+      if (this.isLegacyEventType(event, "step_completed")) {
         terminalStatusByStep.set(stepId, "completed");
-      } else if (event.type === "step_skipped") {
+      } else if (this.isLegacyEventType(event, "step_skipped")) {
         terminalStatusByStep.set(stepId, "skipped");
       }
     }
@@ -1058,7 +1134,7 @@ export class AgentDaemon extends EventEmitter {
       throw new Error(`Workspace ${task.workspaceId} not found`);
     }
 
-    const planEvent = events.filter((e) => e.type === "plan_created").pop();
+    const planEvent = events.filter((e) => this.isLegacyEventType(e, "plan_created")).pop();
     if (!planEvent?.payload?.plan) {
       throw new Error(
         `Task ${task.id} cannot be continued because no execution plan could be restored`,
@@ -1082,12 +1158,19 @@ export class AgentDaemon extends EventEmitter {
   }
 
   private launchContinuationExecution(effectiveTask: Task, executor: TaskExecutor): void {
+    const guardrails = GuardrailManager.loadSettings();
+    MemoryService.applyExecutionSideChannelPolicy(
+      guardrails.sideChannelDuringExecution,
+      guardrails.sideChannelMaxCallsPerWindow,
+    );
     executor
       .continueAfterBudgetExhausted()
       .then(() => {
+        MemoryService.clearExecutionSideChannelPolicy();
         this.processOrphanedFollowUps(effectiveTask.id, executor);
       })
       .catch((error) => {
+        MemoryService.clearExecutionSideChannelPolicy();
         console.error(`[AgentDaemon] Continued task ${effectiveTask.id} failed:`, error);
         this.taskRepo.update(effectiveTask.id, {
           status: "failed",
@@ -1095,16 +1178,56 @@ export class AgentDaemon extends EventEmitter {
           completedAt: Date.now(),
         });
         this.clearRetryState(effectiveTask.id);
-        this.logEvent(effectiveTask.id, "error", { error: error.message });
+        if (
+          !this.hasRecentEquivalentErrorEvent(
+            effectiveTask.id,
+            error.message,
+            undefined,
+            (error as Any)?.terminal_failure_fingerprint,
+          )
+        ) {
+          this.logEvent(effectiveTask.id, "error", { error: error.message });
+        }
         this.activeTasks.delete(effectiveTask.id);
         this.queueManager.onTaskFinished(effectiveTask.id);
         this.processOrphanedFollowUps(effectiveTask.id, executor);
       });
   }
 
+  private hasRecentEquivalentErrorEvent(
+    taskId: string,
+    message: string,
+    windowMs = 10_000,
+    fingerprint?: string,
+  ): boolean {
+    const normalized = String(message || "").trim();
+    if (!normalized) return false;
+    const now = Date.now();
+    const events = this.getTaskEventsForReplay(taskId);
+    const latestError = [...events].reverse().find((event) => this.isLegacyEventType(event, "error"));
+    if (!latestError || now - (latestError.timestamp || 0) > windowMs) {
+      return false;
+    }
+    const payload = latestError.payload && typeof latestError.payload === "object" ? latestError.payload : {};
+    const latestMessage =
+      typeof (payload as Any).message === "string"
+        ? String((payload as Any).message)
+        : typeof (payload as Any).error === "string"
+          ? String((payload as Any).error)
+          : "";
+    const latestFingerprint =
+      typeof (payload as Any).terminal_failure_fingerprint === "string"
+        ? String((payload as Any).terminal_failure_fingerprint)
+        : "";
+    if (fingerprint && latestFingerprint && latestFingerprint === fingerprint) {
+      return true;
+    }
+    return latestMessage.trim() === normalized;
+  }
+
   private async startQueuedContinuation(task: Task): Promise<void> {
     console.log(`[AgentDaemon] Starting queued continuation for task ${task.id}: ${task.title}`);
-    const events = this.eventRepo.findByTaskId(task.id);
+    const events = this.getTaskEventsForReplay(task.id);
     if (!this.isTurnLimitContinuationEligible(task, events)) {
       this.taskRepo.update(task.id, {
         status: "failed",
@@ -1168,7 +1291,7 @@ export class AgentDaemon extends EventEmitter {
       throw new Error(`Task ${taskId} is not in failed status (current: ${task.status})`);
     }
     // Fetch all events for this task
-    const events = this.eventRepo.findByTaskId(taskId);
+    const events = this.getTaskEventsForReplay(taskId);
     if (!this.isTurnLimitContinuationEligible(task, events)) {
       throw new Error(
         `Task ${taskId} cannot be continued because it was not stopped by turn-limit exhaustion`,
@@ -2041,25 +2164,405 @@ export class AgentDaemon extends EventEmitter {
    * Log an event for a task
    */
   logEvent(taskId: string, type: string, payload: Any): void {
-    // Streaming progress events are ephemeral UI state (~3/sec).
-    // Skip DB persistence, activity logging, and memory capture.
+    const timestamp = Date.now();
+    const payloadObj: Record<string, unknown> =
+      payload && typeof payload === "object" && !Array.isArray(payload)
+        ? ({ ...(payload as Record<string, unknown>) } as Record<string, unknown>)
+        : payload === undefined
+          ? {}
+          : ({ value: payload } as Record<string, unknown>);
+    this.normalizeArtifactEventPayload(taskId, type, payloadObj);
+
+    // Streaming progress remains ephemeral, but we bridge it into the v2 timeline
+    // as an in-memory step update so UIs can render deterministic progress cards.
     if (type === "llm_streaming") {
-      this.emitTaskEvent(taskId, type, payload);
-      // Forward streaming progress to collaborative/multi-LLM thought panel
+      const seq = this.nextEventSeq(taskId);
+      const eventId = crypto.randomUUID();
+      const streamingEvent = normalizeTaskEventToTimelineV2({
+        taskId,
+        type: "timeline_step_updated",
+        payload: {
+          ...payloadObj,
+          legacyType: "llm_streaming",
+          status: "in_progress",
+          actor: "agent",
+          ephemeral: true,
+          message:
+            typeof payloadObj.message === "string"
+              ? payloadObj.message
+              : "Streaming response in progress",
+        },
+        timestamp,
+        eventId,
+        seq,
+      });
+
+      this.emitTaskEvent(streamingEvent);
       this.maybeEmitTeamStreamingProgress(taskId, payload);
       return;
     }
 
-    this.eventRepo.create({
-      taskId,
-      timestamp: Date.now(),
-      type: type as Any,
-      payload,
-    });
-    this.logActivityForEvent(taskId, type, payload);
-    this.emitTaskEvent(taskId, type, payload);
+    const requestedSeqRaw = payloadObj.seq;
+    const requestedSeq =
+      typeof requestedSeqRaw === "number" && Number.isFinite(requestedSeqRaw) && requestedSeqRaw > 0
+        ? Math.floor(requestedSeqRaw)
+        : undefined;
+    const currentSeq = this.getCurrentEventSeq(taskId);
+    if (requestedSeq !== undefined && requestedSeq <= currentSeq) {
+      this.timelineMetrics.orderViolations += 1;
+      this.timelineMetrics.droppedEvents += 1;
+      const quarantineSeq = this.nextEventSeq(taskId);
+      const quarantineEvent = normalizeTaskEventToTimelineV2({
+        taskId,
+        type: "timeline_error",
+        payload: {
+          message: "Out-of-order timeline event rejected",
+          rejectedType: type,
+          rejectedSeq: requestedSeq,
+          lastKnownSeq: currentSeq,
+          rawPayload: payloadObj,
+          legacyType: "error",
+        },
+        timestamp,
+        eventId: crypto.randomUUID(),
+        seq: quarantineSeq,
+      });
+      this.persistTimelineEvent(quarantineEvent, {
+        legacyType: "error",
+        legacyPayload: {
+          message: "Out-of-order timeline event rejected",
+          rejectedType: type,
+          rejectedSeq: requestedSeq,
+          lastKnownSeq: currentSeq,
+        },
+      });
+      return;
+    }
 
-    // Capture agent thoughts for collaborative team runs
+    if (requestedSeq !== undefined) {
+      this.taskSeqById.set(taskId, requestedSeq);
+    }
+    const seq = requestedSeq ?? this.nextEventSeq(taskId);
+    const eventId = crypto.randomUUID();
+    const timelineEvent = normalizeTaskEventToTimelineV2({
+      taskId,
+      type,
+      payload: payloadObj,
+      timestamp,
+      eventId,
+      seq,
+    });
+
+    // Stage machine: DISCOVER -> BUILD -> VERIFY -> FIX -> DELIVER
+    const shouldInferStageFromEvent =
+      !isTimelineEventType(type) ||
+      (type !== "timeline_group_started" && type !== "timeline_group_finished");
+    const stageSourceType = shouldInferStageFromEvent
+      ? !isTimelineEventType(type)
+        ? (type as EventType)
+        : typeof timelineEvent.legacyType === "string"
+          ? (timelineEvent.legacyType as EventType)
+          : undefined
+      : undefined;
+    if (stageSourceType) {
+      const inferredStage = inferTimelineStageForLegacyType(stageSourceType);
+      if (inferredStage) {
+        this.transitionTimelineStage(taskId, inferredStage);
+      }
+    }
+
+    this.trackTimelineStepState(taskId, timelineEvent);
+    this.trackEvidenceRefs(taskId, timelineEvent);
+    this.timelineMetrics.totalEvents += 1;
+
+    const legacyType: string | undefined = isTimelineEventType(type)
+      ? timelineEvent.legacyType
+      : type;
+    const legacyPayload: Record<string, unknown> = (() => {
+      if (!isTimelineEventType(type)) return payloadObj;
+      const copy = { ...(timelineEvent.payload as Record<string, unknown>) };
+      delete copy.legacyType;
+      return copy;
+    })();
+
+    this.persistTimelineEvent(timelineEvent, {
+      legacyType,
+      legacyPayload,
+    });
+  }
+
+  private normalizeArtifactEventPayload(
+    taskId: string,
+    type: string,
+    payload: Record<string, unknown>,
+  ): void {
+    if (type !== "artifact_created" && type !== "timeline_artifact_emitted") {
+      return;
+    }
+
+    const rawPath =
+      typeof payload.path === "string" && payload.path.trim().length > 0 ? payload.path.trim() : "";
+    if (!rawPath) return;
+
+    const isUrl = /^(https?:\/\/|file:\/\/)/i.test(rawPath);
+    let normalizedPath = rawPath;
+
+    if (!isUrl && !path.isAbsolute(rawPath)) {
+      const task = this.taskRepo.findById(taskId);
+      const workspace =
+        task && typeof task.workspaceId === "string"
+          ? this.workspaceRepo.findById(task.workspaceId)
+          : undefined;
+      const workspacePath =
+        workspace && typeof workspace.path === "string" && workspace.path.trim().length > 0
+          ? workspace.path.trim()
+          : "";
+      if (workspacePath) {
+        normalizedPath = path.resolve(workspacePath, rawPath);
+      }
+    }
+
+    payload.path = normalizedPath;
+
+    const label =
+      typeof payload.label === "string" && payload.label.trim().length > 0
+        ? payload.label.trim()
+        : "";
+    if (!label) {
+      if (isUrl) {
+        payload.label = normalizedPath;
+      } else {
+        const baseName = path.basename(normalizedPath);
+        payload.label = baseName || normalizedPath;
+      }
+    }
+  }
+
+  private getCurrentEventSeq(taskId: string): number {
+    const cached = this.taskSeqById.get(taskId);
+    if (typeof cached === "number") return cached;
+    const fromDb = this.eventRepo.getLatestSeq(taskId);
+    this.taskSeqById.set(taskId, fromDb);
+    return fromDb;
+  }
+
+  private nextEventSeq(taskId: string): number {
+    const next = this.getCurrentEventSeq(taskId) + 1;
+    this.taskSeqById.set(taskId, next);
+    return next;
+  }
+
+  private transitionTimelineStage(taskId: string, nextStage: TimelineStage): void {
+    const currentStage = this.activeTimelineStageByTask.get(taskId);
+    if (currentStage === nextStage) return;
+
+    const timeline = createTimelineEmitter(taskId, (eventType, payload) => {
+      this.logEvent(taskId, eventType, payload);
+    });
+
+    if (currentStage) {
+      timeline.finishGroup(currentStage, {
+        label: currentStage,
+        actor: "system",
+        legacyType: "step_completed",
+      });
+    }
+    timeline.startGroup(nextStage, {
+      label: nextStage,
+      actor: "system",
+      legacyType: "step_started",
+      maxParallel:
+        nextStage === "BUILD"
+          ? Math.max(1, this.queueManager.getStatus().maxConcurrent || 1)
+          : 1,
+    });
+    this.activeTimelineStageByTask.set(taskId, nextStage);
+  }
+
+  private normalizeStepIdForPlanTracking(rawStepId: string): string {
+    return String(rawStepId || "")
+      .trim()
+      .replace(/^step:/i, "");
+  }
+
+  private isSyntheticNonPlanStepId(rawStepId: string): boolean {
+    const stepId = String(rawStepId || "")
+      .trim()
+      .toLowerCase();
+    if (!stepId) return true;
+    return (
+      stepId.startsWith("tool:") ||
+      stepId.startsWith("command:") ||
+      stepId.startsWith("task:") ||
+      stepId.startsWith("completion_gate:") ||
+      stepId.startsWith("evidence_gate:")
+    );
+  }
+
+  private addKnownPlanStepId(taskId: string, rawStepId: string): void {
+    const stepId = String(rawStepId || "").trim();
+    if (!stepId || this.isSyntheticNonPlanStepId(stepId)) return;
+    const knownStepIds = this.knownPlanStepIdsByTask.get(taskId) || new Set<string>();
+    knownStepIds.add(stepId);
+    this.knownPlanStepIdsByTask.set(taskId, knownStepIds);
+  }
+
+  private isKnownPlanStepId(taskId: string, rawStepId: string): boolean {
+    const stepId = String(rawStepId || "").trim();
+    if (!stepId || this.isSyntheticNonPlanStepId(stepId)) return false;
+    const knownStepIds = this.knownPlanStepIdsByTask.get(taskId);
+    if (!knownStepIds || knownStepIds.size === 0) return false;
+    if (knownStepIds.has(stepId)) return true;
+    const normalizedStepId = this.normalizeStepIdForPlanTracking(stepId);
+    for (const candidate of knownStepIds) {
+      if (this.normalizeStepIdForPlanTracking(candidate) === normalizedStepId) return true;
+    }
+    return false;
+  }
+
+  private trackTimelineStepState(taskId: string, event: TaskEvent): void {
+    if (!isTimelineEventType(event.type)) return;
+    const payloadObj =
+      event.payload && typeof event.payload === "object" && !Array.isArray(event.payload)
+        ? (event.payload as Record<string, unknown>)
+        : {};
+    const effectiveLegacyType =
+      typeof event.legacyType === "string"
+        ? event.legacyType
+        : typeof payloadObj.legacyType === "string"
+          ? payloadObj.legacyType
+          : "";
+    const stepId = typeof event.stepId === "string" ? event.stepId : "";
+
+    if (effectiveLegacyType === "plan_created" || effectiveLegacyType === "plan_revised") {
+      const plan = (payloadObj as Any).plan;
+      const steps = Array.isArray(plan?.steps) ? plan.steps : [];
+      for (const step of steps) {
+        if (typeof step?.id === "string") {
+          this.addKnownPlanStepId(taskId, step.id);
+        }
+      }
+    }
+    if (event.type === "timeline_step_started" || event.type === "timeline_step_finished") {
+      this.addKnownPlanStepId(taskId, stepId);
+    }
+    if (!stepId) return;
+
+    const activeSteps = this.activeStepIdsByTask.get(taskId) || new Set<string>();
+    const failedPlanSteps = this.failedPlanStepsByTask.get(taskId) || new Set<string>();
+    const timelineErrors = this.timelineErrorsByTask.get(taskId) || new Set<string>();
+
+    if (event.type === "timeline_step_started") {
+      activeSteps.add(stepId);
+    } else if (event.type === "timeline_step_finished") {
+      const shouldIgnoreUnstartedMismatch =
+        effectiveLegacyType === "task_completed" ||
+        effectiveLegacyType === "task_cancelled" ||
+        effectiveLegacyType === "step_skipped";
+
+      if (!activeSteps.has(stepId) && event.status !== "failed" && !shouldIgnoreUnstartedMismatch) {
+        this.timelineMetrics.stepStateMismatches += 1;
+      }
+      activeSteps.delete(stepId);
+      if (event.status === "failed") {
+        if (this.isKnownPlanStepId(taskId, stepId)) {
+          failedPlanSteps.add(stepId);
+          timelineErrors.delete(stepId);
+        } else {
+          timelineErrors.add(stepId);
+        }
+      } else if (
+        event.status === "completed" ||
+        event.status === "skipped" ||
+        event.status === "cancelled"
+      ) {
+        failedPlanSteps.delete(stepId);
+        timelineErrors.delete(stepId);
+      }
+    } else if (event.type === "timeline_error") {
+      const isPlanFailureError =
+        (effectiveLegacyType === "step_failed" || effectiveLegacyType === "step_timeout") &&
+        this.isKnownPlanStepId(taskId, stepId);
+      if (isPlanFailureError) {
+        failedPlanSteps.add(stepId);
+        timelineErrors.delete(stepId);
+      } else {
+        timelineErrors.add(stepId);
+      }
+    } else if (
+      event.status === "completed" ||
+      event.status === "skipped" ||
+      event.status === "cancelled"
+    ) {
+      failedPlanSteps.delete(stepId);
+      timelineErrors.delete(stepId);
+    }
+
+    if (activeSteps.size > 0) {
+      this.activeStepIdsByTask.set(taskId, activeSteps);
+    } else {
+      this.activeStepIdsByTask.delete(taskId);
+    }
+    if (failedPlanSteps.size > 0) {
+      this.failedPlanStepsByTask.set(taskId, failedPlanSteps);
+    } else {
+      this.failedPlanStepsByTask.delete(taskId);
+    }
+    if (timelineErrors.size > 0) {
+      this.timelineErrorsByTask.set(taskId, timelineErrors);
+    } else {
+      this.timelineErrorsByTask.delete(taskId);
+    }
+  }
+
+  private trackEvidenceRefs(taskId: string, event: TaskEvent): void {
+    if (!isTimelineEventType(event.type)) return;
+    if (event.type !== "timeline_evidence_attached") return;
+
+    const refs = extractTimelineEvidenceRefs(event);
+    if (refs.length === 0) return;
+
+    const existing = this.evidenceRefsByTask.get(taskId) || new Map<string, EvidenceRef>();
+    for (const ref of refs) {
+      existing.set(ref.evidenceId, ref);
+    }
+    this.evidenceRefsByTask.set(taskId, existing);
+  }
+
+  private persistTimelineEvent(
+    event: TaskEvent,
+    options: {
+      legacyType?: string;
+      legacyPayload?: Record<string, unknown>;
+    } = {},
+  ): void {
+    this.eventRepo.create({
+      id: event.id,
+      taskId: event.taskId,
+      timestamp: event.timestamp,
+      type: event.type,
+      payload: event.payload,
+      schemaVersion: 2,
+      eventId: event.eventId,
+      seq: event.seq,
+      ts: event.ts,
+      status: event.status,
+      stepId: event.stepId,
+      groupId: event.groupId,
+      actor: event.actor,
+      legacyType: (options.legacyType || event.legacyType) as Any,
+    });
+
+    const effectiveLegacyType = options.legacyType || event.legacyType;
+    const effectiveLegacyPayload = options.legacyPayload || (event.payload as Record<string, unknown>);
+    if (effectiveLegacyType) {
+      this.logActivityForEvent(event.taskId, effectiveLegacyType, effectiveLegacyPayload);
+    } else {
+      this.logActivityForEvent(event.taskId, event.type, event.payload);
+    }
+
+    this.emitTaskEvent(event);
+
     const teamThoughtEventTypes = new Set([
       "assistant_message",
       "tool_call",
@@ -2067,13 +2570,12 @@ export class AgentDaemon extends EventEmitter {
       "file_created",
       "file_modified",
     ]);
-    if (teamThoughtEventTypes.has(type)) {
-      this.maybeEmitTeamThought(taskId, type, payload);
+    if (effectiveLegacyType && teamThoughtEventTypes.has(effectiveLegacyType)) {
+      this.maybeEmitTeamThought(event.taskId, effectiveLegacyType, effectiveLegacyPayload);
     }
 
-    // Capture to memory system (async, don't block)
-    this.captureToMemory(taskId, type, payload).catch((error) => {
-      // Silently log - memory capture is optional enhancement
+    const memoryType = effectiveLegacyType || event.type;
+    this.captureToMemory(event.taskId, memoryType, effectiveLegacyPayload).catch((error) => {
       console.debug("[AgentDaemon] Memory capture failed:", error);
     });
   }
@@ -2327,12 +2829,41 @@ export class AgentDaemon extends EventEmitter {
       error: "error",
       verification_passed: "insight",
       verification_failed: "error",
+      verification_pending_user_action: "insight",
       file_created: "observation",
       file_modified: "observation",
     };
 
     const memoryType = memoryTypeMap[type];
     if (!memoryType) return;
+
+    // Guardrail: avoid storing high-volume diagnostic tool payloads in memory.
+    // These create low-signal entries and trigger expensive background compression.
+    const toolName = String(payload?.tool || payload?.name || "").trim();
+    const skipMemoryToolNames = new Set([
+      "task_events",
+      "task_history",
+      "search_memories",
+      "scratchpad_read",
+      "glob",
+      "list_directory",
+      "list_directory_with_sizes",
+    ]);
+    if ((type === "tool_call" || type === "tool_result") && skipMemoryToolNames.has(toolName)) {
+      return;
+    }
+
+    if (type === "tool_call") {
+      const inputPreview = JSON.stringify(payload?.input ?? {});
+      if (inputPreview.length > 1500) return;
+    }
+    if (type === "tool_result") {
+      const rawResult =
+        typeof payload?.result === "string"
+          ? payload.result
+          : JSON.stringify(payload?.result ?? payload ?? {});
+      if (rawResult.length > 1500) return;
+    }
 
     const task = this.taskRepo.findById(taskId);
     if (!task) return;
@@ -2589,6 +3120,16 @@ export class AgentDaemon extends EventEmitter {
           description:
             payload?.error || payload?.message || payload?.step?.description || task.title,
         };
+      case "verification_pending_user_action":
+        return {
+          workspaceId: task.workspaceId,
+          taskId: task.id,
+          agentRoleId,
+          actorType,
+          activityType: "info",
+          title: "Verification pending user action",
+          description: payload?.message || task.title,
+        };
       case "verification_passed":
         return {
           workspaceId: task.workspaceId,
@@ -2677,12 +3218,45 @@ export class AgentDaemon extends EventEmitter {
   /**
    * Emit event to renderer process and local listeners
    */
-  private emitTaskEvent(taskId: string, type: string, payload: Any): void {
-    // Emit to local EventEmitter listeners (for gateway integration)
+  private emitTaskEvent(event: TaskEvent): void {
+    const timelineEnvelope = {
+      taskId: event.taskId,
+      type: event.type,
+      payload: event.payload,
+      timestamp: event.timestamp,
+      schemaVersion: event.schemaVersion || 2,
+      eventId: event.eventId || event.id,
+      seq: event.seq,
+      ts: event.ts || event.timestamp,
+      status: event.status,
+      stepId: event.stepId,
+      groupId: event.groupId,
+      actor: event.actor,
+      legacyType: event.legacyType,
+    };
+
+    // Emit timeline event to local EventEmitter listeners.
     try {
-      this.emit(type, { taskId, ...payload });
+      this.emit(event.type, timelineEnvelope);
     } catch (error) {
-      console.error(`[AgentDaemon] Error emitting event ${type}:`, error);
+      console.error(`[AgentDaemon] Error emitting timeline event ${event.type}:`, error);
+    }
+
+    // Compatibility bridge: emit legacy aliases for subscribers that still
+    // listen on legacy event names (assistant_message/task_completed/etc).
+    const legacyAlias = this.resolveLegacyTaskEventAlias(event);
+    if (legacyAlias) {
+      try {
+        this.emit(legacyAlias.type, {
+          taskId: event.taskId,
+          ...legacyAlias.payload,
+        });
+      } catch (error) {
+        console.error(
+          `[AgentDaemon] Error emitting legacy alias event ${legacyAlias.type}:`,
+          error,
+        );
+      }
     }
 
     // Emit to renderer process via IPC
@@ -2691,18 +3265,39 @@ export class AgentDaemon extends EventEmitter {
       // Check if window is still valid before sending
       try {
         if (!window.isDestroyed() && window.webContents && !window.webContents.isDestroyed()) {
-          window.webContents.send(IPC_CHANNELS.TASK_EVENT, {
-            taskId,
-            type,
-            payload,
-            timestamp: Date.now(),
-          });
+          window.webContents.send(IPC_CHANNELS.TASK_EVENT, timelineEnvelope);
         }
       } catch (error) {
         // Window might have been destroyed between check and send
         console.error(`[AgentDaemon] Error sending IPC to window:`, error);
       }
     });
+  }
+
+  private resolveLegacyTaskEventAlias(event: TaskEvent): {
+    type: string;
+    payload: Record<string, unknown>;
+  } | null {
+    const payloadObj =
+      event.payload && typeof event.payload === "object" && !Array.isArray(event.payload)
+        ? ({ ...(event.payload as Record<string, unknown>) } as Record<string, unknown>)
+        : {};
+    const legacyType =
+      typeof event.legacyType === "string" && event.legacyType.trim().length > 0
+        ? event.legacyType.trim()
+        : typeof payloadObj.legacyType === "string" && payloadObj.legacyType.trim().length > 0
+          ? payloadObj.legacyType.trim()
+          : "";
+
+    if (!legacyType || legacyType === event.type || legacyType.startsWith("timeline_")) {
+      return null;
+    }
+
+    delete payloadObj.legacyType;
+    return {
+      type: legacyType,
+      payload: payloadObj,
+    };
   }
 
   /**
@@ -2712,6 +3307,7 @@ export class AgentDaemon extends EventEmitter {
     const existing = this.taskRepo.findById(taskId);
     this.taskRepo.update(taskId, { status });
     if (status === "completed" || status === "failed" || status === "cancelled") {
+      this.clearTimelineTaskState(taskId);
       this.clearRetryState(taskId);
       if (this.teamOrchestrator && existing?.status !== status) {
         void this.teamOrchestrator.onTaskTerminal(taskId).catch(() => {});
@@ -2733,6 +3329,35 @@ export class AgentDaemon extends EventEmitter {
     return this.taskRepo.findById(taskId);
   }
 
+  private getTaskEventsForReplay(taskId: string): TaskEvent[] {
+    if (!this.completionTelemetryBackfilledTaskIds.has(taskId)) {
+      this.backfillTaskCompletionTelemetry(taskId);
+      this.completionTelemetryBackfilledTaskIds.add(taskId);
+    }
+    return this.eventRepo.findByTaskId(taskId);
+  }
+
+  private resolveLegacyEventType(event: TaskEvent): string {
+    return typeof event.legacyType === "string" && event.legacyType.length > 0
+      ? event.legacyType
+      : event.type;
+  }
+
+  private isLegacyEventType(event: TaskEvent, expected: string): boolean {
+    return this.resolveLegacyEventType(event) === expected;
+  }
+
+  private clearTimelineTaskState(taskId: string): void {
+    this.activeTimelineStageByTask.delete(taskId);
+    this.activeStepIdsByTask.delete(taskId);
+    this.failedPlanStepsByTask.delete(taskId);
+    this.timelineErrorsByTask.delete(taskId);
+    this.knownPlanStepIdsByTask.delete(taskId);
+    this.evidenceRefsByTask.delete(taskId);
+    this.taskSeqById.delete(taskId);
+    this.completionTelemetryBackfilledTaskIds.delete(taskId);
+  }
+
   getTaskEvents(taskId: string, options?: { limit?: number; types?: string[] }): TaskEvent[] {
     const all = this.eventRepo.findByTaskId(taskId);
     const normalizedTypes = (options?.types || [])
@@ -2740,7 +3365,11 @@ export class AgentDaemon extends EventEmitter {
       .filter(Boolean);
     const filtered =
       normalizedTypes.length > 0
-        ? all.filter((event) => normalizedTypes.includes(event.type))
+        ? all.filter(
+            (event) =>
+              normalizedTypes.includes(event.type) ||
+              (typeof event.legacyType === "string" && normalizedTypes.includes(event.legacyType)),
+          )
         : all;
     const limit =
       typeof options?.limit === "number" && Number.isFinite(options.limit)
@@ -3049,6 +3678,7 @@ export class AgentDaemon extends EventEmitter {
           e.task_id as taskId,
           e.timestamp as timestamp,
           e.type as type,
+          e.legacy_type as legacy_type,
           e.payload as payload,
           t.title as taskTitle,
           t.workspace_id as workspaceId
@@ -3064,8 +3694,8 @@ export class AgentDaemon extends EventEmitter {
       }
       if (normalizedTypes.length > 0) {
         const placeholders = normalizedTypes.map(() => "?").join(", ");
-        sql += ` AND e.type IN (${placeholders})`;
-        args.push(...normalizedTypes);
+        sql += ` AND (e.type IN (${placeholders}) OR e.legacy_type IN (${placeholders}))`;
+        args.push(...normalizedTypes, ...normalizedTypes);
       }
 
       sql += " ORDER BY e.timestamp ASC LIMIT ?";
@@ -3076,6 +3706,7 @@ export class AgentDaemon extends EventEmitter {
         taskId: string;
         timestamp: number;
         type: string;
+        legacy_type?: string;
         payload: string;
         taskTitle: string;
         workspaceId: string;
@@ -3180,27 +3811,28 @@ export class AgentDaemon extends EventEmitter {
       };
 
       const events = rows.map((row) => {
+        const effectiveType = (row.legacy_type || row.type || "").toString();
         tasksTouched.add(row.taskId);
-        byType[row.type] = (byType[row.type] || 0) + 1;
+        byType[effectiveType] = (byType[effectiveType] || 0) + 1;
 
         const payloadObj = parseJson(row.payload);
 
-        if (row.type === "assistant_message") assistantMessages += 1;
-        if (row.type === "user_message") userMessages += 1;
-        if (row.type === "tool_call") {
+        if (effectiveType === "assistant_message") assistantMessages += 1;
+        if (effectiveType === "user_message") userMessages += 1;
+        if (effectiveType === "tool_call") {
           toolCalls += 1;
           const tool = (payloadObj?.tool || payloadObj?.name || "").toString().trim();
           if (tool) {
             toolCallsByName[tool] = (toolCallsByName[tool] || 0) + 1;
           }
         }
-        if (row.type === "tool_error") toolErrors += 1;
+        if (effectiveType === "tool_error") toolErrors += 1;
 
-        if (row.type === "file_created") filesCreated += 1;
-        if (row.type === "file_modified") filesModified += 1;
-        if (row.type === "file_deleted") filesDeleted += 1;
+        if (effectiveType === "file_created") filesCreated += 1;
+        if (effectiveType === "file_modified") filesModified += 1;
+        if (effectiveType === "file_deleted") filesDeleted += 1;
 
-        if (row.type === "user_feedback") {
+        if (effectiveType === "user_feedback") {
           const decision =
             typeof payloadObj?.decision === "string" ? payloadObj.decision.trim() : "unknown";
           const key = decision || "unknown";
@@ -3214,8 +3846,8 @@ export class AgentDaemon extends EventEmitter {
           workspaceId: row.workspaceId,
           timestampMs: row.timestamp,
           timestampIso: new Date(row.timestamp).toISOString(),
-          type: row.type,
-          summary: summarizeEvent(row.type, payloadObj),
+          type: effectiveType,
+          summary: summarizeEvent(effectiveType, payloadObj),
           ...(includePayload ? { payloadPreview: compactPayloadPreview(payloadObj) } : {}),
         };
       });
@@ -3353,6 +3985,17 @@ export class AgentDaemon extends EventEmitter {
         | "terminalStatus"
         | "failureClass"
         | "budgetUsage"
+        | "continuationCount"
+        | "continuationWindow"
+        | "lifetimeTurnsUsed"
+        | "lastProgressScore"
+        | "autoContinueBlockReason"
+        | "compactionCount"
+        | "lastCompactionAt"
+        | "lastCompactionTokensBefore"
+        | "lastCompactionTokensAfter"
+        | "noProgressStreak"
+        | "lastLoopFingerprint"
       >
     >,
   ): void {
@@ -3411,6 +4054,248 @@ export class AgentDaemon extends EventEmitter {
       passed: issues.length === 0,
       issues,
     };
+  }
+
+  private getUnresolvedFailedSteps(taskId: string): string[] {
+    const failedPlanSteps = this.failedPlanStepsByTask.get(taskId);
+    if (!failedPlanSteps || failedPlanSteps.size === 0) return [];
+
+    const unresolved: string[] = [];
+    const ignoredNonPlanIds: string[] = [];
+    for (const stepId of failedPlanSteps.values()) {
+      if (this.isKnownPlanStepId(taskId, stepId)) {
+        unresolved.push(stepId);
+      } else {
+        ignoredNonPlanIds.push(stepId);
+      }
+    }
+
+    if (ignoredNonPlanIds.length > 0) {
+      this.logEvent(taskId, "log", {
+        metric: "non_plan_failed_step_filtered",
+        ignoredFailedStepIds: ignoredNonPlanIds.slice(0, 50),
+        ignoredCount: ignoredNonPlanIds.length,
+      });
+    }
+
+    return unresolved.sort();
+  }
+
+  private isTaskCompletedTimelineEvent(event: TaskEvent): boolean {
+    if (event.type !== "timeline_step_finished") return false;
+    if (typeof event.legacyType === "string" && event.legacyType === "task_completed") {
+      return true;
+    }
+    const payloadObj =
+      event.payload && typeof event.payload === "object" && !Array.isArray(event.payload)
+        ? (event.payload as Record<string, unknown>)
+        : {};
+    return payloadObj.legacyType === "task_completed";
+  }
+
+  private compareEventOrder(a: TaskEvent, b: TaskEvent): number {
+    const aSeq =
+      typeof a.seq === "number" && Number.isFinite(a.seq) && a.seq > 0 ? Math.floor(a.seq) : undefined;
+    const bSeq =
+      typeof b.seq === "number" && Number.isFinite(b.seq) && b.seq > 0 ? Math.floor(b.seq) : undefined;
+    if (typeof aSeq === "number" && typeof bSeq === "number" && aSeq !== bSeq) {
+      return aSeq - bSeq;
+    }
+    const aTs =
+      typeof a.ts === "number" && Number.isFinite(a.ts) ? a.ts : Number(a.timestamp) || 0;
+    const bTs =
+      typeof b.ts === "number" && Number.isFinite(b.ts) ? b.ts : Number(b.timestamp) || 0;
+    if (aTs !== bTs) return aTs - bTs;
+    return (Number(a.timestamp) || 0) - (Number(b.timestamp) || 0);
+  }
+
+  private computeTimelineTelemetryFromEvents(events: TaskEvent[]): {
+    timeline_event_drop_rate: number;
+    timeline_order_violation_rate: number;
+    step_state_mismatch_rate: number;
+    completion_gate_block_count: number;
+    evidence_gate_fail_count: number;
+  } {
+    const sorted = [...events].sort((a, b) => this.compareEventOrder(a, b));
+    const activeSteps = new Set<string>();
+    let totalEvents = 0;
+    let droppedEvents = 0;
+    let orderViolations = 0;
+    let stepStateMismatches = 0;
+    let completionGateBlocks = 0;
+    let evidenceGateFails = 0;
+
+    for (const event of sorted) {
+      if (!isTimelineEventType(event.type)) continue;
+      totalEvents += 1;
+
+      const payloadObj =
+        event.payload && typeof event.payload === "object" && !Array.isArray(event.payload)
+          ? (event.payload as Record<string, unknown>)
+          : {};
+      const effectiveLegacyType =
+        typeof event.legacyType === "string"
+          ? event.legacyType
+          : typeof payloadObj.legacyType === "string"
+            ? payloadObj.legacyType
+            : "";
+      const gate = typeof payloadObj.gate === "string" ? payloadObj.gate : "";
+
+      if (
+        event.type === "timeline_error" &&
+        (typeof payloadObj.rejectedSeq === "number" ||
+          String(payloadObj.message || "").toLowerCase().includes("out-of-order"))
+      ) {
+        orderViolations += 1;
+        droppedEvents += 1;
+      }
+      if (gate === "completion_failed_step_gate") {
+        completionGateBlocks += 1;
+      }
+      if (
+        gate === "key_claim_evidence_gate" &&
+        event.type === "timeline_step_updated" &&
+        event.status === "blocked"
+      ) {
+        evidenceGateFails += 1;
+      }
+
+      const stepId = typeof event.stepId === "string" ? event.stepId : "";
+      if (!stepId) continue;
+
+      if (event.type === "timeline_step_started") {
+        activeSteps.add(stepId);
+        continue;
+      }
+
+      if (event.type === "timeline_step_finished") {
+        const shouldIgnoreUnstartedMismatch =
+          effectiveLegacyType === "task_completed" ||
+          effectiveLegacyType === "task_cancelled" ||
+          effectiveLegacyType === "step_skipped";
+        if (!activeSteps.has(stepId) && event.status !== "failed" && !shouldIgnoreUnstartedMismatch) {
+          stepStateMismatches += 1;
+        }
+        activeSteps.delete(stepId);
+        continue;
+      }
+
+      if (
+        event.status === "completed" ||
+        event.status === "skipped" ||
+        event.status === "cancelled"
+      ) {
+        activeSteps.delete(stepId);
+      }
+    }
+
+    return {
+      timeline_event_drop_rate: totalEvents > 0 ? droppedEvents / totalEvents : 0,
+      timeline_order_violation_rate: totalEvents > 0 ? orderViolations / totalEvents : 0,
+      step_state_mismatch_rate: totalEvents > 0 ? stepStateMismatches / totalEvents : 0,
+      completion_gate_block_count: completionGateBlocks,
+      evidence_gate_fail_count: evidenceGateFails,
+    };
+  }
+
+  private backfillTaskCompletionTelemetry(taskId: string): void {
+    const updatePayloadById =
+      typeof (this.eventRepo as Any).updatePayloadById === "function"
+        ? (this.eventRepo as Any).updatePayloadById.bind(this.eventRepo)
+        : null;
+    if (!updatePayloadById) return;
+
+    const events = this.eventRepo.findByTaskId(taskId);
+    if (events.length === 0) return;
+
+    const completionEvents = events.filter((event) => this.isTaskCompletedTimelineEvent(event));
+    if (completionEvents.length === 0) return;
+
+    let updated = 0;
+    for (const completionEvent of completionEvents) {
+      const payloadObj =
+        completionEvent.payload &&
+        typeof completionEvent.payload === "object" &&
+        !Array.isArray(completionEvent.payload)
+          ? ({ ...(completionEvent.payload as Record<string, unknown>) } as Record<string, unknown>)
+          : {};
+      const boundarySeq =
+        typeof completionEvent.seq === "number" && Number.isFinite(completionEvent.seq)
+          ? completionEvent.seq
+          : undefined;
+      const boundaryTs =
+        typeof completionEvent.ts === "number" && Number.isFinite(completionEvent.ts)
+          ? completionEvent.ts
+          : completionEvent.timestamp;
+
+      const snapshot = events.filter((event) => {
+        const eventSeq =
+          typeof event.seq === "number" && Number.isFinite(event.seq) ? event.seq : undefined;
+        const eventTs =
+          typeof event.ts === "number" && Number.isFinite(event.ts) ? event.ts : event.timestamp;
+        if (typeof boundarySeq === "number" && typeof eventSeq === "number") {
+          return eventSeq <= boundarySeq;
+        }
+        return eventTs <= boundaryTs;
+      });
+
+      const telemetry = this.computeTimelineTelemetryFromEvents(snapshot);
+      const existingTelemetry =
+        payloadObj.telemetry && typeof payloadObj.telemetry === "object" && !Array.isArray(payloadObj.telemetry)
+          ? (payloadObj.telemetry as Record<string, unknown>)
+          : null;
+
+      const shouldUpdate =
+        !existingTelemetry ||
+        Number(existingTelemetry.timeline_event_drop_rate) !== telemetry.timeline_event_drop_rate ||
+        Number(existingTelemetry.timeline_order_violation_rate) !==
+          telemetry.timeline_order_violation_rate ||
+        Number(existingTelemetry.step_state_mismatch_rate) !== telemetry.step_state_mismatch_rate ||
+        Number(existingTelemetry.completion_gate_block_count) !==
+          telemetry.completion_gate_block_count ||
+        Number(existingTelemetry.evidence_gate_fail_count) !== telemetry.evidence_gate_fail_count;
+      if (!shouldUpdate) continue;
+
+      payloadObj.telemetry = {
+        ...telemetry,
+        telemetry_source: "backfill_v2",
+      };
+      updatePayloadById(completionEvent.id, payloadObj);
+      updated += 1;
+    }
+
+    if (updated > 0) {
+      console.log(
+        `[AgentDaemon] Backfilled completion telemetry for ${updated} event(s) in task ${taskId}`,
+      );
+    }
+  }
+
+  private extractKeyClaimSentences(summary: string): string[] {
+    const trimmed = summary.trim();
+    if (!trimmed) return [];
+    const pieces = trimmed
+      .split(/(?<=[.!?])\s+/)
+      .map((piece) => piece.trim())
+      .filter(Boolean);
+    const keyClaimRe =
+      /(\d{1,4}|\b(less|greater|higher|lower|faster|slower|increase|decrease|median|percentile|best|worst|before|after)\b)/i;
+    return pieces.filter((piece) => keyClaimRe.test(piece));
+  }
+
+  private hasEvidenceForKeyClaims(taskId: string, summary?: string): {
+    passed: boolean;
+    keyClaims: string[];
+  } {
+    const text = typeof summary === "string" ? summary : "";
+    const keyClaims = this.extractKeyClaimSentences(text);
+    if (keyClaims.length === 0) return { passed: true, keyClaims: [] };
+
+    const evidenceRefs = this.evidenceRefsByTask.get(taskId);
+    if (evidenceRefs && evidenceRefs.size > 0) return { passed: true, keyClaims };
+
+    const tokenEvidenceRe = /\[(?:evidence|source|cite):[^\]]+\]|\[[0-9]+\]|https?:\/\//i;
+    return { passed: tokenEvidenceRe.test(text), keyClaims };
   }
 
   private async runPostCompletionVerification(
@@ -3510,6 +4395,16 @@ export class AgentDaemon extends EventEmitter {
       failureClass?: Task["failureClass"];
       budgetUsage?: Task["budgetUsage"];
       outputSummary?: TaskOutputSummary;
+      waiveFailedStepIds?: string[];
+      failedMutationRequiredStepIds?: string[];
+      waivedVerificationStepIds?: string[];
+      terminalStatusReason?: string;
+      nonBlockingFailedStepIds?: string[];
+      verificationOutcome?: VerificationOutcome;
+      verificationScope?: VerificationScope;
+      verificationEvidenceMode?: VerificationEvidenceMode;
+      pendingChecklist?: string[];
+      verificationMessage?: string;
     },
   ): void {
     const existingTask = this.taskRepo.findById(taskId);
@@ -3517,7 +4412,381 @@ export class AgentDaemon extends EventEmitter {
       console.warn(`[AgentDaemon] completeTask called for unknown task ${taskId}`);
       return;
     }
-    const historicalEvents = this.eventRepo.findByTaskId(taskId);
+
+    const normalizeStepIdForComparison = (raw: string): string =>
+      String(raw || "")
+        .trim()
+        .replace(/^step:/i, "");
+    const isVerificationDescription = (description: string): boolean => {
+      const desc = String(description || "")
+        .trim()
+        .toLowerCase();
+      if (!desc) return false;
+      if (desc.startsWith("verify")) return true;
+      if (desc.startsWith("verification")) return true;
+      if (desc.startsWith("review")) {
+        const hasMutationVerb =
+          /\b(tighten|edit|fix|update|rewrite|revise|modify|change|improve|refactor|clean|polish|rework|adjust|correct|enhance|optimize|replace|remove|add|implement|apply|write|create|draft|generate|save)\b/.test(
+            desc,
+          );
+        return !hasMutationVerb;
+      }
+      return desc.includes("verify:") || desc.includes("verification") || desc.includes("verify ");
+    };
+    const historicalEvents = this.getTaskEventsForReplay(taskId);
+    const unresolvedFailedSteps = this.getUnresolvedFailedSteps(taskId);
+    const timelineErrorStepIds = Array.from(this.timelineErrorsByTask.get(taskId) || new Set<string>())
+      .map((id) => String(id || "").trim())
+      .filter((id) => id.length > 0)
+      .sort();
+    const waivedFailedStepIds = new Set(
+      (metadata?.waiveFailedStepIds || [])
+        .map((id) => String(id || "").trim())
+        .filter((id) => id.length > 0),
+    );
+    const waivedVerificationStepIdsFromExecutor = new Set(
+      (metadata?.waivedVerificationStepIds || [])
+        .map((id) => String(id || "").trim())
+        .filter((id) => id.length > 0),
+    );
+    for (const stepId of waivedVerificationStepIdsFromExecutor.values()) {
+      waivedFailedStepIds.add(stepId);
+    }
+    const waivedNormalizedStepIds = new Set(
+      Array.from(waivedFailedStepIds.values()).map((id) => normalizeStepIdForComparison(id)),
+    );
+    const failedMutationRequiredStepIds = new Set(
+      (metadata?.failedMutationRequiredStepIds || [])
+        .map((id) => String(id || "").trim())
+        .filter((id) => id.length > 0),
+    );
+    const failedMutationRequiredNormalizedStepIds = new Set(
+      Array.from(failedMutationRequiredStepIds.values()).map((id) => normalizeStepIdForComparison(id)),
+    );
+    const nonBlockingFailedStepIds = new Set(
+      (this.verificationOutcomeV2Enabled ? metadata?.nonBlockingFailedStepIds || [] : [])
+        .map((id) => String(id || "").trim())
+        .filter((id) => id.length > 0),
+    );
+    const isVerificationFailureStep = (rawStepId: string): boolean => {
+      const stepId = String(rawStepId || "").trim();
+      if (!stepId) return false;
+      const normalizedStepId = normalizeStepIdForComparison(stepId);
+
+      for (let i = historicalEvents.length - 1; i >= 0; i -= 1) {
+        const event = historicalEvents[i];
+        const payloadObj =
+          event.payload && typeof event.payload === "object" && !Array.isArray(event.payload)
+            ? (event.payload as Record<string, unknown>)
+            : {};
+        const stepObj =
+          payloadObj.step && typeof payloadObj.step === "object" && !Array.isArray(payloadObj.step)
+            ? (payloadObj.step as Record<string, unknown>)
+            : {};
+        const eventStepIdRaw =
+          (typeof event.stepId === "string" && event.stepId.trim()) ||
+          (typeof stepObj.id === "string" && stepObj.id.trim()) ||
+          "";
+        if (!eventStepIdRaw) continue;
+        const normalizedEventStepId = normalizeStepIdForComparison(eventStepIdRaw);
+        if (normalizedEventStepId !== normalizedStepId && eventStepIdRaw !== stepId) continue;
+
+        const stepKind =
+          typeof stepObj.kind === "string"
+            ? stepObj.kind
+            : typeof payloadObj.stepKind === "string"
+              ? payloadObj.stepKind
+              : "";
+        if (stepKind === "verification") return true;
+
+        const stepDescription =
+          typeof stepObj.description === "string"
+            ? stepObj.description
+            : typeof payloadObj.stepDescription === "string"
+              ? payloadObj.stepDescription
+              : typeof payloadObj.message === "string"
+                ? payloadObj.message
+                : "";
+        if (isVerificationDescription(stepDescription)) return true;
+      }
+
+      for (let i = historicalEvents.length - 1; i >= 0; i -= 1) {
+        const event = historicalEvents[i];
+        const effectiveLegacyType =
+          typeof event.legacyType === "string"
+            ? event.legacyType
+            : typeof event.type === "string"
+              ? event.type
+              : "";
+        if (effectiveLegacyType !== "plan_created") continue;
+        const plan = (event.payload as Any)?.plan;
+        const steps = Array.isArray(plan?.steps) ? plan.steps : [];
+        for (const step of steps) {
+          const candidateId = String(step?.id || "").trim();
+          if (!candidateId) continue;
+          if (
+            normalizeStepIdForComparison(candidateId) !== normalizedStepId &&
+            candidateId !== stepId
+          ) {
+            continue;
+          }
+          if (String(step?.kind || "").trim().toLowerCase() === "verification") {
+            return true;
+          }
+          if (isVerificationDescription(String(step?.description || ""))) {
+            return true;
+          }
+        }
+      }
+
+      return false;
+    };
+    const isBudgetConstrainedFailureStep = (rawStepId: string): boolean => {
+      const stepId = String(rawStepId || "").trim();
+      if (!stepId) return false;
+      const normalizedStepId = normalizeStepIdForComparison(stepId);
+      const isMatchingStep = (
+        eventStepIdRaw: string,
+        candidateStepObj: Record<string, unknown>,
+        payloadObj: Record<string, unknown>,
+      ): boolean => {
+        const stepObjIdRaw = typeof candidateStepObj.id === "string" ? candidateStepObj.id : "";
+        const payloadStepIdRaw = typeof payloadObj.stepId === "string" ? payloadObj.stepId : "";
+        const options = [eventStepIdRaw, stepObjIdRaw, payloadStepIdRaw].filter(Boolean);
+        for (const option of options) {
+          const normalizedOption = normalizeStepIdForComparison(option);
+          if (option === stepId || normalizedOption === normalizedStepId) {
+            return true;
+          }
+        }
+        return false;
+      };
+
+      let latestFailurePayload: Record<string, unknown> | null = null;
+      let latestFailureStepObj: Record<string, unknown> | null = null;
+      for (let i = historicalEvents.length - 1; i >= 0; i -= 1) {
+        const event = historicalEvents[i];
+        const payloadObj =
+          event.payload && typeof event.payload === "object" && !Array.isArray(event.payload)
+            ? (event.payload as Record<string, unknown>)
+            : {};
+        const stepObj =
+          payloadObj.step && typeof payloadObj.step === "object" && !Array.isArray(payloadObj.step)
+            ? (payloadObj.step as Record<string, unknown>)
+            : {};
+        const eventStepIdRaw = typeof event.stepId === "string" ? event.stepId : "";
+        if (!isMatchingStep(eventStepIdRaw, stepObj, payloadObj)) {
+          continue;
+        }
+        const effectiveLegacyType =
+          typeof event.legacyType === "string"
+            ? event.legacyType
+            : typeof event.type === "string"
+              ? event.type
+              : "";
+        const isFailureEvent =
+          effectiveLegacyType === "step_failed" ||
+          (event.type === "timeline_step_finished" && event.status === "failed");
+        if (!isFailureEvent) {
+          continue;
+        }
+
+        latestFailurePayload = payloadObj;
+        latestFailureStepObj = stepObj;
+        break;
+      }
+
+      if (!latestFailurePayload) {
+        return false;
+      }
+
+      const failureClass =
+        typeof latestFailurePayload.failureClass === "string"
+          ? latestFailurePayload.failureClass
+          : "";
+      if (failureClass.toLowerCase() === "budget_exhausted") {
+        return true;
+      }
+
+      const reasonText = [
+        typeof latestFailurePayload.reason === "string" ? latestFailurePayload.reason : "",
+        typeof latestFailurePayload.error === "string" ? latestFailurePayload.error : "",
+        typeof latestFailurePayload.message === "string" ? latestFailurePayload.message : "",
+        latestFailureStepObj && typeof latestFailureStepObj.error === "string"
+          ? latestFailureStepObj.error
+          : "",
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return /\bweb_search\b/.test(reasonText) && /\bbudget\b/.test(reasonText);
+    };
+
+    const autoWaivedVerificationStepIds: string[] = [];
+    const autoWaivedBudgetStepIds: string[] = [];
+    const mutationContractBlockers = Array.from(failedMutationRequiredStepIds.values());
+    const mutationContractBlockersNormalized = new Set(
+      mutationContractBlockers.map((id) => normalizeStepIdForComparison(id)),
+    );
+    const allowBudgetAutoWaive =
+      metadata?.terminalStatus === "partial_success" &&
+      metadata?.failureClass === "budget_exhausted" &&
+      ((metadata?.waiveFailedStepIds || []).length === 0);
+    let blockingFailedSteps = unresolvedFailedSteps.filter((id) => {
+      const normalized = normalizeStepIdForComparison(id);
+      if (
+        failedMutationRequiredStepIds.has(id) ||
+        failedMutationRequiredNormalizedStepIds.has(normalized) ||
+        mutationContractBlockersNormalized.has(normalized)
+      ) {
+        return true;
+      }
+      if (waivedFailedStepIds.has(id) || waivedNormalizedStepIds.has(normalized)) {
+        return false;
+      }
+      if (nonBlockingFailedStepIds.has(id)) {
+        return false;
+      }
+      const partialSuccessGate = metadata?.terminalStatus === "partial_success";
+      if (partialSuccessGate && isVerificationFailureStep(id)) {
+        autoWaivedVerificationStepIds.push(id);
+        return false;
+      }
+      if (allowBudgetAutoWaive && isBudgetConstrainedFailureStep(id)) {
+        autoWaivedBudgetStepIds.push(id);
+        return false;
+      }
+      return true;
+    });
+    for (const stepId of mutationContractBlockers) {
+      const normalized = normalizeStepIdForComparison(stepId);
+      if (
+        !blockingFailedSteps.some(
+          (candidate) => normalizeStepIdForComparison(candidate) === normalized,
+        )
+      ) {
+        blockingFailedSteps.push(stepId);
+      }
+    }
+
+    if (autoWaivedVerificationStepIds.length > 0) {
+      for (const stepId of autoWaivedVerificationStepIds) {
+        waivedFailedStepIds.add(stepId);
+        waivedNormalizedStepIds.add(normalizeStepIdForComparison(stepId));
+      }
+      this.logEvent(taskId, "log", {
+        metric: "completion_gate_blocked_partial_success",
+        blocked: false,
+        autoWaivedStepIds: autoWaivedVerificationStepIds,
+      });
+      this.logEvent(taskId, "timeline_step_updated", {
+        stepId: "completion_gate:auto_waive_verification",
+        status: "in_progress",
+        actor: "system",
+        message:
+          "Auto-waived verification-only failed steps while honoring partial_success completion.",
+        autoWaivedStepIds: autoWaivedVerificationStepIds,
+        gate: "completion_failed_step_gate",
+        legacyType: "progress_update",
+      });
+      blockingFailedSteps = blockingFailedSteps.filter((id) => !autoWaivedVerificationStepIds.includes(id));
+    }
+    if (autoWaivedBudgetStepIds.length > 0) {
+      for (const stepId of autoWaivedBudgetStepIds) {
+        waivedFailedStepIds.add(stepId);
+        waivedNormalizedStepIds.add(normalizeStepIdForComparison(stepId));
+      }
+      this.logEvent(taskId, "log", {
+        metric: "completion_gate_auto_waive_budget_steps",
+        blocked: false,
+        autoWaivedStepIds: autoWaivedBudgetStepIds,
+      });
+      this.logEvent(taskId, "timeline_step_updated", {
+        stepId: "completion_gate:auto_waive_budget",
+        status: "in_progress",
+        actor: "system",
+        message:
+          "Auto-waived budget-constrained failed steps while honoring partial_success completion.",
+        autoWaivedStepIds: autoWaivedBudgetStepIds,
+        gate: "completion_failed_step_gate",
+        legacyType: "progress_update",
+      });
+      blockingFailedSteps = blockingFailedSteps.filter((id) => !autoWaivedBudgetStepIds.includes(id));
+    }
+    blockingFailedSteps = Array.from(
+      new Set(
+        blockingFailedSteps
+          .map((id) => String(id || "").trim())
+          .filter((id) => id.length > 0),
+      ),
+    );
+
+    if (blockingFailedSteps.length > 0) {
+      this.timelineMetrics.completionGateBlocks += 1;
+      const hasMutationContractBlockers = blockingFailedSteps.some((id) => {
+        const normalized = normalizeStepIdForComparison(id);
+        return (
+          failedMutationRequiredStepIds.has(id) ||
+          failedMutationRequiredNormalizedStepIds.has(normalized)
+        );
+      });
+      const terminalFailureClass: Task["failureClass"] = hasMutationContractBlockers
+        ? "contract_unmet_write_required"
+        : "contract_error";
+      const terminalFailureStatus: NonNullable<Task["terminalStatus"]> = hasMutationContractBlockers
+        ? "failed"
+        : "partial_success";
+      if (metadata?.terminalStatus === "partial_success") {
+        this.logEvent(taskId, "log", {
+          metric: "completion_gate_blocked_partial_success",
+          blocked: true,
+          blockingFailedSteps,
+          failedMutationRequiredStepIds: Array.from(failedMutationRequiredStepIds.values()),
+          terminalStatusReason: metadata?.terminalStatusReason,
+        });
+      }
+      const message = hasMutationContractBlockers
+        ? `Completion blocked: unresolved mutation-required step(s): ${blockingFailedSteps.join(", ")}`
+        : `Completion blocked: unresolved failed step(s): ${blockingFailedSteps.join(", ")}`;
+      this.logEvent(taskId, "timeline_error", {
+        message,
+        unresolvedFailedSteps: blockingFailedSteps,
+        failedMutationRequiredStepIds: Array.from(failedMutationRequiredStepIds.values()),
+        timelineErrorStepIds,
+        waivedFailedStepIds: Array.from(waivedFailedStepIds.values()),
+        nonBlockingFailedStepIds: Array.from(nonBlockingFailedStepIds.values()),
+        terminalStatusReason: metadata?.terminalStatusReason,
+        gate: "completion_failed_step_gate",
+        legacyType: "error",
+      });
+      this.taskRepo.update(taskId, {
+        status: "failed",
+        error: message,
+        completedAt: Date.now(),
+        terminalStatus: terminalFailureStatus,
+        failureClass: terminalFailureClass,
+      });
+      this.clearRetryState(taskId);
+      if (this.teamOrchestrator) {
+        void this.teamOrchestrator.onTaskTerminal(taskId).catch(() => {});
+      }
+      this.clearTimelineTaskState(taskId);
+      this.queueManager.onTaskFinished(taskId);
+      return;
+    }
+    if (nonBlockingFailedStepIds.size > 0) {
+      this.logEvent(taskId, "verification_pending_user_action", {
+        stepId: "completion_gate:non_blocking_verification",
+        status: "blocked",
+        actor: "system",
+        message:
+          metadata?.verificationMessage ||
+          "Completion has pending verification items that require user action.",
+        nonBlockingFailedStepIds: Array.from(nonBlockingFailedStepIds.values()),
+        gate: "completion_failed_step_gate",
+        legacyType: "progress_update",
+      });
+    }
     const risk = scoreTaskRisk(
       {
         title: existingTask.title,
@@ -3540,6 +4809,23 @@ export class AgentDaemon extends EventEmitter {
         : undefined;
     let terminalStatus: NonNullable<Task["terminalStatus"]> = metadata?.terminalStatus || "ok";
     let failureClass: Task["failureClass"] | undefined = metadata?.failureClass || undefined;
+    if (this.verificationOutcomeV2Enabled && metadata?.verificationOutcome === "pending_user_action") {
+      if (terminalStatus === "ok") {
+        terminalStatus = "needs_user_action";
+      }
+    } else if (
+      this.verificationOutcomeV2Enabled &&
+      metadata?.verificationOutcome === "warn_non_blocking" &&
+      terminalStatus === "ok"
+    ) {
+      terminalStatus = "partial_success";
+      if (!failureClass) {
+        failureClass = "contract_error";
+      }
+    }
+    if (terminalStatus === "needs_user_action") {
+      failureClass = undefined;
+    }
     let quality: { passed: boolean; issues: string[] } | null = null;
 
     if (reviewDecision.runQualityPass) {
@@ -3555,6 +4841,45 @@ export class AgentDaemon extends EventEmitter {
         failureClass = "contract_error";
       }
     }
+
+    const evidenceCheck = this.hasEvidenceForKeyClaims(taskId, trimmedSummary);
+    if (!evidenceCheck.passed) {
+      this.timelineMetrics.evidenceGateFails += 1;
+      terminalStatus = "partial_success";
+      failureClass = "contract_error";
+      this.logEvent(taskId, "timeline_step_updated", {
+        stepId: "evidence_gate:key_claims",
+        status: "blocked",
+        actor: "system",
+        message:
+          "Key factual claims are missing evidence links. Please attach evidence references.",
+        keyClaims: evidenceCheck.keyClaims,
+        gate: "key_claim_evidence_gate",
+        legacyType: "progress_update",
+      });
+    } else if (evidenceCheck.keyClaims.length > 0) {
+      const evidenceRefs = Array.from((this.evidenceRefsByTask.get(taskId) || new Map()).values()).slice(
+        0,
+        20,
+      );
+      if (evidenceRefs.length > 0) {
+        this.logEvent(taskId, "timeline_evidence_attached", {
+          stepId: "evidence_gate:key_claims",
+          status: "completed",
+          actor: "system",
+          gate: "key_claim_evidence_gate",
+          keyClaims: evidenceCheck.keyClaims.slice(0, 8),
+          evidenceRefs,
+          message: "Attached evidence references for key factual claims.",
+          legacyType: "citations_collected",
+        });
+      }
+    }
+
+    const completionTelemetry = {
+      ...this.computeTimelineTelemetryFromEvents(this.getTaskEventsForReplay(taskId)),
+      telemetry_source: "runtime_v2",
+    };
 
     const updates: Partial<Task> = {
       status: "completed",
@@ -3577,7 +4902,9 @@ export class AgentDaemon extends EventEmitter {
     }
     this.logEvent(taskId, "task_completed", {
       message:
-        terminalStatus === "partial_success"
+        terminalStatus === "needs_user_action"
+          ? "Task completed - action required"
+          : terminalStatus === "partial_success"
           ? "Task completed with partial results"
           : "Task completed successfully",
       ...(updates.resultSummary ? { resultSummary: updates.resultSummary } : {}),
@@ -3585,6 +4912,25 @@ export class AgentDaemon extends EventEmitter {
       ...(failureClass ? { failureClass } : {}),
       ...(metadata?.budgetUsage ? { budgetUsage: metadata.budgetUsage } : {}),
       ...(metadata?.outputSummary ? { outputSummary: metadata.outputSummary } : {}),
+      ...(metadata?.verificationOutcome ? { verificationOutcome: metadata.verificationOutcome } : {}),
+      ...(metadata?.verificationScope ? { verificationScope: metadata.verificationScope } : {}),
+      ...(metadata?.verificationEvidenceMode
+        ? { verificationEvidenceMode: metadata.verificationEvidenceMode }
+        : {}),
+      ...(Array.isArray(metadata?.pendingChecklist) && metadata?.pendingChecklist.length > 0
+        ? { pendingChecklist: metadata.pendingChecklist }
+        : {}),
+      ...(metadata?.verificationMessage ? { verificationMessage: metadata.verificationMessage } : {}),
+      ...(Array.isArray(metadata?.failedMutationRequiredStepIds) &&
+      metadata.failedMutationRequiredStepIds.length > 0
+        ? { failedMutationRequiredStepIds: metadata.failedMutationRequiredStepIds }
+        : {}),
+      ...(Array.isArray(metadata?.waivedVerificationStepIds) &&
+      metadata.waivedVerificationStepIds.length > 0
+        ? { waivedVerificationStepIds: metadata.waivedVerificationStepIds }
+        : {}),
+      ...(metadata?.terminalStatusReason ? { terminalStatusReason: metadata.terminalStatusReason } : {}),
+      ...(timelineErrorStepIds.length > 0 ? { timelineErrorStepIds } : {}),
       risk: {
         score: risk.score,
         level: risk.level,
@@ -3593,7 +4939,20 @@ export class AgentDaemon extends EventEmitter {
       },
       reviewPolicy,
       reviewGate: reviewDecision,
+      telemetry: completionTelemetry,
     });
+
+    if (this.activeTimelineStageByTask.get(taskId) === "DELIVER") {
+      const timeline = createTimelineEmitter(taskId, (eventType, payload) => {
+        this.logEvent(taskId, eventType, payload);
+      });
+      timeline.finishGroup("DELIVER", {
+        label: "DELIVER",
+        actor: "system",
+        legacyType: "step_completed",
+      });
+      this.activeTimelineStageByTask.delete(taskId);
+    }
 
     if (quality) {
       this.logEvent(taskId, quality.passed ? "review_quality_passed" : "review_quality_failed", {
@@ -3682,6 +5041,7 @@ export class AgentDaemon extends EventEmitter {
     if (this.teamOrchestrator) {
       void this.teamOrchestrator.onTaskTerminal(taskId).catch(() => {});
     }
+    this.clearTimelineTaskState(taskId);
     // Notify queue manager so it can start next task
     this.queueManager.onTaskFinished(taskId);
   }
@@ -3719,7 +5079,7 @@ export class AgentDaemon extends EventEmitter {
       executor = new TaskExecutor(effectiveTask, workspace, this);
 
       // Rebuild conversation history from saved events
-      const events = this.eventRepo.findByTaskId(taskId);
+      const events = this.getTaskEventsForReplay(taskId);
       if (events.length > 0) {
         executor.rebuildConversationFromEvents(events);
       }
@@ -3774,12 +5134,31 @@ export class AgentDaemon extends EventEmitter {
       throw new Error(`No executor found for task ${taskId}`);
     }
 
-    // Log the feedback event for UI
-    this.logEvent(taskId, "step_feedback", {
+    // Re-emit feedback as timeline step transition for deterministic replay.
+    const feedbackMessage =
+      typeof message === "string" && message.trim().length > 0
+        ? message.trim()
+        : action === "retry"
+          ? "Retry requested"
+          : action === "skip"
+            ? "Skip requested"
+            : action === "stop"
+              ? "Stop requested"
+              : "Scope adjustment requested";
+    const feedbackStatus: TaskEvent["status"] =
+      action === "skip"
+        ? "skipped"
+        : action === "stop"
+          ? "cancelled"
+          : "in_progress";
+    this.logEvent(taskId, "timeline_step_updated", {
       stepId,
       action,
-      message,
+      status: feedbackStatus,
+      actor: "user",
+      message: feedbackMessage,
       timestamp: Date.now(),
+      legacyType: "step_feedback",
     });
 
     // Route to executor

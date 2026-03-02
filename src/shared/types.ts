@@ -14,12 +14,14 @@ export type AccentColor =
   | "teal"
   | "coral";
 export type UiDensity = "focused" | "full" | "power";
+export type TimelineVerbosity = "summary" | "verbose";
 
 export interface AppearanceSettings {
   themeMode: ThemeMode;
   visualTheme: VisualTheme;
   accentColor: AccentColor;
   uiDensity?: UiDensity;
+  timelineVerbosity?: TimelineVerbosity;
   language?: string; // Persisted language preference (e.g. 'en', 'ja', 'zh')
   disclaimerAccepted?: boolean;
   onboardingCompleted?: boolean;
@@ -140,6 +142,16 @@ export type TaskStatus =
   | "cancelled"
   | "interrupted";
 
+export type VerificationOutcome =
+  | "pass"
+  | "fail_blocking"
+  | "pending_user_action"
+  | "warn_non_blocking";
+
+export type VerificationScope = "high_risk" | "normal";
+
+export type VerificationEvidenceMode = "agent_observable" | "user_observable" | "time_blocked";
+
 export const TASK_ERROR_CODES = {
   TURN_LIMIT_EXCEEDED: "TURN_LIMIT_EXCEEDED",
 } as const;
@@ -180,10 +192,19 @@ export type EventType =
   | "verification_started"
   | "verification_passed"
   | "verification_failed"
+  | "verification_pending_user_action"
   | "retry_started"
   | "task_cancelled"
   | "task_paused"
   | "task_resumed"
+  | "continuation_decision"
+  | "auto_continuation_started"
+  | "auto_continuation_blocked"
+  | "context_compaction_started"
+  | "context_compaction_completed"
+  | "context_compaction_failed"
+  | "no_progress_circuit_breaker"
+  | "step_contract_escalated"
   | "task_interrupted"
   | "task_status"
   | "task_queued"
@@ -204,6 +225,7 @@ export type EventType =
   | "command_output"
   // LLM usage tracking (tokens/cost)
   | "llm_usage"
+  | "llm_error"
   // Real-time streaming progress (ephemeral, not persisted to DB)
   | "llm_streaming"
   // Sub-Agent / Parallel Agent events
@@ -244,7 +266,49 @@ export type EventType =
   | "artifact_created" // Document/file artifact generated
   // Deep work mode events
   | "progress_journal" // Periodic human-readable status update for long-running tasks
-  | "research_recovery_started"; // Agent began researching error before retry
+  | "research_recovery_started" // Agent began researching error before retry
+  // Timeline V2 canonical event set
+  | "timeline_group_started"
+  | "timeline_group_finished"
+  | "timeline_step_started"
+  | "timeline_step_updated"
+  | "timeline_step_finished"
+  | "timeline_evidence_attached"
+  | "timeline_artifact_emitted"
+  | "timeline_command_output"
+  | "timeline_error";
+
+export type TimelineEventType =
+  | "timeline_group_started"
+  | "timeline_group_finished"
+  | "timeline_step_started"
+  | "timeline_step_updated"
+  | "timeline_step_finished"
+  | "timeline_evidence_attached"
+  | "timeline_artifact_emitted"
+  | "timeline_command_output"
+  | "timeline_error";
+
+export type TimelineEventStatus =
+  | "pending"
+  | "in_progress"
+  | "completed"
+  | "failed"
+  | "blocked"
+  | "skipped"
+  | "cancelled";
+
+export type TimelineEventActor = "system" | "agent" | "user" | "tool" | "subagent";
+
+export type TimelineStage = "DISCOVER" | "BUILD" | "VERIFY" | "FIX" | "DELIVER";
+
+export interface EvidenceRef {
+  evidenceId: string;
+  sourceType: "url" | "file" | "tool_output" | "user_input" | "other";
+  sourceUrlOrPath: string;
+  snippet?: string;
+  capturedAt: number;
+}
 
 export type ToolType =
   | "read_file"
@@ -631,6 +695,14 @@ export interface AgentConfig {
   originChannel?: ChannelType;
   /** Maximum number of LLM turns before forcing completion (for sub-agents) */
   maxTurns?: number;
+  /** Web search mode override for this task. */
+  webSearchMode?: WebSearchMode;
+  /** Per-task web_search usage cap override (Claude-style max_uses). */
+  webSearchMaxUsesPerTask?: number;
+  /** Per-step web_search usage cap override (Claude-style max_uses). */
+  webSearchMaxUsesPerStep?: number;
+  /** Lifetime turn cap across continuation windows (auto-derived when omitted) */
+  lifetimeMaxTurns?: number;
   /** Maximum tokens budget for this agent */
   maxTokens?: number;
   /** Whether to retain memory/context after completion (default: false for sub-agents) */
@@ -711,6 +783,28 @@ export interface AgentConfig {
   progressJournalEnabled?: boolean;
   /** Detected task intent from IntentRouter (used for intent-based tool filtering) */
   taskIntent?: string;
+  /** Auto-continue after turn-window exhaustion when progress is positive */
+  autoContinueOnTurnLimit?: boolean;
+  /** Maximum number of auto-continuation windows (excluding the initial window) */
+  maxAutoContinuations?: number;
+  /** Minimum normalized progress score required to auto-continue */
+  minProgressScoreForAutoContinue?: number;
+  /** Continuation strategy for turn-window exhaustion handling */
+  continuationStrategy?: "adaptive_progress" | "fixed_caps";
+  /** Run context compaction before continuation when context pressure is high */
+  compactOnContinuation?: boolean;
+  /** Continuation compaction trigger threshold (rendered context ratio) */
+  compactionThresholdRatio?: number;
+  /** Warning threshold for repeated loop fingerprints */
+  loopWarningThreshold?: number;
+  /** Critical threshold for repeated loop fingerprints */
+  loopCriticalThreshold?: number;
+  /** Stop when no-progress windows hit this threshold */
+  globalNoProgressCircuitBreaker?: number;
+  /** Side-channel mode while a task execution window is active */
+  sideChannelDuringExecution?: "paused" | "limited" | "enabled";
+  /** Side-channel budget per execution window when mode is limited */
+  sideChannelMaxCallsPerWindow?: number;
 }
 
 /** Specification for one LLM participant in a multi-LLM run */
@@ -775,8 +869,13 @@ export interface Task {
   strategyLock?: boolean; // When true, do not re-route intent at runtime
   budgetProfile?: "balanced" | "strict" | "aggressive";
   // Execution result metadata (for partial success + diagnostics)
-  terminalStatus?: "ok" | "partial_success" | "failed";
-  failureClass?: "budget_exhausted" | "tool_error" | "contract_error" | "unknown";
+  terminalStatus?: "ok" | "partial_success" | "needs_user_action" | "failed";
+  failureClass?:
+    | "budget_exhausted"
+    | "tool_error"
+    | "contract_error"
+    | "contract_unmet_write_required"
+    | "unknown";
   riskLevel?: TaskRiskLevel;
   evalCaseId?: string;
   evalRunId?: string;
@@ -786,10 +885,22 @@ export interface Task {
   toolDisabledScope?: "provider" | "global";
   budgetUsage?: {
     turns: number;
+    lifetimeTurns?: number;
     toolCalls: number;
     webSearchCalls: number;
     duplicatesBlocked: number;
   };
+  continuationCount?: number;
+  continuationWindow?: number;
+  lifetimeTurnsUsed?: number;
+  lastProgressScore?: number;
+  autoContinueBlockReason?: string;
+  compactionCount?: number;
+  lastCompactionAt?: number;
+  lastCompactionTokensBefore?: number;
+  lastCompactionTokensAfter?: number;
+  noProgressStreak?: number;
+  lastLoopFingerprint?: string;
 }
 
 // ============ Git Worktree Types ============
@@ -906,6 +1017,26 @@ export interface TaskEvent {
   timestamp: number;
   type: EventType;
   payload: Any;
+  schemaVersion: 2;
+  eventId?: string;
+  seq?: number;
+  ts?: number;
+  status?: TimelineEventStatus;
+  stepId?: string;
+  groupId?: string;
+  actor?: TimelineEventActor;
+  legacyType?: EventType;
+}
+
+export interface TaskTimelineEventV2 extends TaskEvent {
+  schemaVersion: 2;
+  type: TimelineEventType;
+  eventId: string;
+  seq: number;
+  ts: number;
+  status: TimelineEventStatus;
+  stepId: string;
+  actor: TimelineEventActor;
 }
 
 /**
@@ -2816,6 +2947,7 @@ export const IPC_CHANNELS = {
   MEMORY_IMPORT_CHATGPT: "memory:importChatGPT",
   MEMORY_IMPORT_CHATGPT_PROGRESS: "memory:importChatGPTProgress",
   MEMORY_IMPORT_CHATGPT_CANCEL: "memory:importChatGPTCancel",
+  MEMORY_IMPORT_TEXT: "memory:importFromText",
   MEMORY_GET_IMPORTED_STATS: "memory:getImportedStats",
   MEMORY_FIND_IMPORTED: "memory:findImported",
   MEMORY_DELETE_IMPORTED: "memory:deleteImported",
@@ -3385,6 +3517,7 @@ export interface TunnelStatusData {
 // Search Provider types
 export type SearchProviderType = "tavily" | "brave" | "serpapi" | "google" | "duckduckgo";
 export type SearchType = "web" | "news" | "images";
+export type WebSearchMode = "disabled" | "cached" | "live";
 
 export interface SearchSettingsData {
   primaryProvider: SearchProviderType | null;
@@ -3591,9 +3724,30 @@ export interface GuardrailSettings {
   enforceAllowedDomains: boolean;
   allowedDomains: string[];
 
+  // Web Search Policy
+  webSearchMode: WebSearchMode;
+  webSearchMaxUsesPerTask: number;
+  webSearchMaxUsesPerStep: number;
+  webSearchAllowedDomains: string[];
+  webSearchBlockedDomains: string[];
+
   // Max Iterations Per Task
   maxIterationsPerTask: number;
   iterationLimitEnabled: boolean;
+
+  // Execution Continuation
+  autoContinuationEnabled: boolean;
+  defaultMaxAutoContinuations: number;
+  defaultMinProgressScore: number;
+  lifetimeTurnCapEnabled: boolean;
+  defaultLifetimeTurnCap: number;
+  compactOnContinuation: boolean;
+  compactionThresholdRatio: number;
+  loopWarningThreshold: number;
+  loopCriticalThreshold: number;
+  globalNoProgressCircuitBreaker: number;
+  sideChannelDuringExecution: "paused" | "limited" | "enabled";
+  sideChannelMaxCallsPerWindow: number;
 }
 
 // Default trusted command patterns (glob-like patterns)
@@ -3811,7 +3965,7 @@ export const DEFAULT_QUEUE_SETTINGS: QueueSettings = {
 // Toast notification types for UI
 export interface ToastNotification {
   id: string;
-  type: "success" | "error" | "info";
+  type: "success" | "error" | "info" | "warning";
   title: string;
   message?: string;
   taskId?: string;

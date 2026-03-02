@@ -178,4 +178,106 @@ describe("TaskExecutor workspace preflight acknowledgement", () => {
     expect(fakeThis.toolRegistry.setWorkspace).toHaveBeenCalledWith(preferredWorkspace);
     expect(fakeThis.daemon.updateTaskWorkspace).toHaveBeenCalledWith("t1", "ws-preferred");
   });
+
+  it("does not preflight-fail create/build steps that mention artifacts to be created", () => {
+    const fakeThis: Any = Object.create((TaskExecutor as Any).prototype);
+    fakeThis.workspace = { path: process.cwd() };
+    const step = {
+      id: "s1",
+      description:
+        "Add a simple host entry in SystemMetricsWidgetApp.swift, run a build cycle, and create canvas/system-metrics-widget-preview.html.",
+      kind: "primary",
+      status: "pending",
+    };
+
+    const reason = (TaskExecutor as Any).prototype.getMissingWorkspaceArtifactPreflightReason.call(
+      fakeThis,
+      step,
+    );
+    expect(reason).toBeNull();
+  });
+
+  it("still preflight-fails verification-only missing artifacts", () => {
+    const fakeThis: Any = Object.create((TaskExecutor as Any).prototype);
+    fakeThis.workspace = { path: process.cwd() };
+    const step = {
+      id: "s2",
+      description:
+        "Verify and inspect SystemMetricsWidgetApp.swift and canvas/system-metrics-widget-preview.html.",
+      kind: "verification",
+      status: "pending",
+    };
+
+    const reason = (TaskExecutor as Any).prototype.getMissingWorkspaceArtifactPreflightReason.call(
+      fakeThis,
+      step,
+    );
+    expect(String(reason || "")).toContain("missing_required_workspace_artifact");
+  });
+
+  it("does not preflight-fail mixed verification plus write-note steps", () => {
+    const fakeThis: Any = Object.create((TaskExecutor as Any).prototype);
+    fakeThis.workspace = { path: process.cwd() };
+    const step = {
+      id: "s3",
+      description:
+        "Verify: run a full functional pass by opening `index.html` and checking interactions; then provide a short usage note in `README.md`.",
+      kind: "primary",
+      status: "pending",
+    };
+
+    const reason = (TaskExecutor as Any).prototype.getMissingWorkspaceArtifactPreflightReason.call(
+      fakeThis,
+      step,
+    );
+    expect(reason).toBeNull();
+  });
+
+  it("ignores command snippets when checking verification artifact preflight", () => {
+    const fakeThis: Any = Object.create((TaskExecutor as Any).prototype);
+    fakeThis.workspace = { path: process.cwd() };
+    const step = {
+      id: "s4",
+      description:
+        "Verification: run the local server (`python3 -m http.server`) and manually validate key flows.",
+      kind: "verification",
+      status: "pending",
+    };
+
+    const reason = (TaskExecutor as Any).prototype.getMissingWorkspaceArtifactPreflightReason.call(
+      fakeThis,
+      step,
+    );
+    expect(reason).toBeNull();
+  });
+
+  it("requires write_file for write-intent steps that target source/project artifact files", () => {
+    const fakeThis: Any = Object.create((TaskExecutor as Any).prototype);
+    const requiredTools = (TaskExecutor as Any).prototype.extractRequiredToolsFromStepDescription.call(
+      fakeThis,
+      "Build widget UI in SystemMetricsWidgetExtension/SystemMetricsWidget.swift and wire the provider.",
+    ) as Set<string>;
+
+    expect(requiredTools.has("write_file")).toBe(true);
+  });
+
+  it("ignores non-tool via phrases such as localStorage when inferring required tools", () => {
+    const fakeThis: Any = Object.create((TaskExecutor as Any).prototype);
+    const requiredTools = (TaskExecutor as Any).prototype.extractRequiredToolsFromStepDescription.call(
+      fakeThis,
+      "Implement Notepad save/load via localStorage and keyboard shortcuts.",
+    ) as Set<string>;
+
+    expect(requiredTools.has("localstorage")).toBe(false);
+  });
+
+  it("still infers real tools from via phrases when the tool exists", () => {
+    const fakeThis: Any = Object.create((TaskExecutor as Any).prototype);
+    const requiredTools = (TaskExecutor as Any).prototype.extractRequiredToolsFromStepDescription.call(
+      fakeThis,
+      "Research the error via web_search and summarize likely root causes.",
+    ) as Set<string>;
+
+    expect(requiredTools.has("web_search")).toBe(true);
+  });
 });

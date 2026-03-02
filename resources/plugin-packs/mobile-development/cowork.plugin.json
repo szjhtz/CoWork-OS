@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "description": "Skills for React Native, iOS/Swift, Android/Kotlin development, emulator management, build configuration, and mobile CI/CD",
   "type": "pack",
-  "author": "CoWork-OSS",
+  "author": "CoWork OS",
   "keywords": ["mobile", "react-native", "ios", "android", "swift", "kotlin", "xcode", "gradle", "app-store", "play-store"],
   "icon": "📱",
   "category": "Engineering",

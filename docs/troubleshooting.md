@@ -118,3 +118,62 @@ If you see `sh: 1: tsc: not found` right after `npx coworkd-node`, you are on an
 ```bash
 npm install cowork-os@latest --no-audit --no-fund
 ```
+
+## "Tool-call budget exhausted: 42/42"
+
+If you see:
+
+```text
+Tool-call budget exhausted: 42/42
+```
+
+that means hard executor budget contracts are enabled.
+
+Current default behavior:
+
+- `COWORK_AGENT_BUDGET_CONTRACTS=false` (opt-in only)
+
+If your environment still enforces this cap, check for an explicit override and unset it:
+
+```bash
+unset COWORK_AGENT_BUDGET_CONTRACTS
+```
+
+Or explicitly disable it:
+
+```bash
+export COWORK_AGENT_BUDGET_CONTRACTS=false
+```
+
+To restore legacy strict budget-contract behavior, set:
+
+```bash
+export COWORK_AGENT_BUDGET_CONTRACTS=true
+```
+
+## "web_search budget exhausted: X/Y"
+
+If a research step logs:
+
+```text
+web_search budget exhausted: 12/12
+```
+
+the task now uses a soft landing path for web-search-specific budget limits:
+
+- The `web_search` tool call returns a structured error (`failureClass=budget_exhausted`) instead of throwing a hard executor exception.
+- Execution can continue using already-collected evidence.
+- Terminal completion can resolve as `partial_success` (instead of being hard blocked), and budget-constrained failed steps are auto-waived in the completion gate when appropriate.
+
+To tune behavior, use Guardrails > Web Search Policy:
+
+- `Mode`: `disabled | cached | live`
+- `Max uses per task`
+- `Max uses per step`
+- `Allowed domains` / `Blocked domains`
+
+Notes:
+
+- `cached` is the default mode.
+- If strict cached provider behavior is unavailable, runtime falls back to `live` and emits `web_search_mode_fallback_live`.
+- Domain filtering emits `web_search_domain_filtered_result_count`. If all results are filtered, `web_search` returns a structured policy error.

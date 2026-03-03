@@ -562,6 +562,8 @@ const IPC_CHANNELS = {
   MEMORY_GET_IMPORTED_STATS: "memory:getImportedStats",
   MEMORY_FIND_IMPORTED: "memory:findImported",
   MEMORY_DELETE_IMPORTED: "memory:deleteImported",
+  MEMORY_DELETE_IMPORTED_ENTRY: "memory:deleteImportedEntry",
+  MEMORY_SET_IMPORTED_RECALL_IGNORED: "memory:setImportedRecallIgnored",
   MEMORY_GET_USER_PROFILE: "memory:getUserProfile",
   MEMORY_ADD_USER_FACT: "memory:addUserFact",
   MEMORY_UPDATE_USER_FACT: "memory:updateUserFact",
@@ -569,6 +571,7 @@ const IPC_CHANNELS = {
   MEMORY_RELATIONSHIP_LIST: "memory:relationshipList",
   MEMORY_RELATIONSHIP_UPDATE: "memory:relationshipUpdate",
   MEMORY_RELATIONSHIP_DELETE: "memory:relationshipDelete",
+  MEMORY_RELATIONSHIP_CLEANUP_RECURRING: "memory:relationshipCleanupRecurring",
   MEMORY_COMMITMENTS_GET: "memory:commitmentsGet",
   MEMORY_COMMITMENTS_DUE_SOON: "memory:commitmentsDueSoon",
 
@@ -2705,6 +2708,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_FIND_IMPORTED, data),
   deleteImportedMemories: (workspaceId: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_DELETE_IMPORTED, workspaceId),
+  deleteImportedMemoryEntry: (data: { workspaceId: string; memoryId: string }) =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_DELETE_IMPORTED_ENTRY, data),
+  setImportedMemoryPromptRecallIgnored: (data: {
+    workspaceId: string;
+    memoryId: string;
+    ignored: boolean;
+  }) => ipcRenderer.invoke(IPC_CHANNELS.MEMORY_SET_IMPORTED_RECALL_IGNORED, data),
   getUserProfile: () => ipcRenderer.invoke(IPC_CHANNELS.MEMORY_GET_USER_PROFILE),
   addUserFact: (data: {
     category: UserFactCategory;
@@ -2736,6 +2746,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   }) => ipcRenderer.invoke(IPC_CHANNELS.MEMORY_RELATIONSHIP_UPDATE, data),
   deleteRelationshipMemory: (id: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_RELATIONSHIP_DELETE, id),
+  cleanupRecurringRelationshipHistory: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_RELATIONSHIP_CLEANUP_RECURRING),
   getOpenCommitments: (limit?: number) =>
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_COMMITMENTS_GET, { limit }),
   getDueSoonCommitments: (windowHours?: number) =>
@@ -3791,6 +3803,7 @@ export interface ElectronAPI {
     uiDensity?: "focused" | "full" | "power";
     timelineVerbosity?: "summary" | "verbose";
     language?: string;
+    devRunLoggingEnabled?: boolean;
     disclaimerAccepted?: boolean;
     onboardingCompleted?: boolean;
     onboardingCompletedAt?: string;
@@ -3812,6 +3825,7 @@ export interface ElectronAPI {
     uiDensity?: "focused" | "full" | "power";
     timelineVerbosity?: "summary" | "verbose";
     language?: string;
+    devRunLoggingEnabled?: boolean;
     disclaimerAccepted?: boolean;
     onboardingCompleted?: boolean;
     onboardingCompletedAt?: string;
@@ -4315,6 +4329,15 @@ export interface ElectronAPI {
     offset?: number;
   }) => Promise<Memory[]>;
   deleteImportedMemories: (workspaceId: string) => Promise<{ success: boolean; deleted: number }>;
+  deleteImportedMemoryEntry: (data: {
+    workspaceId: string;
+    memoryId: string;
+  }) => Promise<{ success: boolean }>;
+  setImportedMemoryPromptRecallIgnored: (data: {
+    workspaceId: string;
+    memoryId: string;
+    ignored: boolean;
+  }) => Promise<{ success: boolean; memory: Memory | null }>;
   getUserProfile: () => Promise<UserProfile>;
   addUserFact: (data: {
     category: UserFactCategory;
@@ -4345,6 +4368,11 @@ export interface ElectronAPI {
     dueAt?: number | null;
   }) => Promise<Any | null>;
   deleteRelationshipMemory: (id: string) => Promise<{ success: boolean }>;
+  cleanupRecurringRelationshipHistory: () => Promise<{
+    success: boolean;
+    collapsed: number;
+    groupsCollapsed: number;
+  }>;
   getOpenCommitments: (limit?: number) => Promise<Any[]>;
   getDueSoonCommitments: (windowHours?: number) => Promise<{ items: Any[]; reminderText: string }>;
 

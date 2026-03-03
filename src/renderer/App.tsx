@@ -133,6 +133,7 @@ export function App() {
   const [visualTheme, setVisualTheme] = useState<VisualTheme>("warm");
   const [accentColor, setAccentColor] = useState<AccentColor>("cyan");
   const [uiDensity, setUiDensity] = useState<UiDensity>("focused");
+  const [devRunLoggingEnabled, setDevRunLoggingEnabled] = useState(false);
 
   // Queue state
   const [queueStatus, setQueueStatus] = useState<QueueStatus | null>(null);
@@ -279,6 +280,7 @@ export function App() {
         setVisualTheme(settings.visualTheme || "warm");
         setAccentColor(settings.accentColor);
         setUiDensity(settings.uiDensity || "focused");
+        setDevRunLoggingEnabled(settings.devRunLoggingEnabled === true);
         applyPersistedLanguage(settings.language);
         setDisclaimerAccepted(settings.disclaimerAccepted ?? false);
         setOnboardingCompleted(settings.onboardingCompleted ?? false);
@@ -1403,6 +1405,13 @@ export function App() {
     });
   };
 
+  const handleDevRunLoggingEnabledChange = (enabled: boolean) => {
+    setDevRunLoggingEnabled(enabled);
+    void window.electronAPI?.saveAppearanceSettings?.({
+      devRunLoggingEnabled: enabled,
+    });
+  };
+
   // Smart right panel visibility: auto-collapse on welcome screen in focused mode
   const effectiveRightCollapsed =
     uiDensity === "full" ? rightSidebarCollapsed : !selectedTaskId ? true : rightSidebarCollapsed;
@@ -1866,6 +1875,8 @@ export function App() {
           onAccentChange={handleAccentChange}
           uiDensity={uiDensity}
           onUiDensityChange={handleUiDensityChange}
+          devRunLoggingEnabled={devRunLoggingEnabled}
+          onDevRunLoggingEnabledChange={handleDevRunLoggingEnabledChange}
           initialTab={settingsTab}
           onShowOnboarding={handleShowOnboarding}
           onboardingCompletedAt={onboardingCompletedAt}

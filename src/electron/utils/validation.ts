@@ -1023,6 +1023,11 @@ export const GeneratePairingSchema = z.object({
   displayName: z.string().max(MAX_TITLE_LENGTH).optional(),
 });
 
+// ============ ID Schemas (for simple string ID params) ============
+
+export const UUIDSchema = z.string().uuid();
+export const StringIdSchema = z.string().min(1).max(100);
+
 // ============ ChatGPT Import Schema ============
 
 export const ChatGPTImportSchema = z.object({
@@ -1051,6 +1056,17 @@ export const FindImportedSchema = z.object({
   workspaceId: WorkspaceIdSchema,
   limit: z.number().int().min(1).max(500).optional(),
   offset: z.number().int().min(0).optional(),
+});
+
+export const DeleteImportedEntrySchema = z.object({
+  workspaceId: WorkspaceIdSchema,
+  memoryId: UUIDSchema,
+});
+
+export const SetImportedRecallIgnoredSchema = z.object({
+  workspaceId: WorkspaceIdSchema,
+  memoryId: UUIDSchema,
+  ignored: z.boolean(),
 });
 
 // ============ Worktree/Comparison Schemas ============
@@ -1088,11 +1104,6 @@ export const FilePathSchema = z.object({
   filePath: z.string().min(1).max(MAX_PATH_LENGTH),
   workspacePath: z.string().min(1).max(MAX_PATH_LENGTH),
 });
-
-// ============ ID Schemas (for simple string ID params) ============
-
-export const UUIDSchema = z.string().uuid();
-export const StringIdSchema = z.string().min(1).max(100);
 
 // ============ MCP (Model Context Protocol) Schemas ============
 

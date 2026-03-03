@@ -833,6 +833,28 @@ const getTextContent = (node: React.ReactNode): string => {
 };
 
 const stripHttpScheme = (value: string): string => value.replace(/^https?:\/\//, "");
+const HTML_TAG_REGEX = /<[^>]*>/g;
+const URLISH_TEXT_REGEX = /^(?:https?:\/\/|www\.|(?:[a-z0-9-]+\.)+[a-z]{2,}\/)/i;
+
+const stripHtmlTags = (value: string): string =>
+  String(value || "")
+    .replace(HTML_TAG_REGEX, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const extractDomainFromUrl = (raw: string): string => {
+  const trimmed = String(raw || "").trim();
+  if (!trimmed) return "";
+  try {
+    const parsed = new URL(trimmed.startsWith("http://") || trimmed.startsWith("https://") ? trimmed : `https://${trimmed}`);
+    return parsed.hostname.replace(/^www\./i, "");
+  } catch {
+    return stripHttpScheme(trimmed).split("/")[0].replace(/^www\./i, "");
+  }
+};
+
+const isUrlLikeLabel = (value: string): boolean => URLISH_TEXT_REGEX.test(String(value || "").trim());
 
 const looksLikeLocalFilePath = (value: string): boolean => {
   const trimmed = value.trim();
@@ -909,6 +931,8 @@ const CITATION_REF_REGEX = /\[(\d+)\]/g;
 const BARE_URL_REGEX =
   /(?<!\(|\[)(?:^|(?<=\s))((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}\/[^\s)\]]+)/gi;
 const GLOB_TOKEN_REGEX = /(?<![`\\])\*\*\/\*[^\s,;()]+/g;
+const FENCED_CODE_BLOCK_REGEX = /(```[\s\S]*?```)/g;
+const JSON_PATH_PAYLOAD_LINE_REGEX = /^(\s*)\{\s*"path"\s*:\s*"((?:\\.|[^"\\])*)"\s*\}(\s*)$/;
 const SOURCES_HEADING_REGEX = /(^|\n)(?:#{1,6}\s*)?sources\b[^\n]*(?:\n|$)/i;
 const SOURCE_ENTRY_INLINE_SPLIT_REGEX =
   /\s+(\[\d+\]\s*(?:(?:\[[^\]]+\]\([^)]+\))|https?:\/\/))/gi;
@@ -928,6 +952,45 @@ function autolinkBareUrls(text: string): string {
 /** Keep glob-style path patterns literal when rendering markdown. */
 function protectGlobTokens(text: string): string {
   return text.replace(GLOB_TOKEN_REGEX, (token) => `\`${token}\``);
+}
+
+function transformOutsideFencedCodeBlocks(text: string, transform: (segment: string) => string): string {
+  return text
+    .split(FENCED_CODE_BLOCK_REGEX)
+    .map((segment, index) => (index % 2 === 1 ? segment : transform(segment)))
+    .join("");
+}
+
+function escapeMarkdownLinkText(text: string): string {
+  return text.replace(/\\/g, "\\\\").replace(/\[/g, "\\[").replace(/\]/g, "\\]");
+}
+
+function escapeMarkdownHref(href: string): string {
+  return encodeURI(href).replace(/\(/g, "%28").replace(/\)/g, "%29");
+}
+
+function autolinkJsonPathPayloadLines(text: string): string {
+  return transformOutsideFencedCodeBlocks(text, (segment) =>
+    segment
+      .split("\n")
+      .map((line) => {
+        const match = line.match(JSON_PATH_PAYLOAD_LINE_REGEX);
+        if (!match) return line;
+
+        const [, leadingWhitespace, encodedPath, trailingWhitespace] = match;
+        let pathValue: string;
+        try {
+          pathValue = JSON.parse(`"${encodedPath}"`);
+        } catch {
+          return line;
+        }
+        const normalizedPath = pathValue.trim();
+        if (!normalizedPath || !looksLikeLocalFilePath(normalizedPath)) return line;
+
+        return `${leadingWhitespace}[${escapeMarkdownLinkText(normalizedPath)}](${escapeMarkdownHref(normalizedPath)})${trailingWhitespace}`;
+      })
+      .join("\n"),
+  );
 }
 
 /**
@@ -957,7 +1020,7 @@ function normalizeSourcesSection(text: string): string {
 }
 
 function normalizeMarkdownForDisplay(text: string): string {
-  return normalizeSourcesSection(protectGlobTokens(text));
+  return normalizeSourcesSection(autolinkJsonPathPayloadLines(protectGlobTokens(text)));
 }
 
 function cleanAssistantMessageForDisplay(message: string): string {
@@ -1057,14 +1120,31 @@ const buildMarkdownComponents = (options: {
       // Check if this link matches a citation — render an enriched card
       const normHref = href.replace(/\/+$/, "").toLowerCase();
       const matchedCitation = citationUrlMap.get(normHref);
-      if (matchedCitation && matchedCitation.title && matchedCitation.title !== matchedCitation.url) {
+      const matchedCitationUrl =
+        matchedCitation && typeof matchedCitation.url === "string" ? matchedCitation.url : href;
+      const matchedCitationTitle =
+        matchedCitation && typeof matchedCitation.title === "string"
+          ? stripHtmlTags(matchedCitation.title)
+          : "";
+      const matchedCitationDomain =
+        matchedCitation && typeof matchedCitation.domain === "string"
+          ? stripHtmlTags(matchedCitation.domain)
+          : "";
+      const shouldRenderCitationCard =
+        !!matchedCitation &&
+        matchedCitationTitle.length > 0 &&
+        matchedCitationTitle !== matchedCitationUrl &&
+        !isUrlLikeLabel(linkText);
+
+      if (shouldRenderCitationCard) {
+        const citationDomain = matchedCitationDomain || extractDomainFromUrl(matchedCitationUrl);
         return (
           <a
             {...props}
             href={href}
             onClick={handleClick}
             className="citation-source-link"
-            title={matchedCitation.url}
+            title={matchedCitationUrl}
             style={{
               display: "inline-flex",
               alignItems: "center",
@@ -1092,7 +1172,7 @@ const buildMarkdownComponents = (options: {
             }}
           >
             <img
-              src={`https://www.google.com/s2/favicons?domain=${matchedCitation.domain}&sz=16`}
+              src={`https://www.google.com/s2/favicons?domain=${citationDomain}&sz=16`}
               alt=""
               width={14}
               height={14}
@@ -1113,7 +1193,7 @@ const buildMarkdownComponents = (options: {
                   textOverflow: "ellipsis",
                 }}
               >
-                {matchedCitation.title}
+                {matchedCitationTitle}
               </span>
               <span
                 style={{
@@ -1125,7 +1205,7 @@ const buildMarkdownComponents = (options: {
                   textOverflow: "ellipsis",
                 }}
               >
-                {matchedCitation.domain}
+                {citationDomain}
               </span>
             </span>
           </a>
@@ -1191,6 +1271,11 @@ const buildMarkdownComponents = (options: {
     h1: renderHeading("h1"),
     h2: renderHeading("h2"),
     h3: renderHeading("h3"),
+    table: ({ children, ...props }: Any) => (
+      <div className="markdown-table-wrapper">
+        <table {...props}>{children}</table>
+      </div>
+    ),
     a: MarkdownLink,
     p: ({ children, ...props }: Any) => <p {...props}>{replaceCitationsInChildren(children)}</p>,
     li: ({ children, ...props }: Any) => <li {...props}>{replaceCitationsInChildren(children)}</li>,
@@ -2257,19 +2342,88 @@ export function MainContent({
       : [];
     if (refs.length > 0) {
       return refs
-        .map((ref) => {
+        .map((ref, index) => {
           const source = typeof ref?.sourceUrlOrPath === "string" ? ref.sourceUrlOrPath : "";
           if (!source) return null;
+          const domain = extractDomainFromUrl(source);
+          const snippet = typeof ref?.snippet === "string" ? stripHtmlTags(ref.snippet) : "";
+          const sourceTool =
+            typeof ref?.sourceTool === "string" && ref.sourceTool.trim().length > 0
+              ? stripHtmlTags(ref.sourceTool)
+              : "timeline_evidence";
           return {
+            index: index + 1,
             url: source,
-            source,
-            snippet: typeof ref?.snippet === "string" ? ref.snippet : undefined,
-            title: typeof ref?.snippet === "string" ? ref.snippet : undefined,
+            snippet,
+            title: domain || source,
+            domain,
+            accessedAt: 0,
+            sourceTool,
           };
         })
-        .filter(Boolean);
+        .filter(
+          (
+            entry,
+          ): entry is {
+            index: number;
+            url: string;
+            title: string;
+            snippet: string;
+            domain: string;
+            accessedAt: number;
+            sourceTool: string;
+          } => entry !== null,
+        );
     }
-    return Array.isArray(evidenceEvent.payload?.citations) ? evidenceEvent.payload.citations : [];
+    const rawCitations = Array.isArray(evidenceEvent.payload?.citations)
+      ? (evidenceEvent.payload.citations as Array<Record<string, unknown>>)
+      : [];
+    return rawCitations
+      .map((citation, index) => {
+        const url = typeof citation?.url === "string" ? citation.url : "";
+        if (!url) return null;
+        const domain =
+          typeof citation?.domain === "string" && citation.domain.trim().length > 0
+            ? stripHtmlTags(citation.domain)
+            : extractDomainFromUrl(url);
+        const title =
+          typeof citation?.title === "string" && citation.title.trim().length > 0
+            ? stripHtmlTags(citation.title)
+            : domain || url;
+        const snippet =
+          typeof citation?.snippet === "string" && citation.snippet.trim().length > 0
+            ? stripHtmlTags(citation.snippet)
+            : "";
+        const sourceTool =
+          typeof citation?.sourceTool === "string" && citation.sourceTool.trim().length > 0
+            ? stripHtmlTags(citation.sourceTool)
+            : typeof citation?.source === "string" && citation.source.trim().length > 0
+              ? stripHtmlTags(citation.source)
+              : "unknown";
+        const accessedAt = typeof citation?.accessedAt === "number" ? citation.accessedAt : 0;
+        return {
+          index: typeof citation?.index === "number" ? citation.index : index + 1,
+          url,
+          domain,
+          title,
+          snippet,
+          accessedAt,
+          sourceTool,
+        };
+      })
+      .filter(
+        (
+          entry,
+        ): entry is {
+          index: number;
+          url: string;
+          title: string;
+          snippet: string;
+          domain: string;
+          accessedAt: number;
+          sourceTool: string;
+        } => entry !== null,
+      );
   }, [events]);
 
   const markdownComponents = useMemo(
@@ -6235,9 +6389,20 @@ export function MainContent({
                   </span>
                 )}
                 <span className="task-status-banner-detail">
-                  Share your next instruction below and I'll continue right away.
+                  Type anything below to continue, or stop this task here.
                 </span>
               </div>
+              {onStopTask && (
+                <div className="task-status-banner-actions">
+                  <button
+                    className="task-status-banner-stop-btn"
+                    onClick={onStopTask}
+                    title="Stop task"
+                  >
+                    Stop task
+                  </button>
+                </div>
+              )}
             </div>
           )}
           {task.status === "blocked" && (
@@ -6699,11 +6864,11 @@ function renderEventTitle(
         : path;
     return path ? (
       <span>
-        Artifact ready:{" "}
+        Output ready:{" "}
         <ClickableFilePath path={path} workspacePath={workspacePath} onOpenViewer={onOpenViewer} />
         {label && label !== path && <span className="event-title-meta"> ({label})</span>}
       </span>
-    ) : "Artifact ready";
+    ) : "Output ready";
   }
 
   if (event.type === "timeline_error") {
@@ -6945,11 +7110,11 @@ function renderEventTitle(
       const acType = typeof acp.type === "string" ? acp.type : "artifact";
       return acPath ? (
         <span>
-          Artifact ready:{" "}
+          Output ready:{" "}
           <ClickableFilePath path={acPath} workspacePath={workspacePath} onOpenViewer={onOpenViewer} />
           <span className="event-title-meta"> ({acType})</span>
         </span>
-      ) : `Artifact ready (${acType})`;
+      ) : `Output ready (${acType})`;
     }
     case "error":
       return getMessage("error", msgCtx);
@@ -7033,7 +7198,8 @@ function renderEventDetails(
             const source =
               typeof entry?.sourceUrlOrPath === "string" ? entry.sourceUrlOrPath.trim() : "";
             if (!source) return null;
-            const snippet = typeof entry?.snippet === "string" ? entry.snippet : "";
+            const snippet =
+              typeof entry?.snippet === "string" ? stripHtmlTags(entry.snippet) : "";
             const label = snippet || source;
             const isWeb = /^https?:\/\//i.test(source);
             return (

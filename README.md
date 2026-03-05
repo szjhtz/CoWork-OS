@@ -48,17 +48,20 @@
 - **Usage Insights** — Dashboard showing task stats, cost/token tracking by model, activity heatmaps, top skills, and per-pack analytics.
 - **ChatGPT History Import** — Import your full ChatGPT conversation history. CoWork OS instantly knows your preferences, past projects, and context — no cold start. All data stays encrypted on your machine and never leaves it.
 - **Security-first** — Approval workflows, sandboxed execution, configurable guardrails, encrypted storage, and 3200+ tests.
+- **Structured guidance** — In propose-style flows, the agent can pause with short multiple-choice prompts instead of ambiguous free-text follow-ups.
+- **Runtime resilience** — Adaptive turn budgets, context-overflow recovery, and safe path normalization keep long-running tasks moving without silent file drift.
 - **Local-first & BYOK** — Your data and API keys stay on your machine. No telemetry. No middleman.
 
 ### Recent Platform Updates
 
-The latest runtime updates add three core capabilities:
+The latest runtime updates add four core capabilities:
 
 - **Tier-1 chat integration setup** with `integration_setup` (`list`, `inspect`, `configure`), OAuth support, and stale-plan safety via `expected_plan_hash`
 - **Approval-gated skill expansion** with `skill_proposal` (`create`, `list`, `approve`, `reject`) and workspace-local proposal persistence
 - **Workspace bootstrap + heartbeat alignment** with `.cowork/BOOTSTRAP.md`, `.cowork/VIBES.md`, `.cowork/LORE.md`, onboarding lifecycle state, and proactive task frequency enforcement
+- **Guided input + runtime recovery** with `request_user_input`, adaptive turn-window recovery, context compaction retry, grouped parallel tool lanes, and workspace/task-path repair
 
-See [Integration Setup, Skill Proposals, and Bootstrap Lifecycle](docs/integration-skill-bootstrap-lifecycle.md) for full implementation details and testing scenarios.
+See [Integration Setup, Skill Proposals, and Bootstrap Lifecycle](docs/integration-skill-bootstrap-lifecycle.md) for the integration/bootstrap changes, and [Features](docs/features.md) for the guided-input and runtime-recovery additions.
 
 ## Quick Start
 
@@ -109,8 +112,8 @@ See the [Development Guide](docs/development.md) for prerequisites and details.
 
 1. **Create a task** — Describe what you want ("organize my Downloads by file type", "create a quarterly report spreadsheet"). No workspace needed — a temp folder is used automatically if you don't select one.
 2. **Choose a mode** — Run normally, or toggle **Autonomous** (auto-approve actions), **Collaborative** (multi-agent perspectives), or **Multi-LLM** (compare providers with a judge) per task.
-3. **Monitor execution** — Watch the real-time task timeline as the agent plans, executes, and produces artifacts. Shell commands run in a live terminal view where you can see output in real-time, stop execution, or provide input (e.g. `y`/`n`) directly.
-4. **Approve when needed** — Destructive operations require your explicit approval (unless Autonomous mode is on).
+3. **Monitor execution** — Watch the real-time task timeline as the agent plans, executes, and produces artifacts. Parallel tool bursts are grouped into lane summaries, and shell commands run in a live terminal view where you can see output in real-time, stop execution, or provide input (e.g. `y`/`n`) directly.
+4. **Respond when needed** — Destructive operations require explicit approval (unless Autonomous mode is on), and propose-mode tasks can pause for structured multiple-choice input before continuing.
 
 ## Features
 
@@ -127,6 +130,16 @@ Completion state and file availability are now explicit:
 - **Unseen-output badge**: if completion happens in another task/view, the collapsed right-panel toggle shows a numeric badge until you open Files
 - **Filename-first rows with clear location context**: Files rows stay filename-only, with output folder context shown separately (or **Workspace root**)
 - **Artifact parity**: artifact-only outputs are treated the same as normal file outputs in completion toasts, timeline details, and Files panel
+
+### Guided Input & Runtime Recovery
+
+Long-running tasks now have clearer operator handoffs and stronger recovery defaults:
+
+- **Structured input cards**: propose-mode tasks can pause with 1-3 short multiple-choice prompts, with answers captured inline in the desktop UI or via the Control Plane web dashboard
+- **Adaptive turn recovery**: execute-mode tasks reserve room for a final answer, soft-stop exhausted follow-up windows, and make a bounded recovery attempt before triggering a safety stop
+- **Context overflow retry**: context-capacity failures trigger compaction and retry instead of immediate hard failure when the model context window is exceeded
+- **Path repair**: `/workspace/...` aliases and drifted relative paths can be normalized back into the active workspace or pinned task root, with strict-fail policies available when you want hard enforcement
+- **Parallel timeline lanes**: read-only tool batches render as grouped timeline rows so the UI stays readable even when searches/fetches run concurrently
 
 ### Mission Control
 

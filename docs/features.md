@@ -48,6 +48,10 @@
 - **Image Generation**: Multi-provider support (Gemini, OpenAI gpt-image-1/1.5/DALL-E, Azure OpenAI)
 - **Visual Annotation**: Iterative image refinement with the Visual Annotator
 - **Context Summarization**: Automatic context compression surfaced in the task timeline
+- **Structured Input Requests**: In propose-mode flows, the agent can pause with 1-3 short multiple-choice questions instead of asking ambiguous free-text follow-ups
+- **Parallel Tool Timeline**: Concurrent read-only tool bursts are grouped into lane-based timeline cards instead of flooding the event feed
+- **Adaptive Runtime Recovery**: Execute tasks use adaptive turn budgets, bounded follow-up recovery, and safety-stop escalation instead of hard window failure by default
+- **Path Drift Repair**: `/workspace/...` aliases and drifted relative paths can be normalized back into the active workspace or pinned task root, with strict-fail policies when hard enforcement is preferred
 - **Action-First Planning**: Agent prioritizes direct action over excessive pre-planning
 - **Voice Calls**: Outbound phone calls via ElevenLabs Agents
 - **Think With Me Mode**: Socratic brainstorming mode that helps clarify thinking without executing tools. Activated via toggle or auto-detected from brainstorm/trade-off patterns.
@@ -87,6 +91,21 @@ Each task can be launched with one of four modes:
 These modes are mutually exclusive — only one can be active per task. All four are toggled in the task creation UI.
 
 > **Note:** Autonomous mode shows a confirmation dialog before enabling, since it bypasses all approval prompts.
+
+When the agent is operating in propose-mode execution, it can also use `request_user_input` to pause for structured multiple-choice decisions. Responses are persisted locally and can be submitted from either the desktop UI or the Control Plane web dashboard.
+
+### Guided Decisions & Runtime Recovery
+
+The runtime now includes a set of decision and recovery contracts aimed at keeping tasks convergent without hiding failures:
+
+| Capability | Behavior |
+|------------|----------|
+| **Structured input requests** | `request_user_input` asks 1-3 concise multiple-choice questions, pauses the task, and resumes after submit/dismiss. Only available in propose mode. |
+| **Adaptive turn-window recovery** | Execute-oriented tasks default to `adaptive_unbounded`, soft-log exhausted windows, reserve space for finalization, and allow a bounded follow-up recovery attempt before triggering a safety stop. |
+| **Context overflow retry** | Context-capacity errors trigger compaction plus retry instead of immediate hard failure when the model context window is exceeded. |
+| **Workspace alias repair** | Absolute alias paths such as `/workspace/...` can be remapped into the active workspace for file and directory tools, or blocked via `strict_fail`. |
+| **Pinned task-root repair** | Relative paths that drift outside the task's canonical root can be rewritten back under the pinned root, retried with a bounded budget, or rejected under strict policy. |
+| **Parallel tool-lane rendering** | Parallel read-only tool groups are projected into stable lane rows in the timeline so summary mode stays readable. |
 
 ---
 

@@ -134,6 +134,22 @@ npx vitest run \
 When unit-testing `TaskExecutor` completion paths, mock `daemon.getTaskEvents()` in harnesses.
 `finalizeTask()` always reads task events to build output summaries.
 
+For structured input, executor recovery, and timeline-lane changes, run:
+
+```bash
+npx vitest run \
+  src/daemon/__tests__/control-plane-methods.test.ts \
+  src/electron/agent/__tests__/daemon-input-request.test.ts \
+  src/electron/agent/tools/__tests__/request-user-input.test.ts \
+  src/electron/agent/__tests__/path-alias.test.ts \
+  src/electron/agent/__tests__/executor-context-overflow-recovery.test.ts \
+  src/electron/agent/__tests__/executor-parallel-batch.test.ts \
+  src/electron/agent/__tests__/executor-workspace-preflight-ack.test.ts \
+  src/renderer/components/timeline/__tests__/parallel-group-projection.test.ts \
+  src/renderer/components/timeline/__tests__/parallel-group-feed.test.ts \
+  src/renderer/utils/__tests__/task-event-compat.test.ts
+```
+
 ## Project Structure
 
 | Directory | Description |

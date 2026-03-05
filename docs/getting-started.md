@@ -401,8 +401,8 @@ Don't use system folders like `/System` or `/Applications`.
 1. **Be Specific**: Clear task descriptions work better
 2. **Start Small**: Test with a few files before bulk operations
 3. **Review Plans**: Check the execution plan before it runs
-4. **Approve Carefully**: Read approval requests before accepting
-5. **Monitor Progress**: Watch the timeline to understand what's happening
+4. **Respond Carefully**: Read approval requests and structured input prompts before accepting or submitting
+5. **Monitor Progress**: Watch the timeline to understand what's happening, especially when parallel tool groups collapse into summary lanes
 6. **Use Local Models**: Ollama is free and works offline
 
 ## Next Steps

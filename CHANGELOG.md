@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.13] - 2026-03-05
+
+### Added
+- **Universal workflow slash skills**: `/simplify` and `/batch` now work across desktop and gateway channels, including inline chaining (`then run /simplify`) and shared parsing/normalization.
+- **Zero-config web search fallback**: DuckDuckGo now acts as a built-in last-resort search provider, so `web_search` works even without paid API keys.
+- **Structured input requests**: propose-mode tasks can use `request_user_input` to pause for persisted multiple-choice decisions, with submission from the desktop UI or Control Plane dashboard.
+- **Tier-1 integration orchestration**: new `integration_setup` flow supports `list`, `inspect`, and `configure` for Resend, Slack, the Google family, Jira, Linear, and HubSpot with `expected_plan_hash` stale-plan protection.
+- **Approval-gated skill expansion**: new `skill_proposal` lifecycle lets agents draft, list, approve, and reject workspace-local skill proposals instead of mutating skills directly.
+- **Workspace bootstrap lifecycle**: `.cowork/BOOTSTRAP.md`, `.cowork/VIBES.md`, `.cowork/LORE.md`, and `.cowork/workspace-state.json` now track onboarding/bootstrap state and heartbeat-ready context.
+- **Workspace agent policy**: optional `agent-policy.toml` can require tool families, filter tools, tune loop thresholds, and attach pre-tool / stop-attempt hooks per workspace.
+- **New bundled skills**: added Polymarket, Humanizer, YouTube video intelligence, Stock analysis, Calendly scheduling, Moltbook, and Marketing Strategist skills.
+- **Developer logging capture**: `npm run dev` can mirror timestamped output to `logs/dev-latest.log`, with `npm run dev:log` forcing capture regardless of the Settings toggle.
+
+### Changed
+- **Adaptive executor defaults**: execution-oriented tasks now default to adaptive turn-window recovery, follow-up safety stops, and bounded context-overflow retries instead of treating window exhaustion as an immediate hard failure.
+- **Path reliability policies**: the executor and file tools can normalize `/workspace/...` aliases and rewrite drifted relative paths back under a pinned task root, with `strict_fail` policies available when hard enforcement is desired.
+- **Timeline rendering**: parallel read-only tool bursts are projected into grouped lane cards, task completion is inferred more reliably from timeline payloads, and input-request / recovery events now map cleanly across shared status and timeline models.
+- **Completion and insights UX**: usage insights now surface token/runtime/top-tool metrics and reliability outcomes, while renderer timelines and output surfaces continue the filename-first, output-ready workflow.
+- **Pi provider compatibility**: OpenAI ChatGPT OAuth and Pi-backed model discovery now load `@mariozechner/pi-ai` 0.56.1 through lazy ESM loaders so Electron/CommonJS bundles keep working.
+- **Remote and headless operations**: the Control Plane dashboard now handles pending structured input requests in addition to tasks, approvals, workspaces, and channels.
+
+### Fixed
+- **Shell protocol violations**: `run_command` now rejects direct or wrapped `apply_patch` invocations and tells the agent to use the dedicated patch tool.
+- **Task-root rewrites**: pinned-root recovery no longer skips rewrites just because an unpinned root-level path already exists, preventing drifted writes from mutating the wrong files.
+- **Legacy read-only resumes**: tasks resumed without `executionModeSource` now keep user-selected non-`execute` modes instead of being auto-promoted to mutation-capable execution.
+- **Task execution heuristics**: write-intent detection, duplicate-mutation bypass, follow-up tool locking, and browser-session verification heuristics were tightened to reduce false stalls and false completions.
+- **Canvas URL validation**: canvas browsing now rejects non-HTTP(S) schemes explicitly.
+- **Documentation alignment**: README, architecture, remote-access, development, and getting-started docs now reflect structured input, recovery policies, and Control Plane input-request handling.
+
 ## [0.4.12] - 2026-02-28
 
 ### Added

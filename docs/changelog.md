@@ -7,41 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.13] - 2026-03-05
+
 ### Added
-- **Universal global skills `/simplify` and `/batch`**: two bundled, domain-agnostic slash commands available in desktop and gateway channels. `/simplify` targets quality simplification passes; `/batch` targets parallelizable migration/transform workflows across code, research, writing, operations, and general tasks.
-- **Inline slash chaining**: normal messages can now chain workflow execution with patterns like `... then run /simplify` or `... then run /batch ...` in the same task context.
-- **Shared slash parser/normalizer**: centralized parsing in `src/shared/skill-slash-commands.ts` for direct slash commands and inline chains, with URL/path false-positive protection and robust flag validation.
-- **DuckDuckGo free search fallback**: built-in web search provider that requires no API key. Works out of the box by scraping DuckDuckGo's HTML endpoint. Automatically used as a last-resort fallback when paid providers fail or are not configured. The `web_search` tool is now always available — users no longer need to configure a search provider to use web search.
-- **Polymarket prediction market skill**: query odds, trending markets, price momentum, orderbook depth, open interest, trade history, and resolution timelines across Gamma, CLOB, and Data APIs — no authentication required. Includes formatted output with percentages, volume breakdowns, and multi-outcome event support.
-- **Humanizer writing skill**: rewrite AI-generated text to sound natural and human-written. Detects and removes 50+ LLM tells across 7 layers — vocabulary, sentence mechanics, paragraph structure, emotional register, content depth, document architecture, and tone. Includes flagged word lists, 6 tone presets, and a systematic 7-step rewriting process.
-- **YouTube video intelligence skill**: fetch transcripts, metadata, chapters, and captions from YouTube videos via yt-dlp or youtube-transcript-api. Supports auto-generated and manual captions, multi-language, translation, audio extraction, playlists, and timestamp deep links. Includes 6 workflow recipes.
-- **Stock analysis skill**: comprehensive market intelligence across 3 data sources (Yahoo Finance API, yfinance, Alpha Vantage). Covers real-time quotes, 60+ fundamental metrics, 50+ technical indicators, financial statements, earnings, options chains, analyst ratings, institutional holders, dividends, stock screening, and an 8-dimensional scoring framework.
-- **Calendly scheduling skill**: manage Calendly via the v2 API. Covers event types, scheduled events, invitees with custom Q&A, availability and busy times, cancellation, no-show management, one-off booking links, webhooks, and organization members. Includes 8 workflow recipes and timezone-aware agenda formatting.
-- **Moltbook agent social network skill**: interact with Moltbook — the social network for AI agents. Post content, reply to discussions, browse feeds, upvote/downvote, join submolt communities, follow agents, search semantically, and track engagement. Includes agent registration, verification challenges, and formatted feed output.
-- **Marketing Strategist skill**: comprehensive marketing strategy across 25 disciplines — positioning, buyer psychology, copywriting frameworks (PAS, AIDA, BAB, 4Ps, FAB), SEO, landing page CRO, paid ads (Google/Meta/LinkedIn), funnel architecture, analytics, pricing, product launches, growth loops, competitive intelligence, and marketing operations. Includes 8 workflow recipes and integrates with existing channel-specific skills.
-- **Completion output summary payload**: `task_completed` now supports optional `outputSummary` metadata (`created`, `modifiedFallback`, `primaryOutputPath`, `outputCount`, `folders`) so output-aware UI remains accurate beyond capped event history.
-- **Action-oriented completion UX**: completion toasts now surface output filename/count and include direct actions for opening the file, revealing in Finder, or jumping to the Files panel.
-- **Artifact parity across output UX**: `artifact_created` is now treated as a first-class output signal in renderer output derivation, collaborative child-event merge, and control-plane event bridging.
-- **Renderer completion UX helper layer**: shared utilities now centralize output-derivation fallback, completion attention rules, and panel/badge behavior for deterministic testing.
+- **Universal workflow slash skills**: `/simplify` and `/batch` now work across desktop and gateway channels, including inline chaining (`then run /simplify`) and shared parsing/normalization.
+- **Zero-config web search fallback**: DuckDuckGo now acts as a built-in last-resort search provider, so `web_search` works even without paid API keys.
+- **Structured input requests**: propose-mode tasks can use `request_user_input` to pause for persisted multiple-choice decisions, with submission from the desktop UI or Control Plane dashboard.
+- **Tier-1 integration orchestration**: new `integration_setup` flow supports `list`, `inspect`, and `configure` for Resend, Slack, the Google family, Jira, Linear, and HubSpot with `expected_plan_hash` stale-plan protection.
+- **Approval-gated skill expansion**: new `skill_proposal` lifecycle lets agents draft, list, approve, and reject workspace-local skill proposals instead of mutating skills directly.
+- **Workspace bootstrap lifecycle**: `.cowork/BOOTSTRAP.md`, `.cowork/VIBES.md`, `.cowork/LORE.md`, and `.cowork/workspace-state.json` now track onboarding/bootstrap state and heartbeat-ready context.
+- **Workspace agent policy**: optional `agent-policy.toml` can require tool families, filter tools, tune loop thresholds, and attach pre-tool / stop-attempt hooks per workspace.
+- **New bundled skills**: added Polymarket, Humanizer, YouTube video intelligence, Stock analysis, Calendly scheduling, Moltbook, and Marketing Strategist skills.
+- **Developer logging capture**: `npm run dev` can mirror timestamped output to `logs/dev-latest.log`, with `npm run dev:log` forcing capture regardless of the Settings toggle.
 
 ### Changed
-- **Gateway routing for slash skills**: `/simplify` and `/batch` now have first-class command handlers with usage/help responses on invalid input, while forwarding normalized command text to desktop executor as the single execution source of truth.
-- **Desktop composer slash pass-through**: Enter/Tab no longer auto-select slash dropdown entries when input is an exact `/simplify...` or `/batch...` invocation, preserving direct command send behavior.
-- **Help and channel UX text**: compact/full command help now includes `/simplify` and `/batch`; WhatsApp natural phrase normalization maps common simplify/batch phrases to slash commands.
-- **Output detection precedence**: output detection now prefers created outputs and only uses modified outputs as fallback when no created outputs are detected.
-- **Right-panel files UX**: Files rows remain filename-only, with a primary output highlight, output count badge, and an explicit location context line (folder or “Workspace root”).
-- **Timeline completion details**: `task_completed` now shows an “Output ready” detail card with `Open file`, `Show in Finder`, and `View in Files` actions when outputs are present.
-- **Task status mapping consistency**: `artifact_created` now maps to `executing` in shared status mapping to keep progress indicators coherent.
+- **Adaptive executor defaults**: execution-oriented tasks now default to adaptive turn-window recovery, follow-up safety stops, and bounded context-overflow retries instead of treating window exhaustion as an immediate hard failure.
+- **Path reliability policies**: the executor and file tools can normalize `/workspace/...` aliases and rewrite drifted relative paths back under a pinned task root, with `strict_fail` policies available when hard enforcement is desired.
+- **Timeline rendering**: parallel read-only tool bursts are projected into grouped lane cards, task completion is inferred more reliably from timeline payloads, and input-request / recovery events now map cleanly across shared status and timeline models.
+- **Completion and insights UX**: usage insights now surface token/runtime/top-tool metrics and reliability outcomes, while renderer timelines and output surfaces continue the filename-first, output-ready workflow.
+- **Pi provider compatibility**: OpenAI ChatGPT OAuth and Pi-backed model discovery now load `@mariozechner/pi-ai` 0.56.1 through lazy ESM loaders so Electron/CommonJS bundles keep working.
+- **Remote and headless operations**: the Control Plane dashboard now handles pending structured input requests in addition to tasks, approvals, workspaces, and channels.
 
 ### Fixed
-- **Inline chain punctuation handling**: chaining now recognizes punctuation-terminated forms (for example, `then run /simplify.`) instead of silently skipping.
-- **`/batch` objective enforcement**: parser and docs now enforce required objective semantics for `/batch <objective>`.
-- **`/batch` external-effects guardrails**: runtime policy enforcement now supports deterministic blocking/approval behavior:
-  - `external=none` blocks known side-effect external tool calls for the run.
-  - `external=confirm` requires explicit non-auto approval before first side-effect external action.
-- **Slash parser freeform objective edge cases**: objective parsing now supports quoted text and `--token`-like content inside objectives without misclassifying them as unknown flags.
-- **Files list filtering edge case**: extensionless output files are no longer excluded from the right panel.
-- **Executor hard budget contracts are now opt-in**: `COWORK_AGENT_BUDGET_CONTRACTS` defaults to `false` (previously `true`). Set `COWORK_AGENT_BUDGET_CONTRACTS=true` to restore legacy strict budget-contract behavior.
+- **Shell protocol violations**: `run_command` now rejects direct or wrapped `apply_patch` invocations and tells the agent to use the dedicated patch tool.
+- **Task-root rewrites**: pinned-root recovery no longer skips rewrites just because an unpinned root-level path already exists, preventing drifted writes from mutating the wrong files.
+- **Legacy read-only resumes**: tasks resumed without `executionModeSource` now keep user-selected non-`execute` modes instead of being auto-promoted to mutation-capable execution.
+- **Task execution heuristics**: write-intent detection, duplicate-mutation bypass, follow-up tool locking, and browser-session verification heuristics were tightened to reduce false stalls and false completions.
+- **Canvas URL validation**: canvas browsing now rejects non-HTTP(S) schemes explicitly.
+- **Documentation alignment**: README, architecture, remote-access, development, and getting-started docs now reflect structured input, recovery policies, and Control Plane input-request handling.
+
+## [0.4.12] - 2026-02-28
+
+### Added
+- **Agentic Work Unit (AWU) metric**: Usage Insights now tracks agent efficiency via AWU — successfully completed tasks measured against tokens and cost consumed. Shows AWU count, tokens/AWU, cost/AWU, AWUs per dollar, and period-over-period trend comparison.
+- **All Workspaces aggregation**: Usage Insights defaults to "All Workspaces" view, aggregating metrics across every workspace. Individual workspace filtering remains available via dropdown.
+- **Completion output summary payload**: `task_completed` events now support an optional `outputSummary` contract with normalized output metadata (`created`, `modifiedFallback`, `primaryOutputPath`, `outputCount`, `folders`). This keeps completion UX accurate even when renderer event history is capped.
+- **Completion output UX actions**: completion toasts now show output-aware copy (including filename/count) and include direct actions for `Open file`, `Show in Finder`, and `View in Files`.
+- **Shared renderer completion UX utilities**: added reusable helpers for completion toast construction, output badge behavior, panel auto-open decisions, and output/event visibility rules.
+- **Artifact visibility parity across bridges**: `artifact_created` is now included in collaborative child-file merging and in the control-plane task event bridge allowlist, so artifact-only tasks are visible consistently in all surfaces.
+
+### Changed
+- **Usage Insights UI redesign**: Replaced single-column layout with compact hero stats row (completed, success rate with color-coded progress bar, failed, avg time) and two-column grid for detailed sections (Cost & AWU side-by-side, Activity Day & Hour side-by-side, Skills & Packs side-by-side).
+- **Output detection rule**: completion output detection now prefers newly created outputs (`file_created`, `artifact_created`) and only falls back to modified outputs when no created outputs exist.
+- **Right panel file-output emphasis**: Files section now highlights primary output, shows an output count badge, and adds a separate location context line while keeping filename-only rows.
+- **Completion timeline details**: `task_completed` now renders an explicit "Output ready" details card (with actions) when outputs exist; `artifact_created` is treated as important and expandable in summary/technical timelines.
+- **Status-map coherence for artifact events**: `artifact_created` now maps to `executing` in shared task event status mapping for consistent in-progress state display.
+
+### Fixed
+- **Database startup migration ordering**: moved task evaluation/index-related index creation from bootstrap table creation to post-migration execution so databases created pre-`risk_level` and `eval_*` columns no longer fail on startup (`no such column: risk_level`).
+- **Hidden extensionless outputs in files list**: output files without a dot in the filename are no longer filtered out from the right-panel files section.
 
 ## [0.3.90] - 2026-02-23
 

@@ -34,7 +34,7 @@ See: `docs/vps-linux.md`.
 
 - Create tasks in a selected **workspace folder** and watch execution via an event timeline.
 - Execute steps by calling tools (file ops, browser automation, search, connectors, etc.).
-- Pause for **approvals** before destructive or high-risk actions.
+- Pause for **approvals** before destructive or high-risk actions, and for **structured input requests** when the plan needs a concrete user choice.
 
 Key code:
 - Agent orchestration: `src/electron/agent/daemon.ts`, `src/electron/agent/executor.ts`, `src/electron/agent/queue-manager.ts`
@@ -42,12 +42,29 @@ Key code:
 
 #### Intent Routing & Strategy Layer
 
-Each task prompt is classified by `IntentRouter` into one of five intent types (`chat`, `advice`, `planning`, `execution`, `mixed`) with a confidence score. `TaskStrategyService` then derives execution defaults (conversation mode, max turns, quality passes, answer-first bias, bounded research, timeout-finalize bias) from the classified intent. Strategy is applied at task creation in the daemon and re-applied when queued tasks are dequeued.
+Each task prompt is classified by `IntentRouter` into one of five intent types (`chat`, `advice`, `planning`, `execution`, `mixed`) with a confidence score. `TaskStrategyService` then derives execution defaults (conversation mode, max turns, quality passes, answer-first bias, bounded research, timeout-finalize bias, turn-budget policy, workspace alias policy, task-root policy, and follow-up recovery defaults) from the classified intent. Strategy is applied at task creation in the daemon and re-applied when queued tasks are dequeued, while `executionModeSource` preserves whether a read-only mode came from the user or from strategy inference.
 
 Key code:
 - Intent classifier: `src/electron/agent/strategy/IntentRouter.ts`
 - Strategy service: `src/electron/agent/strategy/TaskStrategyService.ts`
 - Strategy integration: `src/electron/agent/daemon.ts` (task creation), `src/electron/agent/context-manager.ts` (context injection)
+
+#### Structured Input Requests
+
+When a propose-mode task needs a real decision, the executor can require `request_user_input` instead of continuing with an ambiguous free-text question. The flow is:
+
+- the tool creates an `input_requests` record and pauses the task
+- the desktop UI renders the request as an inline multiple-choice card
+- control-plane operators can list/respond to the same request remotely
+- submitted answers resume execution; dismissed requests keep the task paused or reject the waiting branch
+
+This keeps "need user choice" states explicit and recoverable across app restarts.
+
+Key code:
+- Tool surface: `src/electron/agent/tools/registry.ts`
+- Persistence + resume: `src/electron/agent/daemon.ts`, `src/electron/database/repositories.ts`
+- IPC / control plane: `src/electron/ipc/handlers.ts`, `src/daemon/control-plane-methods.ts`
+- Renderer surfaces: `src/renderer/App.tsx`, `src/renderer/components/MainContent.tsx`
 
 #### Completion Contract & Timeout Recovery
 
@@ -56,6 +73,22 @@ The executor tracks cancellation reasons (`user`, `timeout`, `shutdown`, `system
 Key code:
 - Timeout recovery: `src/electron/agent/executor.ts` (`finalizeWithTimeoutRecovery`, `finalizeTaskBestEffort`, `buildTimeoutRecoveryAnswer`)
 - Retry helpers: `src/electron/agent/executor.ts` (`applyRetryTokenCap`, `getRetryTimeoutMs`, `isAbortLikeError`)
+
+#### Turn-Budget, Context, and Path Recovery
+
+Recent executor hardening adds several recovery layers that now shape default runtime behavior:
+
+- execute-oriented tasks default to `adaptive_unbounded` turn policy, treating per-window exhaustion as a soft event and attempting a bounded follow-up recovery before safety-stop escalation
+- context-capacity failures are classified separately so the executor can compact messages and retry instead of immediately failing the task
+- absolute `/workspace/...` aliases can be normalized back into the active workspace for file/directory tools
+- relative path drift can be repaired under a pinned task root (`pin_and_rewrite`) or blocked under strict policy (`strict_fail`)
+- recoverable path drift can suppress tool disablement while retry budget remains, avoiding false "dead tool" states from path-only mistakes
+- parallel read-only tool batches emit grouped lane events so timeline rendering can summarize concurrent work without flooding the feed
+
+Key code:
+- Runtime policy + recovery: `src/electron/agent/executor.ts`, `src/electron/agent/executor-helpers.ts`, `src/electron/agent/executor-loop-utils.ts`
+- Path normalization helpers: `src/electron/agent/path-alias.ts`, `src/electron/agent/tools/file-tools.ts`
+- Timeline grouping: `src/electron/agent/timeline-emitter.ts`, `src/renderer/components/timeline/parallel-group-projection.ts`
 
 #### Completion Output Summary & Renderer Confidence
 
@@ -318,7 +351,7 @@ Docs:
 
 Web UI:
 - The control plane serves a built-in HTML dashboard at `/` (same host/port) for headless management.
-- Manage LLM setup, tasks, approvals, workspaces, and channels from a browser via SSH tunnel or Tailscale.
+- Manage LLM setup, tasks, approvals, pending structured input requests, workspaces, and channels from a browser via SSH tunnel or Tailscale.
 - Code: `src/electron/control-plane/web-ui.ts`
 
 Code:
@@ -343,6 +376,7 @@ Key methods (see `src/electron/control-plane/protocol.ts`):
 - Tasks: `task.create`, `task.get`, `task.list`, `task.cancel`, `task.sendMessage`
 - Tasks (admin): `task.events`
 - Approvals (admin): `approval.list`, `approval.respond`
+- Structured input (admin): `input_request.list`, `input_request.respond`
 - Channels: `channel.list`, `channel.get`
 - Channels (admin): `channel.create`, `channel.update`, `channel.test`, `channel.enable`, `channel.disable`, `channel.remove`
 - Managed accounts: `account.list`, `account.get`
@@ -458,7 +492,7 @@ Security docs:
 ```mermaid
 flowchart LR
   subgraph Renderer["Renderer (React UI)"]
-    UI["Task list, timeline, settings, approvals"]
+    UI["Task list, timeline, input requests, settings, approvals"]
   end
 
   subgraph Main["Electron Main (Node.js)"]
@@ -549,7 +583,7 @@ Schema creation and migrations:
 - `src/electron/database/schema.ts`
 
 Major table families (non-exhaustive):
-- Tasks and execution logs: `tasks`, `task_events`, `artifacts`, `approvals`
+- Tasks and execution logs: `tasks`, `task_events`, `artifacts`, `approvals`, `input_requests`
 - Workspaces: `workspaces`
 - Channels + gateway state: `channels`, `channel_users`, `channel_sessions`, `channel_messages`, plus queue/rate limit/audit tables
 - Memory: `memories`, `memory_summaries`, `memory_settings`, `memory_embeddings`, and optional FTS tables/triggers

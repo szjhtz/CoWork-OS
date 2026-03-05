@@ -55,6 +55,23 @@ describe("timeline v2 helpers", () => {
     expect(inferTimelineStageForLegacyType("tool_call")).toBe("BUILD");
     expect(inferTimelineStageForLegacyType("verification_passed")).toBe("VERIFY");
     expect(inferTimelineStageForLegacyType("step_failed")).toBe("FIX");
+    expect(inferTimelineStageForLegacyType("verification_mode_selected")).toBe("FIX");
+    expect(inferTimelineStageForLegacyType("verification_preflight_policy_applied")).toBe("FIX");
+    expect(inferTimelineStageForLegacyType("verification_text_checklist_evaluated")).toBe("FIX");
+    expect(inferTimelineStageForLegacyType("workspace_path_alias_normalized")).toBe("FIX");
+    expect(inferTimelineStageForLegacyType("workspace_path_alias_recovery_attempted")).toBe("FIX");
+    expect(inferTimelineStageForLegacyType("workspace_path_alias_recovery_failed")).toBe("FIX");
+    expect(inferTimelineStageForLegacyType("task_path_root_pinned")).toBe("FIX");
+    expect(inferTimelineStageForLegacyType("task_path_rewrite_applied")).toBe("FIX");
+    expect(inferTimelineStageForLegacyType("task_path_recovery_attempted")).toBe("FIX");
+    expect(inferTimelineStageForLegacyType("task_path_recovery_failed")).toBe("FIX");
+    expect(
+      inferTimelineStageForLegacyType("tool_disable_suppressed_recoverable_path_drift"),
+    ).toBe("FIX");
+    expect(inferTimelineStageForLegacyType("mutation_checkpoint_retry_applied")).toBe("FIX");
+    expect(inferTimelineStageForLegacyType("tool_protocol_violation")).toBe("FIX");
+    expect(inferTimelineStageForLegacyType("turn_window_soft_exhausted")).toBe("FIX");
+    expect(inferTimelineStageForLegacyType("safety_stop_triggered")).toBe("FIX");
     expect(inferTimelineStageForLegacyType("task_completed")).toBe("DELIVER");
   });
 

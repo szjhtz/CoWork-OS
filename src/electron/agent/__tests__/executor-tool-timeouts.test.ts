@@ -37,4 +37,26 @@ describe("TaskExecutor getToolTimeoutMs", () => {
     expect(timeoutMs).toBe(302_000);
     timeoutSpy.mockRestore();
   });
+
+  it("uses a long timeout window for request_user_input by default", () => {
+    const executor = Object.create(TaskExecutor.prototype) as Any;
+    executor.task = { agentConfig: { deepWorkMode: false } };
+
+    const timeoutSpy = vi
+      .spyOn(BuiltinToolsSettingsManager, "getToolTimeoutMs")
+      .mockReturnValue(null);
+
+    const timeoutMs = executor.getToolTimeoutMs("request_user_input", {
+      questions: [
+        {
+          id: "delivery_mode",
+          question: "Choose delivery mode",
+          options: [{ label: "A", description: "A" }, { label: "B", description: "B" }],
+        },
+      ],
+    });
+
+    expect(timeoutMs).toBe(86_400_000);
+    timeoutSpy.mockRestore();
+  });
 });

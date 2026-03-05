@@ -1,12 +1,9 @@
 import OpenAI from "openai";
-import {
-  getModel as _getModel,
-  getModels,
-  complete as piAiComplete,
-  type Model,
-  type Message as PiAiMessage,
-  type Context as PiAiContext,
-  type Tool as PiAiTool,
+import type {
+  Model,
+  Message as PiAiMessage,
+  Context as PiAiContext,
+  Tool as PiAiTool,
 } from "@mariozechner/pi-ai";
 import {
   LLMProvider,
@@ -20,6 +17,7 @@ import {
 } from "./types";
 import { OpenAIOAuth, OpenAIOAuthTokens } from "./openai-oauth";
 import { imageToTextFallback } from "./image-utils";
+import { loadPiAiModule } from "./pi-ai-loader";
 
 // Default model for openai-codex (ChatGPT backend)
 const DEFAULT_CODEX_MODEL = "gpt-5.1-codex-mini";
@@ -219,6 +217,7 @@ export class OpenAIProvider implements LLMProvider {
     }
 
     try {
+      const { getModels, complete: piAiComplete } = await loadPiAiModule();
       // Map model ID to ChatGPT internal model
       const codexModelId = this.mapToCodexModel(request.model);
       console.log(
@@ -305,6 +304,7 @@ export class OpenAIProvider implements LLMProvider {
   async testConnection(): Promise<{ success: boolean; error?: string }> {
     try {
       if (this.authMethod === "oauth") {
+        const { getModels, complete: piAiComplete } = await loadPiAiModule();
         // For OAuth, try to get the API key and make a simple request
         if (!this.oauthTokens) {
           return { success: false, error: "OAuth tokens not available" };
@@ -364,6 +364,7 @@ export class OpenAIProvider implements LLMProvider {
       console.log("[OpenAI] Using OAuth - fetching models from pi-ai SDK...");
 
       try {
+        const { getModels } = await loadPiAiModule();
         // Get models from pi-ai SDK for openai-codex provider
         const piAiModels = getModels("openai-codex");
 

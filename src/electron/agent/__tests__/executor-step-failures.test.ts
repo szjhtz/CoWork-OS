@@ -89,6 +89,11 @@ function applyExecutorFieldDefaults(executor: Any): void {
   executor.lastAssistantOutput = null;
   executor.lastNonVerificationOutput = null;
   executor.filesReadTracker = new Map();
+  executor.artifactMutationLedger = Object.create(null);
+  executor.stepContractReconciliationLedger = Object.create(null);
+  executor.reliabilityContractReconciliationV3Enabled = true;
+  executor.reliabilityStepMutationDedupeV3Enabled = true;
+  executor.reliabilityBrowserChecklistV3Enabled = true;
   executor.currentStepId = null;
   executor.lastRecoveryFailureSignature = "";
   executor.recoveredFailureStepIds = new Set();
@@ -219,6 +224,7 @@ function createExecutorWithStubs(responses: LLMResponse[], toolResults: Record<s
   executor.toolCallDeduplicator = {
     checkDuplicate: vi.fn().mockReturnValue({ isDuplicate: false }),
     recordCall: vi.fn(),
+    resetMutationHistoryForNewStep: vi.fn(),
   };
   executor.toolResultMemoryLimit = 8;
   executor.toolRegistry = {
@@ -293,6 +299,7 @@ function createExecutorWithLLMHandler(handler: (messages: Any[]) => LLMResponse)
   executor.toolCallDeduplicator = {
     checkDuplicate: vi.fn().mockReturnValue({ isDuplicate: false }),
     recordCall: vi.fn(),
+    resetMutationHistoryForNewStep: vi.fn(),
   };
   executor.toolResultMemoryLimit = 8;
   executor.toolRegistry = {
@@ -370,6 +377,54 @@ describe("TaskExecutor executeStep failure handling", () => {
     expect(step.error).toBeUndefined();
   });
 
+  it("allows one duplicate-bypass mutation attempt for mutation-required steps", async () => {
+    executor = createExecutorWithStubs(
+      [
+        toolUseResponse("write_file", {
+          path: "script.js",
+          content: "console.log('timeline');\n",
+        }),
+        textResponse("Implemented rendering logic."),
+      ],
+      {},
+    );
+    const tempDir = fs.mkdtempSync("/tmp/cowork-dup-bypass-");
+    (executor as Any).workspace.path = tempDir;
+    (executor as Any).reliabilityV2DisableBootstrapWrite = true;
+    (executor as Any).toolCallDeduplicator.checkDuplicate = vi
+      .fn()
+      .mockReturnValue({ isDuplicate: true, reason: "duplicate_call" });
+    (executor as Any).toolRegistry.executeTool = vi.fn(async (name: string, input: Any) => {
+      if (name === "write_file") {
+        const filePath = path.resolve(tempDir, String(input?.path || "script.js"));
+        fs.writeFileSync(filePath, String(input?.content || ""), "utf8");
+        return { success: true, path: "script.js" };
+      }
+      return { success: true };
+    });
+
+    const step: Any = {
+      id: "dup-bypass-step",
+      description: "Implement horizontal timeline rendering in `script.js`.",
+      status: "pending",
+    };
+
+    try {
+      await (executor as Any).executeStep(step);
+      expect(step.status, String(step.error || "")).toBe("completed");
+      expect((executor as Any).daemon.logEvent).toHaveBeenCalledWith(
+        "task-1",
+        "mutation_duplicate_bypass_applied",
+        expect.objectContaining({
+          stepId: "dup-bypass-step",
+          tool: "write_file",
+        }),
+      );
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("blocks create_document for watch-skip recommendation prompts and continues with a text answer", async () => {
     executor = createExecutorWithStubs(
       [
@@ -396,7 +451,7 @@ describe("TaskExecutor executeStep failure handling", () => {
 
     await (executor as Any).executeStep(step);
 
-    expect(step.status).toBe("completed");
+    expect(step.status, String(step.error || "")).toBe("completed");
     expect(executor.daemon.logEvent).toHaveBeenCalledWith(
       "task-1",
       "tool_blocked",
@@ -473,6 +528,98 @@ describe("TaskExecutor executeStep failure handling", () => {
 
     expect(step.status).toBe("failed");
     expect(step.error).toContain("no newly generated image");
+  });
+
+  it("uses browser_session verification for in-browser UI checks even when mission images are mentioned", async () => {
+    executor = createExecutorWithStubs(
+      [
+        toolUseResponse("browser_navigate", { url: "http://localhost:3000" }),
+        toolUseResponse("browser_get_content", {}),
+        textResponse("OK"),
+      ],
+      {
+        browser_navigate: { success: true, url: "http://localhost:3000" },
+        browser_get_content: { success: true, content: "<html>timeline</html>" },
+      },
+    );
+    (executor as Any).getAvailableTools = vi.fn().mockReturnValue([
+      { name: "browser_navigate", description: "", input_schema: { type: "object", properties: {} } },
+      { name: "browser_get_content", description: "", input_schema: { type: "object", properties: {} } },
+      { name: "read_file", description: "", input_schema: { type: "object", properties: {} } },
+    ]);
+
+    const step: Any = {
+      id: "verify-browser-session",
+      description:
+        "Final verification: test the site in-browser to confirm smooth horizontal scrolling, working toggles, and correctly sourced mission images.",
+      status: "pending",
+    };
+
+    expect((executor as Any).resolveVerificationModeForStep(step)).toBe("browser_session");
+    await (executor as Any).executeStep(step);
+
+    expect(step.status).toBe("completed");
+    expect(String(step.error || "")).toBe("");
+  });
+
+  it("does not require create_directory for root-file scaffold steps", () => {
+    executor = createExecutorWithStubs([], {});
+
+    const step: Any = {
+      id: "root-scaffold",
+      description:
+        "Create the project scaffold in the workspace: add/overwrite index.html, styles.css, and script.js with a minimal layout.",
+      status: "pending",
+    };
+
+    const contract = (executor as Any).resolveStepExecutionContract(step);
+    expect(Array.from(contract.requiredTools)).toContain("write_file");
+    expect(Array.from(contract.requiredTools)).not.toContain("create_directory");
+  });
+
+  it("passes browser-session final verification via deterministic checklist even when text is not OK", async () => {
+    executor = createExecutorWithStubs(
+      [
+        toolUseResponse("browser_navigate", { url: "http://localhost:3000" }),
+        toolUseResponse("browser_get_content", {}),
+        textResponse(
+          "Browser session checks are complete: navigation succeeded, timeline container is visible, and toggle controls are present.",
+        ),
+      ],
+      {
+        browser_navigate: { success: true, url: "http://localhost:3000" },
+        browser_get_content: {
+          success: true,
+          content:
+            "<div id='timelineViewport'></div><div id='timelineTrack'></div><input id='whatIfToggle' type='checkbox' />",
+        },
+      },
+    );
+    (executor as Any).getAvailableTools = vi.fn().mockReturnValue([
+      { name: "browser_navigate", description: "", input_schema: { type: "object", properties: {} } },
+      { name: "browser_get_content", description: "", input_schema: { type: "object", properties: {} } },
+    ]);
+
+    const step: Any = {
+      id: "verify-browser-checklist",
+      description:
+        "Final verification: test in-browser horizontal scroll, timeline track, and What If toggle behavior.",
+      status: "pending",
+    };
+    (executor as Any).plan = { description: "Plan", steps: [step] };
+    expect((executor as Any).resolveVerificationModeForStep(step)).toBe("browser_session");
+
+    await (executor as Any).executeStep(step);
+
+    expect(step.status, String(step.error || "")).toBe("completed");
+    expect((executor as Any).daemon.logEvent).toHaveBeenCalledWith(
+      "task-1",
+      "verification_checklist_evaluated",
+      expect.objectContaining({
+        stepId: "verify-browser-checklist",
+        passed: true,
+      }),
+    );
   });
 
   it("accepts artifact verification evidence from file inspection tools when step text is generic", async () => {
@@ -796,6 +943,59 @@ relationship_memory:
     await expect((executor as Any).executePlan()).rejects.toThrow("Task failed");
   });
 
+  it("reconciles create_directory-only contract misses when equivalent artifacts were written later", async () => {
+    executor = createExecutorWithStubs([textResponse("done")], {});
+    const step1: Any = {
+      id: "plan-scaffold-1",
+      description:
+        "Create scaffold: add/overwrite index.html, styles.css, script.js with timeline structure.",
+      status: "pending",
+    };
+    const step2: Any = {
+      id: "plan-impl-2",
+      description: "Implement timeline rendering in script.js and wire controls.",
+      status: "pending",
+    };
+    (executor as Any).plan = { description: "Plan", steps: [step1, step2] };
+    (executor as Any).executeStep = vi.fn(async (target: Any) => {
+      if (target.id === "plan-scaffold-1") {
+        target.status = "failed";
+        target.error =
+          "Step required tool contract was not satisfied. Missing successful calls for: create_directory.";
+        target.completedAt = Date.now();
+        return;
+      }
+
+      target.status = "completed";
+      target.completedAt = Date.now();
+      const record = (executor as Any).recordArtifactMutationLedgerEntry.bind(executor);
+      for (const relPath of ["index.html", "styles.css", "script.js"]) {
+        record(relPath, {
+          stepId: target.id,
+          tool: "write_file",
+          evidence: {
+            tool_success: true,
+            canonical_tool: "write_file",
+            reported_path: path.resolve("/tmp", relPath),
+            artifact_registered: true,
+            fs_exists: true,
+            mtime_after_step_start: true,
+            size_bytes: 42,
+          },
+        });
+      }
+    });
+
+    await expect((executor as Any).executePlan()).resolves.toBeUndefined();
+    expect((executor as Any).daemon.logEvent).toHaveBeenCalledWith(
+      "task-1",
+      "step_contract_reconciled_posthoc",
+      expect.objectContaining({
+        stepId: "plan-scaffold-1",
+      }),
+    );
+  });
+
   it("requires a direct answer when prompt asks for a decision and summary is artifact-only", () => {
     executor = createExecutorWithStubs([textResponse("done")], {});
     (executor as Any).task.title = "Review YouTube video";
@@ -1086,7 +1286,71 @@ relationship_memory:
     await (executor as Any).executeStep(step);
 
     expect(step.status).toBe("failed");
-    expect(step.error).toContain("written artifact");
+    expect(String(step.error || "")).toContain("Missing successful calls for: write_file");
+  });
+
+  it("does not treat directory-only mutation evidence as satisfying write contract", () => {
+    executor = createExecutorWithStubs([textResponse("done")], {});
+    const tempDir = fs.mkdtempSync("/tmp/cowork-dir-evidence-");
+    (executor as Any).workspace.path = tempDir;
+    const dirPath = path.join(tempDir, "backend/src/services/ais");
+    fs.mkdirSync(dirPath, { recursive: true });
+
+    try {
+      const satisfies = (executor as Any).mutationEvidenceSatisfiesWriteContract({
+        tool_success: true,
+        canonical_tool: "create_directory",
+        reported_path: dirPath,
+        artifact_registered: true,
+        fs_exists: true,
+        mtime_after_step_start: true,
+        size_bytes: null,
+      });
+      expect(satisfies).toBe(false);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("fails fast with write checkpoint when required write_file is never attempted", async () => {
+    const responses: LLMResponse[] = Array.from({ length: 16 }, (_, i) =>
+      toolUseResponse("create_directory", { path: `backend/src/services/ais/p${i}` }),
+    );
+    executor = createExecutorWithStubs(responses, {});
+    (executor as Any).getAvailableTools = vi.fn().mockReturnValue([
+      { name: "create_directory", description: "", input_schema: { type: "object", properties: {} } },
+      { name: "write_file", description: "", input_schema: { type: "object", properties: {} } },
+      { name: "list_directory", description: "", input_schema: { type: "object", properties: {} } },
+      { name: "read_file", description: "", input_schema: { type: "object", properties: {} } },
+    ]);
+    const tempDir = fs.mkdtempSync("/tmp/cowork-required-write-checkpoint-");
+    (executor as Any).workspace.path = tempDir;
+    (executor as Any).toolRegistry.executeTool = vi.fn(async (name: string, input: Any) => {
+      if (name === "create_directory") {
+        const relPath = String(input?.path || "");
+        fs.mkdirSync(path.resolve(tempDir, relPath), { recursive: true });
+        return { success: true, path: relPath };
+      }
+      return { success: true };
+    });
+
+    const step: Any = {
+      id: "ais-ingestion-write-checkpoint",
+      description:
+        "Implement AIS ingestion in `/backend/src/services/ais/` with separate connectors (`backend/marinetrafficClient.ts`, `backend/unAisClient.ts`) and a normalizer (`backend/normalizeAisRecord.ts`) that outputs a unified schema.",
+      status: "pending",
+    };
+
+    try {
+      await (executor as Any).executeStep(step);
+      expect(step.status).toBe("failed");
+      expect(String(step.error || "")).toMatch(
+        /artifact_write_checkpoint_failed|tool-only turns with policy-blocked/i,
+      );
+      expect((executor as Any).callLLMWithRetry.mock.calls.length).toBeLessThanOrEqual(7);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   it("does not treat reported artifact path alone as successful mutation evidence", async () => {
@@ -1120,7 +1384,7 @@ relationship_memory:
       await (executor as Any).executeStep(step);
       expect(step.status).toBe("failed");
       expect(String(step.error || "")).toMatch(
-        /artifact_write_checkpoint_failed|written artifact/i,
+        /missing successful calls for: write_file|artifact_write_checkpoint_failed|written artifact/i,
       );
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
@@ -1153,6 +1417,330 @@ relationship_memory:
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
+  });
+
+  it("reuses prior mutation evidence for refinement steps when current-step target verification is present", async () => {
+    executor = createExecutorWithStubs(
+      [
+        toolUseResponse("read_file", { path: "styles.css" }),
+        textResponse("Validated existing style changes."),
+      ],
+      {
+        read_file: { success: true, path: "styles.css", content: "/* styles */" },
+      },
+    );
+    const tempDir = fs.mkdtempSync("/tmp/cowork-prior-mutation-");
+    (executor as Any).workspace.path = tempDir;
+    fs.writeFileSync(path.join(tempDir, "styles.css"), "/* previous */");
+    const normalizedTarget = path
+      .resolve(tempDir, "styles.css")
+      .replace(/\\/g, "/")
+      .toLowerCase();
+    (executor as Any).artifactMutationLedger = {
+      [normalizedTarget]: {
+        stepId: "step-previous",
+        ts: Date.now() - 5000,
+        tool: "write_file",
+        evidence: {
+          tool_success: true,
+          canonical_tool: "write_file",
+          reported_path: path.resolve(tempDir, "styles.css"),
+          artifact_registered: true,
+          fs_exists: true,
+          mtime_after_step_start: true,
+          size_bytes: 12,
+        },
+      },
+    };
+
+    const step: Any = {
+      id: "style-refinement",
+      description: "Style interactions in `styles.css`: refine hover states and spacing.",
+      status: "pending",
+    };
+
+    try {
+      await (executor as Any).executeStep(step);
+      expect(step.status).toBe("completed");
+      expect(executor.daemon.logEvent).toHaveBeenCalledWith(
+        "task-1",
+        "step_contract_satisfied_by_prior_mutation",
+        expect.objectContaining({
+          stepId: "style-refinement",
+        }),
+      );
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not reuse prior mutation evidence when step explicitly requires new delta creation", async () => {
+    executor = createExecutorWithStubs(
+      [
+        toolUseResponse("read_file", { path: "styles.css" }),
+        textResponse("Reviewed styles file."),
+      ],
+      {
+        read_file: { success: true, path: "styles.css", content: "/* styles */" },
+      },
+    );
+    const tempDir = fs.mkdtempSync("/tmp/cowork-prior-mutation-explicit-");
+    (executor as Any).workspace.path = tempDir;
+    fs.writeFileSync(path.join(tempDir, "styles.css"), "/* previous */");
+    const normalizedTarget = path
+      .resolve(tempDir, "styles.css")
+      .replace(/\\/g, "/")
+      .toLowerCase();
+    (executor as Any).artifactMutationLedger = {
+      [normalizedTarget]: {
+        stepId: "step-previous",
+        ts: Date.now() - 5000,
+        tool: "write_file",
+        evidence: {
+          tool_success: true,
+          canonical_tool: "write_file",
+          reported_path: path.resolve(tempDir, "styles.css"),
+          artifact_registered: true,
+          fs_exists: true,
+          mtime_after_step_start: true,
+          size_bytes: 12,
+        },
+      },
+    };
+
+    const step: Any = {
+      id: "style-explicit-delta",
+      description: "Implement new interactions in `styles.css` and add new animation classes.",
+      status: "pending",
+    };
+
+    try {
+      await (executor as Any).executeStep(step);
+      expect(step.status).toBe("failed");
+      expect(String(step.error || "")).toMatch(
+        /missing successful calls for: write_file|artifact_write_checkpoint_failed|written artifact/i,
+      );
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not count deterministic bootstrap as success when target file already exists and is non-empty", async () => {
+    executor = createExecutorWithStubs([textResponse("OK")], {});
+    const tempDir = fs.mkdtempSync("/tmp/cowork-bootstrap-existing-");
+    (executor as Any).workspace.path = tempDir;
+    fs.writeFileSync(path.join(tempDir, "styles.css"), "body { color: red; }\n");
+
+    const step: Any = { id: "bootstrap-existing", description: "Style interactions", status: "pending" };
+    const stepContract: Any = {
+      requiredTools: new Set(["write_file"]),
+      mode: "mutation_required",
+      requiresMutation: true,
+      requiresArtifactEvidence: true,
+      targetPaths: ["styles.css"],
+      requiredExtensions: [".css"],
+      enforcementLevel: "strict",
+      contractReason: "step_requires_artifact_mutation",
+      verificationMode: "none",
+      artifactKind: "file",
+    };
+
+    try {
+      const bootstrap = await (executor as Any).performDeterministicArtifactBootstrap(
+        step,
+        stepContract,
+      );
+      expect(bootstrap.attempted).toBe(true);
+      expect(bootstrap.succeeded).toBe(false);
+      expect(bootstrap.error).toBe("target_already_exists_nonempty");
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("bootstraps missing css artifacts and records prior-mutation ledger evidence", async () => {
+    executor = createExecutorWithStubs([textResponse("OK")], {});
+    const tempDir = fs.mkdtempSync("/tmp/cowork-bootstrap-css-");
+    (executor as Any).workspace.path = tempDir;
+
+    const step: Any = { id: "bootstrap-css", description: "Style interactions", status: "pending" };
+    const stepContract: Any = {
+      requiredTools: new Set(["write_file"]),
+      mode: "mutation_required",
+      requiresMutation: true,
+      requiresArtifactEvidence: true,
+      targetPaths: ["styles.css"],
+      requiredExtensions: [".css"],
+      enforcementLevel: "strict",
+      contractReason: "step_requires_artifact_mutation",
+      verificationMode: "none",
+      artifactKind: "file",
+    };
+
+    try {
+      const bootstrap = await (executor as Any).performDeterministicArtifactBootstrap(
+        step,
+        stepContract,
+      );
+      expect(bootstrap.attempted).toBe(true);
+      expect(bootstrap.succeeded).toBe(true);
+
+      const written = fs.readFileSync(path.join(tempDir, "styles.css"), "utf8");
+      expect(written).toContain("bootstrap artifact stub");
+
+      const normalizedTarget = path
+        .resolve(tempDir, "styles.css")
+        .replace(/\\/g, "/")
+        .toLowerCase();
+      expect((executor as Any).artifactMutationLedger[normalizedTarget]).toBeTruthy();
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("prefers synthesized directory+basename target for deterministic bootstrap", async () => {
+    executor = createExecutorWithStubs([textResponse("OK")], {});
+    const tempDir = fs.mkdtempSync("/tmp/cowork-bootstrap-synth-");
+    (executor as Any).workspace.path = tempDir;
+
+    const step: Any = {
+      id: "bootstrap-synth",
+      description:
+        "Create chokepoint analytics module in `server/src/chokepoints/` and write `chokepointMonitor.ts`.",
+      status: "pending",
+    };
+    const stepContract: Any = {
+      requiredTools: new Set(["write_file"]),
+      mode: "mutation_required",
+      requiresMutation: true,
+      requiresArtifactEvidence: true,
+      targetPaths: ["server/src/chokepoints/", "chokepointMonitor.ts"],
+      requiredExtensions: [".ts"],
+      enforcementLevel: "strict",
+      contractReason: "step_requires_artifact_mutation",
+      verificationMode: "none",
+      artifactKind: "file",
+    };
+
+    try {
+      const preferred = (executor as Any).getPreferredMutationTargetPath(step, stepContract);
+      expect(preferred).toBe(path.join("server/src/chokepoints", "chokepointMonitor.ts"));
+
+      const bootstrap = await (executor as Any).performDeterministicArtifactBootstrap(
+        step,
+        stepContract,
+      );
+      expect(bootstrap.attempted).toBe(true);
+      expect(bootstrap.succeeded).toBe(true);
+      expect(bootstrap.path).toBe(path.resolve(tempDir, "server/src/chokepoints/chokepointMonitor.ts"));
+      expect(fs.existsSync(path.join(tempDir, "server/src/chokepoints/chokepointMonitor.ts"))).toBe(true);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to second candidate when first target already exists and is non-empty", async () => {
+    executor = createExecutorWithStubs([textResponse("OK")], {});
+    const tempDir = fs.mkdtempSync("/tmp/cowork-bootstrap-fallback-existing-");
+    (executor as Any).workspace.path = tempDir;
+    fs.writeFileSync(path.join(tempDir, "styles.css"), "body { color: red; }\n");
+
+    const step: Any = {
+      id: "bootstrap-existing-fallback",
+      description: "Update styles in `styles.css` and `alt/styles.css`.",
+      status: "pending",
+    };
+    const stepContract: Any = {
+      requiredTools: new Set(["write_file"]),
+      mode: "mutation_required",
+      requiresMutation: true,
+      requiresArtifactEvidence: true,
+      targetPaths: ["styles.css", "alt/styles.css"],
+      requiredExtensions: [".css"],
+      enforcementLevel: "strict",
+      contractReason: "step_requires_artifact_mutation",
+      verificationMode: "none",
+      artifactKind: "file",
+    };
+
+    try {
+      const bootstrap = await (executor as Any).performDeterministicArtifactBootstrap(
+        step,
+        stepContract,
+      );
+      expect(bootstrap.attempted).toBe(true);
+      expect(bootstrap.succeeded).toBe(true);
+      expect(bootstrap.path).toBe(path.resolve(tempDir, "alt/styles.css"));
+      expect(fs.readFileSync(path.join(tempDir, "alt/styles.css"), "utf8")).toContain(
+        "bootstrap artifact stub",
+      );
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("skips unsupported extensions and succeeds on later supported candidate", async () => {
+    executor = createExecutorWithStubs([textResponse("OK")], {});
+    const tempDir = fs.mkdtempSync("/tmp/cowork-bootstrap-fallback-ext-");
+    (executor as Any).workspace.path = tempDir;
+
+    const step: Any = {
+      id: "bootstrap-ext-fallback",
+      description: "Write `notes.unsupported` and `server/src/chokepoints/chokepointMonitor.ts`.",
+      status: "pending",
+    };
+    const stepContract: Any = {
+      requiredTools: new Set(["write_file"]),
+      mode: "mutation_required",
+      requiresMutation: true,
+      requiresArtifactEvidence: true,
+      targetPaths: ["notes.unsupported", "server/src/chokepoints/chokepointMonitor.ts"],
+      requiredExtensions: [".unsupported", ".ts"],
+      enforcementLevel: "strict",
+      contractReason: "step_requires_artifact_mutation",
+      verificationMode: "none",
+      artifactKind: "file",
+    };
+
+    try {
+      const bootstrap = await (executor as Any).performDeterministicArtifactBootstrap(
+        step,
+        stepContract,
+      );
+      expect(bootstrap.attempted).toBe(true);
+      expect(bootstrap.succeeded).toBe(true);
+      expect(bootstrap.path).toBe(path.resolve(tempDir, "server/src/chokepoints/chokepointMonitor.ts"));
+      expect(fs.existsSync(path.join(tempDir, "server/src/chokepoints/chokepointMonitor.ts"))).toBe(true);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("builds write-recovery hints with preferred writable file target instead of directory token", () => {
+    executor = createExecutorWithStubs([textResponse("OK")], {});
+    const step: Any = {
+      id: "write-recovery-path",
+      description:
+        "Create chokepoint analytics module in `server/src/chokepoints/` and write `chokepointMonitor.ts`.",
+      status: "pending",
+    };
+    const stepContract: Any = {
+      requiredTools: new Set(["write_file"]),
+      mode: "mutation_required",
+      requiresMutation: true,
+      requiresArtifactEvidence: true,
+      targetPaths: ["server/src/chokepoints/", "chokepointMonitor.ts"],
+      requiredExtensions: [".ts"],
+      enforcementLevel: "strict",
+      contractReason: "step_requires_artifact_mutation",
+      verificationMode: "none",
+      artifactKind: "file",
+    };
+
+    const template = (executor as Any).buildWriteRecoveryTemplate(step, stepContract);
+    expect(template.templateId).toContain("write_recovery");
+    expect(JSON.stringify(template.steps)).toContain("server/src/chokepoints/chokepointMonitor.ts");
+    expect(JSON.stringify(template.steps)).not.toContain('"server/src/chokepoints/"');
   });
 
   it("treats generate_presentation as valid mutation evidence for write-required steps", async () => {
@@ -1236,6 +1824,49 @@ relationship_memory:
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
+  });
+
+  it("inserts a deterministic recovery plan before artifact breaker skips remaining steps", () => {
+    executor = createExecutorWithStubs([textResponse("OK")], {});
+    (executor as Any).autoRecoveryStepsPlanned = 0;
+    (executor as Any).budgetContract = { maxAutoRecoverySteps: 2 };
+    (executor as Any).requestPlanRevision = vi.fn().mockReturnValue(true);
+    (executor as Any).recoveredFailureStepIds = new Set<string>();
+
+    const failedStep: Any = {
+      id: "failed-artifact-step",
+      description:
+        "Create chokepoint analytics module in `server/src/chokepoints/` and write `chokepointMonitor.ts`.",
+      status: "failed",
+      error:
+        "Step contract failure [contract_unmet_write_required][artifact_write_checkpoint_failed]: iteration 7 reached without successful file/canvas mutation.",
+    };
+
+    const inserted = (executor as Any).tryInjectArtifactRecoveryBeforeCircuitBreaker(failedStep, 2);
+    expect(inserted).toBe(true);
+    expect((executor as Any).requestPlanRevision).toHaveBeenCalledTimes(1);
+    expect((executor as Any).autoRecoveryStepsPlanned).toBe(1);
+    expect((executor as Any).recoveredFailureStepIds.has("failed-artifact-step")).toBe(true);
+  });
+
+  it("keeps breaker behavior when recovery insertion is blocked by budget", () => {
+    executor = createExecutorWithStubs([textResponse("OK")], {});
+    (executor as Any).autoRecoveryStepsPlanned = 1;
+    (executor as Any).budgetContract = { maxAutoRecoverySteps: 1 };
+    (executor as Any).requestPlanRevision = vi.fn().mockReturnValue(true);
+    (executor as Any).recoveredFailureStepIds = new Set<string>();
+
+    const failedStep: Any = {
+      id: "failed-artifact-step-budget",
+      description: "Expose backend services in `server/src/api/` and write `routes.ts`.",
+      status: "failed",
+      error:
+        "Step contract failure [contract_unmet_write_required][artifact_write_checkpoint_failed]: iteration 7 reached without successful file/canvas mutation.",
+    };
+
+    const inserted = (executor as Any).tryInjectArtifactRecoveryBeforeCircuitBreaker(failedStep, 2);
+    expect(inserted).toBe(false);
+    expect((executor as Any).requestPlanRevision).not.toHaveBeenCalled();
   });
 
   it("allows distinct file writes after first mutation success in the same step", async () => {
@@ -1389,6 +2020,45 @@ relationship_memory:
 
     expect(taskLimit).toBe(4);
     expect(stepLimit).toBe(3);
+  });
+
+  it("accepts structured checklist verification responses when all required checks pass", async () => {
+    executor = createExecutorWithStubs(
+      [
+        textResponse(
+          [
+            "Final editorial checklist:",
+            "- Sections: PASS (all mandatory sections present)",
+            "- Claims sourced: PASS (all claims cite sources)",
+            "- Links valid: PASS (all links verified)",
+            "- Word count: PASS (within target range)",
+            "- Style: PASS (tone and style align with template)",
+          ].join("\n"),
+        ),
+      ],
+      {},
+    );
+
+    const step: Any = {
+      id: "verify-checklist-pass",
+      description:
+        "Verification step: run final editorial checklist in newsletter/weekly/YYYY-WW/final-checklist.md confirming all mandatory template sections exist, claims are sourced, links are valid, and word count and style match target.",
+      status: "pending",
+      kind: "verification",
+    };
+    (executor as Any).plan = { description: "Plan", steps: [step] };
+
+    await (executor as Any).executeStep(step);
+
+    expect(step.status, String(step.error || "")).toBe("completed");
+    expect((executor as Any).daemon.logEvent).toHaveBeenCalledWith(
+      "task-1",
+      "verification_text_checklist_evaluated",
+      expect.objectContaining({
+        stepId: "verify-checklist-pass",
+        passed: true,
+      }),
+    );
   });
 
   it("fails final verification steps unless the response is exactly OK", async () => {

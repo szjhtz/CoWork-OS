@@ -6,6 +6,7 @@ function getWaivableStepIds(
   opts?: {
     budgetConstrainedFailedStepIds?: string[];
     blockingVerificationFailedStepIds?: string[];
+    nonBlockingVerificationFailedStepIds?: string[];
     planCompletedEffectively?: boolean;
   },
 ): string[] {
@@ -13,22 +14,29 @@ function getWaivableStepIds(
   executor.plan = { description: "Plan", steps };
   executor.budgetConstrainedFailedStepIds = new Set(opts?.budgetConstrainedFailedStepIds || []);
   executor.blockingVerificationFailedStepIds = new Set(opts?.blockingVerificationFailedStepIds || []);
-  executor.nonBlockingVerificationFailedStepIds = new Set();
+  executor.nonBlockingVerificationFailedStepIds = new Set(
+    opts?.nonBlockingVerificationFailedStepIds || [],
+  );
   executor.planCompletedEffectively = !!opts?.planCompletedEffectively;
   return (TaskExecutor as Any).prototype.getWaivableFailedStepIdsAtCompletion.call(executor);
 }
 
 describe("TaskExecutor getWaivableFailedStepIdsAtCompletion", () => {
-  it("returns failed verification step ids when work steps succeeded", () => {
-    const result = getWaivableStepIds([
-      { id: "1", description: "Write response", status: "completed", kind: "primary" },
+  it("returns failed verification step ids when they are marked non-blocking", () => {
+    const result = getWaivableStepIds(
+      [
+        { id: "1", description: "Write response", status: "completed", kind: "primary" },
+        {
+          id: "2",
+          description: "Verify: check final response",
+          status: "failed",
+          kind: "verification",
+        },
+      ],
       {
-        id: "2",
-        description: "Verify: check final response",
-        status: "failed",
-        kind: "verification",
+        nonBlockingVerificationFailedStepIds: ["2"],
       },
-    ]);
+    );
 
     expect(result).toEqual(["2"]);
   });
@@ -70,19 +78,29 @@ describe("TaskExecutor getWaivableFailedStepIdsAtCompletion", () => {
   });
 
   it("falls back to heuristic verification detection when step kind is missing", () => {
-    const result = getWaivableStepIds([
-      { id: "1", description: "Write response", status: "completed" },
-      { id: "2", description: "Verify: check final response", status: "failed" },
-    ]);
+    const result = getWaivableStepIds(
+      [
+        { id: "1", description: "Write response", status: "completed" },
+        { id: "2", description: "Verify: check final response", status: "failed" },
+      ],
+      {
+        nonBlockingVerificationFailedStepIds: ["2"],
+      },
+    );
 
     expect(result).toEqual(["2"]);
   });
 
   it("treats verify-described steps as waivable even when planner kind is primary", () => {
-    const result = getWaivableStepIds([
-      { id: "1", description: "Write response", status: "completed", kind: "primary" },
-      { id: "2", description: "Verify: run final checks", status: "failed", kind: "primary" },
-    ]);
+    const result = getWaivableStepIds(
+      [
+        { id: "1", description: "Write response", status: "completed", kind: "primary" },
+        { id: "2", description: "Verify: run final checks", status: "failed", kind: "primary" },
+      ],
+      {
+        nonBlockingVerificationFailedStepIds: ["2"],
+      },
+    );
 
     expect(result).toEqual(["2"]);
   });
@@ -117,7 +135,7 @@ describe("TaskExecutor getWaivableFailedStepIdsAtCompletion", () => {
     expect(result).toEqual([]);
   });
 
-  it("waives non-mutation failed steps when executePlan marked completion-with-warnings", () => {
+  it("waives only the budget-constrained non-mutation failure in mixed-failure plans", () => {
     const result = getWaivableStepIds(
       [
         { id: "1", description: "Collect Reddit findings", status: "failed", kind: "primary" },
@@ -132,12 +150,12 @@ describe("TaskExecutor getWaivableFailedStepIdsAtCompletion", () => {
         },
       ],
       {
-        planCompletedEffectively: true,
+        budgetConstrainedFailedStepIds: ["1"],
+        nonBlockingVerificationFailedStepIds: ["4"],
       },
     );
 
-    expect(result).toEqual(expect.arrayContaining(["1", "4"]));
-    expect(result).toHaveLength(2);
+    expect(result).toEqual(["1"]);
   });
 
   it("does not waive mutation-required failures even in completion-with-warnings mode", () => {
@@ -293,13 +311,13 @@ describe("TaskExecutor verification terminal status mapping", () => {
     (TaskExecutor as Any).prototype.finalizeTaskBestEffort.call(executor, "Mixed waiver summary");
 
     expect(executor.task.terminalStatus).toBe("partial_success");
-    expect(executor.task.failureClass).toBe("contract_error");
+    expect(executor.task.failureClass).toBe("optional_enrichment");
     expect(executor.daemon.completeTask).toHaveBeenCalledWith(
       "task-1",
       "Mixed waiver summary",
       expect.objectContaining({
         terminalStatus: "partial_success",
-        failureClass: "contract_error",
+        failureClass: "optional_enrichment",
       }),
     );
   });

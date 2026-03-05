@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  descriptionHasChecklistReportCue,
+  descriptionHasWriteIntent,
   extractArtifactPathCandidates,
   isArtifactPathLikeToken,
   isLikelyCommandSnippet,
@@ -34,5 +36,39 @@ describe("step-contract token classification", () => {
     expect(isArtifactPathLikeToken("scripts/main.js")).toBe(true);
     expect(isArtifactPathLikeToken("index.html")).toBe(true);
     expect(isArtifactPathLikeToken("python3 -m http.server")).toBe(false);
+  });
+});
+
+describe("step-contract write intent", () => {
+  it("does not treat generic make phrasing as write intent without artifact cues", () => {
+    expect(
+      descriptionHasWriteIntent(
+        "Make a recommendation for the rollout approach and explain tradeoffs.",
+      ),
+    ).toBe(false);
+  });
+
+  it("treats lock/define/set style artifact directives as write intent", () => {
+    expect(
+      descriptionHasWriteIntent(
+        "Lock requirements in /Users/mesut/Desktop/linux/coworkos/requirements.md with distro defaults.",
+      ),
+    ).toBe(true);
+  });
+
+  it("does not treat output naming-only phrasing as write intent", () => {
+    expect(
+      descriptionHasWriteIntent(
+        "Set research window and define output file name daily-ai-agent-trends-2026-03-03.md.",
+      ),
+    ).toBe(false);
+  });
+
+  it("recognizes checklist/report phrasing cues for verification-mode policy decisions", () => {
+    expect(
+      descriptionHasChecklistReportCue(
+        "Verification step: run final editorial checklist in newsletter/weekly/YYYY-WW/final-checklist.md",
+      ),
+    ).toBe(true);
   });
 });

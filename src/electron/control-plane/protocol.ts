@@ -312,6 +312,49 @@ export const Methods = {
   ACP_TASK_LIST: "acp.task.list",
   ACP_TASK_CANCEL: "acp.task.cancel",
 
+  // Company operations
+  COMPANY_LIST: "company.list",
+  COMPANY_GET: "company.get",
+  COMPANY_UPDATE: "company.update",
+  COMPANY_TEMPLATE_EXPORT: "company.template.export",
+  COMPANY_TEMPLATE_IMPORT: "company.template.import",
+
+  // Goal operations
+  GOAL_LIST: "goal.list",
+  GOAL_GET: "goal.get",
+  GOAL_CREATE: "goal.create",
+  GOAL_UPDATE: "goal.update",
+
+  // Project operations
+  PROJECT_LIST: "project.list",
+  PROJECT_GET: "project.get",
+  PROJECT_CREATE: "project.create",
+  PROJECT_UPDATE: "project.update",
+  PROJECT_WORKSPACE_LIST: "project.workspace.list",
+  PROJECT_WORKSPACE_LINK: "project.workspace.link",
+  PROJECT_WORKSPACE_UNLINK: "project.workspace.unlink",
+  PROJECT_WORKSPACE_SET_PRIMARY: "project.workspace.setPrimary",
+
+  // Issue operations
+  ISSUE_LIST: "issue.list",
+  ISSUE_GET: "issue.get",
+  ISSUE_CREATE: "issue.create",
+  ISSUE_UPDATE: "issue.update",
+  ISSUE_COMMENT_CREATE: "issue.comment.create",
+  ISSUE_COMMENT_LIST: "issue.comment.list",
+  ISSUE_CHECKOUT: "issue.checkout",
+  ISSUE_RELEASE: "issue.release",
+
+  // Run operations
+  RUN_LIST: "run.list",
+  RUN_GET: "run.get",
+  RUN_EVENTS: "run.events",
+
+  // Cost operations
+  COST_SUMMARY: "cost.summary",
+  COST_BY_AGENT: "cost.byAgent",
+  COST_BY_PROJECT: "cost.byProject",
+
   // Canvas operations (cross-device rendering)
   CANVAS_LIST: "canvas.list",
   CANVAS_GET: "canvas.get",

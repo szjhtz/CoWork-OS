@@ -487,6 +487,7 @@ describe("TaskExecutor executeStep failure handling", () => {
       [
         toolUseResponse("web_search", { query: "first blocked call" }),
         toolUseResponse("web_search", { query: "second blocked call" }),
+        toolUseResponse("web_search", { query: "third blocked call" }),
       ],
       {},
     );

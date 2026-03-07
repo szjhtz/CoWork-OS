@@ -56,17 +56,22 @@ export const LLM_TIMEOUT_MS = 2 * 60 * 1000;
 // only occur for unusually massive documents (>25K words).
 export const STEP_TIMEOUT_MS = 15 * 60 * 1000;
 
-// Per-step timeout for deep work mode (30 minutes).
+// Per-step timeout for deep work mode (45 minutes; raised from 30 min).
 // Deep work tasks are long-running autonomous runs that may involve
 // complex multi-step operations, web research for error recovery,
-// and iterative problem-solving cycles.
-export const DEEP_WORK_STEP_TIMEOUT_MS = 30 * 60 * 1000;
+// and iterative problem-solving cycles. The previous 30-min cap was
+// prematurely aborting large document generation and full-repo analysis steps.
+export const DEEP_WORK_STEP_TIMEOUT_MS = 45 * 60 * 1000;
 
 // Default per-tool execution timeout (overrideable per tool)
 export const TOOL_TIMEOUT_MS = 30 * 1000;
 
-// Maximum consecutive failures for the same tool before giving up
-export const MAX_TOOL_FAILURES = 2;
+// Maximum consecutive failures for the same tool before giving up (raised from 2 → 5).
+// The previous limit of 2 was disabling tools too aggressively: transient network
+// errors, file-not-found during refactors, and flaky shell commands were permanently
+// disabling tools after a single retry. 5 consecutive failures remains a reliable
+// signal of a truly broken tool while tolerating normal intermittent errors.
+export const MAX_TOOL_FAILURES = 5;
 
 // Maximum total steps in a plan (including revisions) to prevent runaway execution
 export const MAX_TOTAL_STEPS = 20;
@@ -180,14 +185,14 @@ export const PRE_COMPACTION_FLUSH_MIN_TOKEN_DELTA = 250;
 // explicit limit on summary output. We cap summary output at 4096 tokens (≈ Claude's
 // default max output) which is enough for a thorough 9-section handoff summary.
 export const PROACTIVE_COMPACTION_THRESHOLD = 0.9;
-export const PROACTIVE_COMPACTION_TARGET = 0.5;
-export const COMPACTION_SUMMARY_MAX_OUTPUT_TOKENS = 4096;
+export const PROACTIVE_COMPACTION_TARGET = 0.55;
+export const COMPACTION_SUMMARY_MAX_OUTPUT_TOKENS = 6144;
 export const COMPACTION_SUMMARY_MIN_OUTPUT_TOKENS = 500;
-export const COMPACTION_SUMMARY_MAX_INPUT_CHARS = 60000;
-export const COMPACTION_USER_MSG_CLAMP = 3000;
-export const COMPACTION_ASSISTANT_TEXT_CLAMP = 1500;
-export const COMPACTION_TOOL_USE_CLAMP = 800;
-export const COMPACTION_TOOL_RESULT_CLAMP = 1200;
+export const COMPACTION_SUMMARY_MAX_INPUT_CHARS = 90000;
+export const COMPACTION_USER_MSG_CLAMP = 4000;
+export const COMPACTION_ASSISTANT_TEXT_CLAMP = 2500;
+export const COMPACTION_TOOL_USE_CLAMP = 1200;
+export const COMPACTION_TOOL_RESULT_CLAMP = 2000;
 
 // ===== Error Classification Functions =====
 
@@ -866,17 +871,21 @@ export class ToolFailureTracker {
   // Separate tracker for input-dependent errors (higher threshold before disabling)
   private inputDependentFailures: Map<string, { count: number; lastError: string }> = new Map();
   private disabledTools: Map<string, { disabledAt: number; reason: string }> = new Map();
-  private readonly cooldownMs: number = 5 * 60 * 1000; // 5 minutes cooldown
+  private readonly cooldownMs: number = 2 * 60 * 1000; // 2 minutes cooldown
   // Higher threshold for input-dependent errors since LLM might eventually get it right
-  private readonly maxInputDependentFailures: number = 4;
+  private readonly maxInputDependentFailures: number = 8;
 
   private getMaxInputDependentFailures(toolName: string): number {
     // AppleScript often needs a few iterative syntax/quoting fixes before succeeding.
     if (toolName === "run_applescript") {
-      return 8;
+      return 12;
     }
     if (toolName.startsWith("browser_")) {
-      return 6;
+      return 10;
+    }
+    // Shell commands need iteration room for install/path/env fixes.
+    if (toolName === "run_command") {
+      return 10;
     }
     return this.maxInputDependentFailures;
   }
@@ -998,6 +1007,21 @@ export class ToolFailureTracker {
   }
 
   /**
+   * Get the names of all currently disabled tools.
+   */
+  getDisabledToolNames(): string[] {
+    // Clean up expired cooldowns first
+    const now = Date.now();
+    for (const [name, info] of this.disabledTools.entries()) {
+      if (now - info.disabledAt >= this.cooldownMs) {
+        this.disabledTools.delete(name);
+        this.failures.delete(name);
+      }
+    }
+    return Array.from(this.disabledTools.keys());
+  }
+
+  /**
    * Get the last error for a tool with guidance for alternative approaches
    */
   getLastError(toolName: string): string | undefined {
@@ -1021,6 +1045,19 @@ export class ToolFailureTracker {
       }
       if (/timed out/i.test(error)) {
         return "SUGGESTION: Break long shell operations into smaller AppleScript calls, then verify output incrementally instead of running a long installer/build in one script.";
+      }
+    }
+
+    // Shell command failures - distinguish command errors from tool errors
+    if (toolName === "run_command") {
+      if (/command not found|not found|No such file or directory/i.test(error)) {
+        return "SUGGESTION: The command doesn't exist. Try: (1) check if the package needs to be installed first, (2) use the full path to the executable, or (3) use a different command/tool.";
+      }
+      if (/permission denied|EACCES/i.test(error)) {
+        return "SUGGESTION: Permission denied. Try: (1) checking file permissions, (2) writing a script file and running it, or (3) using a different approach.";
+      }
+      if (/exit code [1-9]|non-zero exit|exited with/i.test(error)) {
+        return "SUGGESTION: The command ran but failed (non-zero exit). This is the command itself failing (normal during development), not a tool failure. Read the error output carefully, fix the underlying issue, and retry.";
       }
     }
 

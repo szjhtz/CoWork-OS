@@ -156,7 +156,7 @@ describe("ToolFailureTracker browser HTTP status handling", () => {
   it("treats browser HTTP status failures as input-dependent (no immediate disable)", () => {
     const tracker = new ToolFailureTracker();
 
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 9; i++) {
       expect(tracker.recordFailure("browser_navigate", "Navigation failed with HTTP 403")).toBe(
         false,
       );
@@ -191,7 +191,7 @@ describe("ToolFailureTracker browser HTTP status handling", () => {
   it("treats missing-module runtime errors as input-dependent before disabling monty_run", () => {
     const tracker = new ToolFailureTracker();
 
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 7; i++) {
       expect(
         tracker.recordFailure("monty_run", "ModuleNotFoundError: No module named 'datetime'"),
       ).toBe(false);

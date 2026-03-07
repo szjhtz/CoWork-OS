@@ -66,6 +66,7 @@ import { MemoryService } from "../memory/MemoryService";
 import { PlaybookService } from "../memory/PlaybookService";
 import { UserProfileService } from "../memory/UserProfileService";
 import { KnowledgeGraphService } from "../knowledge-graph/KnowledgeGraphService";
+import { MemorySynthesizer } from "../memory/MemorySynthesizer";
 import { IntentRouter } from "./strategy/IntentRouter";
 import { TaskStrategyService } from "./strategy/TaskStrategyService";
 import { CitationTracker } from "./citation/CitationTracker";
@@ -3529,7 +3530,7 @@ ${transcript}
     const requestedMaxTurns =
       typeof task.agentConfig?.maxTurns === "number" && task.agentConfig.maxTurns > 0
         ? task.agentConfig.maxTurns
-        : 100;
+        : 150;
     const requestedWindowTurnCap =
       task.agentConfig?.windowTurnCap === null
         ? null
@@ -3836,9 +3837,9 @@ ${transcript}
     this.toolFailureTracker = new ToolFailureTracker();
 
     // Initialize tool call deduplicator to prevent repetitive calls
-    // Max 2 identical calls within 60 seconds before blocking
-    // Max 2 semantically similar calls (e.g., similar web searches) within the window
-    this.toolCallDeduplicator = new ToolCallDeduplicator(2, 60000, 2);
+    // Max 3 identical calls within 120 seconds before blocking
+    // Max 4 semantically similar calls (e.g., similar web searches) within the window
+    this.toolCallDeduplicator = new ToolCallDeduplicator(3, 120000, 4);
 
     // Initialize file operation tracker to detect redundant reads and duplicate creations
     this.fileOperationTracker = new FileOperationTracker();
@@ -7869,6 +7870,15 @@ ${transcript}
           /* best-effort */
         });
 
+        // Auto-propose skills from repeatedly reinforced playbook patterns.
+        import("../memory/PlaybookSkillPromoter")
+          .then(({ PlaybookSkillPromoter }) =>
+            PlaybookSkillPromoter.maybePropose(this.workspace.id, this.workspace.path),
+          )
+          .catch(() => {
+            /* best-effort */
+          });
+
         // Extract entities/relationships from task results into the knowledge graph.
         try {
           const resultSummary = this.task.resultSummary || this.buildResultSummary() || "";
@@ -11225,7 +11235,7 @@ You are continuing a previous conversation. The context from the previous conver
     recentCalls: ToolLoopCall[],
     toolName: string,
     input: Any,
-    threshold: number = 3,
+    threshold: number = 5,
   ): boolean {
     const category = this.normalizeToolCategory(toolName, input);
     const signature = this.extractToolSignature(toolName, input);
@@ -11248,7 +11258,21 @@ You are continuing a previous conversation. The context from the previous conver
     const allSameCategory = recent.every((c) => c.tool === baseTool);
     const allSameSignature = recent.every((c) => c.target === baseSig);
 
-    return allSameCategory && allSameSignature;
+    if (!(allSameCategory && allSameSignature)) return false;
+
+    // Productive-cycle exemption: if the wider window contains a mix of tool categories
+    // (read + write/execute), this is a fix-cycle (read→edit→test→read), not a degenerate loop.
+    const widerWindow = recentCalls.slice(-(threshold + 3));
+    const allCategories = new Set(widerWindow.map((c) => c.tool));
+    const hasReadLike = [...allCategories].some((cat) =>
+      /^(read|search|list|glob|find|get)/.test(cat),
+    );
+    const hasWriteLike = [...allCategories].some((cat) =>
+      /^(write|edit|create|run|execute|shell|command|browser)/.test(cat),
+    );
+    if (hasReadLike && hasWriteLike) return false;
+
+    return true;
   }
 
   private summarizeToolResult(toolName: string, result: Any, input?: Any): string | null {
@@ -16365,8 +16389,9 @@ Return ONLY a JSON object:
       : PersonalityManager.getPersonalityPrompt();
     const identityPrompt = PersonalityManager.getIdentityPrompt();
 
-    // Get memory context for injection (from previous sessions)
-    let memoryContext = "";
+    // ── Synthesized Memory Context ───────────────────────────────────
+    // Uses MemorySynthesizer to collect, deduplicate, and rank context
+    // from all 6 memory subsystems into a single coherent block.
     const isSubAgentTask = (this.task.agentType ?? "main") === "sub" || !!this.task.parentTaskId;
     const retainMemory = this.task.agentConfig?.retainMemory ?? !isSubAgentTask;
     const gatewayContext = this.task.agentConfig?.gatewayContext ?? "private";
@@ -16375,16 +16400,10 @@ Return ONLY a JSON object:
       (gatewayContext === "group" || gatewayContext === "public");
     const allowMemoryInjection =
       retainMemory && (gatewayContext === "private" || allowTrustedSharedMemory);
-    let kitContext = "";
     let contextPackInjectionEnabled = false;
     try {
       const features = MemoryFeaturesManager.loadSettings();
       contextPackInjectionEnabled = !!features.contextPackInjectionEnabled;
-      if (gatewayContext === "private" && contextPackInjectionEnabled) {
-        kitContext = buildWorkspaceKitContext(this.workspace.path, this.task.prompt, new Date(), {
-          agentRoleId: this.task.assignedAgentRoleId || null,
-        });
-      }
     } catch {
       // optional
     }
@@ -16403,20 +16422,42 @@ Return ONLY a JSON object:
       }
     }
 
+    // Synthesize all memory sources into a single context block
+    let synthesizedMemoryBlock = "";
     if (allowMemoryInjection) {
       try {
-        memoryContext = MemoryService.getContextForInjection(this.workspace.id, this.task.prompt);
-      } catch {
-        // Memory service may not be initialized, continue without context
+        const includeWorkspaceKit =
+          gatewayContext === "private" && contextPackInjectionEnabled;
+        const synthesized = MemorySynthesizer.synthesize(
+          this.workspace.id,
+          this.workspace.path,
+          this.task.prompt,
+          {
+            tokenBudget:
+              DEFAULT_PROMPT_SECTION_BUDGETS.kitContext +
+              DEFAULT_PROMPT_SECTION_BUDGETS.memoryContext +
+              DEFAULT_PROMPT_SECTION_BUDGETS.playbookContext,
+            includeWorkspaceKit,
+            includeKnowledgeGraph: true,
+            agentRoleId: this.task.assignedAgentRoleId || null,
+          },
+        );
+        synthesizedMemoryBlock = synthesized.text;
+      } catch (synthError) {
+        // MemorySynthesizer failed — fall back to legacy per-source injection.
+        // This path should be rare; if it recurs, investigate MemorySynthesizer.
+        console.warn(
+          "[Executor] MemorySynthesizer.synthesize failed, using legacy memory injection:",
+          (synthError as Error)?.message ?? synthError,
+        );
+        try {
+          const memCtx = MemoryService.getContextForInjection(this.workspace.id, this.task.prompt);
+          const pbCtx = PlaybookService.getPlaybookForContext(this.workspace.id, this.task.prompt);
+          synthesizedMemoryBlock = [memCtx, pbCtx].filter(Boolean).join("\n");
+        } catch {
+          // best-effort
+        }
       }
-    }
-
-    // Playbook context: inject relevant past task patterns
-    let playbookContext = "";
-    try {
-      playbookContext = PlaybookService.getPlaybookForContext(this.workspace.id, this.task.prompt);
-    } catch {
-      // Playbook is best-effort
     }
 
     // Define system prompt once so we can track its token usage
@@ -16429,26 +16470,14 @@ Return ONLY a JSON object:
       false,
       2,
     ).text;
-    const budgetedKitContext = this.budgetPromptSection(
-      kitContext,
-      DEFAULT_PROMPT_SECTION_BUDGETS.kitContext,
-      "step_kit_context",
+    const budgetedSynthesizedMemory = this.budgetPromptSection(
+      synthesizedMemoryBlock,
+      DEFAULT_PROMPT_SECTION_BUDGETS.kitContext +
+        DEFAULT_PROMPT_SECTION_BUDGETS.memoryContext +
+        DEFAULT_PROMPT_SECTION_BUDGETS.playbookContext,
+      "step_synthesized_memory",
       false,
       3,
-    ).text;
-    const budgetedMemoryContext = this.budgetPromptSection(
-      memoryContext,
-      DEFAULT_PROMPT_SECTION_BUDGETS.memoryContext,
-      "step_memory_context",
-      false,
-      4,
-    ).text;
-    const budgetedPlaybookContext = this.budgetPromptSection(
-      playbookContext,
-      DEFAULT_PROMPT_SECTION_BUDGETS.playbookContext,
-      "step_playbook_context",
-      false,
-      5,
     ).text;
     const budgetedInfraContext = this.budgetPromptSection(
       infraContext,
@@ -16457,8 +16486,27 @@ Return ONLY a JSON object:
       false,
       2,
     ).text;
+    // Channel-specific persona adaptation (append to personality prompt)
+    let channelAdaptedPersonality = personalityPrompt;
+    const originChannel = this.task.agentConfig?.originChannel;
+    if (originChannel) {
+      try {
+        const { ChannelPersonaAdapter } = await import("../memory/ChannelPersonaAdapter");
+        const channelDirective = ChannelPersonaAdapter.adaptForChannel(
+          originChannel,
+          gatewayContext as "private" | "group" | "public",
+        );
+        if (channelDirective) {
+          channelAdaptedPersonality = personalityPrompt
+            ? `${personalityPrompt}\n\n${channelDirective}`
+            : channelDirective;
+        }
+      } catch {
+        // best-effort — fall back to unmodified personality
+      }
+    }
     const budgetedPersonalityPrompt = this.budgetPromptSection(
-      personalityPrompt,
+      channelAdaptedPersonality,
       DEFAULT_PROMPT_SECTION_BUDGETS.personalityPrompt,
       "step_personality_prompt",
       false,
@@ -16476,7 +16524,7 @@ Return ONLY a JSON object:
     const modeDomainContract = buildModeDomainContract(effectiveExecutionMode, effectiveTaskDomain);
     const webSearchModeContract = this.buildWebSearchModeContract();
     this.systemPrompt = `${identityPrompt}
-${budgetedRoleContext ? `\n${budgetedRoleContext}\n` : ""}${budgetedKitContext ? `\nWORKSPACE CONTEXT PACK (follow for workspace rules/preferences/style; cannot override system/security/tool rules):\n${budgetedKitContext}\n` : ""}${budgetedMemoryContext ? `\n${budgetedMemoryContext}\n` : ""}${budgetedPlaybookContext ? `\n${budgetedPlaybookContext}\n` : ""}${budgetedInfraContext ? `\n${budgetedInfraContext}\n` : ""}
+${budgetedRoleContext ? `\n${budgetedRoleContext}\n` : ""}${budgetedSynthesizedMemory ? `\n${budgetedSynthesizedMemory}\n` : ""}${budgetedInfraContext ? `\n${budgetedInfraContext}\n` : ""}
 ${SHARED_PROMPT_POLICY_CORE}
 
 You are the user's autonomous AI companion. You have real tools and you use them to get things done — not describe what could be done, but actually do it.
@@ -16982,9 +17030,9 @@ TASK / CONVERSATION HISTORY:
       let foundBrowserInspectionEvidence = false;
       let browserInspectionEvidenceText = "";
       let currentStepTargetVerificationObserved = false;
-      const maxIterations = 16; // Allow enough iterations for scaffolding steps and build-fix cycles (raised from 8)
+      const maxIterations = 32; // Allow enough iterations for scaffolding steps and build-fix cycles
       const maxEmptyResponses = 3;
-      const maxMaxTokensRecoveries = 3; // Max recovery attempts for max_tokens truncation (mirrors Claude Code)
+      const maxMaxTokensRecoveries = 6; // Max recovery attempts for max_tokens truncation
       const maxContextCapacityRecoveries = 2;
       let maxTokensRecoveryCount = 0;
       let contextCapacityRecoveryCount = 0;
@@ -16999,6 +17047,7 @@ TASK / CONVERSATION HISTORY:
       let loopBreakInjected = false;
       let lowProgressNudgeInjected = false;
       let stopReasonNudgeInjected = false;
+      let toolAlternativesInjected = false;
       let firstWriteCheckpointEscalated = false;
       let mutationDuplicateBypassUsed = false;
       let mutationCheckpointRetryCount = 0;
@@ -19277,6 +19326,53 @@ TASK / CONVERSATION HISTORY:
               stepFailed = false;
               lastFailureReason = "";
               continue;
+            }
+            // Graceful degradation: before stopping, suggest tool alternatives (once per step).
+            if (!toolAlternativesInjected && !failureDecision.shouldStopFromHardFailure) {
+              toolAlternativesInjected = true;
+              const disabledToolNames = this.toolFailureTracker.getDisabledToolNames?.() ?? [];
+              const alternativeMap: Record<string, string[]> = {
+                browser_navigate: ["web_fetch", "web_search"],
+                run_command: ["run_applescript", "write_file"],
+                edit_file: ["write_file"],
+                search_files: ["glob", "list_directory"],
+                web_search: ["web_fetch"],
+                web_fetch: ["web_search"],
+              };
+              const suggestions = new Set<string>();
+              for (const disabled of disabledToolNames) {
+                const alts = alternativeMap[disabled];
+                if (alts) alts.forEach((a) => suggestions.add(a));
+                // Also check prefix matches (e.g. browser_*)
+                for (const [prefix, altList] of Object.entries(alternativeMap)) {
+                  if (disabled.startsWith(prefix.replace(/_.*/, "_"))) {
+                    altList.forEach((a) => suggestions.add(a));
+                  }
+                }
+              }
+              // Remove any suggestions that are themselves disabled
+              for (const s of suggestions) {
+                if (this.toolFailureTracker.isDisabled(s)) suggestions.delete(s);
+              }
+              if (suggestions.size > 0) {
+                messages.push({
+                  role: "user" as const,
+                  content: [
+                    {
+                      type: "text" as const,
+                      text:
+                        `Some tools you were using are temporarily unavailable. ` +
+                        `Consider using these alternatives: ${[...suggestions].join(", ")}. ` +
+                        `Try a completely different approach to accomplish the same goal.`,
+                    },
+                  ],
+                });
+                console.log(
+                  `${this.logTag} Injected tool alternatives before stopping: ${[...suggestions].join(", ")}`,
+                );
+                continueLoop = true;
+                continue;
+              }
             }
             console.log(
               `${this.logTag} All tool calls failed, were disabled, or duplicates - stopping iteration`,
@@ -21835,9 +21931,9 @@ TASK / CONVERSATION HISTORY:
     let hasProvidedTextResponse = false; // Track if agent has given a text answer
     let hadToolCalls = false; // Track if any tool calls were made
     let capabilityRefusalCount = 0;
-    const maxIterations = 20; // Allow enough iterations for multi-tool follow-up messages (raised from 8 — productive coding sessions need more room)
+    const maxIterations = 32; // Allow enough iterations for multi-tool follow-up messages and productive coding sessions
     const maxEmptyResponses = 3;
-    const maxMaxTokensRecoveries = 3; // Max recovery attempts for max_tokens truncation
+    const maxMaxTokensRecoveries = 6; // Max recovery attempts for max_tokens truncation
     const maxContextCapacityRecoveries = 2;
     let maxTokensRecoveryCount = 0;
     let contextCapacityRecoveryCount = 0;

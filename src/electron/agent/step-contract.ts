@@ -209,6 +209,14 @@ export function descriptionHasReadOnlyIntent(text: string): boolean {
   );
 }
 
+export function descriptionHasDiscoveryIntent(text: string): boolean {
+  const desc = String(text || "").toLowerCase();
+  return (
+    /\b(locate|find|discover|identify|inventory|catalog|survey|enumerate|scan|detect)\b/.test(desc) ||
+    /\bclarify\s+scope\b/.test(desc)
+  ) && !descriptionHasWriteIntent(desc);
+}
+
 export function descriptionHasSummaryCue(text: string): boolean {
   const desc = String(text || "").toLowerCase();
   return /\b(compile|finalize|package|bundle|deliver|report|summary|summarize)\b/.test(desc);

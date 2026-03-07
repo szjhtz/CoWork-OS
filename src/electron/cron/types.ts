@@ -96,6 +96,8 @@ export interface CronJob {
   name: string;
   description?: string;
   enabled: boolean;
+  shellAccess?: boolean;
+  allowUserInput?: boolean;
   deleteAfterRun?: boolean; // For one-shot jobs
   createdAtMs: number;
   updatedAtMs: number;

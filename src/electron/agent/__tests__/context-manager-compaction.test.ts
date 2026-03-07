@@ -123,9 +123,10 @@ describe("ContextManager active-file path retention", () => {
       msgWithPath("assistant", filePath),                // index 1 — should be retained
     ];
 
-    // Bulk filler to force compaction
+    // Bulk filler to force compaction — use 1000 chars (~250 tokens) each so
+    // 35 × 250 = 8,750 tokens, which exceeds the gpt-3.5-turbo 8,000-token available budget.
     for (let i = 0; i < 35; i++) {
-      messages.push(fillerMsg(i % 2 === 0 ? "assistant" : "user", 600));
+      messages.push(fillerMsg(i % 2 === 0 ? "assistant" : "user", 1000));
     }
 
     // Recent turns that also reference the same file (within ACTIVE_PATH_CONTEXT_WINDOW)
@@ -159,9 +160,9 @@ describe("ContextManager active-file path retention", () => {
       msgWithPath("assistant", staleFile),                    // index 1 — stale, should be evicted
     ];
 
-    // Bulk filler
+    // Bulk filler — 1000 chars each to exceed the 8,000-token available budget
     for (let i = 0; i < 35; i++) {
-      messages.push(fillerMsg(i % 2 === 0 ? "assistant" : "user", 600));
+      messages.push(fillerMsg(i % 2 === 0 ? "assistant" : "user", 1000));
     }
 
     // Recent turns reference only the new active file

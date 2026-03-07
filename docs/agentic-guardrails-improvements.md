@@ -305,12 +305,74 @@ Four tests were updated to match the new thresholds:
 
 ---
 
+## Phase 7 — False-Positive Source Validation Guard (Post-deployment fix, 2026-03-07)
+
+### Root Cause
+
+A build task ("Create an app about breaking news references") failed at finalization with:
+
+> `Task missing source validation: release/funding claims require web_fetch sources with explicit publish dates.`
+
+The failure chain:
+1. Task prompt contained "breaking news" → `taskLikelyNeedsWebEvidence()` returned `true`
+2. The final agent response included "announcement/launch/release" wording — from HTML seed data the agent had just **written into the app** — not from real-world research claims
+3. The agent had not called `web_fetch` (correctly — it was building an app, not fetching news)
+4. `requiresStrictResearchClaimValidation()` returned `true` → finalization threw
+
+**Two complementary fixes applied in `src/electron/agent/executor.ts`:**
+
+### Fix 7a: Build-task escape hatch in `requiresStrictResearchClaimValidation`
+
+```typescript
+// Before
+private requiresStrictResearchClaimValidation(candidate: string): boolean {
+  if (!this.taskLikelyNeedsWebEvidence()) return false;
+  return this.responseHasHighRiskResearchClaim(candidate);
+}
+
+// After
+private requiresStrictResearchClaimValidation(candidate: string): boolean {
+  if (!this.taskLikelyNeedsWebEvidence()) return false;
+  // Build tasks that created files are not research tasks — the output describes
+  // built artifacts, not factual claims about current events.
+  const createdFiles = this.fileOperationTracker?.getCreatedFiles?.() || [];
+  if (createdFiles.length > 0) return false;
+  return this.responseHasHighRiskResearchClaim(candidate);
+}
+```
+
+If the agent created any files during the task, it's a build task. Skip research claim validation.
+
+### Fix 7b: Build-intent signals in `taskLikelyNeedsWebEvidence`
+
+The method triggered on broad keywords like `"breaking"`, `"news"`, `"search"` even when the task was about *building a tool related to* those topics, not *fetching* them. Added build-intent counterweight:
+
+```typescript
+private taskLikelyNeedsWebEvidence(): boolean {
+  const prompt = `${this.task.title}\n${this.task.prompt}`.toLowerCase();
+  const researchSignals = ["news", "latest", "today", "trending", "breaking", ...];
+  if (!researchSignals.some((signal) => prompt.includes(signal))) return false;
+  // Build/creation tasks mentioning news-related keywords don't need web evidence.
+  const buildSignals = [
+    "create an app", "build an app", "make an app", "write an app",
+    "create a tool", "build a tool", "create a website", "build a website",
+    "implement", "develop an app", "develop a tool",
+  ];
+  if (buildSignals.some((signal) => prompt.includes(signal))) return false;
+  return true;
+}
+```
+
+This also prevents misleading step-context prompts (lines 16901–16909) from instructing the LLM to fetch news when it should be building something.
+
+---
+
 ## Files Modified
 
 | File | Nature of Changes |
 |---|---|
 | `src/electron/agent/executor-helpers.ts` | Circuit breaker constants, timeout, compaction constants, run_command guidance, `getDisabledToolNames()` |
-| `src/electron/agent/executor.ts` | Deduplicator params, iteration limits, detectToolLoop threshold + exemption, tool alternatives + graceful degradation |
+| `src/electron/agent/executor.ts` | Deduplicator params, iteration limits, detectToolLoop threshold + exemption, tool alternatives + graceful degradation, source-validation false-positive fix |
 | `src/electron/agent/completion-checks.ts` | Loop guardrail configs (3 presets), domain completion validation |
 | `src/electron/agent/progress-score-engine.ts` | Progress formula, new signals (read/search/tool), reduced penalties |
 | `src/electron/guardrails/guardrail-manager.ts` | Global limit defaults (7 constants) |
@@ -319,10 +381,11 @@ Four tests were updated to match the new thresholds:
 | `src/electron/agent/__tests__/executor-helpers-cache.test.ts` | Updated 2 threshold-dependent test loops |
 | `src/electron/agent/__tests__/executor-step-failures.test.ts` | Added third mock response to match new threshold |
 | `src/electron/agent/__tests__/completion-checks.test.ts` | Updated expected followUpLock values |
+| `src/electron/agent/__tests__/context-manager-compaction.test.ts` | Increased filler message size to exceed 8,000-token compaction threshold |
 
 ---
 
 ## Verification
 
-- **TypeScript:** `npx tsc --noEmit` — no errors
-- **Tests:** `npx vitest run src/electron/agent/__tests__/` — **609/609 passed**
+- **TypeScript:** `npx tsc --noEmit` — no errors (unrelated GuardrailSettings.tsx errors pre-existed)
+- **Tests:** `npx vitest run src/electron/agent/__tests__/` — **624/624 passed**

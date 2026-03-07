@@ -13403,7 +13403,7 @@ You are continuing a previous conversation. The context from the previous conver
 
   private taskLikelyNeedsWebEvidence(): boolean {
     const prompt = `${this.task.title}\n${this.task.prompt}`.toLowerCase();
-    const signals = [
+    const researchSignals = [
       "news",
       "latest",
       "today",
@@ -13414,7 +13414,24 @@ You are continuing a previous conversation. The context from the previous conver
       "headline",
       "current events",
     ];
-    return signals.some((signal) => prompt.includes(signal));
+    if (!researchSignals.some((signal) => prompt.includes(signal))) return false;
+    // Build/creation tasks mentioning news-related keywords don't need web evidence —
+    // they are building a tool about news, not fetching news itself.
+    const buildSignals = [
+      "create an app",
+      "build an app",
+      "make an app",
+      "write an app",
+      "create a tool",
+      "build a tool",
+      "create a website",
+      "build a website",
+      "implement",
+      "develop an app",
+      "develop a tool",
+    ];
+    if (buildSignals.some((signal) => prompt.includes(signal))) return false;
+    return true;
   }
 
   private taskRequiresTodayContext(): boolean {
@@ -13466,6 +13483,10 @@ You are continuing a previous conversation. The context from the previous conver
 
   private requiresStrictResearchClaimValidation(candidate: string): boolean {
     if (!this.taskLikelyNeedsWebEvidence()) return false;
+    // Build tasks that created files are not research tasks. The output describes
+    // built artifacts, not factual claims about current events, so skip the check.
+    const createdFiles = this.fileOperationTracker?.getCreatedFiles?.() || [];
+    if (createdFiles.length > 0) return false;
     return this.responseHasHighRiskResearchClaim(candidate);
   }
 

@@ -866,6 +866,28 @@ export function App() {
       const isSessionAutoApproval =
         event.type === "approval_requested" && sessionAutoApproveAllRef.current;
       const skipBlockedStateForAutoApproval = isAutoApprovalRequested || isSessionAutoApproval;
+      const payloadTerminalStatus =
+        typeof event.payload?.terminalStatus === "string" ? event.payload.terminalStatus : undefined;
+      const eventTerminalStatus =
+        payloadTerminalStatus !== undefined
+          ? payloadTerminalStatus
+          : event.type === "approval_requested" && !skipBlockedStateForAutoApproval
+            ? "awaiting_approval"
+            : event.type === "approval_denied" || event.type === "input_request_created"
+              ? "needs_user_action"
+              : event.type === "task_interrupted"
+                ? "resume_available"
+                : undefined;
+      const shouldClearTerminalStatus =
+        event.type === "approval_granted" ||
+        event.type === "task_resumed" ||
+        event.type === "input_request_resolved";
+      const payloadFailureClass =
+        typeof event.payload?.failureClass === "string" ? event.payload.failureClass : undefined;
+      const payloadBestKnownOutcome =
+        event.payload?.bestKnownOutcome && typeof event.payload.bestKnownOutcome === "object"
+          ? event.payload.bestKnownOutcome
+          : undefined;
       const isInputRequestResolutionEvent =
         event.type === "input_request_resolved" || event.type === "input_request_dismissed";
       const isTerminalInputResolution =
@@ -879,7 +901,17 @@ export function App() {
             if (isTerminalInputResolution && isTerminalTaskStatus(t.status)) {
               return t;
             }
-            return { ...t, status: newStatus };
+            return {
+              ...t,
+              status: newStatus,
+              ...(shouldClearTerminalStatus
+                ? { terminalStatus: undefined, failureClass: undefined }
+                : eventTerminalStatus !== undefined
+                  ? { terminalStatus: eventTerminalStatus }
+                  : {}),
+              ...(payloadFailureClass !== undefined ? { failureClass: payloadFailureClass } : {}),
+              ...(payloadBestKnownOutcome ? { bestKnownOutcome: payloadBestKnownOutcome } : {}),
+            };
           }),
         );
       }

@@ -940,8 +940,9 @@ export interface Task {
   strategyLock?: boolean; // When true, do not re-route intent at runtime
   budgetProfile?: "balanced" | "strict" | "aggressive";
   // Execution result metadata (for partial success + diagnostics)
-  terminalStatus?: "ok" | "partial_success" | "needs_user_action" | "failed";
+  terminalStatus?: TaskTerminalStatus;
   failureClass?: StepFailureClass;
+  bestKnownOutcome?: TaskBestKnownOutcome;
   coreOutcome?: "ok" | "partial" | "failed";
   dependencyOutcome?: "healthy" | "degraded" | "down";
   failureDomains?: string[];
@@ -988,6 +989,14 @@ export interface Task {
   requestDepth?: number; // Nesting depth of the originating request
   billingCode?: string; // Billing/cost attribution code
 }
+
+export type TaskTerminalStatus =
+  | "ok"
+  | "partial_success"
+  | "needs_user_action"
+  | "awaiting_approval"
+  | "resume_available"
+  | "failed";
 
 export type StepFailureClass =
   | "budget_exhausted"
@@ -1148,6 +1157,17 @@ export interface TaskOutputSummary {
   primaryOutputPath?: string;
   outputCount: number;
   folders: string[];
+}
+
+export interface TaskBestKnownOutcome {
+  capturedAt: number;
+  resultSummary?: string;
+  outputSummary?: TaskOutputSummary;
+  completedStepIds?: string[];
+  blockingIssues?: string[];
+  terminalStatus?: TaskTerminalStatus;
+  failureClass?: StepFailureClass;
+  confidence?: "low" | "medium" | "high";
 }
 
 export interface TaskUsageTotals {

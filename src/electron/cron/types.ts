@@ -229,7 +229,14 @@ export interface CronServiceDeps {
         status: string;
         error?: string | null;
         resultSummary?: string | null;
-        terminalStatus?: "ok" | "partial_success" | "needs_user_action" | "failed" | null;
+        terminalStatus?:
+          | "ok"
+          | "partial_success"
+          | "needs_user_action"
+          | "awaiting_approval"
+          | "resume_available"
+          | "failed"
+          | null;
         failureClass?:
           | "budget_exhausted"
           | "tool_error"

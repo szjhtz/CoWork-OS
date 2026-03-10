@@ -39,6 +39,7 @@ export class AgentRoleRepository {
     const role: AgentRole = {
       id: uuidv4(),
       name: request.name,
+      companyId: request.companyId,
       displayName: request.displayName,
       description: request.description,
       icon: request.icon || "🤖",
@@ -65,18 +66,19 @@ export class AgentRoleRepository {
 
     const stmt = this.db.prepare(`
       INSERT INTO agent_roles (
-        id, name, display_name, description, icon, color,
+        id, name, company_id, display_name, description, icon, color,
         personality_id, model_key, provider_type, system_prompt,
         capabilities, tool_restrictions, is_system, is_active,
         sort_order, created_at, updated_at,
         autonomy_level, soul, heartbeat_enabled, heartbeat_interval_minutes,
         heartbeat_stagger_offset, heartbeat_status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     stmt.run(
       role.id,
       role.name,
+      role.companyId || null,
       role.displayName,
       role.description || null,
       role.icon,
@@ -141,6 +143,30 @@ export class AgentRoleRepository {
     return this.findAll(false);
   }
 
+  findByCompanyId(companyId: string | null, includeInactive = false): AgentRole[] {
+    if (companyId === null) {
+      const stmt = includeInactive
+        ? this.db.prepare(
+            "SELECT * FROM agent_roles WHERE company_id IS NULL ORDER BY sort_order ASC, created_at ASC",
+          )
+        : this.db.prepare(
+            "SELECT * FROM agent_roles WHERE company_id IS NULL AND is_active = 1 ORDER BY sort_order ASC, created_at ASC",
+          );
+      const rows = stmt.all() as Any[];
+      return rows.map((row) => this.mapRowToAgentRole(row));
+    }
+
+    const stmt = includeInactive
+      ? this.db.prepare(
+          "SELECT * FROM agent_roles WHERE company_id = ? ORDER BY sort_order ASC, created_at ASC",
+        )
+      : this.db.prepare(
+          "SELECT * FROM agent_roles WHERE company_id = ? AND is_active = 1 ORDER BY sort_order ASC, created_at ASC",
+        );
+    const rows = stmt.all(companyId) as Any[];
+    return rows.map((row) => this.mapRowToAgentRole(row));
+  }
+
   /**
    * Update an agent role
    */
@@ -161,6 +187,10 @@ export class AgentRoleRepository {
     if (request.displayName !== undefined) {
       fields.push("display_name = ?");
       values.push(request.displayName);
+    }
+    if (request.companyId !== undefined) {
+      fields.push("company_id = ?");
+      values.push(request.companyId);
     }
     if (request.description !== undefined) {
       fields.push("description = ?");
@@ -276,6 +306,7 @@ export class AgentRoleRepository {
       const role: AgentRole = {
         id: uuidv4(),
         ...defaultRole,
+        companyId: undefined,
         createdAt: now,
         updatedAt: now,
         // Ensure Mission Control fields have defaults
@@ -287,18 +318,19 @@ export class AgentRoleRepository {
 
       const stmt = this.db.prepare(`
         INSERT INTO agent_roles (
-          id, name, display_name, description, icon, color,
+          id, name, company_id, display_name, description, icon, color,
           personality_id, model_key, provider_type, system_prompt,
           capabilities, tool_restrictions, is_system, is_active,
           sort_order, created_at, updated_at,
           autonomy_level, heartbeat_enabled, heartbeat_interval_minutes,
           heartbeat_stagger_offset, heartbeat_status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       stmt.run(
         role.id,
         role.name,
+        role.companyId || null,
         role.displayName,
         role.description || null,
         role.icon,
@@ -355,6 +387,7 @@ export class AgentRoleRepository {
       const role: AgentRole = {
         id: uuidv4(),
         ...defaultRole,
+        companyId: undefined,
         createdAt: now,
         updatedAt: now,
         heartbeatEnabled: false,
@@ -365,18 +398,19 @@ export class AgentRoleRepository {
 
       const stmt = this.db.prepare(`
         INSERT INTO agent_roles (
-          id, name, display_name, description, icon, color,
+          id, name, company_id, display_name, description, icon, color,
           personality_id, model_key, provider_type, system_prompt,
           capabilities, tool_restrictions, is_system, is_active,
           sort_order, created_at, updated_at,
           autonomy_level, heartbeat_enabled, heartbeat_interval_minutes,
           heartbeat_stagger_offset, heartbeat_status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       stmt.run(
         role.id,
         role.name,
+        role.companyId || null,
         role.displayName,
         role.description || null,
         role.icon,
@@ -417,6 +451,7 @@ export class AgentRoleRepository {
     return {
       id: row.id,
       name: row.name,
+      companyId: row.company_id || undefined,
       displayName: row.display_name,
       description: row.description || undefined,
       icon: row.icon || "🤖",

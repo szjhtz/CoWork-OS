@@ -132,7 +132,7 @@ describe("DailyBriefingService", () => {
 
   it("includes upcoming cron jobs", async () => {
     const deps = makeDeps({
-      getUpcomingJobs: () => [
+      getUpcomingJobs: (_workspaceId) => [
         { name: "Nightly backup", state: { nextRunAtMs: Date.now() + 3600000 } },
       ],
     });

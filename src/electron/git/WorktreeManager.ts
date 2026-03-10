@@ -8,6 +8,7 @@ import {
   DEFAULT_WORKTREE_SETTINGS,
   WorktreeInfo,
   MergeResult,
+  PullRequestResult,
 } from "../../shared/types";
 
 const WORKTREES_DIR = ".cowork-worktrees";
@@ -199,6 +200,43 @@ export class WorktreeManager {
     }
 
     return result;
+  }
+
+  /**
+   * Push a task branch and open or reuse a GitHub pull request.
+   */
+  async openPullRequest(
+    taskId: string,
+    options: { title: string; body: string },
+  ): Promise<PullRequestResult> {
+    try {
+      const info = this.worktreeInfoRepo.findByTaskId(taskId);
+      if (!info) {
+        return { success: false, error: `No worktree found for task ${taskId}` };
+      }
+
+      const hasChanges = await GitService.hasUncommittedChanges(info.worktreePath);
+      if (hasChanges) {
+        const settings = this.getSettings();
+        await GitService.commitAll(
+          info.worktreePath,
+          `${settings.commitMessagePrefix}Final changes before PR`,
+        );
+      }
+
+      await GitService.pushBranch(info.worktreePath, info.branchName);
+      return await GitService.createPullRequest(info.worktreePath, {
+        branchName: info.branchName,
+        baseBranch: info.baseBranch,
+        title: options.title,
+        body: options.body,
+      });
+    } catch (error: Any) {
+      return {
+        success: false,
+        error: error?.message || "Failed to open pull request",
+      };
+    }
   }
 
   /**

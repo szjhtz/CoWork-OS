@@ -238,6 +238,7 @@ export function configureLlmFromControlPlaneParams(params: unknown): {
   }
 
   LLMProviderFactory.saveSettings(updatedSettings);
-  LLMProviderFactory.clearCache();
+  // Note: do NOT call clearCache() here — saveSettings() already updates the cache.
+  // Calling clearCache() after would discard the update and keep the stale provider.
   return { llm: getControlPlaneLlmStatus() };
 }

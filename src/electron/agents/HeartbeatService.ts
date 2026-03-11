@@ -443,6 +443,11 @@ export class HeartbeatService extends EventEmitter {
                 ...buildAgentConfigFromAutonomyPolicy(resolveOperationalAutonomyPolicy(agent)),
                 allowUserInput: false,
                 gatewayContext: "private",
+                // Heartbeat tasks are planning/review work, not code execution.
+                // Lock the domain so the IntentRouter cannot infer "code" from workspace
+                // keywords (e.g. TypeScript mentions, backtick-formatted paths) and
+                // incorrectly require run_command evidence before marking steps complete.
+                taskDomain: "general",
               },
             },
           );

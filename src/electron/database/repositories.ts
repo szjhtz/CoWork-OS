@@ -284,6 +284,14 @@ export class TaskRepository {
     "riskLevel",
     "evalCaseId",
     "evalRunId",
+    // Control plane linkage fields
+    "issueId",
+    "heartbeatRunId",
+    "companyId",
+    "goalId",
+    "projectId",
+    "requestDepth",
+    "billingCode",
     // Git Worktree fields
     "worktreePath",
     "worktreeBranch",
@@ -615,6 +623,14 @@ export class TaskRepository {
       budgetUsage: row.budget_usage
         ? safeJsonParse(row.budget_usage, undefined, "task.budgetUsage")
         : undefined,
+      companyId: row.company_id || undefined,
+      goalId: row.goal_id || undefined,
+      projectId: row.project_id || undefined,
+      issueId: row.issue_id || undefined,
+      heartbeatRunId: row.heartbeat_run_id || undefined,
+      requestDepth:
+        typeof row.request_depth === "number" ? row.request_depth : undefined,
+      billingCode: row.billing_code || undefined,
     };
   }
 

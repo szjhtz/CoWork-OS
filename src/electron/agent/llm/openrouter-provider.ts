@@ -232,11 +232,23 @@ export class OpenRouterProvider implements LLMProvider {
     if (message.tool_calls) {
       for (const toolCall of message.tool_calls) {
         if (toolCall.type === "function") {
+          let input: Record<string, Any>;
+          try {
+            input =
+              typeof toolCall.function.arguments === "string"
+                ? JSON.parse(toolCall.function.arguments || "{}")
+                : (toolCall.function.arguments as Record<string, Any>) || {};
+          } catch (err) {
+            console.error("Failed to parse OpenRouter tool arguments:", toolCall.function.arguments, err);
+            throw new Error(
+              `OpenRouter tool call "${toolCall.function.name}" has malformed arguments: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
           content.push({
             type: "tool_use",
             id: toolCall.id,
             name: toolCall.function.name,
-            input: JSON.parse(toolCall.function.arguments || "{}"),
+            input,
           });
         }
       }

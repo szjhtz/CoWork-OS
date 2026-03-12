@@ -67,6 +67,47 @@ This will:
    - Show real-time progress in the timeline
    - Request approval before destructive changes
 
+## Orientation: Where The New Product Surfaces Live
+
+Once the app opens, the most important places to know are:
+
+- **Home**: quick launch plus recent sessions and recent automation activity
+- **Devices**: manage the local machine and saved remote CoWork nodes, run remote tasks, and inspect remote task history
+- **Settings > Automations**: Task Queue, Self-Improve, Scheduled Tasks, Webhooks, Event Triggers, and Daily Briefing
+- **Settings > Companies**: company shell setup, goals, projects, issues, planner state, and linked operators
+- **Mission Control**: company and operator monitoring, Kanban board, feed, and Ops view
+
+If you are just getting started, do not configure everything at once. Set up an LLM provider, run one local task, then add Devices, Automations, or Companies as needed.
+
+## Optional: Add A Remote Device
+
+Use this when you want CoWork OS to run tasks on another machine, such as a Mac mini or remote workstation.
+
+1. Start CoWork on the remote machine and enable the Control Plane.
+2. Decide how you will reach it:
+   - same LAN
+   - SSH tunnel
+   - Tailscale
+3. On your main machine, open the **Devices** tab.
+4. Click **Add new device**.
+5. Enter the gateway URL, token, display name, and purpose.
+6. Connect the device and confirm it appears in the device list.
+7. Select that device and run a small test task.
+
+After connection, you can browse remote workspaces, attach files from the remote machine, and inspect remote task history from the same Devices surface.
+
+## Optional: Turn On Automations
+
+Open **Settings > Automations** when you want CoWork OS to do background work without manually starting every task.
+
+Recommended order:
+
+1. **Task Queue**: confirm concurrency and timeout defaults.
+2. **Scheduled Tasks**: add one safe recurring task.
+3. **Daily Briefing**: enable a daily summary.
+4. **Event Triggers / Webhooks**: connect inbound automation only after you have a stable workspace and provider setup.
+5. **Self-Improve**: enable only on git-backed workspaces where worktrees are available.
+
 ## Zero-Human Company Quick Start
 
 If you want to use CoWork OS as a founder-operated autonomous company shell:

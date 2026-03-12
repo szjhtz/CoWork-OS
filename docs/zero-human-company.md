@@ -21,6 +21,7 @@ The zero-human-company workflow is a composition of existing CoWork OS subsystem
 - `Strategic Planner` turns goals and stalled work into managed issues
 - `Mission Control` lets you monitor agents, issues, runs, and tasks
 - `Self-Improve` can optionally run autonomous improvement experiments on git-backed workspaces
+- `Devices` can route execution to dedicated remote machines while the company graph and planner stay on the primary control surface
 
 Together, these create an operating loop where company goals become planner-managed issues, issues become tasks, and tasks are executed by role-specific agents with configurable autonomy.
 
@@ -101,6 +102,7 @@ Mission Control exposes the operating loop through:
 - company graph editing for goals, projects, and issues
 - linked operator visibility
 - direct handoff into company-scoped Digital Twins and Mission Control views
+- a stable human-facing source of truth before planner cycles or operator runs begin
 
 ---
 
@@ -127,6 +129,8 @@ The `Companies` tab is the setup and maintenance surface for the company graph. 
 - assign or unassign existing twins as company operators
 - jump directly into company-scoped Digital Twins or Mission Control
 
+In practice, `Settings > Companies` is now the first screen to open for company work. It is where you define the graph, confirm linked operators, and hand off into Mission Control after setup.
+
 ### Workspace Kit
 
 The ZHC setup depends heavily on `.cowork/` files. The workspace kit is the durable strategy and operating-memory layer for the company.
@@ -146,6 +150,15 @@ Mission Control is the operational cockpit:
 - issue inspection
 - run inspection
 - linked task navigation
+
+### Devices
+
+If your operator tasks need to run on another machine, use the Devices tab alongside the company workflow:
+
+- keep company planning and graph editing on the main machine
+- connect dedicated remotes for execution-heavy tasks
+- inspect remote task history without losing company context
+- attach files from remote workspaces when dispatching company tasks
 
 ### Self-Improve
 
@@ -353,6 +366,10 @@ Expected result:
 - linked tasks appear on the Mission Queue board
 - heartbeat agents begin surfacing work
 - issue runs and task timelines become visible
+
+Optional next step:
+
+- add a dedicated remote execution machine in **Devices** if you want company tasks to run away from the primary desktop while still being monitored from the same CoWork instance
 
 ### Recommended Team Recipe
 

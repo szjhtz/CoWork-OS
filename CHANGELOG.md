@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Managed Devices workspace**: new Devices tab for local and remote machine management with saved remote devices, per-device summaries, connection controls, task feed, remote task launching, and remote file picking for task attachments.
+- **Automation control center**: Settings now groups Task Queue, Self-Improve, Scheduled Tasks, Webhooks, Event Triggers, and Daily Briefing under a dedicated **Automations** section, and the home dashboard surfaces recent automation runs directly.
+- **Company ops surface expansion**: Companies, Digital Twins, and Mission Control now share company-linked operator context so founder-directed company workflows can move cleanly from setup to planning to execution.
+
+### Changed
+- **Self-improvement execution model**: the autonomous improvement loop now runs bounded single-lane campaigns by default, tracks staged progress (`preflight`, `reproducing`, `implementing`, `verifying`, `completed`), records provider-health state, and only promotes candidates that show reproduction, verification, and PR-readiness evidence.
+- **Improvement failure handling**: repeated provider or deterministic failures now trigger cooldowns, candidate parking, and explicit stop reasons instead of retrying indefinitely.
+- **Remote operations UX**: remote sessions now expose device-aware task history, remote workspace browsing, remote file attachment selection, and a clearer distinction between local and remote task views.
+
 ## [0.4.14] - 2026-03-07
 
 ### Added

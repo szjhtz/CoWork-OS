@@ -32,9 +32,13 @@ features:
     details: Local-first runtime with approvals, guardrails, and governance controls for production agent workflows.
   - title: 30+ LLM Providers
     details: Connect to Claude, GPT, Gemini, Ollama, and more. Bring your own keys, switch models per task.
-  - title: 14 Messaging Channels
+  - title: 15 Messaging Channels
     details: WhatsApp, Telegram, Discord, Slack, iMessage, Teams, and more. Chat with your AI from anywhere.
-  - title: 100+ Built-in Skills
+  - title: Managed Devices
+    details: Connect local and remote CoWork nodes, inspect device summaries, browse remote workspaces, and launch tasks against selected machines from one Devices tab.
+  - title: Automations
+    details: Task Queue, Self-Improve, Scheduled Tasks, Webhooks, Event Triggers, and Daily Briefing now live under one Automations operating surface.
+  - title: 139 Built-in Skills
     details: Document creation, web research, code generation, image analysis, and more. Extensible via custom skills and plugins.
   - title: Agent Teams
     details: Multi-agent collaboration with shared checklists, collaborative mode, multi-LLM synthesis, and performance reviews.

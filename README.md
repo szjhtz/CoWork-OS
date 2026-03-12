@@ -40,6 +40,8 @@
 - **139 built-in skills** — Documents, code review, web search, image generation, cloud integrations, game development, mobile development, financial analysis, infrastructure-as-code, and more.
 - **Digital Twin Personas** — Pre-built AI twins for every role (engineer, manager, PM, director). Each twin absorbs cognitively draining work — PR triage, meeting prep, status reports, dependency tracking — so the human stays in flow.
 - **Zero-Human Company Ops** — Configure CoWork OS as a founder-directed autonomous company shell with venture workspace kits, a dedicated Companies tab, persistent operator twins, strategic planner loops, and Mission Control ops monitoring.
+- **Managed Devices** — Run and inspect tasks across saved remote machines from a dedicated Devices tab with connection controls, summaries, remote task feeds, and remote file attachment picking.
+- **Automations Control Center** — A single Automations section now groups task queueing, scheduled tasks, event triggers, webhooks, daily briefings, and the self-improvement loop.
 - **Plugin Platform** — 17 bundled role-specific packs (including Mobile Development, Game Development, and 5 Financial packs) with 55+ skills, in-app Plugin Store for installing community packs, remote registry, and enterprise admin policies for organization-wide control.
 - **Active Context sidebar** — Always-visible panel showing connected MCP connectors with branded Lucide icons and enabled skills, auto-refreshed every 30 seconds.
 - **Agent teams** — Multi-agent collaboration with shared checklists, collaborative mode, multi-LLM synthesis, and persistent teams.
@@ -56,7 +58,15 @@
 
 ### Recent Platform Updates
 
-The latest updates add five evolving agent intelligence capabilities:
+Since `v0.4.13`, the main product updates are:
+
+- **Devices tab + managed remote devices** — CoWork OS can now save remote machines, connect over direct/Tailscale/SSH-backed control-plane routes, inspect device summaries, browse remote workspaces, attach files from remote machines, and open remote task history in a dedicated session view.
+- **Automations section refresh** — `Settings` now groups Task Queue, Self-Improve, Scheduled Tasks, Webhooks, Event Triggers, and Daily Briefing under **Automations**, while the home dashboard highlights recent automation work instead of burying it in settings.
+- **Bounded self-improvement campaigns** — The improvement loop now favors smaller, PR-first campaigns with explicit stages, provider-health reporting, verification/promotion gates, cooldowns, and candidate parking when repeated failures indicate the loop should stop retrying.
+- **Company workflow cohesion** — Companies, Digital Twins, and Mission Control now share persisted company-linked operators so a founder can define a company, activate operators, run the planner, and inspect execution without losing context between surfaces.
+- **Remote session clarity** — When you inspect a task from another device, the UI now makes it explicit that you are viewing remote history rather than the current machine’s live task context.
+
+The latest updates also add five evolving agent intelligence capabilities:
 
 - **Unified Memory Synthesizer** — All 6 memory subsystems (profile, relationship, playbook, knowledge graph, notes, workspace kit) now merge into a single deduplicated, relevance-ranked context block, eliminating redundancy and contradiction in the system prompt.
 - **Adaptive Style Engine** — The agent observes your message patterns (length, emoji use, technical vocabulary) and feedback signals, then gradually shifts its response style to match your preferences. Rate-limited and admin-toggleable.
@@ -158,6 +168,14 @@ Long-running tasks now have clearer operator handoffs and stronger recovery defa
 ### Mission Control
 
 Centralized agent orchestration dashboard with a Kanban task board, real-time activity feed, agent heartbeat monitoring, standup reports, and performance reviews. [Learn more](docs/mission-control.md)
+
+### Devices
+
+The Devices tab turns CoWork OS into a multi-machine control surface. Save and reconnect remote CoWork nodes, inspect device summaries (activity, apps, storage, alerts, resource signals), launch tasks against a selected machine, browse that machine's remote workspaces, and attach files directly from the remote filesystem before dispatching a task. [Learn more](docs/remote-access.md)
+
+### Automations
+
+Automations are now organized as a first-class operating surface instead of a scattered set of settings pages. The Automations section in Settings groups Task Queue, Self-Improve, Scheduled Tasks, Webhooks, Event Triggers, and Daily Briefing, while the home dashboard surfaces recent automation runs so you can monitor background systems without hunting through tabs. [Learn more](docs/features.md#automations-control-center)
 
 ### Zero-Human Company Ops
 
@@ -388,6 +406,8 @@ See [CHANGELOG.md](CHANGELOG.md) for the full history of completed features.
 | [Knowledge Graph](docs/knowledge-graph.md) | Structured entity/relationship memory |
 | [Context Compaction](docs/context-compaction.md) | Proactive session compaction with structured summaries |
 | [Mission Control](docs/mission-control.md) | Agent orchestration dashboard |
+| [Self-Improving Agent](docs/self-improving-agent.md) | Architecture and operating model for bounded autonomous improvement campaigns |
+| [Zero-Human Company Ops](docs/zero-human-company.md) | Founder-directed company planning, operators, and Mission Control ops workflows |
 | [Plugin Packs](docs/plugin-packs.md) | Plugin platform, Customize panel, and Plugin Store |
 | [Best-Fit Workflows](docs/best-fit-workflows.md) | Support Ops, IT Ops, and Sales Ops — where CoWork OS delivers the strongest ROI |
 | [Admin Policies](docs/admin-policies.md) | Enterprise admin policies and organization pack management |

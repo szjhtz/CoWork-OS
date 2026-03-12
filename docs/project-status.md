@@ -7,8 +7,10 @@ CoWork OS is a **security-first personal AI assistant platform** with multi-chan
 ### What CoWork OS Is
 
 - **Personal AI Gateway**: Connect your AI assistant to WhatsApp, Telegram, Discord, Slack, and iMessage
-- **Security-First Design**: 390+ unit tests, configurable guardrails, approval workflows
-- **Multi-Provider Support**: 6 LLM providers including free local models via Ollama
+- **Managed Devices**: Operate local and remote CoWork machines from a dedicated Devices tab
+- **Automations Surface**: One settings group for queueing, scheduling, triggers, briefing, and self-improvement
+- **Security-First Design**: 3200+ tests, configurable guardrails, approval workflows
+- **Multi-Provider Support**: 30+ LLM providers including free local models via Ollama
 - **Local-First Architecture**: Your data stays on your machine, BYOK model
 
 ## What's Built and Working
@@ -181,6 +183,9 @@ CoWork OS is a **security-first personal AI assistant platform** with multi-chan
 - [x] Comparison View - Side-by-side agent/model output comparison
 - [x] Multi-LLM Selection Panel - Configure multi-provider runs
 - [x] Worktree Settings - Git worktree configuration UI
+- [x] Devices tab - saved remote devices, remote task feed, remote workspace browser, remote file picker
+- [x] Companies tab - company shell setup, goals, projects, issues, linked operators
+- [x] Improvement settings - bounded self-improvement campaigns, provider health, parked candidate visibility
 
 #### Settings UI
 - [x] LLM provider configuration
@@ -192,6 +197,7 @@ CoWork OS is a **security-first personal AI assistant platform** with multi-chan
 - [x] Update settings
 - [x] Guardrail settings (budgets, limits)
 - [x] Queue settings (concurrency)
+- [x] Automations settings group (queue, self-improve, scheduled, hooks, triggers, briefing)
 - [x] Custom Skills management
 - [x] Personality settings (styles, personas, quirks)
 - [x] MCP server configuration
@@ -258,7 +264,7 @@ cowork-os/
 │   │   │   ├── executor-*-utils.ts # Modular executor utilities
 │   │   │   ├── executor-event-emitter.ts
 │   │   │   ├── executor-lifecycle-mutex.ts
-│   │   │   ├── llm/           # 5 providers
+│   │   │   ├── llm/           # 30+ providers and compatible gateways
 │   │   │   ├── search/        # 4 providers
 │   │   │   ├── browser/       # Playwright service
 │   │   │   ├── tools/         # All tool implementations + git tools
@@ -360,7 +366,7 @@ Operations Requiring Approval:
 
 ### You Can:
 1. Select workspaces and create tasks
-2. Use any of 6 LLM providers (including free local Ollama)
+2. Use any configured LLM provider, including local Ollama and 30+ supported provider/gateway options
 3. Execute multi-step file operations
 4. Create real Office documents (.xlsx, .docx, .pdf, .pptx)
 5. Search the web with multiple providers
@@ -457,11 +463,11 @@ Expected behavior:
 **CoWork OS is a production-ready, security-first personal AI assistant platform:**
 
 ### Core Strengths
-- **Security**: 390+ unit tests, configurable guardrails, approval workflows, brute-force protection
+- **Security**: 3200+ tests, configurable guardrails, approval workflows, brute-force protection
 - **Multi-Channel**: WhatsApp, Telegram, Discord, Slack, iMessage integration
-- **Multi-Provider**: 6 LLM providers (Claude, GPT, Gemini, Bedrock, OpenRouter, Ollama)
+- **Multi-Provider**: 30+ LLM providers and compatible gateways, including Claude, GPT, Gemini, Bedrock, OpenRouter, and Ollama
 - **Local-First**: Your data stays on your machine, BYOK model
-- **Extensible**: MCP support (Client, Host, Registry), 75+ bundled skills
+- **Extensible**: MCP support (Client, Host, Registry), 139 built-in skills, and plugin packs
 
 ### Feature Highlights
 - Real Office document creation (Excel, Word, PDF, PowerPoint)

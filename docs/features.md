@@ -59,6 +59,32 @@
 - **Graceful Uncertainty**: Agent expresses uncertainty honestly and rates confidence on recommendations. Low-confidence messages display with an amber indicator.
 - **AI Playbook**: Auto-captures successful patterns (approach, outcome, tools) and lessons from failures with error classification (7 categories: tool failure, wrong approach, missing context, permission denied, timeout, rate limit, user correction). Time-based decay scoring deprioritises stale entries. Proven patterns reinforced on repeated success. Mid-task user corrections automatically detected and captured. Relevant entries injected into system prompts. View in Settings > AI Playbook.
 
+### Managed Devices & Remote Operations
+
+CoWork OS now includes a dedicated Devices tab for running and observing work across multiple machines.
+
+- **Local + remote device inventory**: track the current machine alongside saved remote devices in one view
+- **Connection-aware remote cards**: direct, SSH-tunneled, and Tailscale-backed devices expose connection state, last-seen time, active runs, storage summary, app summary, and attention state
+- **Remote task dispatch**: start a task on a selected remote device, optionally with shell access, execution mode, or multi-LLM options
+- **Remote file picker**: browse remote workspaces and attach files directly from the target machine before dispatching a task
+- **Remote task feed**: filter tasks for the selected device, all devices, or attention states, then open those tasks in a remote session view
+- **Device overlays**: inspect apps, storage, resource signals, alerts, and observer history without leaving the Devices surface
+
+See [Remote Access](remote-access.md) for connection patterns and [Mission Control](mission-control.md) for the company-level control surface.
+
+### Automations Control Center
+
+Automation features are now grouped together in `Settings > Automations`:
+
+- **Task Queue**: concurrency, queueing, and background execution policy
+- **Self-Improve**: bounded autonomous improvement campaigns for git-backed workspaces
+- **Scheduled Tasks**: recurring time-based task execution
+- **Webhooks**: inbound automation entry points
+- **Event Triggers**: condition-based actions triggered by channel, webhook, or runtime events
+- **Daily Briefing**: scheduled summaries with workspace, memory, and evolution context
+
+The home dashboard also surfaces recent automation runs so background work is visible without opening Settings.
+
 ### Zero-Human Company Ops
 
 CoWork OS can also be configured as a founder-directed autonomous company shell by composing several existing systems into one operating loop:
@@ -71,6 +97,7 @@ CoWork OS can also be configured as a founder-directed autonomous company shell 
 - **Mission Control ops view**: exposes planner config, planner runs, goals, projects, issues, linked tasks, issue comments, and run events
 - **Autonomy policy integration**: operator roles can carry reusable autonomy presets instead of relying on one global all-or-nothing mode
 - **Persisted company-linked operators**: venture/operator twins can be assigned to a company so the same operator set stays visible across Companies, Digital Twins, and Mission Control
+- **Companies tab as the source of truth**: `Settings > Companies` centralizes company metadata, goals, projects, issues, linked operators, planner state, and handoff into company-scoped Mission Control views
 
 This workflow is designed for "human-directed, agent-operated" execution:
 
@@ -79,6 +106,18 @@ This workflow is designed for "human-directed, agent-operated" execution:
 - Mission Control becomes the monitoring and intervention cockpit
 
 See [Zero-Human Company Operations](zero-human-company.md) for architecture, setup recipe, monitoring flow, and example operating models.
+
+### Self-Improve
+
+The self-improvement loop is now intentionally narrower and more operational:
+
+- **Single-lane bounded campaigns by default**: new settings default to one variant, one concurrent executor, and one queued campaign
+- **Explicit campaign stages**: `queued`, `preflight`, `reproducing`, `implementing`, `verifying`, and `completed`
+- **Promotion gate hardening**: campaigns are promoted only when the winning run shows reproduction, verification, and PR-readiness evidence
+- **Cooldowns and parking**: repeated provider failures or deterministic failures are cooled down and eventually parked instead of retried forever
+- **Provider health visibility**: the settings panel surfaces recent provider-related incidents and blocked/degraded states
+
+See [Self-Improving Agent](self-improving-agent.md) for the architecture and operational guidance.
 
 ### Reliability Flywheel
 

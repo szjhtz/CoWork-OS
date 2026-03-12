@@ -7,8 +7,10 @@ CoWork OS is a **security-first personal AI assistant platform** with multi-chan
 ### What CoWork OS Is
 
 - **Personal AI Gateway**: Connect your AI assistant to WhatsApp, Telegram, Discord, Slack, and iMessage
-- **Security-First Design**: 390+ unit tests, configurable guardrails, approval workflows
-- **Multi-Provider Support**: 6 LLM providers including free local models via Ollama
+- **Managed Device Control Surface**: Run and inspect work across local and remote CoWork machines from a dedicated Devices tab
+- **Automation Operating Surface**: Task Queue, Self-Improve, Scheduled Tasks, Webhooks, Event Triggers, and Daily Briefing are grouped under Automations
+- **Security-First Design**: 3200+ tests, configurable guardrails, approval workflows
+- **Multi-Provider Support**: 30+ LLM providers including free local models via Ollama
 - **Local-First Architecture**: Your data stays on your machine, BYOK model
 
 ## What's Built and Working
@@ -64,6 +66,22 @@ CoWork OS is a **security-first personal AI assistant platform** with multi-chan
 - [x] Session management
 - [x] Security modes (pairing, allowlist, open)
 - [x] Located: `src/electron/gateway/`
+
+#### Managed Devices & Remote Operations
+- [x] Devices tab for local + remote machine management
+- [x] Saved remote device inventory with connection state and summaries
+- [x] Remote task dispatch with device-specific execution options
+- [x] Remote workspace browsing and file attachment picking
+- [x] Remote task history inspection with explicit remote-session UI state
+- [x] Device overlays for apps, storage, alerts, and resource details
+- [x] Located: `src/renderer/components/DevicesPanel.tsx`, `src/electron/control-plane/`
+
+#### Companies, Mission Control, and Self-Improve
+- [x] Companies tab for company metadata, goals, projects, issues, and linked operators
+- [x] Mission Control planner strip and Ops tab for company-run monitoring
+- [x] Company-linked digital twins shared across Companies, Digital Twins, and Mission Control
+- [x] Self-improvement loop with staged campaigns, promotion gates, cooldowns, and parked candidates
+- [x] Located: `src/renderer/components/CompaniesPanel.tsx`, `src/renderer/components/MissionControlPanel.tsx`, `src/electron/improvement/`
 
 ### 2. Tools & Skills
 
@@ -324,7 +342,7 @@ cowork-os/
 │   │   │   ├── queue-manager.ts    # Parallel task queue
 │   │   │   ├── context-manager.ts
 │   │   │   ├── custom-skill-loader.ts
-│   │   │   ├── llm/           # 5 providers
+│   │   │   ├── llm/           # 30+ providers and compatible gateways
 │   │   │   ├── search/        # 4 providers
 │   │   │   ├── browser/       # Playwright service
 │   │   │   ├── tools/         # All tool implementations
@@ -428,7 +446,7 @@ Operations Requiring Approval:
 
 ### You Can:
 1. Select workspaces and create tasks
-2. Use any of 6 LLM providers (including free local Ollama)
+2. Use any configured LLM provider, including local Ollama and 30+ supported provider/gateway options
 3. Execute multi-step file operations
 4. Create real Office documents (.xlsx, .docx, .pdf, .pptx)
 5. Search the web with multiple providers
@@ -532,11 +550,11 @@ Expected behavior:
 **CoWork OS is a production-ready, security-first personal AI assistant platform:**
 
 ### Core Strengths
-- **Security**: 390+ unit tests, configurable guardrails, approval workflows, brute-force protection
+- **Security**: 3200+ tests, configurable guardrails, approval workflows, brute-force protection
 - **Multi-Channel**: WhatsApp, Telegram, Discord, Slack, iMessage integration
-- **Multi-Provider**: 6 LLM providers (Claude, GPT, Gemini, Bedrock, OpenRouter, Ollama)
+- **Multi-Provider**: 30+ LLM providers and compatible gateways, including Claude, GPT, Gemini, Bedrock, OpenRouter, and Ollama
 - **Local-First**: Your data stays on your machine, BYOK model
-- **Extensible**: MCP support (Client, Host, Registry), 75+ bundled skills
+- **Extensible**: MCP support (Client, Host, Registry), 139 built-in skills, and plugin packs
 
 ### Feature Highlights
 - Real Office document creation (Excel, Word, PDF, PowerPoint)

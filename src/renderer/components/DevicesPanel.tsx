@@ -330,9 +330,9 @@ export function DevicesPanel({
     Array<{ path: string; name: string; source: "local" | "remote" }>
   >([]);
   const [showRemoteFilePicker, setShowRemoteFilePicker] = useState(false);
-  const [remoteFilePickerWorkspace, setRemoteFilePickerWorkspace] = useState<{
-    id: string;
-    name: string;
+  const [remoteFilePickerContext, setRemoteFilePickerContext] = useState<{
+    deviceName: string;
+    workspaces: Array<{ id: string; name: string }>;
   } | null>(null);
 
   const setAutonomousModeSelection = useCallback((enabled: boolean) => {
@@ -664,7 +664,10 @@ export function DevicesPanel({
       try {
         const res = await window.electronAPI?.deviceListRemoteWorkspaces?.(activeDevice.taskNodeId);
         if (res?.ok && res.workspaces?.length) {
-          setRemoteFilePickerWorkspace(res.workspaces[0]);
+          setRemoteFilePickerContext({
+            deviceName: activeDevice.name || "Remote device",
+            workspaces: res.workspaces,
+          });
           setShowRemoteFilePicker(true);
         }
       } catch (err) {
@@ -756,7 +759,7 @@ export function DevicesPanel({
       return next.slice(0, 10);
     });
     setShowRemoteFilePicker(false);
-    setRemoteFilePickerWorkspace(null);
+    setRemoteFilePickerContext(null);
   }, []);
 
   if (loading) {
@@ -1060,15 +1063,15 @@ export function DevicesPanel({
 
       {showRemoteFilePicker &&
         activeDevice?.taskNodeId &&
-        remoteFilePickerWorkspace && (
+        remoteFilePickerContext && (
           <RemoteFilePicker
             nodeId={activeDevice.taskNodeId}
-            workspaceId={remoteFilePickerWorkspace.id}
-            workspaceName={remoteFilePickerWorkspace.name}
+            deviceName={remoteFilePickerContext.deviceName}
+            workspaces={remoteFilePickerContext.workspaces}
             onSelect={handleRemoteFilesSelected}
             onCancel={() => {
               setShowRemoteFilePicker(false);
-              setRemoteFilePickerWorkspace(null);
+              setRemoteFilePickerContext(null);
             }}
           />
         )}

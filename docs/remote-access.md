@@ -2,6 +2,14 @@
 
 CoWork OS provides multiple options for remote access to your Control Plane, allowing you to manage tasks, monitor progress, and interact with agents from anywhere.
 
+Remote access is now also the foundation for the desktop **Devices** tab. The same Control Plane connection can be saved as a managed remote device, letting you:
+
+- connect and reconnect a remote CoWork node from the desktop UI
+- launch tasks on that machine
+- inspect remote task history in a remote session view
+- browse remote workspaces
+- attach files directly from the remote filesystem before dispatching a task
+
 ## Overview
 
 The Control Plane WebSocket server binds to `127.0.0.1:18789` by default for security. For remote access, you have three options:
@@ -238,7 +246,25 @@ In Settings > Control Plane > Remote Connection:
 | Setting | Description |
 |---------|-------------|
 | **Gateway URL** | WebSocket URL (e.g., `ws://127.0.0.1:18789` via SSH tunnel) |
-| **Token** | Authentication token from the remote Control Plane |
+| **Token** | Control Plane authentication token from the remote machine |
+| **Device name** | Human-readable label shown in the Devices tab |
+| **Purpose** | Optional remote-device role hint used in device cards and task routing |
+
+### Devices tab workflow
+
+Once the remote endpoint is reachable:
+
+1. Open the desktop **Devices** tab.
+2. Click **Add new device**.
+3. Enter the gateway URL, token, device name, and optional purpose.
+4. Save and connect the device.
+5. Select the device to:
+   - run a task remotely
+   - list remote workspaces
+   - attach files from a remote workspace
+   - inspect tasks, alerts, apps, storage, and device details
+
+When you open a remote task from that tab, CoWork shows a remote-session banner so you can tell you are reviewing another machine's task history rather than the local machine's active session.
 | **TLS Fingerprint** | (Optional) Certificate pin for `wss://` connections |
 
 ### Examples

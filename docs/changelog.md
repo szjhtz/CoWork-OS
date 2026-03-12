@@ -8,10 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Managed devices docs refresh**: documented the Devices tab, saved remote devices, remote task launching, per-device summaries, and remote file selection workflows.
+- **Automation control center docs refresh**: documented the consolidated `Automations` settings group and the relationship between Task Queue, Scheduled Tasks, Webhooks, Event Triggers, Daily Briefing, and Self-Improve.
 - **Zero-human-company docs refresh**: documented the `Settings > Companies` workflow, persisted company-linked digital twins, and company-aware handoff between Companies, Digital Twins, and Mission Control.
 
 ### Changed
-- **Self-improvement documentation**: added detailed architecture and troubleshooting coverage for autonomous improvement startup ordering, worktree requirements, notification flow, and `logs/dev-latest.log` verification steps.
+- **README and feature documentation**: updated product-facing docs to reflect managed devices, automation navigation, bounded self-improvement campaigns, remote session inspection, and the current companies workflow.
+- **Self-improvement documentation**: added detailed architecture and troubleshooting coverage for staged autonomous campaigns, startup ordering, worktree requirements, candidate parking/cooldowns, notification flow, and `logs/dev-latest.log` verification steps.
 
 ### Fixed
 - **Autonomous improvement startup race**: `ImprovementLoopService` now starts after `MemoryService` initialization, skips non-worktree-capable workspaces when isolated git execution is required, and suppresses misleading legacy `ERR_UNHANDLED_ERROR` log noise from unhandled `"error"` alias emission during startup failures.

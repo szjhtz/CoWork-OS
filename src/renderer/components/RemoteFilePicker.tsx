@@ -7,21 +7,29 @@ export interface RemoteFileEntry {
   size: number;
 }
 
+export interface RemoteWorkspace {
+  id: string;
+  name: string;
+}
+
 export interface RemoteFilePickerProps {
   nodeId: string;
-  workspaceId: string;
-  workspaceName?: string;
+  deviceName: string;
+  workspaces: RemoteWorkspace[];
   onSelect: (paths: string[]) => void;
   onCancel: () => void;
 }
 
 export function RemoteFilePicker({
   nodeId,
-  workspaceId,
-  workspaceName,
+  deviceName,
+  workspaces,
   onSelect,
   onCancel,
 }: RemoteFilePickerProps) {
+  const [selectedWorkspace, setSelectedWorkspace] = useState<RemoteWorkspace>(
+    workspaces[0] ?? { id: "", name: "" },
+  );
   const [pathStack, setPathStack] = useState<string[]>([]);
   const [files, setFiles] = useState<RemoteFileEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -31,12 +39,13 @@ export function RemoteFilePicker({
   const currentPath = pathStack.length > 0 ? pathStack.join("/") : ".";
 
   const loadFiles = useCallback(async () => {
+    if (!selectedWorkspace.id) return;
     setLoading(true);
     setError(null);
     try {
       const res = await window.electronAPI?.deviceListFiles?.({
         nodeId,
-        workspaceId,
+        workspaceId: selectedWorkspace.id,
         path: currentPath,
       });
       if (res?.ok && Array.isArray(res.files)) {
@@ -51,11 +60,16 @@ export function RemoteFilePicker({
     } finally {
       setLoading(false);
     }
-  }, [nodeId, workspaceId, currentPath]);
+  }, [nodeId, selectedWorkspace.id, currentPath]);
 
   useEffect(() => {
     void loadFiles();
   }, [loadFiles]);
+
+  useEffect(() => {
+    setPathStack([]);
+    setSelectedPaths(new Set());
+  }, [selectedWorkspace.id]);
 
   const handleNavigate = (name: string) => {
     setPathStack((prev) => [...prev, name]);
@@ -96,11 +110,31 @@ export function RemoteFilePicker({
         aria-label="Select files from remote device"
       >
         <div className="remote-file-picker-header">
-          <h3>Select files from {workspaceName || "remote device"}</h3>
+          <h3>Select files from {deviceName}</h3>
           <button type="button" className="remote-file-picker-close" onClick={onCancel} aria-label="Close">
             ×
           </button>
         </div>
+
+        {workspaces.length > 1 && (
+          <div className="remote-file-picker-workspace-select">
+            <label htmlFor="remote-workspace-select">Workspace:</label>
+            <select
+              id="remote-workspace-select"
+              value={selectedWorkspace.id}
+              onChange={(e) => {
+                const ws = workspaces.find((w) => w.id === e.target.value);
+                if (ws) setSelectedWorkspace(ws);
+              }}
+            >
+              {workspaces.map((ws) => (
+                <option key={ws.id} value={ws.id}>
+                  {ws.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
 
         <div className="remote-file-picker-breadcrumb">
           <button
@@ -108,7 +142,7 @@ export function RemoteFilePicker({
             className="remote-file-picker-breadcrumb-item"
             onClick={() => handleGoBack(0)}
           >
-            {workspaceName || "Workspace"}
+            {selectedWorkspace.name || "Workspace"}
           </button>
           {pathStack.map((segment, i) => (
             <span key={i} className="remote-file-picker-breadcrumb-sep">

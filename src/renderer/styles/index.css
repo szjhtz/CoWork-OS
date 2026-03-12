@@ -7622,6 +7622,37 @@ button {
   color: var(--color-text);
 }
 
+.remote-file-picker-workspace-select {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 20px;
+  background: var(--color-bg-secondary);
+  border-bottom: 1px solid var(--color-border-subtle);
+  font-size: 13px;
+}
+
+.remote-file-picker-workspace-select label {
+  color: var(--color-text-muted);
+  font-weight: 500;
+}
+
+.remote-file-picker-workspace-select select {
+  flex: 1;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.remote-file-picker-workspace-select select:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
 .remote-file-picker-breadcrumb {
   display: flex;
   align-items: center;

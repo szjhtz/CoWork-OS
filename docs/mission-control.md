@@ -4,6 +4,12 @@ Mission Control is a centralized agent orchestration and monitoring dashboard. I
 
 Access it from **Settings** > **Mission Control**. For company-ops workflows, you can also jump into it directly from **Settings** > **Companies** with the selected company preloaded.
 
+Mission Control now sits alongside two other operational entry points:
+
+- **Devices** for machine-level task routing and remote execution
+- **Settings > Automations** for queueing, scheduling, triggers, briefing, and self-improvement policies
+- **Settings > Companies** for company graph editing and operator assignment
+
 ## Layout
 
 Mission Control is split into three panels:
@@ -128,6 +134,8 @@ It exposes:
 Use it together with the strategic planner strip to watch company-level planning move into executable task work.
 
 The `Ops` tab is most useful when the company graph is maintained in **Settings** > **Companies**, since that tab is where companies, goals, projects, issues, and linked operators are created and edited.
+
+If the work itself is being executed on another machine, pair Mission Control with the **Devices** tab: Mission Control gives you company-level orchestration, while Devices gives you machine-level routing and remote task inspection.
 
 ---
 

@@ -208,6 +208,72 @@ In addition to the passive learning layers above, CoWork OS now includes an auto
 - surface review decisions and notifications
 - promote successful runs by merge or GitHub PR
 
+The current loop is intentionally more conservative than earlier versions. It is optimized for bounded, PR-first experiments instead of broad autonomous branching.
+
+### Current operating defaults
+
+The default settings now bias toward small, reviewable campaigns:
+
+- `variantsPerCampaign: 1`
+- `maxConcurrentImprovementExecutors: 1`
+- `maxQueuedImprovementCampaigns: 1`
+- `reviewRequired: false`
+- `judgeRequired: false`
+- `campaignTimeoutMinutes: 30`
+- `campaignTokenBudget: 60000`
+- `campaignCostBudget: 15`
+
+This keeps the loop from flooding a workspace with speculative runs.
+
+### Campaign stages
+
+Each campaign now tracks an explicit stage:
+
+1. `queued`
+2. `preflight`
+3. `reproducing`
+4. `implementing`
+5. `verifying`
+6. `completed`
+
+The UI surfaces these stages in the Self-Improve panel so you can tell whether a campaign is still trying to reproduce a failure, already implementing a fix, or is blocked in verification/promotion.
+
+### Promotion gates
+
+Promotion is stricter than “task did not fail”.
+
+A winning run now needs:
+
+- terminal status `ok`
+- verification to pass
+- no failed review signal
+- evidence in the task outcome that it reproduced the issue
+- evidence that verification was performed
+- evidence that the result is PR-ready
+
+If those signals are missing, the campaign is treated as non-promotable even if it produced a patch.
+
+### Failure cooldowns and parking
+
+Repeated failures no longer loop forever.
+
+- provider-related failures enter a shorter cooldown
+- deterministic failures enter a longer cooldown
+- repeated failures with the same attempt fingerprint can park the candidate entirely
+- parked candidates record `parkReason`, `parkedAt`, `lastFailureClass`, and `failureStreak`
+
+This is important operationally because it stops the loop from repeatedly burning budget on the same broken path.
+
+### Provider health visibility
+
+The Self-Improve settings UI now aggregates provider-related incidents across campaigns and candidates. That lets you distinguish:
+
+- **healthy**: no recent provider failures
+- **degraded**: intermittent provider failures are present
+- **blocked**: provider failures are dominating current improvement activity
+
+This helps answer whether a campaign failed because of your codebase or because the model/provider path is unstable.
+
 ### Execution model
 
 Each autonomous improvement run is created as a normal task with stricter agent policy:
@@ -301,6 +367,8 @@ The loop emits notifications for:
 - experiment failed
 - promotion failed
 - review dismissed
+
+The settings panel is also now the main operational cockpit for this loop. In addition to raw campaigns and candidates, it surfaces provider health, cooldown state, and parked-candidate context.
 
 ### Operational guidance
 

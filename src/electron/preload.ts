@@ -556,7 +556,14 @@ const IPC_CHANNELS = {
   NODE_INVOKE: "node:invoke",
   NODE_EVENT: "node:event",
   // Device Management
+  DEVICE_LIST_MANAGED: "device:listManaged",
+  DEVICE_GET_SUMMARY: "device:getSummary",
+  DEVICE_CONNECT: "device:connect",
+  DEVICE_DISCONNECT: "device:disconnect",
+  DEVICE_PROXY_REQUEST: "device:proxyRequest",
   DEVICE_LIST_TASKS: "device:listTasks",
+  DEVICE_LIST_FILES: "device:listFiles",
+  DEVICE_LIST_REMOTE_WORKSPACES: "device:listRemoteWorkspaces",
   DEVICE_ASSIGN_TASK: "device:assignTask",
   DEVICE_GET_PROFILES: "device:getProfiles",
   DEVICE_UPDATE_PROFILE: "device:updateProfile",
@@ -1574,6 +1581,10 @@ interface ControlPlaneSettingsData {
   };
   connectionMode?: ControlPlaneConnectionMode;
   remote?: RemoteGatewayConfig;
+  savedRemoteDevices?: SavedRemoteGatewayDevice[];
+  activeRemoteDeviceId?: string;
+  managedDevices?: ManagedDevice[];
+  activeManagedDeviceId?: string;
 }
 
 interface ControlPlaneClientInfo {
@@ -1643,6 +1654,129 @@ interface RemoteGatewayConfig {
   sshTunnel?: SSHTunnelConfig;
 }
 
+interface SavedRemoteGatewayDevice {
+  id: string;
+  name: string;
+  config: RemoteGatewayConfig;
+  clientId?: string;
+  connectedAt?: number;
+  lastActivityAt?: number;
+}
+
+const LOCAL_MANAGED_DEVICE_ID = "local:this-device";
+const LOCAL_MANAGED_DEVICE_NODE_ID = "local:this-device";
+void LOCAL_MANAGED_DEVICE_ID;
+void LOCAL_MANAGED_DEVICE_NODE_ID;
+
+type ManagedDeviceRole = "local" | "remote";
+type ManagedDevicePurpose =
+  | "primary"
+  | "work"
+  | "personal"
+  | "automation"
+  | "archive"
+  | "general";
+type ManagedDeviceTransport = "local" | "direct" | "ssh" | "tailscale" | "unknown";
+type ManagedDeviceAttentionState = "none" | "info" | "warning" | "critical";
+
+interface ManagedDeviceStorageSummary {
+  totalBytes?: number;
+  freeBytes?: number;
+  usedBytes?: number;
+  usagePercent?: number;
+  workspaceCount: number;
+  artifactCount: number;
+}
+
+interface ManagedDeviceAppsSummary {
+  channelsTotal: number;
+  channelsEnabled: number;
+  workspacesTotal: number;
+  approvalsPending: number;
+  inputRequestsPending: number;
+  accountsTotal?: number;
+}
+
+interface ManagedDeviceAlert {
+  id: string;
+  level: ManagedDeviceAttentionState;
+  title: string;
+  description?: string;
+  kind:
+    | "approval"
+    | "input_request"
+    | "channel"
+    | "connection"
+    | "storage"
+    | "status"
+    | "warning";
+}
+
+interface ManagedDevice {
+  id: string;
+  name: string;
+  role: ManagedDeviceRole;
+  purpose: ManagedDevicePurpose;
+  transport: ManagedDeviceTransport;
+  status: RemoteGatewayConnectionState | "local";
+  platform: "ios" | "android" | "macos" | "linux" | "windows";
+  version?: string;
+  modelIdentifier?: string;
+  clientId?: string;
+  connectedAt?: number;
+  lastSeenAt?: number;
+  taskNodeId?: string | null;
+  tags?: string[];
+  config?: RemoteGatewayConfig;
+  autoConnect?: boolean;
+  attentionState?: ManagedDeviceAttentionState;
+  activeRunCount?: number;
+  storageSummary?: ManagedDeviceStorageSummary;
+  appsSummary?: ManagedDeviceAppsSummary;
+}
+
+interface ManagedDeviceSummary {
+  device: ManagedDevice;
+  runtime?: {
+    platform?: string;
+    arch?: string;
+    node?: string;
+    electron?: string;
+    coworkVersion?: string;
+    cwd?: string;
+    userDataDir?: string;
+    headless?: boolean;
+  };
+  tasks: {
+    total: number;
+    active: number;
+    attention: number;
+    recent: Any[];
+  };
+  apps: ManagedDeviceAppsSummary & {
+    channels?: Any[];
+    workspaces?: Any[];
+    accounts?: Any[];
+  };
+  storage: ManagedDeviceStorageSummary & {
+    workspaceRoots: Array<{ id: string; name: string; path: string }>;
+  };
+  alerts: ManagedDeviceAlert[];
+  observer: Array<{
+    id: string;
+    timestamp: number;
+    title: string;
+    detail?: string;
+    level: ManagedDeviceAttentionState;
+  }>;
+}
+
+interface DeviceProxyRequest {
+  deviceId: string;
+  method: string;
+  params?: unknown;
+}
+
 type RemoteGatewayConnectionState =
   | "disconnected"
   | "connecting"
@@ -1660,10 +1794,12 @@ interface RemoteGatewayStatus {
   error?: string;
   reconnectAttempts?: number;
   lastActivityAt?: number;
+  sshTunnel?: SSHTunnelStatus;
 }
 
 interface RemoteGatewayEvent {
   type: "stateChange" | "event";
+  deviceId?: string;
   state?: RemoteGatewayConnectionState;
   event?: string;
   payload?: unknown;
@@ -2733,6 +2869,14 @@ contextBridge.exposeInMainWorld("electronAPI", {
     return () => ipcRenderer.removeListener(IPC_CHANNELS.SSH_TUNNEL_EVENT, subscription);
   },
 
+  // Device Fleet
+  listManagedDevices: () => ipcRenderer.invoke(IPC_CHANNELS.DEVICE_LIST_MANAGED),
+  getDeviceSummary: (deviceId: string) => ipcRenderer.invoke(IPC_CHANNELS.DEVICE_GET_SUMMARY, deviceId),
+  connectDevice: (deviceId: string) => ipcRenderer.invoke(IPC_CHANNELS.DEVICE_CONNECT, deviceId),
+  disconnectDevice: (deviceId: string) => ipcRenderer.invoke(IPC_CHANNELS.DEVICE_DISCONNECT, deviceId),
+  deviceProxyRequest: (request: DeviceProxyRequest) =>
+    ipcRenderer.invoke(IPC_CHANNELS.DEVICE_PROXY_REQUEST, request),
+
   // Live Canvas APIs
   canvasCreate: (data: { taskId: string; workspaceId: string; title?: string }) =>
     ipcRenderer.invoke(IPC_CHANNELS.CANVAS_CREATE, data),
@@ -2795,8 +2939,17 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // Device Management APIs
   deviceListTasks: (nodeId: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.DEVICE_LIST_TASKS, nodeId),
-  deviceAssignTask: (params: { nodeId: string; prompt: string; workspaceId?: string }) =>
-    ipcRenderer.invoke(IPC_CHANNELS.DEVICE_ASSIGN_TASK, params),
+  deviceListFiles: (params: { nodeId: string; workspaceId: string; path?: string }) =>
+    ipcRenderer.invoke(IPC_CHANNELS.DEVICE_LIST_FILES, params),
+  deviceListRemoteWorkspaces: (nodeId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.DEVICE_LIST_REMOTE_WORKSPACES, nodeId),
+  deviceAssignTask: (params: {
+    nodeId: string;
+    prompt: string;
+    workspaceId?: string;
+    agentConfig?: Any;
+    shellAccess?: boolean;
+  }) => ipcRenderer.invoke(IPC_CHANNELS.DEVICE_ASSIGN_TASK, params),
   deviceGetProfiles: () => ipcRenderer.invoke(IPC_CHANNELS.DEVICE_GET_PROFILES),
   deviceUpdateProfile: (deviceId: string, data: { customName?: string; platform?: string; modelIdentifier?: string }) =>
     ipcRenderer.invoke(IPC_CHANNELS.DEVICE_UPDATE_PROFILE, deviceId, data),
@@ -4464,6 +4617,21 @@ export interface ElectronAPI {
   ) => Promise<{ ok: boolean; latencyMs?: number; error?: string }>;
   onSSHTunnelEvent: (callback: (event: SSHTunnelEvent) => void) => () => void;
 
+  // Device Fleet
+  listManagedDevices: () => Promise<{ ok: boolean; devices?: ManagedDevice[]; error?: string }>;
+  getDeviceSummary: (
+    deviceId: string,
+  ) => Promise<{ ok: boolean; summary?: ManagedDeviceSummary; error?: string }>;
+  connectDevice: (
+    deviceId: string,
+  ) => Promise<{ ok: boolean; status?: RemoteGatewayStatus; error?: string }>;
+  disconnectDevice: (
+    deviceId: string,
+  ) => Promise<{ ok: boolean; status?: RemoteGatewayStatus; error?: string }>;
+  deviceProxyRequest: (
+    request: DeviceProxyRequest,
+  ) => Promise<{ ok: boolean; payload?: unknown; error?: string }>;
+
   // Live Canvas APIs
   canvasCreate: (data: {
     taskId: string;
@@ -4527,7 +4695,13 @@ export interface ElectronAPI {
 
   // Device Management
   deviceListTasks: (nodeId: string) => Promise<{ ok: boolean; tasks?: Any[]; error?: string }>;
-  deviceAssignTask: (params: { nodeId: string; prompt: string; workspaceId?: string }) => Promise<{ ok: boolean; taskId?: string; error?: string }>;
+  deviceAssignTask: (params: {
+    nodeId: string;
+    prompt: string;
+    workspaceId?: string;
+    agentConfig?: Any;
+    shellAccess?: boolean;
+  }) => Promise<{ ok: boolean; taskId?: string; error?: string }>;
   deviceGetProfiles: () => Promise<{ ok: boolean; profiles?: Any[]; error?: string }>;
   deviceUpdateProfile: (deviceId: string, data: { customName?: string; platform?: string; modelIdentifier?: string }) => Promise<{ ok: boolean; error?: string }>;
 

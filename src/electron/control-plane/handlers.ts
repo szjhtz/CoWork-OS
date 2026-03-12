@@ -2420,15 +2420,28 @@ export function setupControlPlaneHandlers(
         if (remoteClient && remoteClient.getStatus().state === "connected") {
           console.log(`[ControlPlane] Forwarding task creation to remote device: ${params.nodeId}`);
           try {
+            // Fetch available remote workspaces to prevent "Workspace not found" errors
+            const workspacesRes = await remoteClient.request("workspace.list") as any;
+            const remoteWorkspaces = workspacesRes?.workspaces || [];
+            
+            let targetWorkspaceId = params.workspaceId;
+            const remoteHasWorkspace = remoteWorkspaces.some((w: any) => w.id === targetWorkspaceId);
+            
+            if (!remoteHasWorkspace) {
+              if (remoteWorkspaces.length > 0) {
+                targetWorkspaceId = remoteWorkspaces[0].id;
+                console.log(`[ControlPlane] Workspace ${params.workspaceId} not found on remote, falling back to: ${targetWorkspaceId}`);
+              } else {
+                throw new Error("No workspaces available on the remote device");
+              }
+            }
+
             remoteTaskRes = await remoteClient.request("task.create", {
               title: params.prompt.slice(0, 50) + (params.prompt.length > 50 ? "..." : ""),
               prompt: params.prompt,
-              // Use default workspace if none provided, or map if we had a workspace mapping strategy
-              // Since it's a remote machine, it might not have the exact same workspaceId.
-              // Letting the remote side handle default mapping if undefined.
-              workspaceId: params.workspaceId, 
+              workspaceId: targetWorkspaceId, 
             });
-          } catch (e: Any) {
+          } catch (e: any) {
              console.error(`[ControlPlane] Remote task execution failed:`, e);
              return { ok: false, error: e?.message || "Remote execution failed" };
           }

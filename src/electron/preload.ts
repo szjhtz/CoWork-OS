@@ -19,6 +19,7 @@ import type {
   InfraStatus,
   ImprovementCampaign,
   ImprovementCandidate,
+  ImprovementEligibility,
   ImprovementLoopSettings,
   WalletInfo,
   CreateAgentTeamItemRequest,
@@ -604,6 +605,9 @@ const IPC_CHANNELS = {
 
   // Self-improvement loop
   IMPROVEMENT_GET_SETTINGS: "improvement:getSettings",
+  IMPROVEMENT_GET_ELIGIBILITY: "improvement:getEligibility",
+  IMPROVEMENT_SAVE_OWNER_ENROLLMENT: "improvement:saveOwnerEnrollment",
+  IMPROVEMENT_CLEAR_OWNER_ENROLLMENT: "improvement:clearOwnerEnrollment",
   IMPROVEMENT_SAVE_SETTINGS: "improvement:saveSettings",
   IMPROVEMENT_LIST_CANDIDATES: "improvement:listCandidates",
   IMPROVEMENT_LIST_RUNS: "improvement:listRuns",
@@ -3037,10 +3041,14 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // Self-improvement loop APIs
   getImprovementSettings: () =>
     ipcRenderer.invoke(IPC_CHANNELS.IMPROVEMENT_GET_SETTINGS) as Promise<ImprovementLoopSettings>,
+  getImprovementEligibility: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.IMPROVEMENT_GET_ELIGIBILITY) as Promise<ImprovementEligibility>,
+  saveImprovementOwnerEnrollment: (token: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.IMPROVEMENT_SAVE_OWNER_ENROLLMENT, token) as Promise<ImprovementEligibility>,
+  clearImprovementOwnerEnrollment: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.IMPROVEMENT_CLEAR_OWNER_ENROLLMENT) as Promise<ImprovementEligibility>,
   saveImprovementSettings: (settings: ImprovementLoopSettings) =>
-    ipcRenderer.invoke(IPC_CHANNELS.IMPROVEMENT_SAVE_SETTINGS, settings) as Promise<{
-      success: boolean;
-    }>,
+    ipcRenderer.invoke(IPC_CHANNELS.IMPROVEMENT_SAVE_SETTINGS, settings) as Promise<ImprovementLoopSettings>,
   listImprovementCandidates: (workspaceId?: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.IMPROVEMENT_LIST_CANDIDATES, workspaceId) as Promise<
       ImprovementCandidate[]
@@ -3600,6 +3608,7 @@ export interface FileViewerResult {
       | "docx"
       | "pdf"
       | "image"
+      | "video"
       | "pptx"
       | "xlsx"
       | "html"
@@ -3608,6 +3617,10 @@ export interface FileViewerResult {
     htmlContent?: string;
     ocrText?: string;
     pdfThumbnailDataUrl?: string;
+    playbackUrl?: string;
+    mimeType?: string;
+    durationMs?: number;
+    posterDataUrl?: string;
     size: number;
   };
   error?: string;
@@ -4794,7 +4807,10 @@ export interface ElectronAPI {
 
   // Self-improvement loop
   getImprovementSettings: () => Promise<ImprovementLoopSettings>;
-  saveImprovementSettings: (settings: ImprovementLoopSettings) => Promise<{ success: boolean }>;
+  getImprovementEligibility: () => Promise<ImprovementEligibility>;
+  saveImprovementOwnerEnrollment: (token: string) => Promise<ImprovementEligibility>;
+  clearImprovementOwnerEnrollment: () => Promise<ImprovementEligibility>;
+  saveImprovementSettings: (settings: ImprovementLoopSettings) => Promise<ImprovementLoopSettings>;
   listImprovementCandidates: (workspaceId?: string) => Promise<ImprovementCandidate[]>;
   listImprovementCampaigns: (workspaceId?: string) => Promise<ImprovementCampaign[]>;
   refreshImprovementCandidates: () => Promise<{ candidateCount: number }>;

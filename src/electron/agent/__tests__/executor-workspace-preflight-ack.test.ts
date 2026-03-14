@@ -65,7 +65,7 @@ describe("TaskExecutor workspace preflight acknowledgement", () => {
     expect(pauseForUserInput.mock.calls[0][1]).toBe("workspace_required");
   });
 
-  it("does not pause for ambiguous coding requests in temporary workspace", () => {
+  it("does not pause for ambiguous coding requests in temporary workspace (stays in temp, no auto-switch)", () => {
     const pauseForUserInput = vi.fn();
     const tryAutoSwitch = vi.fn(() => false);
     const fakeThis: Any = {
@@ -79,7 +79,7 @@ describe("TaskExecutor workspace preflight acknowledgement", () => {
     const shouldPause = (TaskExecutor as Any).prototype.preflightWorkspaceCheck.call(fakeThis);
     expect(shouldPause).toBe(false);
     expect(pauseForUserInput).not.toHaveBeenCalled();
-    expect(tryAutoSwitch).toHaveBeenCalledTimes(1);
+    expect(tryAutoSwitch).not.toHaveBeenCalled();
   });
 
   it("does not pause when capability upgrade intent is active", () => {
@@ -516,12 +516,12 @@ describe("TaskExecutor workspace preflight acknowledgement", () => {
     expect(Array.from(contract.requiredTools)).toContain("write_file");
   });
 
-  it("auto-promotes strategy-inferred propose mode for mutation-required steps", () => {
+  it("auto-promotes strategy-inferred plan mode for mutation-required steps", () => {
     const fakeThis: Any = Object.create((TaskExecutor as Any).prototype);
     fakeThis.task = {
       id: "task-1",
       agentConfig: {
-        executionMode: "propose",
+        executionMode: "plan",
         executionModeSource: "strategy",
         taskDomain: "code",
       },
@@ -554,7 +554,7 @@ describe("TaskExecutor workspace preflight acknowledgement", () => {
     fakeThis.task = {
       id: "task-2",
       agentConfig: {
-        executionMode: "propose",
+        executionMode: "plan",
         executionModeSource: "user",
         taskDomain: "code",
       },
@@ -575,7 +575,7 @@ describe("TaskExecutor workspace preflight acknowledgement", () => {
     );
 
     expect(alignment.status).toBe("conflict");
-    expect(fakeThis.task.agentConfig.executionMode).toBe("propose");
+    expect(fakeThis.task.agentConfig.executionMode).toBe("plan");
     expect(
       fakeThis.emitEvent.mock.calls.some((call: Any[]) => call[0] === "plan_contract_conflict"),
     ).toBe(true);
@@ -586,7 +586,7 @@ describe("TaskExecutor workspace preflight acknowledgement", () => {
     fakeThis.task = {
       id: "task-legacy-mode",
       agentConfig: {
-        executionMode: "propose",
+        executionMode: "plan",
         taskIntent: "execution",
         taskDomain: "code",
       },
@@ -612,7 +612,7 @@ describe("TaskExecutor workspace preflight acknowledgement", () => {
     );
 
     expect(alignment.status).toBe("conflict");
-    expect(fakeThis.task.agentConfig.executionMode).toBe("propose");
+    expect(fakeThis.task.agentConfig.executionMode).toBe("plan");
     expect(fakeThis.task.agentConfig.executionModeSource).toBeUndefined();
     expect(
       fakeThis.emitEvent.mock.calls.some((call: Any[]) => call[0] === "execution_mode_auto_promoted"),

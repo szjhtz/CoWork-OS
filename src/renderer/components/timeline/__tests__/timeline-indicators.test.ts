@@ -50,6 +50,20 @@ describe("timeline indicators", () => {
     expect(indicator.tone).toBe("active");
   });
 
+  it("uses sub-stage groupLabel for FIX stage when present", () => {
+    const indicator = resolveTimelineIndicator(
+      makeEvent("timeline_group_started", { stage: "FIX", groupLabel: "Preparing workspace" }),
+    );
+    expect(indicator.label).toBe("Preparing workspace");
+  });
+
+  it("falls back to generic label when FIX stage has no sub-stage groupLabel", () => {
+    const indicator = resolveTimelineIndicator(
+      makeEvent("timeline_group_started", { stage: "FIX", groupLabel: "FIX" }),
+    );
+    expect(indicator.label).toBe("Fix stage started");
+  });
+
   it("maps progress updates to spinning Loader2 active icon", () => {
     const indicator = resolveTimelineIndicator(makeEvent("timeline_step_updated", { message: "Working" }));
     expect(indicator.icon).toBe(Loader2);

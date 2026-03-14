@@ -90,6 +90,8 @@ export function FileViewer({ filePath, workspacePath, onClose }: FileViewerProps
         return <ThemeIcon emoji="📕" icon={<FileTextIcon size={16} />} />;
       case "image":
         return <ThemeIcon emoji="🖼️" icon={<ImageIcon size={16} />} />;
+      case "video":
+        return <ThemeIcon emoji="🎬" icon={<FileIcon size={16} />} />;
       case "pptx":
         return <ThemeIcon emoji="📊" icon={<PresentationIcon size={16} />} />;
       case "xlsx":
@@ -149,6 +151,20 @@ export function FileViewer({ filePath, workspacePath, onClose }: FileViewerProps
               src={fileData.content || ""}
               alt={fileData.fileName}
               className="file-viewer-image"
+            />
+          </div>
+        );
+
+      case "video":
+        return (
+          <div className="file-viewer-video-container">
+            <video
+              src={fileData.playbackUrl || ""}
+              className="file-viewer-video"
+              controls
+              preload="metadata"
+              playsInline
+              poster={fileData.posterDataUrl}
             />
           </div>
         );

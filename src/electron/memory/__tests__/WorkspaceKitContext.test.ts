@@ -59,7 +59,7 @@ describe("WorkspaceKitContext", () => {
     );
 
     const out = buildWorkspaceKitContext(tmpDir, "any");
-    expect(out).toContain("Priorities (.cowork/PRIORITIES.md)");
+    expect(out).toContain("Current Priorities (.cowork/PRIORITIES.md)");
     expect(out).toContain("Ship context retention");
     expect(out).toContain("Cross-Agent Signals (.cowork/CROSS_SIGNALS.md)");
     expect(out).toContain("ExampleCo appears");
@@ -80,11 +80,11 @@ describe("WorkspaceKitContext", () => {
     );
 
     const out = buildWorkspaceKitContext(tmpDir, "any");
-    expect(out).toContain("Company Operating Profile (.cowork/COMPANY.md)");
+    expect(out).toContain("Company Context (.cowork/COMPANY.md)");
     expect(out).toContain("autonomous venture OS");
-    expect(out).toContain("Operating System (.cowork/OPERATIONS.md)");
+    expect(out).toContain("Operating Model (.cowork/OPERATIONS.md)");
     expect(out).toContain("Customer support");
-    expect(out).toContain("KPIs (.cowork/KPIS.md)");
+    expect(out).toContain("Business Metrics (.cowork/KPIS.md)");
     expect(out).toContain("Revenue: up 12%");
   });
 
@@ -136,7 +136,7 @@ describe("WorkspaceKitContext", () => {
     expect(out).not.toContain("#### Lessons Learned");
   });
 
-  it("includes VIBES.md content and places it before SOUL.md", () => {
+  it("includes VIBES.md content and places it after SOUL.md", () => {
     writeFile(
       path.join(tmpDir, ".cowork", "VIBES.md"),
       [
@@ -153,14 +153,14 @@ describe("WorkspaceKitContext", () => {
     );
     writeFile(path.join(tmpDir, ".cowork", "SOUL.md"), "# SOUL\n\n## Rules\n- Be blunt\n");
     const out = buildWorkspaceKitContext(tmpDir, "any");
-    expect(out).toContain("Current Vibes (.cowork/VIBES.md)");
+    expect(out).toContain("Current Operating Mode (.cowork/VIBES.md)");
     expect(out).toContain("Mode: crunch");
     expect(out).toContain("Energy: high");
     expect(out).toContain("Shipping deadline Friday");
-    // VIBES should appear before SOUL in the output
-    const vibesIdx = out.indexOf("Current Vibes");
-    const soulIdx = out.indexOf("Assistant Style");
-    expect(vibesIdx).toBeLessThan(soulIdx);
+    // SOUL should appear before VIBES in the output
+    const soulIdx = out.indexOf("Workspace Persona");
+    const vibesIdx = out.indexOf("Current Operating Mode");
+    expect(soulIdx).toBeLessThan(vibesIdx);
   });
 
   it("includes LORE.md with bullet sections", () => {
@@ -181,7 +181,7 @@ describe("WorkspaceKitContext", () => {
       ].join("\n"),
     );
     const out = buildWorkspaceKitContext(tmpDir, "any");
-    expect(out).toContain("Shared Lore (.cowork/LORE.md)");
+    expect(out).toContain("Durable Context (.cowork/LORE.md)");
     expect(out).toContain("First task in this workspace");
     expect(out).toContain("Debugged the auth race condition");
     expect(out).toContain("spaghetti module");
@@ -202,8 +202,8 @@ describe("WorkspaceKitContext", () => {
       "# Daily Log\n\n## Open Loops\n- Check metrics\n",
     );
     const out = buildWorkspaceKitContext(tmpDir, "any", now);
-    const mistakesIdx = out.indexOf("Mistakes / Preferences");
-    const loreIdx = out.indexOf("Shared Lore");
+    const mistakesIdx = out.indexOf("Recurring Mistakes");
+    const loreIdx = out.indexOf("Durable Context");
     const dailyIdx = out.indexOf("Daily Log");
     expect(mistakesIdx).toBeLessThan(loreIdx);
     expect(loreIdx).toBeLessThan(dailyIdx);
@@ -215,7 +215,7 @@ describe("WorkspaceKitContext", () => {
       ["# SOUL", "", "## Rules", "- Be blunt", ""].join("\n"),
     );
     const out = buildWorkspaceKitContext(tmpDir, "any");
-    expect(out).toContain("Assistant Style (.cowork/SOUL.md)");
+    expect(out).toContain("Workspace Persona (.cowork/SOUL.md)");
     expect(out).toContain("## Rules");
     expect(out).toContain("Be blunt");
   });

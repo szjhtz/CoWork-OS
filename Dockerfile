@@ -68,6 +68,11 @@ ENV COWORK_CONTROL_PLANE_PORT=18789
 
 RUN mkdir -p /data /workspace && chown -R node:node /data /workspace
 
+# Optional: COWORK_TZ sets TZ for the process (IANA timezone, e.g. America/New_York).
+COPY deploy/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+
 USER node
 
 EXPOSE 18789

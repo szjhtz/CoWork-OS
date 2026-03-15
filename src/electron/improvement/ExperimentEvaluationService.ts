@@ -6,6 +6,7 @@ import type {
   ImprovementCampaign,
   ImprovementJudgeVerdict,
   ImprovementReplayCase,
+  ImprovementVariantArtifactSummary,
   ImprovementVariantEvaluation,
   ImprovementVariantRun,
   Task,
@@ -31,9 +32,11 @@ export class ExperimentEvaluationService {
     baselineMetrics: EvalBaselineMetrics;
     evalWindowDays: number;
     replayCases: ImprovementReplayCase[];
+    maxPatchFiles?: number;
   }): ImprovementVariantEvaluation {
     const task = params.variant.taskId ? this.taskRepo.findById(params.variant.taskId) : undefined;
     const events = task ? this.eventRepo.findByTaskId(task.id) : [];
+    const artifactSummary = extractArtifactSummary(task, params.maxPatchFiles || 8);
 
     const verificationPassed = events.some(
       (event) => event.legacyType === "verification_passed" || event.type === "verification_passed",
@@ -45,6 +48,10 @@ export class ExperimentEvaluationService {
       (event) => event.legacyType === "review_quality_failed" || event.type === "review_quality_failed",
     );
 
+    const reproductionEvidenceFound = Boolean(artifactSummary.reproductionMethod);
+    const verificationEvidenceFound = artifactSummary.verificationCommands.length > 0 || verificationPassed;
+    const prReadinessEvidenceFound = artifactSummary.prReadiness === "ready";
+
     const targetedVerificationPassed =
       !!task &&
       task.status === "completed" &&
@@ -52,29 +59,51 @@ export class ExperimentEvaluationService {
       verificationPassed &&
       !verificationFailed &&
       !reviewFailed &&
-      hasPromotionEvidence(task);
+      reproductionEvidenceFound &&
+      verificationEvidenceFound;
+    const promotable = targetedVerificationPassed && prReadinessEvidenceFound;
     const failureClassResolved =
       !!task && task.failureClass !== "required_verification" && task.failureClass !== "contract_error";
-    const regressionSignals = collectRegressionSignals(task, verificationFailed, reviewFailed);
+    const regressionSignals = collectRegressionSignals(
+      task,
+      verificationFailed,
+      reviewFailed,
+      reproductionEvidenceFound,
+      verificationEvidenceFound,
+      prReadinessEvidenceFound,
+    );
     const replayPassRate = computeReplayPassRate(params.replayCases, task, regressionSignals);
     const diffSizePenalty = estimateDiffSizePenalty(task);
+    const safetySignals = collectSafetySignals(artifactSummary, diffSizePenalty, params.maxPatchFiles || 8);
 
     let score = 0;
     if (targetedVerificationPassed) score += 0.45;
     if (verificationPassed) score += 0.1;
     if (failureClassResolved) score += 0.15;
+    // Small incremental bonus for PR-readiness after the targeted verification gate already cleared.
+    if (promotable) score += 0.05;
     score += replayPassRate * 0.25;
     score -= diffSizePenalty;
     score -= Math.min(regressionSignals.length, 3) * 0.1;
+    score -= Math.min(safetySignals.length, 2) * 0.05;
     score = Number(Math.max(0, Math.min(1, score)).toFixed(4));
 
     const notes = [
       `Task status: ${task?.status || "missing"}${task?.terminalStatus ? ` (${task.terminalStatus})` : ""}`,
       `Targeted verification: ${targetedVerificationPassed ? "passed" : "failed"}`,
+      `Promotable: ${promotable ? "yes" : "no"}`,
       `Replay pass rate: ${Math.round(replayPassRate * 100)}%`,
     ];
+    if (artifactSummary.reproductionMethod) notes.push(`Reproduction method: ${artifactSummary.reproductionMethod}`);
+    if (artifactSummary.changedFiles.length > 0) {
+      notes.push(`Changed files: ${artifactSummary.changedFiles.join(", ")}`);
+    }
+    if (artifactSummary.verificationCommands.length > 0) {
+      notes.push(`Verification commands: ${artifactSummary.verificationCommands.join(" | ")}`);
+    }
     if (task?.resultSummary) notes.push(`Summary: ${task.resultSummary.slice(0, 400)}`);
     for (const signal of regressionSignals) notes.push(signal);
+    for (const signal of safetySignals) notes.push(signal);
 
     return {
       variantId: params.variant.id,
@@ -82,13 +111,21 @@ export class ExperimentEvaluationService {
       score,
       targetedVerificationPassed,
       verificationPassed,
+      promotable,
+      reproductionEvidenceFound,
+      verificationEvidenceFound,
+      prReadinessEvidenceFound,
       regressionSignals,
+      safetySignals,
       failureClassResolved,
       replayPassRate,
       diffSizePenalty,
-      summary: targetedVerificationPassed
-        ? "Variant passed targeted checks."
-        : "Variant failed targeted checks or triggered regression signals.",
+      artifactSummary,
+      summary: promotable
+        ? "Variant passed targeted checks and is promotable."
+        : targetedVerificationPassed
+          ? "Variant passed targeted checks but is missing promotability evidence."
+          : "Variant failed targeted checks or triggered regression signals.",
       notes,
     };
   }
@@ -109,6 +146,7 @@ export class ExperimentEvaluationService {
         baselineMetrics: params.campaign.baselineMetrics || this.snapshot(params.evalWindowDays),
         evalWindowDays: params.evalWindowDays,
         replayCases: params.campaign.replayCases,
+        maxPatchFiles: 8,
       }),
     );
     evaluations.sort((a, b) => b.score - a.score);
@@ -117,8 +155,10 @@ export class ExperimentEvaluationService {
       (candidate) =>
         candidate.targetedVerificationPassed &&
         candidate.verificationPassed &&
+        candidate.promotable &&
         candidate.replayPassRate >= 0.5 &&
-        candidate.regressionSignals.length === 0,
+        candidate.regressionSignals.length === 0 &&
+        candidate.safetySignals.length === 0,
     );
 
     const verdict: ImprovementJudgeVerdict = {
@@ -155,6 +195,9 @@ function collectRegressionSignals(
   task: Task | undefined,
   verificationFailed: boolean,
   reviewFailed: boolean,
+  reproductionEvidenceFound: boolean,
+  verificationEvidenceFound: boolean,
+  prReadinessEvidenceFound: boolean,
 ): string[] {
   const signals: string[] = [];
   if (!task) {
@@ -165,9 +208,31 @@ function collectRegressionSignals(
   if (task.terminalStatus !== "ok") signals.push(`Task terminal status is ${task.terminalStatus || "missing"}.`);
   if (verificationFailed) signals.push("Verification failed event recorded.");
   if (reviewFailed) signals.push("Review quality failure recorded.");
-  if (!hasPromotionEvidence(task)) signals.push("Task did not report PR-ready reproduction and verification evidence.");
+  if (!reproductionEvidenceFound) signals.push("Task did not report a concrete reproduction method.");
+  if (!verificationEvidenceFound) signals.push("Task did not report explicit verification evidence.");
+  if (!prReadinessEvidenceFound) signals.push("Task did not report PR-readiness evidence.");
   if (/regress|broke|still failing|unable|cannot/i.test(String(task.resultSummary || ""))) {
     signals.push("Result summary suggests unresolved or regressed behavior.");
+  }
+  return signals;
+}
+
+export function collectSafetySignals(
+  artifactSummary: ImprovementVariantArtifactSummary,
+  diffSizePenalty: number,
+  maxPatchFiles: number,
+): string[] {
+  const signals: string[] = [];
+  if (artifactSummary.prReadiness === "ready" && artifactSummary.changedFiles.length === 0) {
+    signals.push("PR readiness was declared without a changed-files summary.");
+  }
+  if (artifactSummary.changedFiles.length > maxPatchFiles) {
+    signals.push(
+      `Patch scope exceeded the expected file cap (${artifactSummary.changedFiles.length}/${maxPatchFiles}).`,
+    );
+  }
+  if (diffSizePenalty >= 0.12) {
+    signals.push("Patch appears larger than expected for a bounded self-improvement run.");
   }
   return signals;
 }
@@ -200,25 +265,54 @@ function estimateDiffSizePenalty(task: Task | undefined): number {
   return 0.12;
 }
 
-function hasPromotionEvidence(task: Task | undefined): boolean {
-  if (!task) return false;
-  const text = `${task.resultSummary || ""} ${task.error || ""} ${task.bestKnownOutcome || ""}`;
-  const hasReproduction =
-    /reproduction\s*(method|:|\s)/i.test(text) ||
-    /reproduce[d]?\s/i.test(text) ||
-    /reproduced\s+(the\s+)?(failure|issue|bug)/i.test(text);
-  const hasVerification =
-    /verification/i.test(text) ||
-    /\bverified\b/i.test(text) ||
-    /verifies?\s/i.test(text) ||
-    /(test|check)s?\s+(pass|passed)/i.test(text) ||
-    /(npm\s+)?test\s+passes/i.test(text);
-  const hasPrReadiness =
-    /pr\s*readiness/i.test(text) ||
-    /pr\s*ready/i.test(text) ||
-    /ready\s*for\s*pr/i.test(text) ||
-    /ready\s*to\s*(open|create|submit)\s*(a\s*)?pr/i.test(text) ||
-    /ready\s*for\s*review/i.test(text) ||
-    /draft\s*pr\s*(ready|can\s+be\s+opened)/i.test(text);
-  return hasReproduction && hasVerification && hasPrReadiness;
+export function extractArtifactSummary(
+  task: Task | undefined,
+  maxPatchFiles: number,
+): ImprovementVariantArtifactSummary {
+  const text = `${task?.resultSummary || ""}\n${task?.error || ""}`;
+  const reproductionMatch = text.match(/reproduction method\s*:\s*([^\n]+)/i);
+  const rootCauseMatch = text.match(/root cause\s*:\s*([^\n]+)/i);
+  const changedFilesMatch = text.match(/changed files summary\s*:\s*([^\n]+)/i);
+  const verificationMatch = text.match(/verification(?: commands?)?\s*:\s*([^\n]+)/i);
+
+  const changedFilesRaw = changedFilesMatch?.[1] || "";
+  const changedFiles = changedFilesRaw
+    .split(/[;,]/)
+    .map((item) => item.trim())
+    .filter((item) => /[./\\]/.test(item) || /\.(ts|tsx|js|jsx|json|md|css|scss)$/i.test(item))
+    .slice(0, maxPatchFiles + 5);
+
+  const fallbackVerificationCommands = [...text.matchAll(/((?:npm|pnpm|yarn|bun)\s+(?:test|run\s+[\w:-]+))/gi)]
+    .map((match) => match[1]?.trim() || "")
+    .filter(Boolean);
+
+  const verificationCommands = verificationMatch?.[1]
+    ? verificationMatch[1]
+        .split(/[;|]/)
+        .map((item) => item.trim())
+        .filter(Boolean)
+    : [...new Set(fallbackVerificationCommands)];
+
+  const prReadiness = /pr readiness\s*:\s*ready/i.test(text) || /ready\s*(for|to)\s*(pr|review)/i.test(text)
+    ? "ready"
+    : /pr readiness\s*:\s*not ready/i.test(text) || /not ready/i.test(text)
+      ? "not_ready"
+      : "unknown";
+
+  const summary: ImprovementVariantArtifactSummary = {
+    reproductionMethod:
+      reproductionMatch?.[1]?.trim() ||
+      (/reproduced\s+(the\s+)?(failure|issue|bug)/i.test(text) ? "Reproduced from task evidence." : undefined),
+    changedFiles,
+    verificationCommands,
+    prReadiness,
+    rootCauseSummary: rootCauseMatch?.[1]?.trim(),
+    missingEvidence: [],
+  };
+
+  if (!summary.reproductionMethod) summary.missingEvidence.push("reproduction_method");
+  if (summary.verificationCommands.length === 0) summary.missingEvidence.push("verification_commands");
+  if (summary.prReadiness === "unknown") summary.missingEvidence.push("pr_readiness");
+
+  return summary;
 }

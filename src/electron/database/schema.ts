@@ -1912,6 +1912,8 @@ export class DatabaseManager {
           fingerprint TEXT NOT NULL,
           source TEXT NOT NULL,
           status TEXT NOT NULL,
+          readiness TEXT,
+          readiness_reason TEXT,
           title TEXT NOT NULL,
           summary TEXT NOT NULL,
           severity REAL NOT NULL DEFAULT 0,
@@ -1928,6 +1930,8 @@ export class DatabaseManager {
           cooldown_until INTEGER,
           park_reason TEXT,
           parked_at INTEGER,
+          last_skip_reason TEXT,
+          last_skip_at INTEGER,
           last_attempt_fingerprint TEXT,
           last_failure_class TEXT,
           resolved_at INTEGER
@@ -1983,6 +1987,8 @@ export class DatabaseManager {
           stop_reason TEXT,
           provider_health_snapshot TEXT,
           stage_budget TEXT,
+          verification_commands TEXT,
+          observability TEXT,
           pr_required INTEGER NOT NULL DEFAULT 1,
           winner_variant_id TEXT,
           promoted_task_id TEXT,
@@ -2023,6 +2029,7 @@ export class DatabaseManager {
           outcome_metrics TEXT,
           verdict_summary TEXT,
           evaluation_notes TEXT,
+          observability TEXT,
           created_at INTEGER NOT NULL,
           started_at INTEGER,
           completed_at INTEGER,
@@ -2063,13 +2070,20 @@ export class DatabaseManager {
       "ALTER TABLE improvement_candidates ADD COLUMN cooldown_until INTEGER",
       "ALTER TABLE improvement_candidates ADD COLUMN park_reason TEXT",
       "ALTER TABLE improvement_candidates ADD COLUMN parked_at INTEGER",
+      "ALTER TABLE improvement_candidates ADD COLUMN readiness TEXT",
+      "ALTER TABLE improvement_candidates ADD COLUMN readiness_reason TEXT",
+      "ALTER TABLE improvement_candidates ADD COLUMN last_skip_reason TEXT",
+      "ALTER TABLE improvement_candidates ADD COLUMN last_skip_at INTEGER",
       "ALTER TABLE improvement_candidates ADD COLUMN last_attempt_fingerprint TEXT",
       "ALTER TABLE improvement_candidates ADD COLUMN last_failure_class TEXT",
       "ALTER TABLE improvement_campaigns ADD COLUMN stage TEXT",
       "ALTER TABLE improvement_campaigns ADD COLUMN stop_reason TEXT",
       "ALTER TABLE improvement_campaigns ADD COLUMN provider_health_snapshot TEXT",
       "ALTER TABLE improvement_campaigns ADD COLUMN stage_budget TEXT",
+      "ALTER TABLE improvement_campaigns ADD COLUMN verification_commands TEXT",
+      "ALTER TABLE improvement_campaigns ADD COLUMN observability TEXT",
       "ALTER TABLE improvement_campaigns ADD COLUMN pr_required INTEGER NOT NULL DEFAULT 1",
+      "ALTER TABLE improvement_variant_runs ADD COLUMN observability TEXT",
     ]) {
       try {
         this.db.exec(statement);
@@ -2097,6 +2111,54 @@ export class DatabaseManager {
         console.error("[DatabaseManager] Migration failed (schema may be inconsistent):", statement, msg);
         throw err;
       }
+    }
+
+    // Orchestration runs: DAG-based sub-agent orchestration persistence
+    try {
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS orchestration_runs (
+          id TEXT PRIMARY KEY,
+          root_task_id TEXT NOT NULL,
+          workspace_id TEXT NOT NULL,
+          tasks TEXT NOT NULL,
+          status TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          completed_at INTEGER
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_orchestration_runs_root
+          ON orchestration_runs(root_task_id);
+        CREATE INDEX IF NOT EXISTS idx_orchestration_runs_status
+          ON orchestration_runs(status, created_at DESC);
+      `);
+    } catch {
+      // Table already exists
+    }
+
+    // Memory tier promotion: adds tier and reference tracking to memories
+    for (const statement of [
+      "ALTER TABLE memories ADD COLUMN tier TEXT NOT NULL DEFAULT 'short'",
+      "ALTER TABLE memories ADD COLUMN reference_count INTEGER NOT NULL DEFAULT 0",
+      "ALTER TABLE memories ADD COLUMN last_referenced_at INTEGER",
+    ]) {
+      try {
+        this.db.exec(statement);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (/duplicate column name|already exists/i.test(msg)) {
+          continue;
+        }
+        console.error("[DatabaseManager] Migration failed:", statement, msg);
+      }
+    }
+
+    try {
+      this.db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_memories_tier
+          ON memories(workspace_id, tier, reference_count DESC);
+      `);
+    } catch {
+      // Index already exists
     }
 
     this.db.exec(`

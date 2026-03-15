@@ -254,6 +254,7 @@ const IPC_CHANNELS = {
   TASK_DELETE: "task:delete",
   TASK_EVENT: "task:event",
   TASK_EVENTS: "task:events",
+  TASK_SEMANTIC_TIMELINE: "task:semanticTimeline",
   TASK_SEND_MESSAGE: "task:sendMessage",
   TASK_STEP_FEEDBACK: "task:stepFeedback",
   TASK_SEND_STDIN: "task:sendStdin",
@@ -2315,6 +2316,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
 
   // Task event history (load from DB)
   getTaskEvents: (taskId: string) => ipcRenderer.invoke(IPC_CHANNELS.TASK_EVENTS, taskId),
+
+  // Semantic timeline projection (normalised UiTimelineEvent[] derived from task_events)
+  getSemanticTimeline: (taskId: string) => ipcRenderer.invoke(IPC_CHANNELS.TASK_SEMANTIC_TIMELINE, taskId),
 
   // Send follow-up message to a task (optionally with image attachments)
   sendMessage: (taskId: string, message: string, images?: ImageAttachment[]) => {

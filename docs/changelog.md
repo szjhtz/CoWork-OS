@@ -21,12 +21,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Dashboard chat UI**: Batched tool events (400ms flush) to avoid UI freeze; flush on subscription cleanup.
 - **README and feature documentation**: updated product-facing docs to reflect managed devices, automation navigation, bounded self-improvement campaigns, remote session inspection, and the current companies workflow.
 - **Self-improvement documentation**: added detailed architecture and troubleshooting coverage for staged autonomous campaigns, startup ordering, worktree requirements, candidate parking/cooldowns, notification flow, and `logs/dev-latest.log` verification steps.
+- **IPC contract documentation**: clarified that `kit:openFile`, `kit:resetAdaptiveStyle`, and `kit:submitMessageFeedback` live in the shared `IPC_CHANNELS` registry used by preload, renderer, and Electron handlers.
 
 ### Fixed
 - **Browser profile=user errors**: Clearer messages when Chrome not installed or profile locked.
 - **Invalid COWORK_TZ**: Validation with UTC fallback.
 - **Event batch loss**: Flush pending events on subscription cleanup.
 - **Autonomous improvement startup race**: `ImprovementLoopService` now starts after `MemoryService` initialization, skips non-worktree-capable workspaces when isolated git execution is required, and suppresses misleading legacy `ERR_UNHANDLED_ERROR` log noise from unhandled `"error"` alias emission during startup failures.
+- **Improvement loop candidate persistence**: fixed the `improvement_candidates` repository insert mismatch that could fail startup with `SqliteError: 27 values for 28 columns` and prevent `ImprovementLoopService` initialization.
+- **Workspace Kit / behavior-adaptation IPC constants**: restored the shared `IPC_CHANNELS` entries for `KIT_OPEN_FILE`, `KIT_RESET_ADAPTIVE_STYLE`, and `KIT_SUBMIT_MESSAGE_FEEDBACK` so preload, renderer, and handler code stay aligned.
 
 ## [0.4.13] - 2026-03-05
 
@@ -437,7 +440,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Gmail Tools**: `gmail_action` for sending emails, reading messages, creating drafts, searching
   - **Calendar Tools**: `google_calendar_action` for creating, updating, and managing events
   - **Drive Tools**: Enhanced `google_drive_action` with improved error handling
-  - **Settings UI**: New "Google Workspace" tab replaces separate Google Drive settings
+  - **Settings UI**: Google Workspace is accessible as a card in **Settings** > **Integrations**
 - **Gateway Channel Enhancements** - Improved channel implementations
   - **Gateway Cleanup**: Proper cleanup on disconnect for all channels
   - **Matrix Direct Rooms**: Support for direct message rooms in Matrix

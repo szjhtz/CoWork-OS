@@ -8,6 +8,7 @@ import {
 } from "../../shared/types";
 import { PairingCodeDisplay } from "./PairingCodeDisplay";
 import { ContextPolicySettings } from "./ContextPolicySettings";
+import { ResearchChannelsSettings } from "./ResearchChannelsSettings";
 
 interface TelegramSettingsProps {
   onStatusChange?: (connected: boolean) => void;
@@ -391,6 +392,19 @@ export function TelegramSettings({ onStatusChange }: TelegramSettingsProps) {
           )}
         </div>
       )}
+
+      <ResearchChannelsSettings
+        channelId={channel.id}
+        channelConfig={(channel.config || {}) as Record<string, unknown>}
+        onConfigChange={async (config) => {
+          await window.electronAPI.updateGatewayChannel({
+            id: channel.id,
+            config: { ...channel.config, ...config },
+          });
+          setChannel({ ...channel, config: { ...channel.config, ...config } });
+        }}
+        channelType="telegram"
+      />
 
       {/* Per-Context Security Policies (DM vs Group) */}
       <div className="settings-section">

@@ -65,6 +65,7 @@ import {
 import { DEFAULT_QUIRKS } from "../../shared/types";
 import { formatChatTranscriptForPrompt } from "./chat-transcript";
 import { evaluateWorkspaceRouterRules } from "./router-rules";
+import { applyResearchChatRouting } from "./router-research-routing";
 import { extractJsonValues } from "../utils/json-utils";
 import { pruneTempWorkspaces } from "../utils/temp-workspace";
 import {
@@ -1929,6 +1930,27 @@ export class MessageRouter {
       }
     } catch (error) {
       console.warn("[RouterRules] Failed to evaluate rules.monty:", error);
+    }
+
+    // Research chat routing: when message is from a designated research chat (Telegram/WhatsApp),
+    // route to research agent and inject the research prompt.
+    const sess = this.sessionRepo.findById(sessionId);
+    const channel = sess?.channelId ? this.channelRepo.findById(sess.channelId) : null;
+    const channelConfig = (channel?.config || {}) as Record<string, unknown>;
+    const researchResult = applyResearchChatRouting({
+      channelType: adapter.type,
+      channelConfig,
+      chatId: message.chatId,
+      originalText: message.text.trim(),
+      currentAgentRoleId: securityContext?.agentRoleId,
+      roleExists: (id) => !!this.agentRoleRepo.findById(id),
+    });
+    if (researchResult) {
+      message.text = researchResult.text;
+      if (researchResult.agentRoleId) {
+        if (!securityContext) securityContext = {};
+        securityContext.agentRoleId = researchResult.agentRoleId;
+      }
     }
 
     // Regular message - send to desktop app for task processing

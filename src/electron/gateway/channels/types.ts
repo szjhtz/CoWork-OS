@@ -180,6 +180,10 @@ export interface TelegramConfig extends ChannelConfig {
   botToken: string;
   /** Webhook URL (optional, uses polling if not set) */
   webhookUrl?: string;
+  /** Chat IDs (groups/channels) designated as research link-dump channels */
+  researchChatIds?: string[];
+  /** Agent role ID for research tasks (default: uses channel defaultAgentRoleId) */
+  researchAgentRoleId?: string;
 }
 
 /**
@@ -258,6 +262,10 @@ export interface WhatsAppConfig extends ChannelConfig {
    * preventing the bot from responding outside the self-chat.
    */
   ingestNonSelfChatsInSelfChatMode?: boolean;
+  /** Chat IDs (groups) designated as research link-dump channels */
+  researchChatIds?: string[];
+  /** Agent role ID for research tasks (default: uses channel defaultAgentRoleId) */
+  researchAgentRoleId?: string;
 }
 
 /**

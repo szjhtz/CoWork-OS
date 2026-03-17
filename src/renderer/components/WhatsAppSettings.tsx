@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { Lightbulb } from "lucide-react";
 import { ChannelData, ChannelUserData, SecurityMode } from "../../shared/types";
+import { ResearchChannelsSettings } from "./ResearchChannelsSettings";
 import QRCode from "qrcode";
 
 interface WhatsAppSettingsProps {
@@ -729,6 +730,22 @@ export function WhatsAppSettings({ onStatusChange }: WhatsAppSettingsProps) {
           </div>
         )}
       </div>
+
+      <ResearchChannelsSettings
+        channelId={channel.id}
+        channelConfig={(channel.config || {}) as Record<string, unknown>}
+        onConfigChange={async (config) => {
+          await window.electronAPI.updateGatewayChannel({
+            id: channel.id,
+            config: { ...channel.config, ...config },
+          });
+          setChannel({
+            ...channel,
+            config: { ...channel.config, ...config },
+          });
+        }}
+        channelType="whatsapp"
+      />
 
       <div className="settings-section">
         <h4>Security Mode</h4>

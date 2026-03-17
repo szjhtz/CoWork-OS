@@ -59,6 +59,10 @@ QR code pairing via Baileys library for Web WhatsApp connections.
 | **Self-Chat Mode ON** (default) | Bot only responds in "Message Yourself" chat | Using your personal WhatsApp |
 | **Self-Chat Mode OFF** | Bot responds to all incoming messages | Dedicated bot phone number |
 
+### Research Channels
+
+Designate specific groups as link-research channels. Post URLs there and the agent builds a findings report with classification. See [Research Channels](research-channels.md).
+
 ---
 
 ## Telegram
@@ -77,6 +81,10 @@ Bot commands, streaming responses, workspace selection via grammY.
 | Command | Description |
 |---------|-------------|
 | `/addworkspace <path>` | Add new workspace |
+
+### Research Channels
+
+Designate specific groups as link-research channels. Post URLs there and the agent builds a findings report with classification. See [Research Channels](research-channels.md).
 
 ---
 

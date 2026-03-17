@@ -21,7 +21,7 @@ let mockGuardrails = {
 
 vi.mock("../../guardrails/guardrail-manager", () => ({
   GuardrailManager: {
-    getSettings: () => mockGuardrails,
+    loadSettings: () => mockGuardrails,
   },
 }));
 
@@ -38,7 +38,7 @@ const setResponseStyleMock = vi.fn((style: Record<string, string>) => {
 
 vi.mock("../../settings/personality-manager", () => ({
   PersonalityManager: {
-    getSettings: () => ({ responseStyle: mockResponseStyle }),
+    loadSettings: () => ({ responseStyle: mockResponseStyle }),
     setResponseStyle: (...args: unknown[]) => setResponseStyleMock(...(args as [Record<string, string>])),
   },
 }));

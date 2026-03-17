@@ -518,6 +518,7 @@ describe("TaskExecutor workspace preflight acknowledgement", () => {
 
   it("auto-promotes strategy-inferred plan mode for mutation-required steps", () => {
     const fakeThis: Any = Object.create((TaskExecutor as Any).prototype);
+    fakeThis.workspace = { permissions: { shell: true } };
     fakeThis.task = {
       id: "task-1",
       agentConfig: {
@@ -551,6 +552,7 @@ describe("TaskExecutor workspace preflight acknowledgement", () => {
 
   it("fails fast on mutation-required steps when user-locked read-only mode blocks required tools", () => {
     const fakeThis: Any = Object.create((TaskExecutor as Any).prototype);
+    fakeThis.workspace = { permissions: { shell: true } };
     fakeThis.task = {
       id: "task-2",
       agentConfig: {
@@ -583,6 +585,7 @@ describe("TaskExecutor workspace preflight acknowledgement", () => {
 
   it("treats legacy read-only execution modes as user-owned during mutation alignment", () => {
     const fakeThis: Any = Object.create((TaskExecutor as Any).prototype);
+    fakeThis.workspace = { permissions: { shell: true } };
     fakeThis.task = {
       id: "task-legacy-mode",
       agentConfig: {

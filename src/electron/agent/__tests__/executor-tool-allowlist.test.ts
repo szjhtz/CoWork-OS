@@ -20,6 +20,7 @@ describe("TaskExecutor tool allow-list semantics", () => {
     };
     executor.isVisualCanvasTask = vi.fn().mockReturnValue(false);
     executor.isCanvasTool = vi.fn((toolName: string) => toolName.startsWith('canvas_'));
+    executor.workspace = { permissions: { shell: true } };
     executor.logTag = "[Executor:test]";
     return executor;
   }

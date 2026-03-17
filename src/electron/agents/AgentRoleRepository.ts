@@ -366,7 +366,7 @@ export class AgentRoleRepository {
           personality_id, model_key, provider_type, system_prompt,
           capabilities, tool_restrictions, is_system, is_active,
         sort_order, created_at, updated_at,
-        autonomy_level, heartbeat_enabled, heartbeat_interval_minutes,
+        autonomy_level, soul, heartbeat_enabled, heartbeat_interval_minutes,
         heartbeat_stagger_offset, heartbeat_status, operator_mandate, allowed_loop_types,
         output_types, suppression_policy, max_autonomous_outputs_per_cycle,
         last_useful_output_at, operator_health_score
@@ -393,6 +393,7 @@ export class AgentRoleRepository {
         role.createdAt,
         role.updatedAt,
         role.autonomyLevel || "specialist",
+        role.soul || null,
         role.heartbeatEnabled ? 1 : 0,
         role.heartbeatIntervalMinutes,
         role.heartbeatStaggerOffset,
@@ -455,7 +456,7 @@ export class AgentRoleRepository {
           personality_id, model_key, provider_type, system_prompt,
           capabilities, tool_restrictions, is_system, is_active,
         sort_order, created_at, updated_at,
-        autonomy_level, heartbeat_enabled, heartbeat_interval_minutes,
+        autonomy_level, soul, heartbeat_enabled, heartbeat_interval_minutes,
         heartbeat_stagger_offset, heartbeat_status, operator_mandate, allowed_loop_types,
         output_types, suppression_policy, max_autonomous_outputs_per_cycle,
         last_useful_output_at, operator_health_score
@@ -482,6 +483,7 @@ export class AgentRoleRepository {
         role.createdAt,
         role.updatedAt,
         role.autonomyLevel || "specialist",
+        role.soul || null,
         role.heartbeatEnabled ? 1 : 0,
         role.heartbeatIntervalMinutes,
         role.heartbeatStaggerOffset,

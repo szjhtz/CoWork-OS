@@ -341,7 +341,7 @@ describe("integration_setup tool", () => {
 
     expect(result.success).toBe(true);
     expect(Array.isArray(result.providers)).toBe(true);
-    expect(result.providers).toHaveLength(8);
+    expect(result.providers).toHaveLength(14);
     expect(result.providers.some((provider: Any) => provider.provider === "resend")).toBe(true);
     expect(result.providers.some((provider: Any) => provider.provider === "jira")).toBe(true);
   });

@@ -90,10 +90,7 @@ export async function computeWorkspaceKitStatus(
   workspaceId = workspacePath,
 ): Promise<WorkspaceKitStatus> {
   const kitRoot = path.join(workspacePath, KIT_DIR_NAME);
-  const state = await readWorkspaceKitState(workspacePath);
-  const bootstrapPath = path.join(workspacePath, KIT_DIR_NAME, "BOOTSTRAP.md");
-  const bootstrapPresent = fs.existsSync(bootstrapPath);
-  const lifecycle = { state, bootstrapPresent };
+  const lifecycle = await ensureBootstrapLifecycleState(workspacePath);
 
   const hasKitDir = (() => {
     try {

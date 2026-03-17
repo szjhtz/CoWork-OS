@@ -12,7 +12,6 @@
  *  - Actor-aware so future sub-agents can slot in without changes
  */
 
-import { randomUUID } from "node:crypto";
 import type {
   CanonicalActionKind,
   NormalizerInputEvent,

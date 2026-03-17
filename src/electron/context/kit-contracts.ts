@@ -299,6 +299,7 @@ export const WORKSPACE_PROMPT_ORDER = [
   "MISTAKES.md",
   "LORE.md",
   "MEMORY.md",
+  "HEARTBEAT.md",
 ] as const;
 
 export const WORKSPACE_HEALTH_FILES = [

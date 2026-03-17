@@ -5291,6 +5291,46 @@ export class AgentDaemon extends EventEmitter {
       ),
     );
 
+    // Best-effort / wrap-up auto-waive: when the executor explicitly finalized the task
+    // via a soft deadline / wrap-up / best-effort path (not a hard failure), waive any
+    // non-mutation-required blocking steps so the task can complete as partial_success
+    // rather than being hard-blocked by the completion gate.
+    const bestEffortReasons = [
+      "best_effort",
+      "Timeout recovery",
+      "Wrap-up",
+      "executor_best_effort_finalized",
+      "No team member analyses available for synthesis",
+    ];
+    const terminalStatusReason = metadata?.terminalStatusReason ?? "";
+    const isBestEffortFinalization =
+      bestEffortReasons.some((r) => terminalStatusReason.includes(r)) &&
+      (metadata?.terminalStatus === "ok" || metadata?.terminalStatus === "partial_success");
+    if (isBestEffortFinalization && blockingFailedSteps.length > 0) {
+      const nonMutationBlockers = blockingFailedSteps.filter((id) => {
+        const normalized = normalizeStepIdForComparison(id);
+        return (
+          !failedMutationRequiredStepIds.has(id) &&
+          !failedMutationRequiredNormalizedStepIds.has(normalized)
+        );
+      });
+      if (nonMutationBlockers.length > 0) {
+        this.logEvent(taskId, "timeline_step_updated", {
+          stepId: "completion_gate:best_effort_auto_waive",
+          status: "in_progress",
+          actor: "system",
+          message: `Best-effort finalization: auto-waiving ${nonMutationBlockers.length} non-mutation-required blocking step(s) to allow partial_success completion.`,
+          autoWaivedStepIds: nonMutationBlockers,
+          terminalStatusReason,
+          gate: "completion_failed_step_gate",
+          legacyType: "progress_update",
+        });
+        blockingFailedSteps = blockingFailedSteps.filter(
+          (id) => !nonMutationBlockers.includes(id),
+        );
+      }
+    }
+
     if (blockingFailedSteps.length > 0) {
       this.timelineMetrics.completionGateBlocks += 1;
       const hasMutationContractBlockers = blockingFailedSteps.some((id) => {

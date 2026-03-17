@@ -1027,6 +1027,8 @@ export const ChannelConfigSchema = z
     selfChatMode: z.boolean().optional(),
     responsePrefix: z.string().max(20).optional(),
     trustedGroupMemoryOptIn: z.boolean().optional(),
+    researchChatIds: z.array(z.string().max(200)).max(50).optional(),
+    researchAgentRoleId: z.string().uuid().optional(),
   })
   .passthrough();
 

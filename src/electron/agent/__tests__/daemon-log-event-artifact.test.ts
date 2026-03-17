@@ -30,6 +30,7 @@ function createDaemonLike() {
       seq += 1;
       return seq;
     }),
+    activeTimelineStageByTask: new Map(),
     transitionTimelineStage: vi.fn(),
     trackTimelineStepState: vi.fn(),
     trackEvidenceRefs: vi.fn(),

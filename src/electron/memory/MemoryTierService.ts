@@ -92,6 +92,16 @@ export class MemoryTierService {
 
       // Evict stale short-tier memories older than TTL with low reference count
       const cutoff = Date.now() - SHORT_TIER_TTL_DAYS * 24 * 60 * 60 * 1000;
+      // Delete child rows first to avoid FK constraint violation (memory_embeddings references memories)
+      db.prepare(
+        `DELETE FROM memory_embeddings
+         WHERE memory_id IN (
+           SELECT id FROM memories
+           WHERE COALESCE(tier, 'short') = 'short'
+             AND created_at < ?
+             AND COALESCE(reference_count, 0) < ?
+         )`,
+      ).run(cutoff, SHORT_TIER_EVICTION_THRESHOLD);
       const evictResult = db
         .prepare(
           `DELETE FROM memories

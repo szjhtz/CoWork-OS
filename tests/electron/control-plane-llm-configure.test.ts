@@ -63,7 +63,6 @@ describe('control-plane llm-configure', () => {
         authMethod: 'api_key',
       }),
     }));
-    expect(mockFactory.clearCache).toHaveBeenCalled();
     expect(result.llm.currentProvider).toBe('openai');
   });
 

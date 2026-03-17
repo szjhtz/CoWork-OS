@@ -206,7 +206,7 @@ export class IntentRouter {
       "execution",
       3,
       "action-verb",
-      /\b(create|build|make|edit|write|fix|deploy|run|install|execute|open|search|fetch|schedule|configure|implement|check|read|review|find|analyze|examine|inspect|list|show|scan|look|update|modify|delete|remove|rename|move|copy|test|verify|continue|commit|push|pull|merge|raise|raised|cherry-?pick|rebase|revert|publish|release|tag|submit|approve|request|close|research|investigate|summarize|compare|generate|draft|prepare|export|troubleshoot|diagnose)\b/.test(
+      /\b(create|build|make|edit|write|fix|deploy|run|install|execute|open|search|fetch|schedule|configure|implement|check|read|review|find|analyze|examine|inspect|list|show|scan|look|update|modify|delete|remove|rename|move|copy|test|verify|continue|commit|push|pull|merge|raise|raised|cherry-?pick|rebase|revert|publish|release|tag|submit|approve|request|close|research|investigate|summarize|compare|generate|draft|prepare|export|troubleshoot|diagnose|explore|spawn|crawl|scrape|extract|index|monitor|track|profile|audit|map|catalog|enumerate|parse|process|transform|migrate|sync|import|clone|fork)\b/.test(
         lower,
       ),
     );

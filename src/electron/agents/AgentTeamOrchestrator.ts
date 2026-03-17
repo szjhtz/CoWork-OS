@@ -201,7 +201,21 @@ export class AgentTeamOrchestrator {
         const currentPhase = run.phase || "dispatch";
         const hasSynthesisItem = refreshedItems.some((i) => i.title === SYNTHESIS_ITEM_TITLE);
         if (run.collaborativeMode && currentPhase !== "complete" && !hasSynthesisItem) {
-          await this.transitionToSynthesizePhase(run, team, rootTask, refreshedItems);
+          // Guard: verify all sub-agent tasks are actually terminal before synthesis.
+          // Synthesis must only run after every sub-agent has completed (success or failure).
+          const preSynthesisItems = refreshedItems.filter((i) => i.title !== SYNTHESIS_ITEM_TITLE);
+          let allSubAgentsTerminal = true;
+          for (const item of preSynthesisItems) {
+            if (!item.sourceTaskId) continue;
+            const task = await this.deps.getTaskById(item.sourceTaskId);
+            if (!task || !isTerminalTaskStatus(task.status)) {
+              allSubAgentsTerminal = false;
+              break;
+            }
+          }
+          if (allSubAgentsTerminal) {
+            await this.transitionToSynthesizePhase(run, team, rootTask, refreshedItems);
+          }
           return;
         }
 

@@ -37,10 +37,14 @@ interface LLMTeamSelection {
  * Ask the LLM to pick the right team members and leader for a given task.
  * Returns `null` when the LLM call fails or returns unparseable output so the
  * caller can fall back to keyword matching.
+ *
+ * @param maxAgents - When provided (e.g. from "spawn 2 subagents"), the LLM is
+ * instructed to pick exactly this many agents.
  */
 async function selectViaLLM(
   prompt: string,
   activeRoles: AgentRole[],
+  maxAgents?: number,
 ): Promise<LLMTeamSelection | null> {
   let provider: LLMProvider;
   let model: string;
@@ -58,6 +62,11 @@ async function selectViaLLM(
     )
     .join("\n");
 
+  const countRule =
+    maxAgents != null && maxAgents >= 1
+      ? `- The user explicitly requested exactly ${maxAgents} agent(s). Pick EXACTLY ${maxAgents} agents — no more, no less.`
+      : "- Pick between 2 and 5 agents depending on task complexity. Simple tasks need 2-3, complex tasks up to 5.";
+
   const systemPrompt = [
     "You are a team composition advisor. Given a task and a list of available agents, select the most appropriate team.",
     "",
@@ -65,9 +74,7 @@ async function selectViaLLM(
     "- First identify the PRIMARY action of the task (writing, coding, research, design, etc.).",
     "- ALWAYS include the agent whose core specialization matches the primary action. E.g. a writing task MUST include a writer, a coding task MUST include a coder.",
     "- Then add agents that complement with relevant secondary skills (research, review, domain expertise).",
-    "- Pick between 2 and 5 agents depending on task complexity.",
-    "- Simple, single-domain tasks need only 2-3 agents.",
-    "- Complex, multi-domain tasks may need up to 5.",
+    countRule,
     "- Pick a leader who can best coordinate and synthesize the work — usually the agent with the primary skill.",
     "- Do NOT pick agents with only tangential relevance. A marketing agent is not a writer. A coder is not a researcher.",
     "",
@@ -96,6 +103,7 @@ async function selectViaLLM(
       .replace(/```json?\s*/gi, "")
       .replace(/```/g, "")
       .trim();
+    if (!cleaned) return null;
     const parsed = JSON.parse(cleaned) as LLMTeamSelection;
 
     // Validate: memberIds must be an array of known IDs
@@ -126,6 +134,7 @@ async function selectViaLLM(
 function selectViaKeywords(
   prompt: string,
   activeRoles: AgentRole[],
+  maxAgents?: number,
 ): { members: AgentRole[]; leader: AgentRole } {
   // Detect which capabilities the prompt needs
   const detected = new Set<AgentCapability>();
@@ -133,11 +142,15 @@ function selectViaKeywords(
     if (pattern.test(prompt)) detected.add(cap as AgentCapability);
   }
 
-  // Simple heuristic sizing
-  let max = 3;
-  if (detected.size >= 5) max = 5;
-  else if (detected.size >= 3) max = 4;
-  const min = Math.max(2, max - 1);
+  // Use explicit max from prompt if provided, else heuristic
+  let max = maxAgents ?? 3;
+  if (maxAgents == null) {
+    if (detected.size >= 5) max = 5;
+    else if (detected.size >= 3) max = 4;
+  }
+  // When maxAgents is explicitly set (e.g. "spawn 1 agent"), respect it exactly.
+  // Without an explicit cap, keep the existing floor of 2 so we always have a pair.
+  const min = maxAgents != null ? maxAgents : Math.max(2, max - 1);
 
   // Score agents by how many detected capabilities they cover
   const scored = activeRoles
@@ -159,14 +172,19 @@ function selectViaKeywords(
   }
 
   // Select leader: prefer "lead" autonomy among selected, else fallback
-  const leader =
+  let leader =
     members.find((m) => m.autonomyLevel === "lead") ||
     activeRoles.find((r) => r.name === "architect") ||
     activeRoles.find((r) => r.name === "project_manager") ||
     members[0];
 
-  if (leader && !members.some((m) => m.id === leader.id)) {
-    members.push(leader);
+  // Only add leader to members if not already present and we won't exceed maxAgents
+  if (leader && !members.some((m) => m.id === leader!.id)) {
+    if (maxAgents == null || members.length < maxAgents) {
+      members.push(leader);
+    } else {
+      leader = members[0];
+    }
   }
 
   return { members, leader: leader! };
@@ -181,10 +199,13 @@ function selectViaKeywords(
  *
  * Uses the configured LLM to analyze task complexity and pick agents.
  * Falls back to keyword-based matching if the LLM call fails.
+ *
+ * @param maxAgents - Optional cap from user prompt (e.g. "spawn 2 subagents" -> 2)
  */
 export async function selectAgentsForTask(
   prompt: string,
   allRoles: AgentRole[],
+  maxAgents?: number,
 ): Promise<{ members: AgentRole[]; leader: AgentRole }> {
   const active = allRoles.filter((r) => r.isActive);
   if (active.length === 0) {
@@ -192,11 +213,15 @@ export async function selectAgentsForTask(
   }
 
   // Try LLM-based selection first
-  const llmResult = await selectViaLLM(prompt, active);
+  const llmResult = await selectViaLLM(prompt, active, maxAgents);
 
   if (llmResult) {
     const roleMap = new Map(active.map((r) => [r.id, r]));
-    const members = llmResult.memberIds
+    let memberIds = llmResult.memberIds;
+    if (maxAgents != null && maxAgents >= 1) {
+      memberIds = memberIds.slice(0, maxAgents);
+    }
+    const members = memberIds
       .map((id) => roleMap.get(id))
       .filter((r): r is AgentRole => r != null);
     const leader = roleMap.get(llmResult.leaderId) || members[0];
@@ -206,5 +231,12 @@ export async function selectAgentsForTask(
   }
 
   // Fallback to keyword matching
-  return selectViaKeywords(prompt, active);
+  let result = selectViaKeywords(prompt, active, maxAgents);
+  if (maxAgents != null && maxAgents >= 1 && result.members.length > maxAgents) {
+    result = {
+      ...result,
+      members: result.members.slice(0, maxAgents),
+    };
+  }
+  return result;
 }

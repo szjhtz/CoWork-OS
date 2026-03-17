@@ -6,6 +6,30 @@ import { AgentDaemon } from "../daemon";
 import { GuardrailManager } from "../../guardrails/guardrail-manager";
 import { BuiltinToolsSettingsManager, type RunCommandApprovalMode } from "./builtin-settings";
 
+/**
+ * Strip ANSI/VT control sequences and normalize line endings produced by the
+ * `script` PTY wrapper used for CLI agent commands (e.g. codex).
+ * `script` converts LF→CRLF and may inject escape sequences; both would render
+ * as garbled characters in the CommandOutput terminal UI if not cleaned.
+ */
+function stripScriptControlCodes(text: string): string {
+  return (
+    text
+      // VT/CSI escape sequences (covers colour, cursor movement, etc.)
+      .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "")
+      // Other ESC-prefixed sequences (OSC, DCS, etc.)
+      .replace(/\x1b[@-_][0-?]*[ -/]*[@-~]/g, "")
+      // Bare ESC characters left over
+      .replace(/\x1b/g, "")
+      // CRLF → LF, then lone CR → LF
+      .replace(/\r\n/g, "\n")
+      .replace(/\r/g, "\n")
+      // Strip the `script` session header/trailer lines
+      .replace(/^Script started on .*\n?/m, "")
+      .replace(/^Script done on .*\n?/m, "")
+  );
+}
+
 // Limits to prevent runaway commands
 const MAX_TIMEOUT = 5 * 60 * 1000; // 5 minutes max
 const DEFAULT_TIMEOUT = 60 * 1000; // 1 minute default
@@ -736,6 +760,14 @@ export class ShellTools {
 
     // Create a minimal, safe environment (don't leak sensitive process.env vars like API keys)
     const resolvedShell = resolveShellForCommandExecution();
+
+    // Detect if this command invokes a CLI agent (codex) that needs
+    // special environment (API keys) and PTY allocation.
+    // Match only when `codex` appears as the first command token or after a
+    // shell separator (;, |, &) to avoid false-positives on paths like
+    // /usr/local/codex-backup or variables that contain the word.
+    const isCliAgentCommand = /(?:^|[;&|])\s*codex\b/.test(command);
+
     const safeEnv: Record<string, string> =
       process.platform === "win32"
         ? {
@@ -762,9 +794,47 @@ export class ShellTools {
             ...options?.env,
           };
 
+    // Forward auth keys and runtime config for CLI agent commands.
+    if (isCliAgentCommand && process.platform !== "win32") {
+      const CLI_AGENT_ENV_PASSTHROUGH = [
+        // Auth credentials
+        "OPENAI_API_KEY",
+        "CODEX_API_KEY",
+        "AWS_REGION",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+        "CLOUD_ML_REGION",
+        "GOOGLE_APPLICATION_CREDENTIALS",
+        // Runtime config (not secret keys, but required for correct operation)
+        "ANTHROPIC_MODEL", // selects which Anthropic model codex uses
+        "XDG_CONFIG_HOME",
+        "NPM_CONFIG_PREFIX",
+        "NVM_DIR",
+        "NODE_PATH",
+      ];
+      for (const key of CLI_AGENT_ENV_PASSTHROUGH) {
+        if (process.env[key] && !safeEnv[key]) {
+          safeEnv[key] = process.env[key]!;
+        }
+      }
+    }
+
     const cwd = options?.cwd || this.workspace.path;
 
-    // Emit the command being executed
+    // Wrap CLI agent commands with `script` to allocate a PTY (prevents hang bug)
+    let effectiveCommand = command;
+    if (isCliAgentCommand && process.platform !== "win32") {
+      if (process.platform === "darwin") {
+        // macOS: script -q /dev/null <command>
+        effectiveCommand = `script -q /dev/null ${command}`;
+      } else {
+        // Linux: script -qc "<command>" /dev/null
+        effectiveCommand = `script -qc ${JSON.stringify(command)} /dev/null`;
+      }
+    }
+
+    // Emit the command being executed (show original command, not wrapped)
     this.daemon.logEvent(this.taskId, "command_output", {
       command,
       cwd,
@@ -783,7 +853,7 @@ export class ShellTools {
       this.clearEscalationTimeouts();
 
       // Use a shell to handle complex commands with pipes, redirects, etc.
-      const child = spawn(resolvedShell, getShellArgs(resolvedShell, command), {
+      const child = spawn(resolvedShell, getShellArgs(resolvedShell, effectiveCommand), {
         cwd,
         env: safeEnv,
         stdio: ["pipe", "pipe", "pipe"], // Enable stdin for interactive commands
@@ -805,7 +875,10 @@ export class ShellTools {
 
       // Stream stdout
       child.stdout.on("data", (data: Buffer) => {
-        const chunk = this.sanitizeCommandOutput(data.toString("utf-8"));
+        const raw = isCliAgentCommand
+          ? stripScriptControlCodes(data.toString("utf-8"))
+          : data.toString("utf-8");
+        const chunk = this.sanitizeCommandOutput(raw);
         stdout += chunk;
         // Emit live output
         this.daemon.logEvent(this.taskId, "command_output", {
@@ -817,7 +890,10 @@ export class ShellTools {
 
       // Stream stderr
       child.stderr.on("data", (data: Buffer) => {
-        const chunk = this.sanitizeCommandOutput(data.toString("utf-8"));
+        const raw = isCliAgentCommand
+          ? stripScriptControlCodes(data.toString("utf-8"))
+          : data.toString("utf-8");
+        const chunk = this.sanitizeCommandOutput(raw);
         stderr += chunk;
         // Emit live output
         this.daemon.logEvent(this.taskId, "command_output", {

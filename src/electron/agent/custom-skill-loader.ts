@@ -46,7 +46,21 @@ interface ModelSkillDescriptionOptions {
   shortlistSize?: number;
   lowConfidenceThreshold?: number;
   textBudgetChars?: number;
+  includePrereqBlockedSkills?: boolean;
 }
+
+interface RankedSkillMatch {
+  skill: CustomSkill;
+  score: number;
+}
+
+interface RankSkillsForQueryOptions {
+  availableToolNames?: Set<string>;
+  limit?: number;
+  includePrereqBlockedSkills?: boolean;
+}
+
+type RoutingIntentCue = "review" | "fix";
 
 function isPackagedElectronApp(): boolean {
   try {
@@ -67,6 +81,26 @@ export class CustomSkillLoader {
       /no fabricated tool-side behavior/i,
     ],
   } as const;
+
+  private static readonly ROUTING_INTENT_CUE_PATTERNS: Record<RoutingIntentCue, RegExp[]> = {
+    review: [
+      /\bpull request\b/i,
+      /\bpr\b/i,
+      /\breview\b/i,
+      /\bfeedback\b/i,
+      /\bmerge\b/i,
+    ],
+    fix: [
+      /\bfix(?:ing)?\b/i,
+      /\bbug\b/i,
+      // "issue" is intentionally narrowed to require a technical co-signal to avoid
+      // false positives on "issue an invoice", "issue tracking", etc.
+      /\b(?:bug\s+issue|issue\s+(?:with|in|on)|known\s+issue)\b/i,
+      /\berror\b/i,
+      /\bbroken\b/i,
+      /\brepair\b/i,
+    ],
+  };
 
   private bundledSkillsDir: string;
   private managedSkillsDir: string;
@@ -420,8 +454,14 @@ export class CustomSkillLoader {
    * List skills that can be automatically invoked by the model
    * Excludes guidelines and skills with disableModelInvocation set
    */
-  listModelInvocableSkills(options: { availableToolNames?: Set<string> } = {}): CustomSkill[] {
+  listModelInvocableSkills(
+    options: {
+      availableToolNames?: Set<string>;
+      includePrereqBlockedSkills?: boolean;
+    } = {},
+  ): CustomSkill[] {
     const availableToolNames = options.availableToolNames;
+    const includePrereqBlockedSkills = options.includePrereqBlockedSkills === true;
     return this.listSkills().filter((skill) => {
       // Exclude guideline skills
       if (skill.type === "guideline") return false;
@@ -447,7 +487,11 @@ export class CustomSkillLoader {
         const hasBinaryRequirements =
           (Array.isArray(skill.requires?.bins) && skill.requires.bins.length > 0) ||
           (Array.isArray(skill.requires?.anyBins) && skill.requires.anyBins.length > 0);
-        if (hasBinaryRequirements && !availableToolNames.has("run_command")) {
+        if (
+          hasBinaryRequirements &&
+          !includePrereqBlockedSkills &&
+          !availableToolNames.has("run_command")
+        ) {
           return false;
         }
       }
@@ -465,10 +509,143 @@ export class CustomSkillLoader {
     return new Set(tokens);
   }
 
+  private buildRoutingHaystack(texts: string[]): string {
+    return texts
+      .filter((text) => typeof text === "string" && text.trim().length > 0)
+      .join(" ")
+      .toLowerCase()
+      .trim();
+  }
+
+  private normalizeRoutingPhrase(text: string): string {
+    return String(text || "")
+      .toLowerCase()
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  private escapeRegExp(text: string): string {
+    return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  private queryContainsRoutingPhrase(query: string, phrase: string): boolean {
+    const normalizedQuery = this.normalizeRoutingPhrase(query);
+    const normalizedPhrase = this.normalizeRoutingPhrase(phrase);
+    if (!normalizedQuery || !normalizedPhrase) return false;
+
+    const escapedPhrasePattern = normalizedPhrase
+      .split(" ")
+      .filter(Boolean)
+      .map((segment) => this.escapeRegExp(segment))
+      .join("\\s+");
+
+    if (!escapedPhrasePattern) return false;
+
+    return new RegExp(`(?:^|[^a-z0-9])${escapedPhrasePattern}(?:$|[^a-z0-9])`, "i").test(
+      normalizedQuery,
+    );
+  }
+
+  matchesSkillRoutingQuery(skill: CustomSkill, query: string): boolean {
+    const keywords = skill.metadata?.routing?.keywords;
+    if (!Array.isArray(keywords) || keywords.length === 0) return true;
+
+    const normalizedQuery = this.normalizeRoutingPhrase(query);
+    if (!normalizedQuery) return false;
+
+    const matched = keywords.some(
+      (keyword) => typeof keyword === "string" && this.queryContainsRoutingPhrase(normalizedQuery, keyword),
+    );
+    if (!matched) {
+      logger.debug(`Keyword gate BLOCKED skill "${skill.id}" for query "${query.slice(0, 80)}" (keywords: ${JSON.stringify(keywords)})`);
+    }
+    return matched;
+  }
+
+  private scoreTextOverlap(queryTokens: Set<string>, texts: string[]): number {
+    const haystack = this.buildRoutingHaystack(texts);
+    if (!haystack || queryTokens.size === 0) return 0;
+
+    let overlap = 0;
+    for (const token of queryTokens) {
+      if (haystack.includes(token)) overlap += 1;
+    }
+    return overlap / Math.max(queryTokens.size, 1);
+  }
+
+  private getIntentCueCount(texts: string[], cue: RoutingIntentCue): number {
+    const haystack = this.buildRoutingHaystack(texts);
+    if (!haystack) return 0;
+    return CustomSkillLoader.ROUTING_INTENT_CUE_PATTERNS[cue].reduce((count, pattern) => {
+      const flags = pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`;
+      const globalPattern = new RegExp(pattern.source, flags);
+      const matches = Array.from(haystack.matchAll(globalPattern)).length;
+      return count + matches;
+    }, 0);
+  }
+
+  private inferDominantIntentCue(texts: string[]): RoutingIntentCue | null {
+    const reviewCount = this.getIntentCueCount(texts, "review");
+    const fixCount = this.getIntentCueCount(texts, "fix");
+    if (reviewCount === 0 && fixCount === 0) return null;
+    if (reviewCount === fixCount) return null;
+    return reviewCount > fixCount ? "review" : "fix";
+  }
+
+  private getRoutingExamples(skill: CustomSkill, polarity: "positive" | "negative"): string[] {
+    const examples = skill.metadata?.routing?.examples;
+    const raw = polarity === "positive" ? examples?.positive : examples?.negative;
+    if (!Array.isArray(raw)) return [];
+    return raw.filter((example): example is string => typeof example === "string" && example.trim().length > 0);
+  }
+
+  private getBestExampleOverlap(queryTokens: Set<string>, examples: string[]): number {
+    let best = 0;
+    for (const example of examples) {
+      best = Math.max(best, this.scoreTextOverlap(queryTokens, [example]));
+    }
+    return best;
+  }
+
+  private rankSkillsForQuery(skills: CustomSkill[], query: string): RankedSkillMatch[] {
+    const normalizedQuery = String(query || "").trim();
+    if (!normalizedQuery) {
+      return skills.map((skill) => ({ skill, score: 1 }));
+    }
+
+    const queryTokens = this.tokenizeForRouting(normalizedQuery);
+    if (queryTokens.size === 0) {
+      return skills.map((skill) => ({ skill, score: 0 }));
+    }
+
+    return skills
+      .map((skill) => ({ skill, score: this.scoreSkillForQuery(skill, normalizedQuery, queryTokens) }))
+      .sort((a, b) => b.score - a.score || a.skill.id.localeCompare(b.skill.id));
+  }
+
+  rankModelInvocableSkillsForQuery(
+    query: string,
+    options: RankSkillsForQueryOptions = {},
+  ): RankedSkillMatch[] {
+    const eligibleSkills = this.listModelInvocableSkills({
+      availableToolNames: options.availableToolNames,
+      includePrereqBlockedSkills: options.includePrereqBlockedSkills,
+    }).filter((skill) => this.matchesSkillRoutingQuery(skill, query));
+
+    const ranked = this.rankSkillsForQuery(eligibleSkills, query);
+    const limit =
+      typeof options.limit === "number" && Number.isFinite(options.limit)
+        ? Math.max(Math.floor(options.limit), 0)
+        : ranked.length;
+    return ranked.slice(0, limit);
+  }
+
   private scoreSkillForQuery(skill: CustomSkill, query: string, queryTokens: Set<string>): number {
     if (!query || queryTokens.size === 0) return 0;
 
-    const haystack = [
+    const positiveExamples = this.getRoutingExamples(skill, "positive");
+    const negativeExamples = this.getRoutingExamples(skill, "negative");
+    const positiveTexts = [
       skill.id || "",
       skill.name || "",
       skill.description || "",
@@ -476,22 +653,63 @@ export class CustomSkillLoader {
       skill.metadata?.routing?.useWhen || "",
       skill.metadata?.routing?.outputs || "",
       skill.metadata?.routing?.successCriteria || "",
-      skill.metadata?.routing?.dontUseWhen || "",
+      ...positiveExamples,
     ]
-      .join(" ")
-      .toLowerCase();
-    if (!haystack.trim()) return 0;
+      .filter((text) => typeof text === "string" && text.trim().length > 0);
+    if (positiveTexts.length === 0) return 0;
 
-    let overlap = 0;
-    for (const token of queryTokens) {
-      if (haystack.includes(token)) overlap += 1;
+    const overlapScore = this.scoreTextOverlap(queryTokens, positiveTexts);
+    const positiveExampleBoost = Math.min(
+      0.45,
+      this.getBestExampleOverlap(queryTokens, positiveExamples) * 0.6,
+    );
+    const negativeOverlap = this.getBestExampleOverlap(queryTokens, [
+      skill.metadata?.routing?.dontUseWhen || "",
+      ...negativeExamples,
+    ]);
+    const negativePenalty = Math.min(0.65, negativeOverlap * 0.85);
+
+    const dominantQueryIntent = this.inferDominantIntentCue([query]);
+    const dominantSkillIntent = this.inferDominantIntentCue(positiveTexts);
+    let intentAlignmentBoost = 0;
+    let intentMismatchPenalty = 0;
+    if (dominantQueryIntent && dominantSkillIntent) {
+      if (dominantQueryIntent === dominantSkillIntent) {
+        intentAlignmentBoost = 0.2;
+      } else {
+        intentMismatchPenalty = 0.3;
+      }
+    } else if (dominantQueryIntent && this.getIntentCueCount(positiveTexts, dominantQueryIntent) > 0) {
+      intentAlignmentBoost = 0.1;
     }
-    const overlapScore = overlap / Math.max(queryTokens.size, 1);
 
     const exactIdHit = query.toLowerCase().includes((skill.id || "").toLowerCase()) ? 0.35 : 0;
     const exactNameHit = query.toLowerCase().includes((skill.name || "").toLowerCase()) ? 0.2 : 0;
     const routingBoost = skill.metadata?.routing?.useWhen ? 0.05 : 0;
-    return Math.min(1, overlapScore + exactIdHit + exactNameHit + routingBoost);
+
+    // Explicit keyword triggers: any keyword match gives a guaranteed strong routing signal
+    const routingKeywords = skill.metadata?.routing?.keywords ?? [];
+    const keywordHit =
+      routingKeywords.length > 0 &&
+      routingKeywords.some((kw) => kw && query.toLowerCase().includes(kw.toLowerCase()))
+        ? 0.5
+        : 0;
+
+    return Math.max(
+      0,
+      Math.min(
+        1,
+        overlapScore +
+          positiveExampleBoost +
+          intentAlignmentBoost +
+          exactIdHit +
+          exactNameHit +
+          routingBoost +
+          keywordHit -
+          negativePenalty -
+          intentMismatchPenalty,
+      ),
+    );
   }
 
   private shortlistSkillsForQuery(
@@ -504,26 +722,27 @@ export class CustomSkillLoader {
     totalEligible: number;
   } {
     const normalizedQuery = String(query || "").trim();
+
+    // Hard gate: skills with routing keywords are hidden from the model unless a keyword matches.
+    // This prevents keyword-gated skills (e.g. codex-cli) from appearing in the
+    // model's skill list for unrelated tasks.
+    const eligibleSkills = skills.filter((skill) => this.matchesSkillRoutingQuery(skill, normalizedQuery));
+    logger.info(`shortlistSkillsForQuery: ${skills.length} skills → ${eligibleSkills.length} after keyword gate (query="${normalizedQuery.slice(0, 80)}")`);
+
     if (!normalizedQuery) {
       return {
-        skills,
+        skills: eligibleSkills,
         confidence: 1,
-        totalEligible: skills.length,
+        totalEligible: eligibleSkills.length,
       };
     }
 
-    const queryTokens = this.tokenizeForRouting(normalizedQuery);
-    const ranked = skills
-      .map((skill) => ({
-        skill,
-        score: this.scoreSkillForQuery(skill, normalizedQuery, queryTokens),
-      }))
-      .sort((a, b) => b.score - a.score || a.skill.id.localeCompare(b.skill.id));
+    const ranked = this.rankSkillsForQuery(eligibleSkills, normalizedQuery);
 
     return {
       skills: ranked.slice(0, shortlistSize).map((entry) => entry.skill),
       confidence: ranked[0]?.score ?? 0,
-      totalEligible: skills.length,
+      totalEligible: eligibleSkills.length,
     };
   }
 
@@ -532,7 +751,10 @@ export class CustomSkillLoader {
    * Groups skills by category and includes parameter info
    */
   getSkillDescriptionsForModel(options: ModelSkillDescriptionOptions = {}): string {
-    const skills = this.listModelInvocableSkills({ availableToolNames: options.availableToolNames });
+    const skills = this.listModelInvocableSkills({
+      availableToolNames: options.availableToolNames,
+      includePrereqBlockedSkills: options.includePrereqBlockedSkills,
+    });
     if (skills.length === 0) {
       return "";
     }

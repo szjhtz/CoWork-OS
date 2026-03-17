@@ -46,12 +46,44 @@ vi.mock("../../../settings/personality-manager", () => ({
 // Mock skills storage
 let mockSkills: Map<string, CustomSkill> = new Map();
 
+function matchesSkillRoutingQuery(skill: CustomSkill, query: string): boolean {
+  const keywords = skill.metadata?.routing?.keywords;
+  if (!Array.isArray(keywords) || keywords.length === 0) return true;
+
+  const normalizedQuery = String(query || "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!normalizedQuery) return false;
+
+  return keywords.some((keyword) => {
+    if (typeof keyword !== "string") return false;
+    const normalizedKeyword = keyword
+      .toLowerCase()
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!normalizedKeyword) return false;
+
+    const escaped = normalizedKeyword
+      .split(" ")
+      .filter(Boolean)
+      .map((segment) => segment.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+      .join("\\s+");
+
+    return new RegExp(`(?:^|[^a-z0-9])${escaped}(?:$|[^a-z0-9])`, "i").test(normalizedQuery);
+  });
+}
+
 // Mock the custom skill loader
 vi.mock("../../custom-skill-loader", () => ({
   getCustomSkillLoader: vi.fn().mockImplementation(() => ({
     getSkill: vi.fn().mockImplementation((id: string) => mockSkills.get(id)),
     listModelInvocableSkills: vi.fn().mockImplementation(() => Array.from(mockSkills.values())),
     getSkillStatusEntry: vi.fn().mockResolvedValue(null),
+    matchesSkillRoutingQuery: vi
+      .fn()
+      .mockImplementation((skill: CustomSkill, query: string) => matchesSkillRoutingQuery(skill, query)),
     expandPrompt: vi.fn().mockImplementation((
       skill: CustomSkill,
       params: Record<string, Any>,
@@ -252,6 +284,11 @@ describe("use_skill tool", () => {
     mockDaemon = {
       logEvent: vi.fn(),
       registerArtifact: vi.fn(),
+      getTaskById: vi.fn().mockResolvedValue({
+        id: "test-task-123",
+        title: "Generic task",
+        prompt: "Generic prompt",
+      }),
     };
 
     registry = new ToolRegistry(mockWorkspace, mockDaemon, "test-task-123");
@@ -488,6 +525,61 @@ describe("use_skill tool", () => {
       expect(result.error).toContain("not currently executable");
       expect(result.reason).toContain("run_command");
       expect(result.missing_tools).toContain("run_command");
+    });
+
+    it('should reject codex-cli without the keyword "codex" in the task', async () => {
+      const skill = createTestSkill({
+        id: "codex-cli",
+        name: "Codex CLI Agent",
+        parameters: [],
+        metadata: {
+          routing: {
+            keywords: ["codex"],
+          },
+        },
+      });
+      mockSkills.set("codex-cli", skill);
+      mockDaemon.getTaskById.mockResolvedValue({
+        id: "test-task-123",
+        title: "Review this repo",
+        prompt: "Run a generic agent on this issue",
+      });
+
+      const result = await registry.executeTool("use_skill", {
+        skill_id: "codex-cli",
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("not available for this task");
+      expect(result.reason).toContain("specific keywords");
+    });
+
+    it('should allow codex-cli when the task includes the keyword "codex"', async () => {
+      const skill = createTestSkill({
+        id: "codex-cli",
+        name: "Codex CLI Agent",
+        prompt: "Use codex for this task",
+        parameters: [],
+        metadata: {
+          routing: {
+            keywords: ["codex"],
+          },
+        },
+      });
+      mockSkills.set("codex-cli", skill);
+      mockDaemon.getTaskById.mockResolvedValue({
+        id: "test-task-123",
+        title: "Please use codex",
+        prompt: "Use codex to review this change",
+      });
+
+      const result = await registry.executeTool("use_skill", {
+        skill_id: "codex-cli",
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.skill_id).toBe("codex-cli");
+      expect(result.expanded_prompt).toContain("codex");
     });
   });
 

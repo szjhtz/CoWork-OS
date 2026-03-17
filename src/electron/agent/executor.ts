@@ -3895,6 +3895,48 @@ ${transcript}
     this.initialImages = images;
   }
 
+  /**
+   * Detect high-confidence skill matches for the given query and return explicit
+   * planning hints so even weaker models route to the correct skill via use_skill.
+   * Returns empty string when no skill scores above the threshold.
+   */
+  private getHighConfidenceSkillHints(query: string): string {
+    // Lower bar than maybeHandleHighConfidenceSkillRouting: hints are informational
+    // (injected into the planning prompt) so a slightly weaker match is acceptable.
+    // The LLM still decides whether to act on them.
+    const HIGH_CONFIDENCE_THRESHOLD = 0.70;
+    try {
+      const skillLoader = getCustomSkillLoader();
+      const availableToolNames = new Set(this.getAvailableTools().map((tool) => tool.name));
+      if (!availableToolNames.has("use_skill")) return "";
+
+      const scored = skillLoader
+        .rankModelInvocableSkillsForQuery(query, {
+          availableToolNames,
+          includePrereqBlockedSkills: true,
+          limit: 3,
+        })
+        .filter((entry) => entry.score >= HIGH_CONFIDENCE_THRESHOLD)
+
+      if (scored.length === 0) return "";
+
+      const hints = scored.map(
+        (entry) =>
+          `- Skill "${entry.skill.id}" (${entry.skill.name}): ${entry.skill.description || ""}`,
+      );
+      return [
+        `IMPORTANT — Highly relevant custom skills detected for this task:`,
+        ...hints,
+        ``,
+        `You MUST include a plan step that uses the use_skill tool with the skill ID(s) above.`,
+        `Example step: "Use the '${scored[0].skill.id}' skill to ${scored[0].skill.description?.toLowerCase() || "complete the task"}"`,
+        `Do NOT attempt to manually run CLI commands that these skills already handle.`,
+      ].join("\n");
+    } catch {
+      return "";
+    }
+  }
+
   private getRoleContextPrompt(): string {
     const roleId = this.task.assignedAgentRoleId;
     if (!roleId) return "";
@@ -5130,7 +5172,7 @@ ${transcript}
     if (!merged) return;
     this.bestKnownOutcome = merged;
     this.task.bestKnownOutcome = merged;
-    this.daemon.updateTask(this.task.id, { bestKnownOutcome: merged });
+    this.daemon.updateTask?.(this.task.id, { bestKnownOutcome: merged });
   }
 
   private shouldFinalizeAsPartialSuccess(error: unknown): boolean {
@@ -14086,19 +14128,15 @@ You are continuing a previous conversation. The context from the previous conver
   }
 
   private taskLikelyNeedsWebEvidence(): boolean {
+    // Sub-agent tasks in collaborative mode are doing delegated work (often local
+    // file exploration), not web research — skip the web evidence requirement.
+    if (this.task.parentTaskId && this.task.agentType === "sub") return false;
+
     const prompt = `${this.task.title}\n${this.task.prompt}`.toLowerCase();
-    const researchSignals = [
-      "news",
-      "latest",
-      "today",
-      "trending",
-      "breaking",
-      "reddit",
-      "search",
-      "headline",
-      "current events",
-    ];
-    if (!researchSignals.some((signal) => prompt.includes(signal))) return false;
+    // Use word-boundary regex to avoid false positives (e.g. "Researcher" matching "search")
+    const researchSignalPattern =
+      /\b(?:news|latest|today|trending|breaking|reddit|search|headline|current events)\b/;
+    if (!researchSignalPattern.test(prompt)) return false;
     // Build/creation tasks mentioning news-related keywords don't need web evidence —
     // they are building a tool about news, not fetching news itself.
     const buildSignals = [
@@ -14637,6 +14675,31 @@ You are continuing a previous conversation. The context from the previous conver
     return true;
   }
 
+  private async expandSkillPrompt(
+    skillId: string,
+    parameters: Record<string, Any>,
+    invocationLabel: string,
+  ): Promise<string> {
+    const input = {
+      skill_id: skillId,
+      parameters,
+    };
+
+    this.emitEvent("tool_call", { tool: "use_skill", input });
+    const result = await this.toolRegistry.executeTool("use_skill", input);
+    this.emitEvent("tool_result", { tool: "use_skill", result });
+
+    if (!result?.success || typeof result?.expanded_prompt !== "string") {
+      const reason =
+        typeof result?.error === "string" && result.error.trim().length > 0
+          ? result.error
+          : `Failed to execute ${invocationLabel}.`;
+      throw new Error(reason);
+    }
+
+    return String(result.expanded_prompt).trim();
+  }
+
   private async runUseSkillFromSlash(command: ParsedSkillSlashCommand): Promise<string> {
     const parameters: Record<string, Any> = {};
     if (command.objective) {
@@ -14658,24 +14721,76 @@ You are continuing a previous conversation. The context from the previous conver
       parameters.external = "confirm";
     }
 
-    const input = {
-      skill_id: command.command,
-      parameters,
-    };
+    return await this.expandSkillPrompt(command.command, parameters, `/${command.command}`);
+  }
 
-    this.emitEvent("tool_call", { tool: "use_skill", input });
-    const result = await this.toolRegistry.executeTool("use_skill", input);
-    this.emitEvent("tool_result", { tool: "use_skill", result });
+  private async maybeHandleHighConfidenceSkillRouting(): Promise<boolean> {
+    const rawQuery = `${this.task.title || ""}\n${this.task.prompt || ""}`.trim();
+    if (!rawQuery) return false;
 
-    if (!result?.success || typeof result?.expanded_prompt !== "string") {
-      const reason =
-        typeof result?.error === "string" && result.error.trim().length > 0
-          ? result.error
-          : `Failed to execute /${command.command}.`;
-      throw new Error(reason);
+    // Higher bar than getHighConfidenceSkillHints: this path bypasses the LLM
+    // entirely and directly expands the skill prompt, so we need strong confidence.
+    const HIGH_CONFIDENCE_THRESHOLD = 0.78;
+    const MIN_MARGIN_OVER_NEXT = 0.12;
+
+    try {
+      const availableToolNames = new Set(this.getAvailableTools().map((tool) => tool.name));
+      if (!availableToolNames.has("use_skill")) return false;
+
+      const skillLoader = getCustomSkillLoader();
+      const ranked = skillLoader.rankModelInvocableSkillsForQuery(rawQuery, {
+        availableToolNames,
+        includePrereqBlockedSkills: true,
+        limit: 2,
+      });
+      const [best, second] = ranked;
+
+      if (!best || best.score < HIGH_CONFIDENCE_THRESHOLD) {
+        return false;
+      }
+
+      const marginOverNext = best.score - (second?.score ?? 0);
+      if (second && marginOverNext < MIN_MARGIN_OVER_NEXT) {
+        return false;
+      }
+
+      const missingRequiredParams = (best.skill.parameters || []).filter(
+        (param) => param.required && param.default === undefined,
+      );
+      if (missingRequiredParams.length > 0) {
+        this.emitEvent("log", {
+          message:
+            `Skipped deterministic natural-language routing to skill '${best.skill.id}' ` +
+            `because required parameters are still needed.`,
+          skillId: best.skill.id,
+          missingParameters: missingRequiredParams.map((param) => param.name),
+          score: best.score,
+        });
+        return false;
+      }
+
+      const expanded = await this.expandSkillPrompt(
+        best.skill.id,
+        {},
+        `skill '${best.skill.id}'`,
+      );
+      this.task.prompt = expanded;
+      this.emitEvent("log", {
+        message:
+          `Deterministically routed natural-language request to skill '${best.skill.id}'.`,
+        skillId: best.skill.id,
+        score: best.score,
+        marginOverNext: second ? marginOverNext : null,
+      });
+      return true;
+    } catch (error) {
+      this.emitEvent("log", {
+        message:
+          "Deterministic natural-language skill routing failed; continuing with normal planning.",
+        error: String((error as Any)?.message || error),
+      });
+      return false;
     }
-
-    return String(result.expanded_prompt).trim();
   }
 
   private configureBatchExternalPolicyFromSlash(command: ParsedSkillSlashCommand): void {
@@ -15093,6 +15208,23 @@ You are continuing a previous conversation. The context from the previous conver
    * but with adequate token budgets and neutral system prompts (not companion framing).
    */
   private async handleSubAgentChatMode(rawPrompt: string): Promise<void> {
+    // Guard: if this is a team synthesis prompt but no sub-agent analyses were collected,
+    // skip the LLM call entirely and emit a direct informational message.
+    const isTeamSynthesisPrompt = rawPrompt.includes("TEAM WORK ITEM STATUS:");
+    const hasTeamAnalyses = rawPrompt.includes("=== TEAM MEMBER ANALYSES");
+    if (isTeamSynthesisPrompt && !hasTeamAnalyses) {
+      const noAnalysesText =
+        "The sub-agents did not produce any analyses to synthesize. " +
+        "All team members either failed or timed out before generating output. " +
+        "Please try again or check the sub-agent logs for details.";
+      this.emitEvent("assistant_message", { message: noAnalysesText });
+      this.lastAssistantOutput = noAnalysesText;
+      this.lastAssistantText = noAnalysesText;
+      const resultSummary = this.buildResultSummary() || noAnalysesText;
+      this.finalizeTaskBestEffort(resultSummary, "No team member analyses available for synthesis.");
+      return;
+    }
+
     const roleContext = this.getRoleContextPrompt();
 
     this.daemon.updateTaskStatus(this.task.id, "executing");
@@ -15146,7 +15278,8 @@ You are continuing a previous conversation. The context from the previous conver
       const resultSummary = this.buildResultSummary() || assistantText;
       this.finalizeTaskBestEffort(resultSummary);
     } catch (error: Any) {
-      const fallbackText = "Synthesis processing encountered an error.";
+      const errorDetail = error instanceof Error ? error.message : String(error);
+      const fallbackText = `Synthesis encountered an error: ${errorDetail}`;
       this.emitEvent("assistant_message", { message: fallbackText });
       this.lastAssistantOutput = fallbackText;
       this.lastAssistantText = fallbackText;
@@ -15633,7 +15766,10 @@ You are continuing a previous conversation. The context from the previous conver
         return;
       }
 
-      await this.maybeHandleSkillSlashCommandOrInlineChain();
+      const handledSkillSlashOrInline = await this.maybeHandleSkillSlashCommandOrInlineChain();
+      if (!handledSkillSlashOrInline) {
+        await this.maybeHandleHighConfidenceSkillRouting();
+      }
 
       // Friendly companion-mode when conversation mode resolves to chat.
       if (this.resolveConversationMode(this.task.prompt, true) === "chat") {
@@ -16162,8 +16298,9 @@ CLOUD STORAGE ROUTING (CRITICAL):
   - box_action, dropbox_action, onedrive_action, google_drive_action, sharepoint_action, notion_action.
 - Example: "which files I have on box?" should start with box_action list_folder_items on folder_id "0".
 
-SKILL + TOOL ROUTING:
-- Prefer relevant custom skills early when confidence is high.
+SKILL + TOOL ROUTING (CRITICAL):
+- ALWAYS check the Custom Skills section below before planning manual steps. If a skill matches the task, use it via the use_skill tool.
+- Only use a custom skill when the Custom Skills section lists it. Do NOT invent or guess skill IDs that are not shown.
 - For general research start with web_search; for a known URL prefer web_fetch; use browser tools for interactive/JS pages.
 - Never use run_command curl/wget for web access.
 
@@ -16242,7 +16379,14 @@ Return ONLY a JSON object:
       console.log(`[Task ${this.task.id}] Calling LLM API for plan creation...`);
 
       // Use retry wrapper for resilient API calls
-      const planTextPrompt = `Task: ${this.task.title}\n\nDetails: ${this.task.prompt}\n\nCreate an execution plan.`;
+      // Detect high-confidence skill matches and inject explicit hints into the planning prompt.
+      // This ensures even weaker models route to the right skills instead of guessing commands.
+      const highConfidenceSkillHints = this.getHighConfidenceSkillHints(
+        `${this.task.title}\n${this.task.prompt}`,
+      );
+      const planTextPrompt = highConfidenceSkillHints
+        ? `Task: ${this.task.title}\n\nDetails: ${this.task.prompt}\n\n${highConfidenceSkillHints}\n\nCreate an execution plan.`
+        : `Task: ${this.task.title}\n\nDetails: ${this.task.prompt}\n\nCreate an execution plan.`;
       const planUserContent = await this.buildUserContent(planTextPrompt, this.initialImages);
       const planMessages: LLMMessage[] = [
         {

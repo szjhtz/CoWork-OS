@@ -80,6 +80,7 @@ import {
   PersonaId,
   PERSONALITY_DEFINITIONS,
   PERSONA_DEFINITIONS,
+  CustomSkill,
 } from "../../../shared/types";
 import {
   resolveModelPreferenceToModelKey,
@@ -613,6 +614,7 @@ export class ToolRegistry {
         shortlistSize: resolvedSkillShortlistSize,
         lowConfidenceThreshold: resolvedSkillLowConfidenceThreshold,
         textBudgetChars: resolvedSkillTextBudgetChars,
+        includePrereqBlockedSkills: true,
       });
       if (skillDescriptions) {
         sections.push(`Custom Skills:\n${skillDescriptions}`);
@@ -1773,6 +1775,7 @@ Channel Message Log (Local Gateway):
       shortlistSize: resolvedSkillShortlistSize,
       lowConfidenceThreshold: resolvedSkillLowConfidenceThreshold,
       textBudgetChars: resolvedSkillTextBudgetChars,
+      includePrereqBlockedSkills: true,
     });
     if (skillDescriptions) {
       descriptions += `
@@ -2673,6 +2676,15 @@ ${skillDescriptions}`;
       };
     }
 
+    // Keyword gate: skills with routing keywords can only be invoked when the task mentions them
+    if (!(await this.passesSkillKeywordGate(skill))) {
+      return {
+        success: false,
+        error: `Skill '${skill_id}' is not available for this task`,
+        reason: "This skill requires specific keywords in the task prompt (e.g. the CLI agent name).",
+      };
+    }
+
     const status = await skillLoader.getSkillStatusEntry(skill_id);
     if (status && !status.eligible) {
       if (status.disabled) {
@@ -2701,7 +2713,16 @@ ${skillDescriptions}`;
         ...missing.os.map((os) => `os:${os}`),
       ];
 
-      if (missingItems.length > 0) {
+      // Skills with install specs handle their own setup (detect → install → execute flow).
+      // Allow expansion so the skill prompt can guide the user through installation.
+      const hasInstallSpecs = Array.isArray(skill.install) && skill.install.length > 0;
+      const onlyMissingBins =
+        missing.env.length === 0 &&
+        missing.config.length === 0 &&
+        missing.os.length === 0 &&
+        (missing.bins.length > 0 || missing.anyBins.length > 0);
+
+      if (missingItems.length > 0 && !(hasInstallSpecs && onlyMissingBins)) {
         return {
           success: false,
           error: `Skill '${skill_id}' is not currently executable`,
@@ -2810,6 +2831,24 @@ ${skillDescriptions}`;
   /**
    * List all skills with metadata
    */
+  /**
+   * Check if a skill passes its keyword gate for the current task.
+   * Skills with routing keywords are only accessible when at least one keyword matches.
+   */
+  private async passesSkillKeywordGate(skill: CustomSkill): Promise<boolean> {
+    const skillLoader = getCustomSkillLoader();
+    const keywords = skill.metadata?.routing?.keywords;
+    if (!Array.isArray(keywords) || keywords.length === 0) return true; // no gate
+    try {
+      const task = await this.daemon.getTaskById(this.taskId);
+      const query = `${task?.title || ""} ${task?.prompt || ""}`.trim();
+      if (!query) return false;
+      return skillLoader.matchesSkillRoutingQuery(skill, query);
+    } catch {
+      return true; // allow on error
+    }
+  }
+
   private async executeSkillList(input: {
     source?: "all" | "bundled" | "managed" | "workspace";
     include_disabled?: boolean;
@@ -2828,6 +2867,10 @@ ${skillDescriptions}`;
     if (!include_disabled) {
       skills = skills.filter((s) => s.enabled !== false);
     }
+
+    // Filter out keyword-gated skills that don't match the current task
+    const gateResults = await Promise.all(skills.map((s) => this.passesSkillKeywordGate(s)));
+    skills = skills.filter((_, i) => gateResults[i]);
 
     // Format for agent consumption
     const formattedSkills = skills.map((s) => ({

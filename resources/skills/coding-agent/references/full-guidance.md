@@ -2,30 +2,17 @@
 
 Use **bash** (with optional background mode) for all coding agent work. Simple and effective.
 
-## ⚠️ PTY Mode Required!
+## PTY Auto-Allocated
 
-Coding agents (Codex, Claude Code, Pi) are **interactive terminal applications** that need a pseudo-terminal (PTY) to work correctly. Without PTY, you'll get broken output, missing colors, or the agent may hang.
-
-**Always use `pty:true`** when running coding agents:
+CoWork OS **automatically wraps `claude`, `codex`, and other coding agent commands with PTY allocation** — no special syntax needed. Just use `run_command` with the command directly:
 
 ```bash
-# ✅ Correct - with PTY
-bash pty:true command:"codex exec 'Your prompt'"
-
-# ❌ Wrong - no PTY, agent may break
-bash command:"codex exec 'Your prompt'"
+# PTY is auto-allocated by CoWork OS for claude/codex commands
+codex exec 'Your prompt'
+claude -p 'Your prompt'
 ```
 
-### Bash Tool Parameters
-
-| Parameter    | Type    | Description                                                                 |
-| ------------ | ------- | --------------------------------------------------------------------------- |
-| `command`    | string  | The shell command to run                                                    |
-| `pty`        | boolean | **Use for coding agents!** Allocates a pseudo-terminal for interactive CLIs |
-| `workdir`    | string  | Working directory (agent sees only this folder's context)                   |
-| `background` | boolean | Run in background, returns sessionId for monitoring                         |
-| `timeout`    | number  | Timeout in seconds (kills process on expiry)                                |
-| `elevated`   | boolean | Run on host instead of sandbox (if allowed)                                 |
+API keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `CODEX_API_KEY`) are auto-forwarded from the host environment.
 
 ### Process Tool Actions (for background sessions)
 
@@ -51,7 +38,7 @@ For quick prompts/chats, create a temp git repo and run:
 SCRATCH=$(mktemp -d) && cd $SCRATCH && git init && codex exec "Your prompt here"
 
 # Or in a real project - with PTY!
-bash pty:true workdir:~/Projects/myproject command:"codex exec 'Add error handling to the API calls'"
+cd ~/Projects/myproject && codex exec 'Add error handling to the API calls'
 ```
 
 **Why git init?** Codex refuses to run outside a trusted git directory. Creating a temp repo solves this for scratch work.
@@ -64,7 +51,7 @@ For longer tasks, use background mode with PTY:
 
 ```bash
 # Start agent in target directory (with PTY!)
-bash pty:true workdir:~/project background:true command:"codex exec --full-auto 'Build a snake game'"
+cd ~/project && codex exec --full-auto 'Build a snake game'
 # Returns sessionId for tracking
 
 # Monitor progress
@@ -103,10 +90,10 @@ process action:kill sessionId:XXX
 
 ```bash
 # Quick one-shot (auto-approves) - remember PTY!
-bash pty:true workdir:~/project command:"codex exec --full-auto 'Build a dark mode toggle'"
+cd ~/project && codex exec --full-auto 'Build a dark mode toggle'
 
 # Background for longer work
-bash pty:true workdir:~/project background:true command:"codex --yolo 'Refactor the auth module'"
+cd ~/project && codex --yolo 'Refactor the auth module'
 ```
 
 ### Reviewing PRs
@@ -119,12 +106,12 @@ Clone to temp folder or use git worktree.
 REVIEW_DIR=$(mktemp -d)
 git clone https://github.com/user/repo.git $REVIEW_DIR
 cd $REVIEW_DIR && gh pr checkout 130
-bash pty:true workdir:$REVIEW_DIR command:"codex review --base origin/main"
+cd $REVIEW_DIR && codex review --base origin/main"
 # Clean up after: trash $REVIEW_DIR
 
 # Or use git worktree (keeps main intact)
 git worktree add /tmp/pr-130-review pr-130-branch
-bash pty:true workdir:/tmp/pr-130-review command:"codex review --base main"
+cd /tmp/pr-130-review && codex review --base main"
 ```
 
 ### Batch PR Reviews (parallel army!)
@@ -134,8 +121,8 @@ bash pty:true workdir:/tmp/pr-130-review command:"codex review --base main"
 git fetch origin '+refs/pull/*/head:refs/remotes/origin/pr/*'
 
 # Deploy the army - one Codex per PR (all with PTY!)
-bash pty:true workdir:~/project background:true command:"codex exec 'Review PR #86. git diff origin/main...origin/pr/86'"
-bash pty:true workdir:~/project background:true command:"codex exec 'Review PR #87. git diff origin/main...origin/pr/87'"
+cd ~/project && codex exec 'Review PR #86. git diff origin/main...origin/pr/86'
+cd ~/project && codex exec 'Review PR #87. git diff origin/main...origin/pr/87'
 
 # Monitor all
 process action:list
@@ -150,10 +137,10 @@ gh pr comment <PR#> --body "<review content>"
 
 ```bash
 # With PTY for proper terminal output
-bash pty:true workdir:~/project command:"claude 'Your task'"
+cd ~/project && claude 'Your task'
 
 # Background
-bash pty:true workdir:~/project background:true command:"claude 'Your task'"
+cd ~/project && claude 'Your task'
 ```
 
 ---
@@ -161,7 +148,7 @@ bash pty:true workdir:~/project background:true command:"claude 'Your task'"
 ## OpenCode
 
 ```bash
-bash pty:true workdir:~/project command:"opencode run 'Your task'"
+cd ~/project && opencode run 'Your task'
 ```
 
 ---
@@ -170,13 +157,13 @@ bash pty:true workdir:~/project command:"opencode run 'Your task'"
 
 ```bash
 # Install: npm install -g @mariozechner/pi-coding-agent
-bash pty:true workdir:~/project command:"pi 'Your task'"
+cd ~/project && pi 'Your task'
 
 # Non-interactive mode (PTY still recommended)
-bash pty:true command:"pi -p 'Summarize src/'"
+$1
 
 # Different provider/model
-bash pty:true command:"pi --provider openai --model gpt-4o-mini -p 'Your task'"
+$1
 ```
 
 **Note:** Pi now has Anthropic prompt caching enabled (PR #584, merged Jan 2026)!
@@ -187,10 +174,10 @@ Before launching a large coding task, scout context first and hand the coding ag
 
 ```bash
 # Local repo scout (Finder)
-bash pty:true workdir:~/project command:"pi --no-session --tools read,grep,find,ls,bash -e npm:pi-finder-subagent -p 'Use finder to locate files relevant to <task>. Return max 12 files with line ranges.'"
+cd ~/project && pi --no-session --tools read,grep,find,ls,bash -e npm:pi-finder-subagent -p 'Use finder to locate files relevant to <task>. Return max 12 files with line ranges.'
 
 # Optional GitHub scout (Librarian)
-bash pty:true workdir:~/project command:"pi --no-session --tools read,grep,find,ls,bash -e npm:pi-librarian -p 'Use librarian to find reference implementations for <task>. Return cited files with line ranges.'"
+cd ~/project && pi --no-session --tools read,grep,find,ls,bash -e npm:pi-librarian -p 'Use librarian to find reference implementations for <task>. Return cited files with line ranges.'
 ```
 
 Use the resulting shortlist as the opening context for Codex/Claude prompts instead of broad repo reads.
@@ -208,8 +195,8 @@ git worktree add -b fix/issue-78 /tmp/issue-78 main
 git worktree add -b fix/issue-99 /tmp/issue-99 main
 
 # 2. Launch Codex in each (background + PTY!)
-bash pty:true workdir:/tmp/issue-78 background:true command:"pnpm install && codex --yolo 'Fix issue #78: <description>. Commit and push.'"
-bash pty:true workdir:/tmp/issue-99 background:true command:"pnpm install && codex --yolo 'Fix issue #99: <description>. Commit and push.'"
+cd /tmp/issue-78 && pnpm install && codex --yolo 'Fix issue #78: <description>. Commit and push.'
+cd /tmp/issue-99 && pnpm install && codex --yolo 'Fix issue #99: <description>. Commit and push.'
 
 # 3. Monitor progress
 process action:list
@@ -228,7 +215,7 @@ git worktree remove /tmp/issue-99
 
 ## ⚠️ Rules
 
-1. **Always use pty:true** - coding agents need a terminal!
+1. **PTY is auto-allocated** - CoWork OS wraps coding agent commands with PTY automatically
 2. **Respect tool choice** - if user asks for Codex, use Codex.
    - Orchestrator mode: do NOT hand-code patches yourself.
    - If an agent fails/hangs, respawn it or ask the user for direction, but don't silently take over.
@@ -272,7 +259,7 @@ CoWork-OSS gateway wake --text "Done: [brief summary of what was built]" --mode 
 **Example:**
 
 ```bash
-bash pty:true workdir:~/project background:true command:"codex --yolo exec 'Build a REST API for todos.
+cd ~/project && codex --yolo exec 'Build a REST API for todos.
 
 When completely finished, run: CoWork-OSS gateway wake --text \"Done: Built todos REST API with CRUD endpoints\" --mode now'"
 ```
@@ -283,7 +270,7 @@ This triggers an immediate wake event — Skippy gets pinged in seconds, not 10 
 
 ## Learnings (Jan 2026)
 
-- **PTY is essential:** Coding agents are interactive terminal apps. Without `pty:true`, output breaks or agent hangs.
+- **PTY is auto-allocated:** CoWork OS handles PTY wrapping for `claude`/`codex` commands automatically.
 - **Git repo required:** Codex won't run outside a git directory. Use `mktemp -d && git init` for scratch work.
 - **exec is your friend:** `codex exec "prompt"` runs and exits cleanly - perfect for one-shots.
 - **submit vs write:** Use `submit` to send input + Enter, `write` for raw data without newline.

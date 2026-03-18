@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { Plus, Trash2, Power, Edit3, Search, User, Play, Square, Zap } from "lucide-react";
+import { getEmojiIcon } from "../utils/emoji-icon-map";
 import type { AgentRoleData, AgentCapability, HeartbeatEvent } from "../../electron/preload";
 import type { Company, HeartbeatStatus } from "../../shared/types";
 import { PersonaTemplateGallery } from "./PersonaTemplateGallery";
@@ -370,7 +371,10 @@ export function DigitalTwinsPanel({ initialCompanyId = null }: DigitalTwinsPanel
             className={`dt-card-avatar ${isInactive ? "dt-avatar-inactive" : ""}`}
             style={{ backgroundColor: role.color }}
           >
-            {role.icon}
+            {role.icon ? (() => {
+              const Icon = getEmojiIcon(role.icon);
+              return <Icon size={20} strokeWidth={2} />;
+            })() : null}
           </div>
           <div className="dt-card-title">
             <span className="dt-card-name">{role.displayName || role.name}</span>

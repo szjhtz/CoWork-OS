@@ -58,35 +58,17 @@
 
 ### Recent Platform Updates
 
-Since `v0.4.13`, the main product updates are:
+Since `v0.5.0`, the main product updates are:
 
-- **Browser automation enhancements** — Chrome DevTools attach mode (`browser_attach` with `debugger_url`) for controlling existing signed-in Chrome sessions; batched actions (`browser_act_batch`) for sequential click/fill/type; profile presets (`user`, `chrome-relay`, `workspace`). See [Browser Automation](docs/features.md#browser-automation).
-- **Dashboard performance** — Tool-heavy event streams are batched to prevent UI freeze during rapid tool execution.
-- **Docker & systemd timezone** — Set `COWORK_TZ` (e.g. `America/New_York`) in Docker Compose or systemd env for correct cron/timestamps.
-- **Devices tab + managed remote devices** — CoWork OS can now save remote machines, connect over direct/Tailscale/SSH-backed control-plane routes, inspect device summaries, browse remote workspaces, attach files from remote machines, and open remote task history in a dedicated session view.
-- **Automations section refresh** — `Settings` now groups Task Queue, Self-Improve, Scheduled Tasks, Webhooks, Event Triggers, and Daily Briefing under **Automations**, while the home dashboard highlights recent automation work instead of burying it in settings.
-- **Bounded self-improvement campaigns** — The improvement loop now favors smaller, PR-first campaigns with explicit stages, provider-health reporting, verification/promotion gates, cooldowns, and candidate parking when repeated failures indicate the loop should stop retrying.
-- **Company workflow cohesion** — Companies, Digital Twins, and Mission Control now share persisted company-linked operators so a founder can define a company, activate operators, run the planner, and inspect execution without losing context between surfaces.
-- **Remote session clarity** — When you inspect a task from another device, the UI now makes it explicit that you are viewing remote history rather than the current machine’s live task context.
+- **Connector catalog consolidation** — The shipped MCP registry is now curated to the supported allowlist: Salesforce, Jira, HubSpot, Zendesk, ServiceNow, Linear, Asana, Okta, Resend, Discord, and Google Workspace. Google services are now presented as a single `google-workspace` connector, while DocuSign, Outreach, and Slack were removed from the shipped Tier-1 connector surface.
+- **Direct-API-first integrations for GitHub and Notion** — Native CoWork paths are now preferred for GitHub and Notion, with MCP used only as a fallback when needed.
+- **Versioned tool catalog snapshots** — Tool discovery now uses a stable SHA-1 catalog version hash that covers native tools plus MCP state. MCP status or `tools_changed` events rebuild the snapshot immediately, and executor caches are busted when the shared catalog version changes.
+- **Collaborative UI refresh** — The sidebar and collaborative task views now use inline agent headers, Lucide-based role icons instead of raw emoji, cleaner markdown normalization, and explicit back-navigation from sub-task views into the parent task flow.
+- **Research channels for Telegram and WhatsApp** — Mark specific chats as link-dump channels so posted URLs automatically produce a structured findings report for follow-up work.
+- **Local AI expansion** — In addition to Ollama, CoWork OS now supports HuggingFace Local AI via `hf-agents` + `llama.cpp` for zero-API-cost local runs.
+- **Notification polish** — In-app notifications now show cleaner titles, humanized statuses, and direct task/view actions.
 
-The latest updates also add five evolving agent intelligence capabilities:
-
-- **Unified Memory Synthesizer** — All 6 memory subsystems (profile, relationship, playbook, knowledge graph, notes, workspace kit) now merge into a single deduplicated, relevance-ranked context block, eliminating redundancy and contradiction in the system prompt.
-- **Adaptive Style Engine** — The agent observes your message patterns (length, emoji use, technical vocabulary) and feedback signals, then gradually shifts its response style to match your preferences. Rate-limited and admin-toggleable.
-- **Playbook-to-Skill Auto-Promotion** — When a task pattern is successfully reinforced 3+ times, the agent auto-drafts a skill proposal with evidence and a prompt template, routed through the existing admin approval workflow.
-- **Cross-Channel Persona Coherence** — The agent's core personality adapts its delivery per channel: concise bullets on Slack, formal structure in email, short messages on WhatsApp — same knowledge, channel-appropriate voice.
-- **Evolution Metrics Dashboard** — Track agent improvement over time: correction rate trend, adaptation velocity, knowledge graph growth, task success rate, and style alignment score. Surfaced in the daily briefing.
-
-See [Evolving Agent Intelligence](docs/evolving-agent-intelligence.md) for architecture details.
-
-Previous updates added four core runtime capabilities:
-
-- **Tier-1 chat integration setup** with `integration_setup` (`list`, `inspect`, `configure`), OAuth support, and stale-plan safety via `expected_plan_hash`
-- **Approval-gated skill expansion** with `skill_proposal` (`create`, `list`, `approve`, `reject`) and workspace-local proposal persistence
-- **Workspace bootstrap + heartbeat alignment** with `.cowork/BOOTSTRAP.md`, `.cowork/VIBES.md`, `.cowork/LORE.md`, onboarding lifecycle state, and proactive task frequency enforcement
-- **Guided input + runtime recovery** with `request_user_input`, adaptive turn-window recovery, context compaction retry, grouped parallel tool lanes, and workspace/task-path repair
-
-See [Integration Setup, Skill Proposals, and Bootstrap Lifecycle](docs/integration-skill-bootstrap-lifecycle.md) for the integration/bootstrap changes, and [Features](docs/features.md) for the guided-input and runtime-recovery additions.
+See [Features](docs/features.md), [Research Channels](docs/research-channels.md), and [Providers](docs/providers.md) for the current runtime details.
 
 ## Quick Start
 
@@ -214,14 +196,14 @@ Advanced web scraping powered by [Scrapling](https://github.com/D4Vinci/Scraplin
 ### Integrations
 
 - **Cloud Storage**: Notion, Box, OneDrive, Google Workspace, Dropbox, SharePoint
-- **Enterprise Connectors**: Salesforce, Jira, HubSpot, Zendesk, ServiceNow, Linear, Asana, Okta, Discord, Slack, Resend, Google Workspace, DocuSign, Outreach
+- **Enterprise Connectors**: Salesforce, Jira, HubSpot, Zendesk, ServiceNow, Linear, Asana, Okta, Discord, Resend, Google Workspace
 - **Developer Tools**: Claude Code-style `glob`/`grep`/`edit_file`, Playwright browser automation, MCP client/host/registry
 
 [Learn more](docs/features.md)
 
 ### Active Context Sidebar
 
-Real-time overview of your active integrations, always visible in the right panel. Shows connected MCP connectors with branded Lucide icons (HubSpot, Salesforce, Slack, GitHub, Postgres, and 30+ more) and green status dots, plus enabled skills from active packs. Each section shows 4 items with internal scrolling for more. Auto-refreshes every 30 seconds. [Learn more](docs/plugin-packs.md#context-panel)
+Real-time overview of your active integrations, always visible in the right panel. Shows connected shipped MCP connectors and native integrations with branded Lucide icons (HubSpot, Salesforce, Google Workspace, Discord, GitHub, Postgres, and more) and green status dots, plus enabled skills from active packs. Each section shows 4 items with internal scrolling for more. Auto-refreshes every 30 seconds. [Learn more](docs/plugin-packs.md#context-panel)
 
 ### Usage Insights
 
@@ -255,7 +237,7 @@ CoWork OS ships purpose-built packs and Tier-1 connectors for three operational 
 |------|------|------------|
 | **Support Ops** | Customer Support Pack | Zendesk, ServiceNow |
 | **IT Ops** | DevOps Pack | ServiceNow, Jira, Linear |
-| **Sales Ops** | Sales CRM Pack | HubSpot, Salesforce, Outreach |
+| **Sales Ops** | Sales CRM Pack | HubSpot, Salesforce |
 
 These are the workflows where approval gates, local data control, and measurable outcome delivery pay off most — and where CoWork OS is a vendor-swap-friendly alternative to point solutions or BPO tooling. [Learn more](docs/best-fit-workflows.md)
 

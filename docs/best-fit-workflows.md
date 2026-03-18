@@ -70,7 +70,7 @@ CoWork OS ships purpose-built packs for three operational lanes. Each lane maps 
 
 **Why this is a strong fit:** Outbound sales workflows are high-volume and repetitive but require personalization at scale — the balance where governed AI delivery performs best.
 
-**Pack:** `sales-crm-pack` · **Connectors:** HubSpot, Salesforce, Outreach
+**Pack:** `sales-crm-pack` · **Connectors:** HubSpot, Salesforce
 
 ---
 

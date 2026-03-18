@@ -335,6 +335,8 @@ Install enterprise connectors from **Settings** > **Integrations** > **Browse Re
 | **Linear** | Product/Issue | API key |
 | **Asana** | Work Management | Personal access token |
 | **Okta** | Identity | API token + domain |
+| **Discord** | Community | Bot token + application ID |
+| **Google Workspace** | Productivity | OAuth in-app flow |
 
 Each connector provides tools like `search`, `get`, `create`, and `update` for its respective service.
 

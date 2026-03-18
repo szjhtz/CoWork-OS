@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **HuggingFace Local AI provider**: added `hf-agents` + `llama.cpp` local-model support with installation checks, model selection, and local server lifecycle management from Settings.
+- **Research channels**: Telegram and WhatsApp chats can now be designated as link-research channels that automatically turn posted URLs into a structured findings report.
+- **Tool catalog versioning**: tool discovery now emits a stable SHA-1 catalog hash that covers native tools and MCP state, with immediate snapshot rebuilds after MCP status or `tools_changed` updates.
+
+### Changed
+- **Connector surface consolidation**: the shipped MCP allowlist is now Salesforce, Jira, HubSpot, Zendesk, ServiceNow, Linear, Asana, Okta, Resend, Discord, and Google Workspace. Google services are consolidated under `google-workspace`; DocuSign, Outreach, and Slack were removed from the shipped Tier-1 connector surface.
+- **Native-first GitHub and Notion routing**: GitHub and Notion workflows now prefer CoWork's direct API paths and fall back to MCP only when needed.
+- **Collaborative task UI**: sidebar/task views now use inline agent headers, Lucide role icons, markdown normalization for collaborative output, and explicit sub-task back-navigation.
+- **Notifications**: task notifications now use cleaner titles, humanized statuses, and direct view actions.
+
+### Fixed
+- **Executor tool cache invalidation**: executor-side tool snapshots are now invalidated consistently when the shared catalog version changes.
+- **Sidebar task navigation polish**: sessions header layout, filter affordance, and sub-task navigation behavior were tightened for collaborative runs.
+
 ## [0.5.0] - 2026-03-15
 
 ### Added

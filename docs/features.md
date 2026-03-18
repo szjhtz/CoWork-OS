@@ -19,6 +19,7 @@
 - **BlueBubbles**: iMessage via Mac server, SMS support
 - **Email**: IMAP/SMTP, any email provider, threading
 - **X (Twitter)**: Mention-trigger task ingress (`do:` prefix by default) with allowlist controls and idempotent session keys ([guide](x-mention-triggers.md))
+- **Research Channels**: Telegram and WhatsApp groups can be marked as link-research channels that auto-generate a structured findings report from posted URLs
 
 ---
 
@@ -36,6 +37,7 @@
 - **Collaborative Mode**: Auto-create ephemeral teams where multiple agents work on the same task, sharing thoughts in real-time
 - **Multi-LLM Mode**: Send the same task to multiple LLM providers/models simultaneously, with a judge agent synthesizing the best result
 - **Agent Comparison Mode**: Compare agent or model outputs side by side
+- **Sub-Task Navigation**: Open a delegated sub-task, inspect its timeline, then jump back to the parent task from the main content view
 - **Git Worktree Isolation**: Tasks run in isolated git worktrees with automatic branch creation, auto-commit, merge, conflict detection, and cleanup
 - **Task Pinning**: Pin important tasks in the sidebar for quick access
 - **Wrap-Up Task**: Gracefully wrap up running tasks instead of hard-cancelling
@@ -1019,6 +1021,7 @@ See [Remote Access](remote-access.md) for details.
 - **MCP Client**: Connect to external MCP servers
 - **MCP Host**: Expose CoWork's tools as an MCP server
 - **MCP Registry**: Browse and install servers from a catalog
+- **Versioned tool snapshots**: Tool discovery tracks a stable catalog hash across native tools and MCP state so status/tool changes invalidate caches immediately
 
 ---
 
@@ -1039,11 +1042,8 @@ Pre-built connectors for enterprise integrations. Install from **Settings > MCP 
 | **Resend** | Email | health, send, list/create/delete webhooks |
 | **Discord** | Community | 19 tools: guilds, channels, messages, threads, roles, reactions, webhooks, members |
 | **Google Workspace** | Productivity (OAuth) | Calendar, Drive, Gmail with shared OAuth and PKCE flow |
-| **DocuSign** | E-signatures (OAuth) | health, send/get/list envelopes |
-| **Outreach** | Sales (OAuth) | health, list/get prospects, create sequences |
-| **Slack** | Messaging (OAuth) | health, list channels, send/search messages |
 
-See [Enterprise Connectors](enterprise-connectors.md) for the full contract.
+GitHub and Notion now prefer native CoWork integrations first, with MCP used only as a fallback path when needed. See [Enterprise Connectors](enterprise-connectors.md) for the current shipped connector contract.
 
 ---
 
@@ -1056,7 +1056,7 @@ Two orchestration tools are available for runtime setup and governed expansion:
 | `integration_setup` | Chat-native Tier-1 integration management with `list`, `inspect`, and `configure`, including OAuth, health checks, and stale-plan protection via `expected_plan_hash` |
 | `skill_proposal` | Approval-gated skill proposal lifecycle (`create`, `list`, `approve`, `reject`) with workspace-local persistence and duplicate cooldown controls |
 
-Tier-1 providers currently covered by `integration_setup`: `resend`, `slack`, `gmail`, `google-calendar`, `google-drive`, `jira`, `linear`, `hubspot`.
+Tier-1 providers currently covered by `integration_setup`: `resend`, `google-workspace`, `jira`, `linear`, `hubspot`, `salesforce`, `zendesk`, `servicenow`.
 
 See [Integration Setup, Skill Proposals, and Bootstrap Lifecycle](integration-skill-bootstrap-lifecycle.md) for full request/response contracts and operational examples.
 
@@ -1185,7 +1185,7 @@ Configure in **Settings** > **Appearance**.
 Schedule recurring tasks with cron expressions and optional channel delivery.
 
 - Standard cron syntax with workspace binding
-- Channel delivery to any of the 14 channels
+- Channel delivery to any of the 15 channels
 - Conditional delivery (`deliverOnlyIfResult`)
 - Template variables: `{{today}}`, `{{tomorrow}}`, `{{week_end}}`, `{{now}}`
 - Chat context variables: `{{chat_messages}}`, `{{chat_since}}`, etc.

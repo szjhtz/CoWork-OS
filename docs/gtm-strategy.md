@@ -15,7 +15,7 @@ CoWork OS is the production alternative to OpenClaw for users who need:
 
 - Guardrails and approval workflows by default
 - Local-first data ownership (BYOK, no telemetry)
-- A multi-channel operating layer (14 messaging channels)
+- A multi-channel operating layer (15 messaging channels)
 - A desktop + headless runtime that can be governed in daily operations
 
 Short form:
@@ -43,7 +43,7 @@ dangerous command blocking, configurable limits, encrypted local settings, and c
 
 ### 3) Multi-Channel AI Operating Layer
 
-CoWork OS is not just a local runner. It is a messaging-native runtime across 14 channels with shared security modes and governance.
+CoWork OS is not just a local runner. It is a messaging-native runtime across 15 channels with shared security modes and governance.
 
 ### 4) Local-First + BYOK
 
@@ -52,7 +52,7 @@ Users keep control of data and provider keys with optional offline model executi
 ## Proof Points to Reuse in Messaging
 
 - 30+ LLM providers
-- 14 messaging channels
+- 15 messaging channels
 - 100+ built-in skills
 - 4000+ tests
 - ZeroLeaks report published in-repo
@@ -92,7 +92,7 @@ The three operational lanes where CoWork OS has the clearest initial ROI are gov
 |------|------|--------------------|-------------------|
 | **Support Ops** | Customer Support Pack | Zendesk, ServiceNow | High-volume, well-defined quality criteria; completion rate and response time are measurable on day one |
 | **IT Ops** | DevOps Pack | ServiceNow, Jira, Linear | Incident and release workflows have clear triggers, audit requirements, and high cost of error |
-| **Sales Ops** | Sales CRM Pack | HubSpot, Salesforce, Outreach | Outbound workflows are repetitive but require personalization — the balance where governed AI delivery performs best |
+| **Sales Ops** | Sales CRM Pack | HubSpot, Salesforce | Outbound workflows are repetitive but require personalization — the balance where governed AI delivery performs best |
 
 These are best-fit entry points, not exclusions. CoWork OS works across many workflows; these three have the most predictable buyer, measurable outcome, and vendor-swap-friendly structure.
 

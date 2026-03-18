@@ -61,7 +61,7 @@ The human assigns work directly:
 - Drag a task onto the twin's column in the Mission Control Kanban board
 - @mention the twin in a conversation: `@sw-twin summarize auth module changes this week`
 - Invoke a bundled skill: `@twin prepare meeting brief for tomorrow's architecture review`
-- Reach the twin via any of CoWork OS's 14 messaging channels (Slack, Teams, Discord, Email, etc.)
+- Reach the twin via any of CoWork OS's 15 messaging channels (Slack, Teams, Discord, Email, etc.)
 
 ### What a Persona Template Contains
 
@@ -814,7 +814,7 @@ To add a persona for any job function:
 
 ## Channel Integration
 
-Since CoWork OS supports 14 messaging channels, twins are accessible from any surface:
+Since CoWork OS supports 15 messaging channels, twins are accessible from any surface:
 
 | Channel | Example Usage |
 |---------|--------------|

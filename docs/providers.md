@@ -16,6 +16,7 @@ CoWork OS is **free and open source**. To run tasks, configure your own model cr
 | AWS Bedrock | AWS credentials in Settings (auto-resolves inference profiles) | Pay-per-token via AWS |
 | Azure OpenAI | API key + endpoint in Settings | Pay-per-token via Azure |
 | Ollama (Local) | Install Ollama and pull models | **Free** (runs locally) |
+| HuggingFace Local AI | Install `hf-agents` and run `llama.cpp` locally | **Free** (runs locally) |
 | Groq | API key in Settings | Pay-per-token |
 | xAI (Grok) | API key in Settings | Pay-per-token |
 | Kimi (Moonshot) | API key in Settings | Pay-per-token |
@@ -70,6 +71,27 @@ ollama serve
 | `llama3.2` | 3B | Quick tasks |
 | `qwen2.5:14b` | 14B | Balanced performance |
 | `deepseek-r1:14b` | 14B | Coding tasks |
+
+---
+
+## HuggingFace Local AI (`hf-agents` + `llama.cpp`)
+
+Run compatible local models through CoWork's HuggingFace Local AI provider.
+
+### Setup
+
+```bash
+pip install huggingface_hub
+hf extensions install hf-agents
+```
+
+Then open **Settings** > **LLM**, choose **HuggingFace Local AI**, select or enter a model, and start the local `llama.cpp` server from the provider panel.
+
+### Notes
+
+- Default local endpoint: `http://localhost:8080`
+- API key is optional for local runs
+- Best fit when you want a private local provider but do not want to depend on Ollama
 
 ---
 

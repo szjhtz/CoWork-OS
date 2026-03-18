@@ -432,7 +432,7 @@ optimization plan to hit 30fps stable.
 > **Best-fit workflow: Sales Ops**
 > **Why this is a strong fit:** Outbound sales workflows are high-volume and repetitive but require personalization at scale — the balance where governed AI delivery performs best.
 > **Who already buys this outcome:** Outsourced SDR/BDR providers, sales development agencies, in-house sales teams running a managed outbound lane.
-> **What CoWork OS contributes:** Prospect research briefings, personalized follow-up drafts, pipeline health reviews, and objection-handling scripts. Enable the Sales CRM Pack and connect HubSpot, Salesforce, or Outreach.
+> **What CoWork OS contributes:** Prospect research briefings, personalized follow-up drafts, pipeline health reviews, and objection-handling scripts. Enable the Sales CRM Pack and connect HubSpot or Salesforce.
 
 Connect to Salesforce and HubSpot to automate pipeline management, prospect research, and follow-up sequences.
 
@@ -700,7 +700,7 @@ Triage email, draft responses, identify cleanup opportunities, and manage follow
 
 ### Multi-Channel Messaging
 
-Manage conversations across 14 messaging channels — reply to messages, monitor discussions, and send updates from anywhere.
+Manage conversations across 15 messaging channels — reply to messages, monitor discussions, and send updates from anywhere.
 
 **What it handles:**
 - WhatsApp, Telegram, Discord, Slack, Teams, iMessage, Signal, and more
@@ -1690,10 +1690,10 @@ Rate the attractiveness of entering with a [specific angle].
 | **DevOps & Infra** | K8s, Terraform, Docker, CI/CD, cloud migration, incidents | DevOps pack (8 skills), `run_command` tool |
 | **Mobile Development** | iOS (SwiftUI), Android (Compose), React Native, Fastlane | Mobile Development pack, iOS/Android skills |
 | **Game Development** | Unity, Unreal, Godot, cross-engine performance | Game Development pack, 3 engine skills |
-| **Enterprise** | Salesforce, Jira, Discord, Slack, Zendesk, HubSpot | 10 MCP connectors |
+| **Enterprise** | Salesforce, Jira, Discord, Google Workspace, Zendesk, HubSpot | 11 shipped MCP connectors |
 | **Data & Analytics** | CSV analysis, SQL, financial modeling, market screening | Data Analysis pack, 8+ financial skills |
 | **Content & Marketing** | Blog, social, email campaigns, SEO, copywriting | Marketing pack, marketing strategist skill |
-| **Personal Productivity** | Briefings, inbox, multi-channel messaging, task capture | 14 channels, scheduling, 10+ productivity skills |
+| **Personal Productivity** | Briefings, inbox, multi-channel messaging, task capture | 15 channels, scheduling, 10+ productivity skills |
 | **Team & Management** | Sprints, 1-on-1 prep, status reports, digital twins | EM pack, PM pack, 10 persona templates |
 | **Security** | Vulnerability scanning, compliance, dependency auditing | Security audit skill, dependency check skill |
 | **Remote Ops** | Chat-driven deployment, headless mode, WebSocket API | Gateway, headless daemon, remote access |

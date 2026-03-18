@@ -1,6 +1,6 @@
-# Enterprise Connectors (Phase 1)
+# Enterprise Connectors
 
-This document defines the Phase 1 connector foundation for CoWork OS. The goal is to make enterprise-grade integrations (Salesforce, Jira, etc.) available through a consistent MCP interface while keeping the app decoupled from connector implementation details.
+This document describes the current shipped MCP connector surface in CoWork OS. The goal is to expose enterprise integrations through a consistent MCP interface while keeping the app decoupled from connector implementation details and avoiding overlap with stronger native integrations.
 
 ## Phase 1 Goals
 
@@ -9,14 +9,33 @@ This document defines the Phase 1 connector foundation for CoWork OS. The goal i
 - Specify MVP tool sets for Salesforce and Jira.
 - Ship Salesforce and Jira connectors as installable MCP servers in the registry UI.
 
-## Core Decision: MCP-First Connectors
+## Current Connector Strategy
 
-Connectors should run as MCP servers and expose tools over MCP (stdio, SSE, or WebSocket). Each connector still uses direct APIs under the hood (OAuth, REST, GraphQL), but the app consumes them consistently through MCP.
+Shipped enterprise connectors run as MCP servers and expose tools over MCP (stdio, SSE, or WebSocket). Each connector still uses direct APIs under the hood (OAuth, REST, GraphQL), but the app consumes them consistently through MCP.
+
+For some integrations with strong native CoWork paths, the runtime now prefers direct APIs first and only falls back to MCP when needed. Today that applies to GitHub and Notion.
 
 Benefits:
 - Decoupled release cadence (connectors ship independently of the desktop app).
 - Supports local and managed deployments.
 - Works with existing CoWork MCP settings, registry, and tool discovery.
+- Avoids duplicate surfaces where native integrations are the better default.
+
+## Shipped Connector Allowlist
+
+The shipped connector catalog is currently limited to:
+
+- Salesforce
+- Jira
+- HubSpot
+- Zendesk
+- ServiceNow
+- Linear
+- Asana
+- Okta
+- Resend
+- Discord
+- Google Workspace
 
 ## Connector Contract
 
@@ -196,39 +215,6 @@ Three Google integrations using shared OAuth with PKCE flow:
 
 Authentication: OAuth 2.0 with PKCE via local callback server (port 18765). Scopes are mapped per service (Calendar, Drive, Gmail).
 
-## DocuSign Connector (OAuth)
-
-Electronic signature integration:
-
-- `docusign.health`
-- `docusign.send_envelope`
-- `docusign.get_envelope`
-- `docusign.list_envelopes`
-
-Authentication: OAuth 2.0 with signature scope.
-
-## Outreach Connector (OAuth)
-
-Sales engagement platform:
-
-- `outreach.health`
-- `outreach.list_prospects`
-- `outreach.get_prospect`
-- `outreach.create_sequence`
-
-Authentication: OAuth 2.0 with sales intelligence scopes.
-
-## Slack Connector (OAuth)
-
-Team messaging with OAuth-based setup (in addition to the gateway Socket Mode integration):
-
-- `slack.health`
-- `slack.list_channels`
-- `slack.send_message`
-- `slack.search_messages`
-
-Authentication: OAuth 2.0 with team-domain support.
-
 ## Connector Template
 
 A minimal MCP connector template is provided at:
@@ -253,11 +239,17 @@ These are included in the local MCP registry and appear in **Settings → MCP Se
 - Linear (Product/Issue tracking)
 - Asana (Work management)
 - Okta (Identity)
+- Resend (Transactional email / webhook automation)
 - Discord (Community/messaging — 19 tools)
-- Slack (Team messaging)
 - Google Workspace (Calendar, Drive, Gmail — OAuth)
-- DocuSign (E-signatures — OAuth)
-- Outreach (Sales engagement — OAuth)
+
+Not shipped in the current connector catalog:
+
+- Slack connector MCP server
+- DocuSign connector MCP server
+- Outreach connector MCP server
+
+Slack remains available as a channel gateway, while GitHub and Notion are handled through native CoWork integrations first.
 
 ## Chat Setup Orchestration (Tier-1)
 
@@ -265,7 +257,7 @@ The runtime now exposes a provider-agnostic setup tool for Tier-1 connectors:
 
 - Tool: `integration_setup`
 - Actions: `list`, `inspect`, `configure`
-- Providers: `resend`, `slack`, `gmail`, `google-calendar`, `google-drive`, `jira`, `linear`, `hubspot`
+- Providers: `resend`, `google-workspace`, `jira`, `linear`, `hubspot`, `salesforce`, `zendesk`, `servicenow`
 
 Operational contract:
 

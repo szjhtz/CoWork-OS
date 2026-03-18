@@ -16,12 +16,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Managed devices docs refresh**: documented the Devices tab, saved remote devices, remote task launching, per-device summaries, and remote file selection workflows.
 - **Automation control center docs refresh**: documented the consolidated `Automations` settings group and the relationship between Task Queue, Scheduled Tasks, Webhooks, Event Triggers, Daily Briefing, and Self-Improve.
 - **Zero-human-company docs refresh**: documented the `Settings > Companies` workflow, persisted company-linked digital twins, and company-aware handoff between Companies, Digital Twins, and Mission Control.
+- **HuggingFace Local AI provider**: added `hf-agents` + `llama.cpp` local-model support with installation checks, model selection, and local server lifecycle management from Settings.
+- **Research channels**: Telegram and WhatsApp chats can now be designated as link-research channels that automatically turn posted URLs into a structured findings report.
+- **Tool catalog versioning**: tool discovery now emits a stable SHA-1 catalog hash that covers native tools and MCP state, with immediate snapshot rebuilds after MCP status or `tools_changed` updates.
 
 ### Changed
 - **Dashboard chat UI**: Batched tool events (400ms flush) to avoid UI freeze; flush on subscription cleanup.
 - **README and feature documentation**: updated product-facing docs to reflect managed devices, automation navigation, bounded self-improvement campaigns, remote session inspection, and the current companies workflow.
 - **Self-improvement documentation**: added detailed architecture and troubleshooting coverage for staged autonomous campaigns, startup ordering, worktree requirements, candidate parking/cooldowns, notification flow, and `logs/dev-latest.log` verification steps.
 - **IPC contract documentation**: clarified that `kit:openFile`, `kit:resetAdaptiveStyle`, and `kit:submitMessageFeedback` live in the shared `IPC_CHANNELS` registry used by preload, renderer, and Electron handlers.
+- **Connector surface consolidation**: the shipped MCP allowlist is now Salesforce, Jira, HubSpot, Zendesk, ServiceNow, Linear, Asana, Okta, Resend, Discord, and Google Workspace. Google services are consolidated under `google-workspace`; DocuSign, Outreach, and Slack were removed from the shipped Tier-1 connector surface.
+- **Native-first GitHub and Notion routing**: GitHub and Notion workflows now prefer CoWork's direct API paths and fall back to MCP only when needed.
+- **Collaborative task UI**: sidebar/task views now use inline agent headers, Lucide role icons, markdown normalization for collaborative output, and explicit sub-task back-navigation.
+- **Notifications**: task notifications now use cleaner titles, humanized statuses, and direct view actions.
 
 ### Fixed
 - **Browser profile=user errors**: Clearer messages when Chrome not installed or profile locked.
@@ -30,6 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Autonomous improvement startup race**: `ImprovementLoopService` now starts after `MemoryService` initialization, skips non-worktree-capable workspaces when isolated git execution is required, and suppresses misleading legacy `ERR_UNHANDLED_ERROR` log noise from unhandled `"error"` alias emission during startup failures.
 - **Improvement loop candidate persistence**: fixed the `improvement_candidates` repository insert mismatch that could fail startup with `SqliteError: 27 values for 28 columns` and prevent `ImprovementLoopService` initialization.
 - **Workspace Kit / behavior-adaptation IPC constants**: restored the shared `IPC_CHANNELS` entries for `KIT_OPEN_FILE`, `KIT_RESET_ADAPTIVE_STYLE`, and `KIT_SUBMIT_MESSAGE_FEEDBACK` so preload, renderer, and handler code stay aligned.
+- **Executor tool cache invalidation**: executor-side tool snapshots are now invalidated consistently when the shared catalog version changes.
+- **Sidebar task navigation polish**: sessions header layout, filter affordance, and sub-task navigation behavior were tightened for collaborative runs.
 
 ## [0.4.13] - 2026-03-05
 

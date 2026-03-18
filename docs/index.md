@@ -43,7 +43,7 @@ features:
   - title: Agent Teams
     details: Multi-agent collaboration with shared checklists, collaborative mode, multi-LLM synthesis, and performance reviews.
   - title: Enterprise Connectors
-    details: Salesforce, Jira, HubSpot, Zendesk, ServiceNow, Linear, Asana, Okta, and Resend MCP connectors.
+    details: Salesforce, Jira, HubSpot, Zendesk, ServiceNow, Linear, Asana, Okta, Resend, Discord, and Google Workspace MCP connectors.
   - title: Security First
     details: Local-first architecture, sandboxed execution, guardrails, approval workflows, encrypted storage, and 4000+ tests.
   - title: Best-Fit Operational Workflows

@@ -1,6 +1,27 @@
 import { useState, useRef, useEffect, useMemo, useCallback, Fragment } from "react";
-import { Filter, Cpu, EyeOff, AppWindow, Bell, HardDrive, Rows3, Server } from "lucide-react";
+import { ChevronDown, ChevronRight, SlidersHorizontal, Cpu, EyeOff, AppWindow, Bell, HardDrive, MessageSquare, Rows3, Server, Workflow } from "lucide-react";
+import { getEmojiIcon } from "../utils/emoji-icon-map";
+import { stripAllEmojis } from "../utils/emoji-replacer";
 import { Task, Workspace, UiDensity, InfraStatus } from "../../shared/types";
+
+interface AgentRoleInfo {
+  id: string;
+  displayName: string;
+  color: string;
+  icon?: string;
+}
+
+function formatRelativeShort(timestamp?: number): string {
+  if (!timestamp) return "";
+  const diff = Date.now() - timestamp;
+  const minutes = Math.max(1, Math.round(diff / 60000));
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.round(hours / 24);
+  if (days < 7) return `${days}d`;
+  return new Date(timestamp).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
 
 interface SidebarProps {
   workspace: Workspace | null;
@@ -200,6 +221,7 @@ export function Sidebar({
   const [renameTaskId, setRenameTaskId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [collapsedTasks, setCollapsedTasks] = useState<Set<string>>(new Set());
+  const [agentRoles, setAgentRoles] = useState<Map<string, AgentRoleInfo>>(new Map());
   const [showFailedSessions, setShowFailedSessions] = useState(false);
   const [pinActionError, setPinActionError] = useState<string | null>(null);
   const [activeModeFilters, setActiveModeFilters] = useState<Set<SessionMode>>(new Set());
@@ -216,6 +238,24 @@ export function Sidebar({
     () => new Set(completionAttentionTaskIds),
     [completionAttentionTaskIds],
   );
+
+  useEffect(() => {
+    window.electronAPI
+      .getAgentRoles(false)
+      .then((roles: { id: string; displayName: string; color?: string; icon?: string }[]) => {
+        const map = new Map<string, AgentRoleInfo>();
+        for (const r of roles) {
+          map.set(r.id, {
+            id: r.id,
+            displayName: r.displayName,
+            color: r.color || "#6366f1",
+            icon: r.icon,
+          });
+        }
+        setAgentRoles(map);
+      })
+      .catch(() => {});
+  }, []);
 
   // Helper to get date group for a timestamp
   const getDateGroup = useCallback((timestamp: number): string => {
@@ -770,19 +810,28 @@ export function Sidebar({
     }
   };
 
-  const getAgentTypeIndicator = (task: Task) => {
-    if (task.agentType === "sub") {
+  const getSubagentIcon = (task: Task) => {
+    if (!task.parentTaskId) return null;
+    const role = task.assignedAgentRoleId ? agentRoles.get(task.assignedAgentRoleId) : undefined;
+    if (role?.icon) {
+      const Icon = getEmojiIcon(role.icon);
       return (
-        <span className="cli-agent-type sub" title="Sub-agent">
-          SUB
-        </span>
+        <Icon
+          className="cli-subagent-icon"
+          size={14}
+          strokeWidth={2}
+          title={role.displayName}
+        />
       );
     }
     if (task.agentType === "parallel") {
       return (
-        <span className="cli-agent-type parallel" title="Parallel agent">
-          PAR
-        </span>
+        <Workflow
+          className="cli-subagent-icon cli-subagent-icon-parallel"
+          size={14}
+          strokeWidth={2}
+          title="Parallel agent"
+        />
       );
     }
     return null;
@@ -857,12 +906,17 @@ export function Sidebar({
     return (
       <div key={task.id} className="task-tree-node">
         <div
-          className={`task-item cli-task-item ${selectedTaskId === task.id ? "task-item-selected" : ""} ${isSubAgent ? "task-item-subagent" : ""} ${node.synthetic ? "task-item-group-root" : ""} ${modeClass}`}
+          className={`task-item cli-task-item ${selectedTaskId === task.id ? "task-item-selected" : ""} ${isSubAgent ? "task-item-subagent" : ""} ${node.synthetic ? "task-item-group-root" : ""} ${modeClass} ${hasChildren ? "task-item-has-children" : ""}`}
           onClick={() => {
             if (node.synthetic) return;
-            if (renameTaskId !== task.id) onSelectTask(task.id);
+            if (renameTaskId === task.id) return;
+            onSelectTask(task.id);
           }}
-          style={{ paddingLeft: depth > 0 ? `${8 + depth * 16}px` : undefined }}
+          style={
+            {
+              "--cli-task-padding-left": depth === 0 ? "12px" : `${20 + depth * 22}px`,
+            } as React.CSSProperties
+          }
           title={
             taskMode && taskMode !== "standard" ? SESSION_MODE_META[taskMode].label : undefined
           }
@@ -870,20 +924,9 @@ export function Sidebar({
           {/* Tree connector for sub-agents */}
           {depth > 0 && <span className="cli-tree-prefix">{treePrefix}</span>}
 
-          {/* Collapse toggle for tasks with children */}
-          {hasChildren ? (
-            <button
-              className="cli-collapse-btn"
-              onClick={(e) => toggleCollapse(e, task.id)}
-              title={isCollapsed ? "Expand" : "Collapse"}
-            >
-              {isCollapsed ? "▸" : "▾"}
-            </button>
-          ) : (
-            <span className="cli-task-num">
-              {depth === 0 ? String(index + 1).padStart(2, "0") : "··"}
-            </span>
-          )}
+          <span className="cli-task-num">
+            {depth === 0 ? String(index + 1).padStart(2, "0") : "··"}
+          </span>
 
           <span className={`cli-task-status ${getStatusClass(task.status, showCompletionAttention)}`}>
             {getStatusIndicator(task.status, showCompletionAttention)}
@@ -895,8 +938,8 @@ export function Sidebar({
             </span>
           )}
 
-          {/* Agent type badge for sub-agents */}
-          {getAgentTypeIndicator(task)}
+          {/* Lucide icon for sub-agents */}
+          {getSubagentIcon(task)}
 
           {/* Git branch indicator for worktree-isolated tasks */}
           {task.worktreeBranch && (
@@ -942,12 +985,48 @@ export function Sidebar({
               />
             ) : (
               <div className="cli-task-title-row">
-                <span className="cli-task-title" title={task.title}>
-                  {node.displayTitle || task.title}
+                <span
+                  className={`cli-task-title ${isSubAgent && task.assignedAgentRoleId ? "cli-task-title-with-agent" : ""}`}
+                  title={task.title}
+                >
+                  {isSubAgent && task.assignedAgentRoleId
+                    ? (() => {
+                        const role = agentRoles.get(task.assignedAgentRoleId!);
+                        const full = node.displayTitle || task.title;
+                        const fullNoEmoji = stripAllEmojis(full);
+                        const truncated =
+                          fullNoEmoji.length > 28 ? fullNoEmoji.slice(0, 25) + "..." : fullNoEmoji;
+                        return (
+                          <>
+                            <span className="cli-task-title-truncated">{truncated}</span>
+                            {role && (
+                              <span
+                                className="cli-task-agent-name"
+                                style={{ color: role.color }}
+                              >
+                                {stripAllEmojis(role.displayName)}
+                              </span>
+                            )}
+                          </>
+                        );
+                      })()
+                    : (node.displayTitle || task.title)}
                 </span>
                 {isAwaitingSessionStatus(task.status) && (
                   <span className="cli-task-awaiting-badge">Awaiting response</span>
                 )}
+                {hasChildren && (
+                  <button
+                    className="cli-collapse-btn cli-collapse-btn-inline"
+                    onClick={(e) => toggleCollapse(e, task.id)}
+                    title={isCollapsed ? "Expand" : "Collapse"}
+                  >
+                    {isCollapsed ? "▸" : "▾"}
+                  </button>
+                )}
+                <span className="cli-task-time" aria-hidden="true">
+                  {formatRelativeShort(task.updatedAt || task.createdAt)}
+                </span>
               </div>
             )}
           </div>
@@ -1196,27 +1275,40 @@ export function Sidebar({
                 aria-expanded={!sessionsCollapsed}
                 title={sessionsCollapsed ? "Expand sessions" : "Collapse sessions"}
               >
-                <span className="cli-section-prompt cli-sessions-collapse-indicator">
-                  {sessionsCollapsed ? "▸" : "▾"}
-                </span>
+                <span className="cli-section-prompt terminal-only">{sessionsCollapsed ? "▸" : "▾"}</span>
                 <span className="terminal-only">SESSIONS</span>
-                <span className="modern-only cli-sessions-title">Sessions</span>
+                <span className="modern-only cli-new-task-modern-label" style={{ flex: 1, minWidth: 0 }}>
+                  <span className="sidebar-home-btn-icon cli-sessions-icon" aria-hidden="true">
+                    {(availableModes.length > 1 || activeModeFilters.size > 0) ? (
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        className={`session-filter-toggle ${showFilterBar || activeModeFilters.size > 0 ? "active" : ""}`}
+                        onClick={(e) => { e.stopPropagation(); setShowFilterBar(!showFilterBar); }}
+                        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setShowFilterBar(!showFilterBar); } }}
+                        title="Filter by mode"
+                        style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', padding: 0, border: 0, background: 'transparent', color: 'inherit' }}
+                      >
+                        <SlidersHorizontal size={16} strokeWidth={2} style={{ display: 'block' }} />
+                        {activeModeFilters.size > 0 && (
+                          <span className="filter-count" style={{ marginLeft: '4px', fontSize: '10px' }}>{activeModeFilters.size}</span>
+                        )}
+                      </span>
+                    ) : (
+                      <MessageSquare size={16} strokeWidth={2} style={{ display: 'block' }} />
+                    )}
+                  </span>
+                  <span className="cli-sessions-title">Sessions</span>
+                  <span className="cli-sessions-collapse-indicator" aria-hidden="true">
+                    {sessionsCollapsed ? (
+                      <ChevronRight size={14} strokeWidth={2.5} />
+                    ) : (
+                      <ChevronDown size={14} strokeWidth={2.5} />
+                    )}
+                  </span>
+                </span>
               </button>
               <div className="cli-list-header-actions">
-                {(availableModes.length > 1 || activeModeFilters.size > 0) && (
-                  <button
-                    type="button"
-                    className={`session-filter-toggle ${showFilterBar || activeModeFilters.size > 0 ? "active" : ""}`}
-                    onClick={() => setShowFilterBar(!showFilterBar)}
-                    title="Filter by mode"
-                    style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}
-                  >
-                    <Filter size={13} strokeWidth={2.5} style={{ display: 'block' }} />
-                    {activeModeFilters.size > 0 && (
-                      <span className="filter-count" style={{ marginLeft: '4px', fontSize: '10px' }}>{activeModeFilters.size}</span>
-                    )}
-                  </button>
-                )}
                 {failedSessionCount > 0 && (
                   <button
                     type="button"
@@ -1224,7 +1316,7 @@ export function Sidebar({
                     onClick={() => setShowFailedSessions(!showFailedSessions)}
                     style={{ cursor: 'pointer', padding: '2px 4px' }}
                   >
-                    {showFailedSessions ? "Hide" : "Show"} failed ({failedSessionCount})
+                    {showFailedSessions ? "Hide" : "Show"} failed
                   </button>
                 )}
               </div>
@@ -1286,12 +1378,12 @@ export function Sidebar({
                   aria-expanded={!automatedFolderCollapsed}
                   title={automatedFolderCollapsed ? "Show automated sessions" : "Hide automated sessions"}
                 >
-                  <span className="automated-folder-chevron" aria-hidden="true">
-                    {automatedFolderCollapsed ? "▸" : "▾"}
-                  </span>
                   <span className="automated-folder-label">
                     <span className="terminal-only">AUTOMATED</span>
                     <span className="modern-only">Automated</span>
+                    <span className="automated-folder-chevron" aria-hidden="true">
+                      {automatedFolderCollapsed ? "▸" : "▾"}
+                    </span>
                   </span>
                   <span className="automated-folder-count">{automatedTaskTree.length}</span>
                   {automatedTaskTree.some((n) => isActiveSessionStatus(n.task.status)) && (

@@ -151,18 +151,41 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: "13px",
     fontWeight: 500,
     color: "var(--color-text)",
-    whiteSpace: "nowrap" as const,
+    display: "-webkit-box",
+    WebkitLineClamp: 2,
+    WebkitBoxOrient: "vertical" as const,
     overflow: "hidden",
-    textOverflow: "ellipsis",
+    lineHeight: 1.35,
+  },
+  notificationBadge: {
+    display: "inline-block",
+    fontSize: "10px",
+    fontWeight: 600,
+    color: "var(--color-text-muted)",
+    textTransform: "uppercase" as const,
+    letterSpacing: "0.04em",
+    marginBottom: "2px",
   },
   notificationMessage: {
-    margin: "4px 0 0",
+    margin: "2px 0 0",
     fontSize: "12px",
     color: "var(--color-text-secondary)",
     display: "-webkit-box",
     WebkitLineClamp: 2,
     WebkitBoxOrient: "vertical" as const,
     overflow: "hidden",
+  },
+  viewBtn: {
+    padding: "4px 10px",
+    fontSize: "11px",
+    fontWeight: 600,
+    color: "var(--color-accent)",
+    backgroundColor: "var(--color-accent-glass)",
+    border: "none",
+    borderRadius: "6px",
+    cursor: "pointer",
+    marginTop: "6px",
+    transition: "all 0.15s ease",
   },
   notificationTime: {
     fontSize: "11px",
@@ -338,6 +361,45 @@ function stripLeadingEmoji(text: string): string {
   return text.replace(/^[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}][\uFE0F\uFE0E]?\s*/u, "");
 }
 
+/** Humanize technical reason/status strings for display */
+function humanizeStatus(value: string): string {
+  const map: Record<string, string> = {
+    required_decision: "Decision required",
+    required_decision_followup: "Follow-up decision",
+    input_request: "Input needed",
+    user_action_required_disabled: "Action required",
+    user_action_required_tool: "Tool approval needed",
+    shell_permission_required: "Shell access needed",
+    workspace_mismatch: "Workspace confirmation",
+    workspace_required: "Workspace needed",
+    approval_requested: "Approval needed",
+  };
+  return map[value] ?? value.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+/** Extract a cleaner display title: prefer task name, drop redundant "Quick check-in ·" prefix */
+function formatNotificationTitle(title: string): {
+  primary: string;
+  badge?: string;
+} {
+  const prefixes = ["Quick check-in · ", "Approval needed · ", "Input needed · "];
+  let primary = stripLeadingEmoji(title);
+  let badge: string | undefined;
+
+  for (const prefix of prefixes) {
+    if (primary.startsWith(prefix)) {
+      const taskPart = primary.slice(prefix.length).trim();
+      primary = taskPart || primary; // Use task name if non-empty
+      if (taskPart) {
+        badge = prefix.replace(" · ", "").trim();
+      }
+      break;
+    }
+  }
+
+  return { primary, badge };
+}
+
 export function NotificationPanel({ onNotificationClick }: NotificationPanelProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
@@ -489,7 +551,15 @@ export function NotificationPanel({ onNotificationClick }: NotificationPanelProp
               notifications.map((notification) => {
                 const typeConfig = typeIcons[notification.type] || typeIcons.info;
                 const isHovered = hoveredId === notification.id;
-                const modernTitle = stripLeadingEmoji(notification.title);
+                const { primary, badge } = formatNotificationTitle(notification.title);
+                const isTechnicalReason =
+                  /^[a-z][a-z0-9_]*$/.test(notification.message.trim()) &&
+                  notification.message.includes("_");
+                const statusBadge = isTechnicalReason
+                  ? humanizeStatus(notification.message)
+                  : null;
+                const showMessage = !isTechnicalReason && notification.message.trim();
+                const displayBadge = statusBadge ?? badge;
 
                 return (
                   <div
@@ -517,11 +587,27 @@ export function NotificationPanel({ onNotificationClick }: NotificationPanelProp
                       {typeConfig.icon}
                     </div>
                     <div style={styles.notificationContent}>
-                      <p style={styles.notificationTitle}>{modernTitle}</p>
-                      <p style={styles.notificationMessage}>{notification.message}</p>
+                      {displayBadge && (
+                        <span style={styles.notificationBadge}>{displayBadge}</span>
+                      )}
+                      <p style={styles.notificationTitle}>{primary}</p>
+                      {showMessage && (
+                        <p style={styles.notificationMessage}>{notification.message}</p>
+                      )}
                       <span style={styles.notificationTime}>
                         {formatRelativeTime(notification.createdAt)}
                       </span>
+                      {notification.type === "input_required" && (
+                        <button
+                          style={styles.viewBtn}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleNotificationClick(notification);
+                          }}
+                        >
+                          View & respond
+                        </button>
+                      )}
                     </div>
                     <div style={styles.notificationActions}>
                       <button

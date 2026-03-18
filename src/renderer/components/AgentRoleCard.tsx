@@ -1,4 +1,5 @@
 import { AgentRoleData, AgentCapability } from "../../electron/preload";
+import { getEmojiIcon } from "../utils/emoji-icon-map";
 
 // Alias for UI usage
 type AgentRole = AgentRoleData;
@@ -58,7 +59,10 @@ export function AgentRoleCard({
     >
       <div className="agent-role-card-header">
         <div className="agent-role-icon" style={{ backgroundColor: role.color }}>
-          {role.icon}
+          {role.icon ? (() => {
+            const Icon = getEmojiIcon(role.icon);
+            return <Icon size={20} strokeWidth={2} />;
+          })() : null}
         </div>
         <div className="agent-role-info">
           <span className="agent-role-name">

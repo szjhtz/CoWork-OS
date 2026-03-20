@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **aurl skill**: Optional skill for [aurl](https://github.com/ShawnPana/aurl) — register OpenAPI/GraphQL APIs by name, explore endpoints, make validated requests. Opt-in: skill appears only when `aurl` is installed. See [aurl skill docs](skills/aurl.md).
+- **14 new MCP connectors** (44 total): Tavily (web search), tldraw (diagrams), Amplitude (analytics), Clerk (auth), Mem (notes), Grafana (monitoring), Mailtrap (email), Socket (dependency security), Metabase (analytics), Shadcn UI (components), GrowthBook (feature flags), Drafts (macOS notes), Fantastical (macOS calendar), Tomba (email finder/verifier). All npm-installable from Settings > Connectors.
+
 ## [0.5.1] - 2026-03-18
 
 ### Added

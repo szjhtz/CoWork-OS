@@ -62,6 +62,7 @@ import {
 } from "./context-manager";
 import { GuardrailManager } from "../guardrails/guardrail-manager";
 import { PersonalityManager } from "../settings/personality-manager";
+import { detectContextMode } from "./context-mode-detector";
 import { calculateCost, formatCost } from "./llm/pricing";
 import { loadImageFromFile, validateImageForProvider } from "./llm/image-utils";
 import { getCustomSkillLoader } from "./custom-skill-loader";
@@ -79,6 +80,7 @@ import { MemoryFeaturesManager } from "../settings/memory-features-manager";
 import { InputSanitizer, OutputFilter } from "./security";
 import { buildRolePersonaPrompt } from "../agents/role-persona";
 import { BuiltinToolsSettingsManager } from "./tools/builtin-settings";
+import { getAwarenessService } from "../awareness/AwarenessService";
 import { describeSchedule, parseIntervalToMs } from "../cron/types";
 import { InfraManager } from "../infra/infra-manager";
 import { InfraSettingsManager } from "../infra/infra-settings";
@@ -275,14 +277,20 @@ const DEFAULT_PROMPT_SECTION_BUDGETS = {
   kitContext: 700,
   memoryContext: 700,
   playbookContext: 420,
+  awarenessContext: 420,
   infraContext: 420,
-  personalityPrompt: 520,
+  personalityPrompt: 700,
   guidelinesPrompt: 520,
   toolDescriptions: 1400,
 } as const;
 
 const PLAN_SYSTEM_PROMPT_TOTAL_BUDGET = 5600;
 const EXECUTION_SYSTEM_PROMPT_TOTAL_BUDGET = 6800;
+const EXPLICIT_CHAT_MAX_OUTPUT_TOKENS = 48_000;
+const EXPLICIT_CHAT_RECENT_MESSAGE_WINDOW = 16;
+const EXPLICIT_CHAT_SUMMARY_TRIGGER_MESSAGE_COUNT = 24;
+const EXPLICIT_CHAT_SUMMARY_TRIGGER_TOKENS = 12_000;
+const EXPLICIT_CHAT_SUMMARY_MAX_OUTPUT_TOKENS = 1536;
 const BATCH_EXTERNAL_SIDE_EFFECT_TOOLS = new Set([
   "x_action",
   "notion_action",
@@ -592,10 +600,13 @@ export class TaskExecutor {
   } | null = null;
   private readonly requiresTestRun: boolean;
   private testRunObserved = false;
+  private testRunSuccessful = false;
   private readonly requiresExecutionToolRun: boolean;
   private executionToolRunObserved = false;
   private executionToolAttemptObserved = false;
   private executionToolLastError = "";
+  private readonly requiresVisualQARun: boolean;
+  private visualQARunObserved = false;
   private allowExecutionWithoutShell = false;
   private planCompletedEffectively = false;
   private cancelled = false;
@@ -681,6 +692,9 @@ export class TaskExecutor {
   private lastToolDisabledScope: "provider" | "global" | null = null;
   private dispatchedMentionedAgents = false;
   private lastAssistantText: string | null = null;
+  private explicitChatSummaryBlock: string | null = null;
+  private explicitChatSummaryCreatedAt: number = 0;
+  private explicitChatSummarySourceMessageCount: number = 0;
   private lastPreCompactionFlushAt: number = 0;
   private lastPreCompactionFlushTokenCount: number = 0;
   private observedOutputTokensPerSecond: number | null = null;
@@ -2744,11 +2758,11 @@ export class TaskExecutor {
     const aliasNormalizedSteps = this.normalizeWorkspaceAliasPathsInPlanSteps(overlapNormalizedSteps);
     const taskRootNormalizedSteps = this.normalizeTaskPinnedRootPathsInPlanSteps(aliasNormalizedSteps);
 
-    return {
+    return this.ensureRequiredPlanSteps({
       ...plan,
       description: sanitizedPlanDescription || "Execution plan",
       steps: taskRootNormalizedSteps,
-    };
+    });
   }
 
   private noteUnifiedCompatMode(entrypoint: "executeStep" | "sendMessage"): void {
@@ -3003,6 +3017,137 @@ export class TaskExecutor {
     } catch {
       return "";
     }
+  }
+
+  private isExplicitChatExecutionMode(): boolean {
+    return this.task.agentConfig?.executionMode === "chat";
+  }
+
+  private stripPinnedSummaryPrefixFromFirstUserMessage(messages: LLMMessage[]): LLMMessage[] {
+    const cloned = messages.map((msg) => ({ ...msg })) as LLMMessage[];
+
+    const firstUserIndex = cloned.findIndex((msg) => msg.role === "user");
+    if (firstUserIndex === -1) return cloned;
+
+    const message = cloned[firstUserIndex];
+    const stripText = (text: string): string => {
+      const trimmed = (text || "").trimStart();
+      if (!trimmed.startsWith(TaskExecutor.PINNED_COMPACTION_SUMMARY_TAG)) {
+        return text;
+      }
+      const closeIdx = trimmed.indexOf(TaskExecutor.PINNED_COMPACTION_SUMMARY_CLOSE_TAG);
+      if (closeIdx === -1) return text;
+      const after = trimmed.slice(closeIdx + TaskExecutor.PINNED_COMPACTION_SUMMARY_CLOSE_TAG.length).trimStart();
+      return after;
+    };
+
+    if (typeof message.content === "string") {
+      const stripped = stripText(message.content);
+      if (stripped !== message.content) {
+        cloned[firstUserIndex] = { ...message, content: stripped };
+      }
+      return cloned;
+    }
+
+    const firstTextIndex = message.content.findIndex(
+      (block) => (block as Any)?.type === "text" && typeof (block as Any)?.text === "string",
+    );
+    if (firstTextIndex === -1) return cloned;
+    const block = message.content[firstTextIndex] as Any;
+    const stripped = stripText(block.text);
+    if (stripped === block.text) return cloned;
+    const nextContent = [...message.content] as Any[];
+    nextContent[firstTextIndex] = { ...block, text: stripped };
+    cloned[firstUserIndex] = { ...message, content: nextContent as LLMContent[] };
+    return cloned;
+  }
+
+  private prependTextToFirstUserMessage(messages: LLMMessage[], prefix: string): void {
+    const trimmedPrefix = (prefix || "").trim();
+    if (!trimmedPrefix) return;
+    const firstUserIndex = messages.findIndex((msg) => msg.role === "user");
+    if (firstUserIndex === -1) return;
+
+    const message = messages[firstUserIndex];
+    if (typeof message.content === "string") {
+      messages[firstUserIndex] = {
+        ...message,
+        content: `${trimmedPrefix}\n\n${message.content}`,
+      };
+      return;
+    }
+
+    if (!Array.isArray(message.content)) return;
+
+    messages[firstUserIndex] = {
+      ...message,
+      content: [
+        { type: "text", text: `${trimmedPrefix}\n\n` },
+        ...message.content,
+      ] as LLMContent[],
+    };
+  }
+
+  private async buildExplicitChatMessages(message: string, systemPrompt: string): Promise<LLMMessage[]> {
+    const baseHistory = this.conversationHistory.slice().reduce<LLMMessage[]>((acc, msg) => {
+      if (!Array.isArray(msg.content)) {
+        acc.push(msg);
+        return acc;
+      }
+      const filtered: LLMContent[] = [];
+      for (const b of msg.content) {
+        if ("type" in b && (b.type === "text" || b.type === "image")) {
+          filtered.push(b as LLMContent);
+        }
+      }
+      if (filtered.length > 0) {
+        acc.push({ ...msg, content: filtered });
+      }
+      return acc;
+    }, []);
+
+    const currentMessage: LLMMessage = {
+      role: "user",
+      content: [{ type: "text", text: message }],
+    };
+
+    const fullMessages: LLMMessage[] = [...baseHistory, currentMessage];
+    const totalTokens = estimateTotalTokens(fullMessages, systemPrompt);
+    const shouldSummarize =
+      baseHistory.length >= EXPLICIT_CHAT_SUMMARY_TRIGGER_MESSAGE_COUNT ||
+      totalTokens >= EXPLICIT_CHAT_SUMMARY_TRIGGER_TOKENS;
+
+    const useCachedSummary = Boolean(this.explicitChatSummaryBlock);
+    if (!useCachedSummary && (!shouldSummarize || baseHistory.length <= EXPLICIT_CHAT_RECENT_MESSAGE_WINDOW)) {
+      return fullMessages;
+    }
+
+    const recentWindow = this.stripPinnedSummaryPrefixFromFirstUserMessage(
+      baseHistory.slice(-EXPLICIT_CHAT_RECENT_MESSAGE_WINDOW),
+    );
+    if (recentWindow.length === 0) {
+      return fullMessages;
+    }
+
+    if (!this.explicitChatSummaryBlock && shouldSummarize) {
+      const removedMessages = baseHistory.slice(0, -EXPLICIT_CHAT_RECENT_MESSAGE_WINDOW);
+      if (removedMessages.length > 0) {
+        this.explicitChatSummaryBlock = await this.buildCompactionSummaryBlock({
+          removedMessages,
+          maxOutputTokens: EXPLICIT_CHAT_SUMMARY_MAX_OUTPUT_TOKENS,
+          contextLabel: "chat session",
+        });
+        this.explicitChatSummaryCreatedAt = Date.now();
+        this.explicitChatSummarySourceMessageCount = removedMessages.length;
+      }
+    }
+
+    const messages = recentWindow.length > 0 ? [...recentWindow] : [];
+    if (this.explicitChatSummaryBlock) {
+      this.prependTextToFirstUserMessage(messages, this.explicitChatSummaryBlock);
+    }
+    messages.push(currentMessage);
+    return messages.length > 0 ? messages : fullMessages;
   }
 
   private formatMessagesForCompactionSummary(
@@ -3942,6 +4087,7 @@ ${transcript}
     this.recoveryRequestActive = this.isRecoveryIntent(this.lastUserMessage);
     this.capabilityUpgradeRequested = this.isCapabilityUpgradeIntent(this.lastUserMessage);
     this.requiresTestRun = this.detectTestRequirement(`${task.title}\n${task.prompt}`);
+    this.requiresVisualQARun = this.detectVisualQARequirement(`${task.title}\n${task.prompt}`);
     this.requiresExecutionToolRun = this.detectExecutionRequirement(
       `${task.title}\n${task.prompt}`,
     );
@@ -4118,6 +4264,25 @@ ${transcript}
     return lines.join("\n");
   }
 
+  /**
+   * Returns a contextual nudge when the current task involves building a web app
+   * with testing/shipping intent, making the QA step explicit in the plan.
+   */
+  private getVisualQAContextPrompt(): string {
+    if (!this.task) return "";
+    const combined = `${this.task.title}\n${this.task.prompt}`;
+    if (!this.detectVisualQARequirement(combined)) return "";
+    return [
+      "VISUAL QA REQUIRED FOR THIS TASK:",
+      "This task builds a web app AND has a testing/quality/shipping intent.",
+      "Your plan MUST include a 'Visual QA with Playwright' step after building.",
+      "Before QA: if you just scaffolded the project, run 'npm install' (or yarn/pnpm) via run_command first — NEVER skip this.",
+      "Use qa_run (with server_command if needed) to automatically test the app.",
+      "qa_run will start the server, launch a browser, take screenshots, and report bugs.",
+      "Fix any critical/major issues found, then re-run qa_run to confirm. Call qa_cleanup when done.",
+    ].join("\n");
+  }
+
   private getInfraContextPrompt(): string {
     try {
       const settings = InfraSettingsManager.loadSettings();
@@ -4265,35 +4430,34 @@ ${transcript}
 
   private async respondInChatMode(message: string, previousStatus?: string): Promise<void> {
     const personalityIdOverride = this.task.agentConfig?.personalityId;
+    const contextMode = detectContextMode(
+      message,
+      this.task.agentConfig?.conversationMode,
+      undefined,
+    );
     const personalityPrompt = personalityIdOverride
       ? PersonalityManager.getPersonalityPromptById(personalityIdOverride)
-      : PersonalityManager.getPersonalityPrompt();
+      : PersonalityManager.getPersonalityPrompt(contextMode);
     const identityPrompt = PersonalityManager.getIdentityPrompt();
+    const isSubAgentTask = (this.task.agentType ?? "main") === "sub" || !!this.task.parentTaskId;
+    const retainMemory = this.task.agentConfig?.retainMemory ?? !isSubAgentTask;
+    const gatewayContext = this.task.agentConfig?.gatewayContext ?? "private";
+    const allowTrustedSharedMemory =
+      this.task.agentConfig?.allowSharedContextMemory === true &&
+      (gatewayContext === "group" || gatewayContext === "public");
+    const allowMemoryInjection =
+      retainMemory && (gatewayContext === "private" || allowTrustedSharedMemory);
+    let awarenessSnapshotBlock = "";
+    if (allowMemoryInjection) {
+      try {
+        awarenessSnapshotBlock = getAwarenessService().getSnapshot(this.workspace.id).text;
+      } catch {
+        // best-effort
+      }
+    }
     const roleContext = this.getRoleContextPrompt();
     const profileContext = this.buildUserProfileBlock(10);
-
-    // Strip tool_use / tool_result blocks from history so we can send to
-    // the LLM without a toolConfig (Bedrock rejects the call otherwise).
-    const recent = this.conversationHistory.slice(-8).reduce<LLMMessage[]>((acc, msg) => {
-      if (!Array.isArray(msg.content)) {
-        acc.push(msg);
-        return acc;
-      }
-      const filtered: LLMContent[] = [];
-      for (const b of msg.content) {
-        if ("type" in b && (b.type === "text" || b.type === "image")) {
-          filtered.push(b as LLMContent);
-        }
-      }
-      if (filtered.length > 0) {
-        acc.push({ ...msg, content: filtered });
-      }
-      return acc;
-    }, []);
-    const messages: LLMMessage[] = [
-      ...recent,
-      { role: "user", content: [{ type: "text", text: message }] },
-    ];
+    const isExplicitChatMode = this.isExplicitChatExecutionMode();
 
     const isThinkMode = this.task.agentConfig?.conversationMode === "think";
 
@@ -4305,15 +4469,73 @@ ${transcript}
       extraChatRules: ["- Do not claim to run tools in this turn."],
     });
 
+    const messages: LLMMessage[] = isExplicitChatMode
+      ? await this.buildExplicitChatMessages(message, systemPrompt)
+      : (() => {
+          // Strip tool_use / tool_result blocks from history so we can send to
+          // the LLM without a toolConfig (Bedrock rejects the call otherwise).
+          const recent = this.conversationHistory.slice(-8).reduce<LLMMessage[]>((acc, msg) => {
+            if (!Array.isArray(msg.content)) {
+              acc.push(msg);
+              return acc;
+            }
+            const filtered: LLMContent[] = [];
+            for (const b of msg.content) {
+              if ("type" in b && (b.type === "text" || b.type === "image")) {
+                filtered.push(b as LLMContent);
+              }
+            }
+            if (filtered.length > 0) {
+              acc.push({ ...msg, content: filtered });
+            }
+            return acc;
+          }, []);
+          return [
+            ...recent,
+            { role: "user", content: [{ type: "text", text: message }] },
+          ];
+        })();
+
+    const onStreamProgress =
+      this.provider.type === "azure"
+        ? (progress: {
+            inputTokens: number;
+            outputTokens: number;
+            outputChars: number;
+            elapsedMs: number;
+            streaming: boolean;
+            text?: string;
+          }) => {
+            if (this.cancelled || this.taskCompleted) return;
+            this.emitEvent("llm_streaming", {
+              inputTokens: progress.inputTokens,
+              outputTokens: progress.outputTokens,
+              elapsedMs: progress.elapsedMs,
+              streaming: progress.streaming,
+              totalInputTokens: this.getCumulativeInputTokens() + progress.inputTokens,
+              totalOutputTokens: this.getCumulativeOutputTokens() + progress.outputTokens,
+              ...(typeof progress.text === "string" ? { text: progress.text } : {}),
+            });
+          }
+        : undefined;
+
     try {
+      const chatMaxTokens = isExplicitChatMode
+        ? this.resolveLLMMaxTokens({
+            messages,
+            system: systemPrompt,
+            requestedMaxTokens: EXPLICIT_CHAT_MAX_OUTPUT_TOKENS,
+          })
+        : null;
       const response = await this.callLLMWithRetry(
         () =>
           this.createMessageWithTimeout(
             {
               model: this.modelId,
-              maxTokens: isThinkMode ? 2048 : 260,
+              maxTokens: chatMaxTokens ?? (isThinkMode ? 2048 : 260),
               system: systemPrompt,
               messages,
+              ...(onStreamProgress ? { onStreamProgress } : {}),
             },
             LLM_TIMEOUT_MS,
             isThinkMode ? "Think-with-me follow-up response" : "Chat-mode follow-up response",
@@ -4325,7 +4547,34 @@ ${transcript}
         this.updateTracking(response.usage.inputTokens, response.usage.outputTokens);
       }
 
-      const text = this.extractTextFromLLMContent(response.content || []);
+      let text = this.extractTextFromLLMContent(response.content || []);
+      if (response.stopReason === "max_tokens" && text && !isThinkMode) {
+        try {
+          const contResponse = await this.createMessageWithTimeout(
+            {
+              model: this.modelId,
+              maxTokens: 400,
+              system: systemPrompt,
+              messages: [
+                ...messages,
+                { role: "assistant", content: [{ type: "text", text }] },
+              ],
+              ...(onStreamProgress ? { onStreamProgress } : {}),
+            },
+            LLM_TIMEOUT_MS,
+            "Chat-mode continuation response",
+          );
+          if (contResponse.usage) {
+            this.updateTracking(contResponse.usage.inputTokens, contResponse.usage.outputTokens);
+          }
+          const contText = this.extractTextFromLLMContent(contResponse.content || []);
+          if (contText) {
+            text = `${text}${contText}`;
+          }
+        } catch {
+          // Continue with the partial answer if the continuation fails.
+        }
+      }
       const chatEmptyFallback = isThinkMode
         ? "Could you say more about that? I'd like to explore this further with you."
         : this.generateCompanionFallbackResponse(message);
@@ -4370,8 +4619,7 @@ ${transcript}
       this.lastNonVerificationOutput = fallback;
       this.lastAssistantText = fallback;
       this.updateConversationHistory([
-        ...recent,
-        { role: "user", content: [{ type: "text", text: message }] },
+        ...messages,
         { role: "assistant", content: [{ type: "text", text: fallback }] },
       ]);
       this.saveConversationSnapshot();
@@ -4691,18 +4939,21 @@ ${transcript}
       parentSignal.addEventListener("abort", onParentAbort, { once: true });
     }
 
-    // Stream progress callback — emits llm_streaming events for real-time UI updates
-    const onStreamProgress: StreamProgressCallback = (progress) => {
-      if (this.cancelled || this.taskCompleted) return;
-      this.emitEvent("llm_streaming", {
-        inputTokens: progress.inputTokens,
-        outputTokens: progress.outputTokens,
-        elapsedMs: progress.elapsedMs,
-        streaming: progress.streaming,
-        totalInputTokens: this.getCumulativeInputTokens() + progress.inputTokens,
-        totalOutputTokens: this.getCumulativeOutputTokens() + progress.outputTokens,
-      });
-    };
+    const shouldStream =
+      this.provider.type === "azure" && this.getEffectiveExecutionMode() === "chat";
+    const onStreamProgress: StreamProgressCallback | undefined = shouldStream
+      ? (progress) => {
+          if (this.cancelled || this.taskCompleted) return;
+          this.emitEvent("llm_streaming", {
+            inputTokens: progress.inputTokens,
+            outputTokens: progress.outputTokens,
+            elapsedMs: progress.elapsedMs,
+            streaming: progress.streaming,
+            totalInputTokens: this.getCumulativeInputTokens() + progress.inputTokens,
+            totalOutputTokens: this.getCumulativeOutputTokens() + progress.outputTokens,
+          });
+        }
+      : undefined;
 
     try {
       return await withTimeout(
@@ -4710,7 +4961,7 @@ ${transcript}
           ...request,
           model: this.modelId,
           signal: requestAbort.signal,
-          onStreamProgress,
+          ...(onStreamProgress ? { onStreamProgress } : {}),
         }),
         timeoutMs,
         operation,
@@ -5331,6 +5582,12 @@ ${transcript}
     const candidate = String(this.buildResultSummary() || this.getContentFallback() || "").trim();
     if (!candidate) return false;
     const message = String((error as Any)?.message || error || "");
+    if (
+      /Task required running tests, but no test command completed successfully\./i.test(message) ||
+      /Task required Playwright visual QA, but qa_run did not complete successfully\./i.test(message)
+    ) {
+      return false;
+    }
     if (/^Task missing /i.test(message) && !this.isSourceValidationGuardError(error)) {
       return false;
     }
@@ -6853,6 +7110,41 @@ ${transcript}
   }
 
   /**
+   * Detect whether the task involves building a web app with any testing/shipping/quality intent.
+   * Returns true for prompts like "build a React app, test it to catch bugs before shipping"
+   * even if Playwright is never mentioned.
+   */
+  private detectVisualQARequirement(prompt: string): boolean {
+    const lower = prompt.toLowerCase();
+
+    // Exclude non-app contexts (email templates, static docs, etc.)
+    const EXCLUDE_SIGNALS = [
+      "email template", "email body", "static html", "markdown", "document only",
+      "read-only", "no server", "no backend",
+    ];
+    if (EXCLUDE_SIGNALS.some((s) => lower.includes(s))) return false;
+
+    // Must involve web app work (require app/framework signals, not just html/css)
+    const WEB_APP_SIGNALS = [
+      "web app", "webapp", "website", "frontend", "react", "vue", "svelte", "next.js", "nextjs",
+      "landing page", "dashboard", "spa", "localhost", "vite", "webpack", "create-react-app", "cra",
+    ];
+    const hasWebSignal = WEB_APP_SIGNALS.some((s) => lower.includes(s));
+    // Allow "html" + "css" only when combined with app-like context
+    const hasHtmlCssOnly = (lower.includes("html") || lower.includes("css")) && !hasWebSignal;
+    if (hasHtmlCssOnly || !hasWebSignal) return false;
+
+    // Plus any testing/quality/shipping intent
+    const QA_INTENT_SIGNALS = [
+      "test it", "test the", "catch bug", "before ship", "make sure", "verify", "validate",
+      "does it work", "check for", "no bug", "works correctly", "works properly",
+      "qa it", "qa the", "quality", "ship it", "ship the", "ready to ship",
+      "see how it looks", "review the result", "looks right", "bug-free", "bug free",
+    ];
+    return QA_INTENT_SIGNALS.some((s) => lower.includes(s));
+  }
+
+  /**
    * Detect whether the task explicitly expects command execution (not just analysis/writing)
    */
   private detectExecutionRequirement(prompt: string): boolean {
@@ -6875,14 +7167,56 @@ ${transcript}
   /**
    * Record command execution metadata (used for test-run enforcement)
    */
-  private recordCommandExecution(toolName: string, input: Any, _result: Any): void {
+  private recordCommandExecution(toolName: string, input: Any, result: Any): void {
     if (toolName !== "run_command") return;
     const command = typeof input?.command === "string" ? input.command : "";
     if (!command) return;
 
     if (this.isTestCommand(command)) {
       this.testRunObserved = true;
+      if (!(result && result.success === false)) {
+        this.testRunSuccessful = true;
+      }
     }
+  }
+
+  private recordQAExecution(toolName: string, result: Any): void {
+    if (toolName !== "qa_run") return;
+    if (result && result.success === false) return;
+    this.visualQARunObserved = true;
+  }
+
+  private buildVisualQAPlanStepDescription(): string {
+    return "Visual QA with Playwright: use qa_run to launch the app in a browser, test core user flows, fix any critical/major issues found, re-run qa_run until clean, then call qa_cleanup.";
+  }
+
+  private planContainsVisualQAStep(steps: PlanStep[]): boolean {
+    return steps.some((step) => {
+      const desc = String(step?.description || "").toLowerCase();
+      return (
+        desc.includes("visual qa with playwright") ||
+        desc.includes("qa_run") ||
+        (desc.includes("playwright") && /\b(qa|test|verify|browser)\b/.test(desc))
+      );
+    });
+  }
+
+  private ensureRequiredPlanSteps(plan: Plan): Plan {
+    const nextPlan: Plan = {
+      ...plan,
+      steps: Array.isArray(plan?.steps) ? [...plan.steps] : [],
+    };
+
+    if (this.requiresVisualQARun && !this.planContainsVisualQAStep(nextPlan.steps)) {
+      nextPlan.steps.push({
+        id: String(nextPlan.steps.length + 1),
+        description: this.buildVisualQAPlanStepDescription(),
+        kind: "verification",
+        status: "pending",
+      });
+    }
+
+    return nextPlan;
   }
 
   private stepRequiresImageVerification(step: PlanStep): boolean {
@@ -7043,6 +7377,28 @@ ${transcript}
       /\b(create|generate|write|save|produce|export)\b/.test(desc);
     if (documentIntent) {
       required.add(canonicalizeToolNameUtil(this.normalizeToolName("create_document").name));
+    }
+
+    const requiresRunCommandEvidence =
+      /\b(?:install dependencies|dependency install|npm install|pnpm install|yarn install)\b/.test(
+        desc,
+      ) ||
+      /\b(?:run|execute)\b[\s\S]{0,30}\b(?:npm|pnpm|yarn)\b/.test(desc) ||
+      /\b(?:run|execute)\s+(?:the\s+)?(?:project\s+)?(?:test|build)\s+command\b/.test(desc) ||
+      /\b(?:test|build)\s+commands?\b[\s\S]{0,20}\b(?:complete successfully|succeed|pass)\b/.test(
+        desc,
+      ) ||
+      /\bcommands?\s+complete successfully\b/.test(desc);
+    if (requiresRunCommandEvidence) {
+      addRequiredToolIfKnown("run_command");
+    }
+
+    const requiresVisualQAEvidence =
+      /\bvisual qa with playwright\b/.test(desc) ||
+      /\bqa_run\b/.test(desc) ||
+      (/\bplaywright\b/.test(desc) && /\b(?:qa|browser|test|verify|shipping|bugs?)\b/.test(desc));
+    if (requiresVisualQAEvidence) {
+      addRequiredToolIfKnown("qa_run");
     }
 
     const canvasIntent =
@@ -8038,6 +8394,10 @@ ${transcript}
   }
 
   private finalizeTask(resultSummary?: string): void {
+    if (this.getEffectiveExecutionMode() === "chat") {
+      this.finalizeChatTurn();
+      return;
+    }
     this.stopProgressJournal();
     const finalResponseGuardError = this.getFinalResponseGuardError();
     if (finalResponseGuardError) {
@@ -8132,6 +8492,10 @@ ${transcript}
       failureClass?: Task["failureClass"];
     },
   ): void {
+    if (this.getEffectiveExecutionMode() === "chat") {
+      this.finalizeChatTurn(reason);
+      return;
+    }
     this.stopProgressJournal();
     this.saveConversationSnapshot();
     this.taskCompleted = true;
@@ -8221,6 +8585,25 @@ ${transcript}
     this.emitRunSummary(reason || "best_effort_finalized", this.task.terminalStatus || "ok");
     // Best-effort finalization — don't record as "success" in the playbook
     // since the task may have been partially completed or timed out.
+  }
+
+  private finalizeChatTurn(reason?: string): void {
+    this.stopProgressJournal();
+    this.saveConversationSnapshot();
+    this.taskCompleted = true;
+    this.task.status = "completed";
+    this.task.completedAt = Date.now();
+    this.task.error = null;
+    this.task.terminalStatus = undefined;
+    this.task.failureClass = undefined;
+    this.task.bestKnownOutcome = undefined;
+    this.task.resultSummary = undefined;
+    this.task.budgetUsage = this.getBudgetUsage();
+    this.task.continuationCount = this.continuationCount;
+    this.task.continuationWindow = this.continuationWindow;
+    this.task.lifetimeTurnsUsed = this.lifetimeTurnCount;
+
+    this.daemon.completeTask(this.task.id, reason || "Chat turn completed");
   }
 
   /**
@@ -9555,6 +9938,9 @@ You are continuing a previous conversation. The context from the previous conver
         conversationHistory: serializedHistory,
         trackerState,
         planSummary,
+        explicitChatSummaryBlock: this.explicitChatSummaryBlock,
+        explicitChatSummaryCreatedAt: this.explicitChatSummaryCreatedAt,
+        explicitChatSummarySourceMessageCount: this.explicitChatSummarySourceMessageCount,
         timestamp: Date.now(),
         messageCount: serializedHistory.length,
         // Include metadata for debugging
@@ -9754,6 +10140,20 @@ You are continuing a previous conversation. The context from the previous conver
         this.totalOutputTokens = payload.usageTotals.outputTokens || 0;
         this.totalCost = payload.usageTotals.cost || 0;
       }
+
+      this.explicitChatSummaryBlock =
+        typeof payload.explicitChatSummaryBlock === "string" &&
+        payload.explicitChatSummaryBlock.trim()
+          ? payload.explicitChatSummaryBlock
+          : null;
+      this.explicitChatSummaryCreatedAt =
+        typeof payload.explicitChatSummaryCreatedAt === "number"
+          ? payload.explicitChatSummaryCreatedAt
+          : 0;
+      this.explicitChatSummarySourceMessageCount =
+        typeof payload.explicitChatSummarySourceMessageCount === "number"
+          ? payload.explicitChatSummarySourceMessageCount
+          : 0;
 
       // NOTE: We intentionally do NOT restore systemPrompt from snapshot
       // The system prompt contains time-sensitive data (e.g., "Current time: ...")
@@ -11596,17 +11996,21 @@ You are continuing a previous conversation. The context from the previous conver
   }
 
   private getWorkspaceSignals(): {
+    hasEntries: boolean;
     hasProjectMarkers: boolean;
     hasCodeFiles: boolean;
     hasAppDirs: boolean;
+    readFailed?: boolean;
   } {
     return this.getWorkspaceSignalsForPath(this.workspace.path);
   }
 
   private getWorkspaceSignalsForPath(workspacePath: string): {
+    hasEntries: boolean;
     hasProjectMarkers: boolean;
     hasCodeFiles: boolean;
     hasAppDirs: boolean;
+    readFailed?: boolean;
   } {
     const projectMarkers = new Set([
       "package.json",
@@ -11666,6 +12070,7 @@ You are continuing a previous conversation. The context from the previous conver
 
     try {
       const entries = fs.readdirSync(workspacePath, { withFileTypes: true });
+      const hasEntries = entries.length > 0;
       let hasProjectMarkers = false;
       let hasCodeFiles = false;
       let hasAppDirs = false;
@@ -11688,9 +12093,15 @@ You are continuing a previous conversation. The context from the previous conver
         if (hasProjectMarkers && hasCodeFiles && hasAppDirs) break;
       }
 
-      return { hasProjectMarkers, hasCodeFiles, hasAppDirs };
+      return { hasEntries, hasProjectMarkers, hasCodeFiles, hasAppDirs };
     } catch {
-      return { hasProjectMarkers: false, hasCodeFiles: false, hasAppDirs: false };
+      return {
+        hasEntries: false,
+        hasProjectMarkers: false,
+        hasCodeFiles: false,
+        hasAppDirs: false,
+        readFailed: true,
+      };
     }
   }
 
@@ -14879,9 +15290,94 @@ You are continuing a previous conversation. The context from the previous conver
     return await this.expandSkillPrompt(command.command, parameters, `/${command.command}`);
   }
 
+  private normalizeSkillInvocationQuery(query: string): string {
+    return String(query || "")
+      .toLowerCase()
+      .replace(/[-_\s]+/g, " ")
+      .trim();
+  }
+
+  private escapeSkillInvocationPattern(text: string): string {
+    return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  private queryContainsSkillInvocationPhrase(query: string, phrase: string): boolean {
+    const normalizedQuery = this.normalizeSkillInvocationQuery(query);
+    const normalizedPhrase = this.normalizeSkillInvocationQuery(phrase);
+    if (!normalizedQuery || !normalizedPhrase) return false;
+
+    const pattern = normalizedPhrase
+      .split(" ")
+      .filter(Boolean)
+      .map((segment) => this.escapeSkillInvocationPattern(segment))
+      .join("\\s+");
+    if (!pattern) return false;
+
+    return new RegExp(`(?:^|[^a-z0-9])${pattern}(?:$|[^a-z0-9])`, "i").test(normalizedQuery);
+  }
+
+  private isExplicitSkillInvocation(query: string, skill: Any): boolean {
+    const normalizedQuery = this.normalizeSkillInvocationQuery(query);
+    if (!normalizedQuery) return false;
+
+    const activationCue = /\b(?:use|run|call|invoke|activate|apply|launch|start|enable|turn on|work on|help with|help me with)\b/;
+    const skillCue = /\bskill\b/;
+    if (!activationCue.test(normalizedQuery) && !skillCue.test(normalizedQuery)) {
+      return false;
+    }
+
+    const skillId = String(skill?.id || "").trim();
+    const skillName = String(skill?.name || "").trim();
+    if (!skillId && !skillName) return false;
+
+    return (
+      (skillId.length > 0 && this.queryContainsSkillInvocationPhrase(normalizedQuery, skillId)) ||
+      (skillName.length > 0 && this.queryContainsSkillInvocationPhrase(normalizedQuery, skillName))
+    );
+  }
+
   private async maybeHandleHighConfidenceSkillRouting(): Promise<boolean> {
     const rawQuery = `${this.task.title || ""}\n${this.task.prompt || ""}`.trim();
     if (!rawQuery) return false;
+
+    try {
+      const skillLoader = getCustomSkillLoader();
+      const ranked = skillLoader.rankModelInvocableSkillsForQuery(rawQuery, {
+        includePrereqBlockedSkills: true,
+        limit: 20,
+      });
+      const explicitMatch = ranked.find((entry) => this.isExplicitSkillInvocation(rawQuery, entry.skill));
+
+      if (explicitMatch) {
+        const best = explicitMatch.skill;
+
+        const missingRequiredParams = (best.parameters || []).filter(
+          (param) => param.required && param.default === undefined,
+        );
+        if (missingRequiredParams.length > 0) {
+          this.emitEvent("log", {
+            message:
+              `Skipped explicit skill routing to skill '${best.id}' because required parameters are still needed.`,
+            skillId: best.id,
+            missingParameters: missingRequiredParams.map((param) => param.name),
+          });
+          return false;
+        }
+
+        const expanded = await this.expandSkillPrompt(best.id, {}, `skill '${best.id}'`);
+        this.task.prompt = expanded;
+        this.emitEvent("log", {
+          message: `Explicitly routed request to skill '${best.id}'.`,
+          skillId: best.id,
+        });
+        return true;
+      }
+    } catch (error) {
+      this.emitEvent("log", {
+        message: "Explicit skill routing failed; continuing with confidence-based routing.",
+        error: String((error as Any)?.message || error),
+      });
+    }
 
     // Higher bar than getHighConfidenceSkillHints: this path bypasses the LLM
     // entirely and directly expands the skill prompt, so we need strong confidence.
@@ -14889,12 +15385,9 @@ You are continuing a previous conversation. The context from the previous conver
     const MIN_MARGIN_OVER_NEXT = 0.12;
 
     try {
-      const availableToolNames = new Set(this.getAvailableTools().map((tool) => tool.name));
-      if (!availableToolNames.has("use_skill")) return false;
-
       const skillLoader = getCustomSkillLoader();
       const ranked = skillLoader.rankModelInvocableSkillsForQuery(rawQuery, {
-        availableToolNames,
+        availableToolNames: new Set(this.getAvailableTools().map((tool) => tool.name)),
         includePrereqBlockedSkills: true,
         limit: 2,
       });
@@ -15454,15 +15947,37 @@ You are continuing a previous conversation. The context from the previous conver
     }
 
     const personalityIdOverride = this.task.agentConfig?.personalityId;
+    const contextMode = detectContextMode(
+      rawPrompt,
+      this.task.agentConfig?.conversationMode,
+      undefined,
+    );
     const personalityPrompt = personalityIdOverride
       ? PersonalityManager.getPersonalityPromptById(personalityIdOverride)
-      : PersonalityManager.getPersonalityPrompt();
+      : PersonalityManager.getPersonalityPrompt(contextMode);
     const identityPrompt = PersonalityManager.getIdentityPrompt();
+    const isSubAgentTask = (this.task.agentType ?? "main") === "sub" || !!this.task.parentTaskId;
+    const retainMemory = this.task.agentConfig?.retainMemory ?? !isSubAgentTask;
+    const gatewayContext = this.task.agentConfig?.gatewayContext ?? "private";
+    const allowTrustedSharedMemory =
+      this.task.agentConfig?.allowSharedContextMemory === true &&
+      (gatewayContext === "group" || gatewayContext === "public");
+    const allowMemoryInjection =
+      retainMemory && (gatewayContext === "private" || allowTrustedSharedMemory);
+    let awarenessSnapshotBlock = "";
+    if (allowMemoryInjection) {
+      try {
+        awarenessSnapshotBlock = getAwarenessService().getSnapshot(this.workspace.id).text;
+      } catch {
+        // best-effort
+      }
+    }
     const roleContext = this.getRoleContextPrompt();
     const profileContext = this.buildUserProfileBlock(10);
 
     this.daemon.updateTaskStatus(this.task.id, "executing");
 
+    const isChatMode = this.isExplicitChatExecutionMode();
     const isThinkMode = this.task.agentConfig?.conversationMode === "think";
 
     const systemPrompt = this.buildChatOrThinkSystemPrompt(isThinkMode, {
@@ -15479,12 +15994,19 @@ You are continuing a previous conversation. The context from the previous conver
     const companionUserContent = await this.buildUserContent(rawPrompt, this.initialImages);
 
     try {
+      const explicitChatMaxTokens = isChatMode
+        ? this.resolveLLMMaxTokens({
+            messages: [{ role: "user", content: companionUserContent }],
+            system: systemPrompt,
+            requestedMaxTokens: EXPLICIT_CHAT_MAX_OUTPUT_TOKENS,
+          })
+        : null;
       const response = await this.callLLMWithRetry(
         () =>
           this.createMessageWithTimeout(
             {
               model: this.modelId,
-              maxTokens: isThinkMode ? 2048 : 800,
+              maxTokens: explicitChatMaxTokens ?? (isThinkMode ? 2048 : 800),
               system: systemPrompt,
               messages: [{ role: "user", content: companionUserContent }],
             },
@@ -15552,7 +16074,9 @@ You are continuing a previous conversation. The context from the previous conver
       // task execution (verification evidence, artifact evidence, etc.)
       // are impossible to satisfy. Use best-effort finalization.
       this.finalizeTaskBestEffort(resultSummary);
-      this.capturePlaybookOutcome("success");
+      if (this.getEffectiveExecutionMode() !== "chat") {
+        this.capturePlaybookOutcome("success");
+      }
     } catch (error: Any) {
       const assistantText = isThinkMode
         ? "I wasn't able to process that right now. Could you try rephrasing, or let me know what specific aspect you'd like to think through?"
@@ -15921,6 +16445,13 @@ You are continuing a previous conversation. The context from the previous conver
         });
       }
 
+      // Chat mode is a pure single-turn LLM response. Skip all task routing,
+      // planning, and tool selection so the session behaves like ChatGPT.
+      if (this.getEffectiveExecutionMode() === "chat") {
+        await this.handleCompanionPrompt();
+        return;
+      }
+
       // Handle local slash-commands (e.g. /schedule ...) deterministically without relying on the LLM.
       // This prevents "plan-only" runs that never create the underlying cron job.
       if (await this.maybeHandleScheduleSlashCommand()) {
@@ -15932,7 +16463,6 @@ You are continuing a previous conversation. The context from the previous conver
         await this.maybeHandleHighConfidenceSkillRouting();
       }
 
-      // Friendly companion-mode when conversation mode resolves to chat.
       if (this.resolveConversationMode(this.task.prompt, true) === "chat") {
         await this.handleCompanionPrompt();
         return;
@@ -16147,6 +16677,12 @@ You are continuing a previous conversation. The context from the previous conver
 
       if (this.requiresTestRun && !this.testRunObserved) {
         throw new Error("Task required running tests, but no test command was executed.");
+      }
+      if (this.requiresTestRun && !this.testRunSuccessful) {
+        throw new Error("Task required running tests, but no test command completed successfully.");
+      }
+      if (this.requiresVisualQARun && !this.visualQARunObserved) {
+        throw new Error("Task required Playwright visual QA, but qa_run did not complete successfully.");
       }
 
       if (
@@ -17450,10 +17986,11 @@ Return ONLY a JSON object:
 
   private async executeStepLegacy(step: PlanStep): Promise<void> {
     const verificationRewindAlreadyAttempted = (step as Any).__verificationRewindAttempted === true;
-    // Verified mode: use cheap model for primary execution steps, strong for verification
-    if (this.isVerifiedMode()) {
-      this.llmProfileUsed = step.kind === "verification" ? "strong" : "cheap";
-    }
+    // Planning uses the strong profile, but ordinary execution should prefer the
+    // cheap/execution profile. Verification stays on strong when profile routing
+    // is enabled so the settings contract ("Strong / Planning", "Cheap / Execution")
+    // actually takes effect during task execution.
+    this.llmProfileUsed = step.kind === "verification" ? "strong" : "cheap";
     this.ensureVerificationOutcomeSets();
     const isPlanVerifyStep = isVerificationStepDescription(step.description);
     const stepContract = this.resolveStepExecutionContract(step);
@@ -17520,9 +18057,14 @@ Return ONLY a JSON object:
 
     // Get personality and identity prompts
     const personalityIdOverride = this.task.agentConfig?.personalityId;
+    const contextMode = detectContextMode(
+      this.task.prompt,
+      this.task.agentConfig?.conversationMode,
+      undefined,
+    );
     const personalityPrompt = personalityIdOverride
       ? PersonalityManager.getPersonalityPromptById(personalityIdOverride)
-      : PersonalityManager.getPersonalityPrompt();
+      : PersonalityManager.getPersonalityPrompt(contextMode);
     const identityPrompt = PersonalityManager.getIdentityPrompt();
 
     // ── Synthesized Memory Context ───────────────────────────────────
@@ -17536,6 +18078,7 @@ Return ONLY a JSON object:
       (gatewayContext === "group" || gatewayContext === "public");
     const allowMemoryInjection =
       retainMemory && (gatewayContext === "private" || allowTrustedSharedMemory);
+    let awarenessSnapshotBlock = "";
     let contextPackInjectionEnabled = false;
     try {
       const features = MemoryFeaturesManager.loadSettings();
@@ -17555,6 +18098,13 @@ Return ONLY a JSON object:
         }
       } catch {
         // optional enhancement
+      }
+    }
+    if (allowMemoryInjection) {
+      try {
+        awarenessSnapshotBlock = getAwarenessService().getSnapshot(this.workspace.id).text;
+      } catch {
+        // best-effort
       }
     }
 
@@ -17599,6 +18149,7 @@ Return ONLY a JSON object:
     // Define system prompt once so we can track its token usage
     const roleContext = this.getRoleContextPrompt();
     const infraContext = this.getInfraContextPrompt();
+    const visualQAContext = this.getVisualQAContextPrompt();
     const budgetedRoleContext = this.budgetPromptSection(
       roleContext,
       DEFAULT_PROMPT_SECTION_BUDGETS.roleContext,
@@ -17614,6 +18165,13 @@ Return ONLY a JSON object:
       "step_synthesized_memory",
       false,
       3,
+    ).text;
+    const budgetedAwarenessSnapshot = this.budgetPromptSection(
+      awarenessSnapshotBlock,
+      DEFAULT_PROMPT_SECTION_BUDGETS.awarenessContext,
+      "step_awareness_snapshot",
+      false,
+      4,
     ).text;
     const budgetedInfraContext = this.budgetPromptSection(
       infraContext,
@@ -17660,7 +18218,7 @@ Return ONLY a JSON object:
     const modeDomainContract = buildModeDomainContract(effectiveExecutionMode, effectiveTaskDomain);
     const webSearchModeContract = this.buildWebSearchModeContract();
     this.systemPrompt = `${identityPrompt}
-${budgetedRoleContext ? `\n${budgetedRoleContext}\n` : ""}${budgetedSynthesizedMemory ? `\n${budgetedSynthesizedMemory}\n` : ""}${budgetedInfraContext ? `\n${budgetedInfraContext}\n` : ""}
+${budgetedRoleContext ? `\n${budgetedRoleContext}\n` : ""}${budgetedSynthesizedMemory ? `\n${budgetedSynthesizedMemory}\n` : ""}${budgetedAwarenessSnapshot ? `\n${budgetedAwarenessSnapshot}\n` : ""}${budgetedInfraContext ? `\n${budgetedInfraContext}\n` : ""}${visualQAContext ? `\n${visualQAContext}\n` : ""}
 ${SHARED_PROMPT_POLICY_CORE}
 
 You are the user's autonomous AI companion. You have real tools and you use them to get things done — not describe what could be done, but actually do it.
@@ -17709,12 +18267,16 @@ PATH DISCOVERY (CRITICAL):
 - The intended path may be in a subdirectory, a parent directory, or an allowed external path.
 - ALWAYS search comprehensively before saying something doesn't exist.
 - CRITICAL - REQUIRED PATH NOT FOUND:
-  - If a task REQUIRES a specific folder/path and it's NOT found after searching:
+  - FIRST determine task intent before stopping:
+    - BUILD/CREATE tasks (keywords: "build", "create", "make", "scaffold", "initialize", "new", "from scratch"): missing files are EXPECTED — scaffold the project yourself using run_command (e.g., npx create-react-app, npm create vite@latest, mkdir + write files). NEVER stop and ask for a path.
+    - MODIFY/FIX tasks (keywords: "fix", "update", "edit", "refactor", "add to existing"): if the path is genuinely missing after searching, then stop.
+  - For BUILD tasks: create the project in the workspace directory. After scaffolding, install dependencies with run_command ("npm install" or equivalent), then proceed.
+  - For MODIFY tasks where path is truly not found after searching:
     1. IMMEDIATELY call revise_plan({ clearRemaining: true, reason: "Required path not found", newSteps: [] })
     2. Ask: "The path '[X]' wasn't found. Please provide the full path or switch to the correct workspace."
     3. DO NOT create placeholder reports, generic checklists, or "framework" documents
     4. STOP execution - the clearRemaining:true removes all pending steps
-  - This is a HARD STOP - revise_plan with clearRemaining cancels all remaining work.
+  - This HARD STOP applies ONLY to modify/fix tasks — never to build/create tasks.
 
 DIAGRAM + VISUALIZATION (CRITICAL):
 - For ANY diagram, flowchart, architecture diagram, sequence diagram, mind map, ERD, Gantt chart, pie chart, timeline, or other visualization: call create_diagram with valid Mermaid syntax.
@@ -17747,9 +18309,30 @@ AUTONOMOUS OPERATION (CRITICAL):
 TEST EXECUTION (CRITICAL):
 - If the task asks to install dependencies or run tests, you MUST use run_command (npm/yarn/pnpm) in the project root.
 - Do NOT use browser tools or MCP puppeteer_evaluate to run shell commands.
-- If run_command fails, retry with the correct package manager or report the failure clearly.
 - Always run the test command even if you suspect there are no tests; report “no tests found” only after running it.
 - Do NOT use http_request or browser tools for test execution or verification.
+- CRITICAL — distinguish test runner errors from test failures:
+  - If run_command exits non-zero due to a SETUP/CONFIG error (e.g., “Cannot find module”, “transform failed”, “jsdom not installed”): fix the config, then retry.
+  - If run_command exits non-zero because TESTS FAILED (assertion failures, wrong selectors, mismatched text): READ the full output, identify the mismatch, fix the source code or test expectations to match each other, then re-run. NEVER just retry the same command without a code change.
+  - NEVER blindly retry a failed test command more than once without first making a code fix.
+- Always use the correct test runner: check the “test” script in package.json (e.g., “vitest run”, “jest”) and use that exact command. NEVER pass Jest-specific flags (--runInBand, --watchAll=false) to a Vitest project or vice versa.
+- When writing tests for a component you also wrote: run the tests immediately after writing them, read any failures, and fix the mismatch between test selectors and the actual component output before marking the step done.
+
+DEPENDENCY INSTALLATION (CRITICAL):
+- After scaffolding or creating any new project, ALWAYS run the install command before starting the dev server or running tests.
+- Use run_command with the correct package manager: “npm install”, “yarn”, or “pnpm install” in the project directory.
+- If a dev server fails to start with “module not found” or similar errors, run the install command first, then retry.
+- NEVER assume dependencies are pre-installed in a freshly created project — always install explicitly.
+
+AUTOMATED VISUAL QA (Playwright) — CRITICAL:
+- ANY task that builds, modifies, or ships a web app AND mentions testing, bugs, verification, or quality MUST include a Playwright QA step — even if Playwright is never mentioned.
+- Trigger phrases that REQUIRE automatic QA (regardless of exact wording): "test it", "catch bugs", "before shipping", "make sure it works", "verify it", "QA it", "check for issues", "validate", "does it work", "see how it looks", "review the result", "make sure", "no bugs", "works correctly".
+- When ANY of these appear alongside web app work: add "Visual QA with Playwright" as a plan step automatically.
+- Use qa_run as the FIRST QA action — it handles everything automatically: starts the server if needed, launches headless Chromium, navigates, runs checks, returns screenshots and a severity-categorized issue list.
+- If qa_run finds critical or major issues: fix the code, then re-run qa_run. Repeat until clean.
+- For testing specific user flows, use qa_navigate → qa_interact → qa_screenshot.
+- Always call qa_cleanup when done.
+- DEFAULT: Even without an explicit test request, always include a Visual QA step after building any web app before marking the task complete.
 
 BULK OPERATIONS (CRITICAL):
 - When performing repetitive operations (e.g., resizing many images), prefer a single command using loops, globs, or xargs.
@@ -19820,6 +20403,7 @@ TASK / CONVERSATION HISTORY:
               // Record file operation for tracking
               this.recordFileOperation(content.name, content.input, result);
               this.recordCommandExecution(content.name, content.input, result);
+              this.recordQAExecution(content.name, result);
 
               if (toolSucceeded) {
                 hadAnyToolSuccess = true;
@@ -20894,6 +21478,19 @@ TASK / CONVERSATION HISTORY:
       const requiresArtifactFileVerification = verificationPathDecisions.some(
         (decision) => decision.role !== "optional_output_inline",
       );
+
+      if (
+        !stepFailed &&
+        !this.isVerificationStep(step) &&
+        stepContract.mode === "analysis_only" &&
+        (stepSucceededWithFileMutation || stepSucceededWithCanvasMutation || bootstrapMutationSucceeded)
+      ) {
+        stepFailed = true;
+        if (!lastFailureReason) {
+          lastFailureReason =
+            "Analysis/inspection step performed a workspace mutation. Use read/list/search tools for discovery steps instead of editing project files.";
+        }
+      }
 
       if (stepContract.verificationMode === "image_file" && !foundNewImage) {
         stepFailed = true;
@@ -22641,12 +23238,12 @@ TASK / CONVERSATION HISTORY:
   }
 
   /**
-   * Refreshes the LLM provider from current global settings if the provider or model
-   * has changed since this executor was initialized. Allows mid-session model switches
-   * to take effect on the next follow-up message. Skips tasks with explicit per-task
-   * model overrides since those are intentional.
+   * Refreshes the active provider/model route from current settings and the
+   * executor's current runtime profile. This lets planning stay on the strong
+   * model while execution steps switch to the cheap model within the same task.
+   * Tasks with explicit per-task model overrides are still respected.
    */
-  private refreshProviderIfSettingsChanged(): void {
+  private refreshProviderIfSettingsChanged(forceProfile?: LlmProfile): void {
     const explicitProviderOverride = this.task.agentConfig?.providerType;
     if (explicitProviderOverride != null) return;
 
@@ -22666,7 +23263,9 @@ TASK / CONVERSATION HISTORY:
         }
       : this.task.agentConfig;
 
+    const desiredProfile = forceProfile || this.llmProfileUsed;
     const newSelection = LLMProviderFactory.resolveTaskModelSelection(selectionConfig, {
+      forceProfile: desiredProfile,
       isVerificationTask:
         this.task.agentConfig?.verificationAgent === true ||
         /^verify\s*:/i.test(this.task.title) ||
@@ -22691,13 +23290,17 @@ TASK / CONVERSATION HISTORY:
         this.resolvedModelKey = newSelection.resolvedModelKey;
         this.contextManager = new ContextManager(this.modelKey);
         this.emitEvent("log", {
-          message: `LLM provider updated mid-session: provider=${newSelection.providerType}, model=${newSelection.modelId}`,
+          message:
+            `LLM provider updated mid-session: provider=${newSelection.providerType}, ` +
+            `profile=${newSelection.llmProfileUsed}, model=${newSelection.modelId}`,
         });
       } catch (err: Any) {
         console.warn(
           `${this.logTag} Failed to switch provider mid-session to ${newSelection.providerType}: ${err?.message}. Keeping current provider.`,
         );
       }
+    } else if (newSelection.llmProfileUsed !== this.llmProfileUsed) {
+      this.llmProfileUsed = newSelection.llmProfileUsed;
     }
   }
 
@@ -22826,7 +23429,10 @@ TASK / CONVERSATION HISTORY:
       this.emitEvent("user_message", { message });
     }
 
-    if (!shouldResumeAfterFollowup && this.resolveConversationMode(message) === "chat") {
+    if (
+      !shouldResumeAfterFollowup &&
+      (this.getEffectiveExecutionMode() === "chat" || this.resolveConversationMode(message) === "chat")
+    ) {
       await this.respondInChatMode(message, previousStatus);
       return;
     }
@@ -22845,11 +23451,32 @@ TASK / CONVERSATION HISTORY:
     const guidelinesPrompt = skillLoader.getEnabledGuidelinesPrompt();
 
     // Get personality and identity prompts
+    const contextMode = detectContextMode(
+      message || this.task.prompt,
+      this.task.agentConfig?.conversationMode,
+      undefined,
+    );
     const personalityIdOverride = this.task.agentConfig?.personalityId;
     const personalityPrompt = personalityIdOverride
       ? PersonalityManager.getPersonalityPromptById(personalityIdOverride)
-      : PersonalityManager.getPersonalityPrompt();
+      : PersonalityManager.getPersonalityPrompt(contextMode);
     const identityPrompt = PersonalityManager.getIdentityPrompt();
+    const isSubAgentTask = (this.task.agentType ?? "main") === "sub" || !!this.task.parentTaskId;
+    const retainMemory = this.task.agentConfig?.retainMemory ?? !isSubAgentTask;
+    const gatewayContext = this.task.agentConfig?.gatewayContext ?? "private";
+    const allowTrustedSharedMemory =
+      this.task.agentConfig?.allowSharedContextMemory === true &&
+      (gatewayContext === "group" || gatewayContext === "public");
+    const allowMemoryInjection =
+      retainMemory && (gatewayContext === "private" || allowTrustedSharedMemory);
+    let awarenessSnapshotBlock = "";
+    if (allowMemoryInjection) {
+      try {
+        awarenessSnapshotBlock = getAwarenessService().getSnapshot(this.workspace.id).text;
+      } catch {
+        // best-effort
+      }
+    }
     const roleContext = this.getRoleContextPrompt();
     const budgetedRoleContext = this.budgetPromptSection(
       roleContext,
@@ -22872,6 +23499,13 @@ TASK / CONVERSATION HISTORY:
       false,
       9,
     ).text;
+    const budgetedAwarenessSnapshot = this.budgetPromptSection(
+      awarenessSnapshotBlock,
+      DEFAULT_PROMPT_SECTION_BUDGETS.awarenessContext,
+      "followup_awareness_snapshot",
+      false,
+      4,
+    ).text;
     const effectiveFollowUpExecutionMode = this.getEffectiveExecutionMode();
     const effectiveFollowUpDomain = this.getEffectiveTaskDomain();
     const followUpModeDomainContract = buildModeDomainContract(
@@ -22890,7 +23524,7 @@ TASK / CONVERSATION HISTORY:
       2,
     ).text;
     if (!this.systemPrompt) {
-      this.systemPrompt = `${identityPrompt}${budgetedRoleContext ? `\n\n${budgetedRoleContext}\n` : ""}${budgetedInfraContext ? `\n${budgetedInfraContext}\n` : ""}
+      this.systemPrompt = `${identityPrompt}${budgetedRoleContext ? `\n\n${budgetedRoleContext}\n` : ""}${budgetedAwarenessSnapshot ? `\n${budgetedAwarenessSnapshot}\n` : ""}${budgetedInfraContext ? `\n${budgetedInfraContext}\n` : ""}
 ${SHARED_PROMPT_POLICY_CORE}
 
 You are the user's autonomous AI companion. You have real tools and you use them to get things done — not describe what could be done, but actually do it.
@@ -22939,12 +23573,16 @@ PATH DISCOVERY (CRITICAL):
 - The intended path may be in a subdirectory, a parent directory, or an allowed external path.
 - ALWAYS search comprehensively before saying something doesn't exist.
 - CRITICAL - REQUIRED PATH NOT FOUND:
-  - If a task REQUIRES a specific folder/path and it's NOT found after searching:
+  - FIRST determine task intent before stopping:
+    - BUILD/CREATE tasks (keywords: "build", "create", "make", "scaffold", "initialize", "new", "from scratch"): missing files are EXPECTED — scaffold the project yourself using run_command (e.g., npx create-react-app, npm create vite@latest, mkdir + write files). NEVER stop and ask for a path.
+    - MODIFY/FIX tasks (keywords: "fix", "update", "edit", "refactor", "add to existing"): if the path is genuinely missing after searching, then stop.
+  - For BUILD tasks: create the project in the workspace directory. After scaffolding, install dependencies with run_command ("npm install" or equivalent), then proceed.
+  - For MODIFY tasks where path is truly not found after searching:
     1. IMMEDIATELY call revise_plan({ clearRemaining: true, reason: "Required path not found", newSteps: [] })
     2. Ask: "The path '[X]' wasn't found. Please provide the full path or switch to the correct workspace."
     3. DO NOT create placeholder reports, generic checklists, or "framework" documents
     4. STOP execution - the clearRemaining:true removes all pending steps
-  - This is a HARD STOP - revise_plan with clearRemaining cancels all remaining work.
+  - This HARD STOP applies ONLY to modify/fix tasks — never to build/create tasks.
 
 DIAGRAM + VISUALIZATION (CRITICAL):
 - For ANY diagram, flowchart, architecture diagram, sequence diagram, mind map, ERD, Gantt chart, pie chart, timeline, or other visualization: call create_diagram with valid Mermaid syntax.
@@ -23088,14 +23726,6 @@ TASK / CONVERSATION HISTORY:
     );
 
     const systemPromptTokens = estimateTokens(this.systemPrompt);
-    const isSubAgentTask = (this.task.agentType ?? "main") === "sub" || !!this.task.parentTaskId;
-    const retainMemory = this.task.agentConfig?.retainMemory ?? !isSubAgentTask;
-    const gatewayContext = this.task.agentConfig?.gatewayContext ?? "private";
-    const allowTrustedSharedMemory =
-      this.task.agentConfig?.allowSharedContextMemory === true &&
-      (gatewayContext === "group" || gatewayContext === "public");
-    const allowMemoryInjection =
-      retainMemory && (gatewayContext === "private" || allowTrustedSharedMemory);
 
     let contextPackInjectionEnabled = false;
     try {

@@ -3,9 +3,11 @@
  * Provides type-safe validation to prevent malformed input attacks
  */
 
+import * as os from "os";
 import * as path from "path";
 import { z } from "zod";
 import { LLM_PROVIDER_TYPES, isTempWorkspaceId, PersonalityId } from "../../shared/types";
+import { getUserDataDir } from "./user-data-dir";
 import { assertSafeLoomMailboxFolder, isSecureOrLocalLoomUrl } from "./loom";
 
 // Common validation patterns
@@ -96,7 +98,7 @@ export const AgentConfigSchema = z
     autoApproveTypes: z.array(z.string().min(1).max(200)).max(50).optional(),
     allowSharedContextMemory: z.boolean().optional(),
     conversationMode: z.enum(["task", "chat", "hybrid"]).optional(),
-    executionMode: z.enum(["execute", "plan", "analyze", "verified"]).optional(),
+    executionMode: z.enum(["execute", "chat", "plan", "analyze", "verified"]).optional(),
     taskDomain: z.enum(["auto", "code", "research", "operations", "writing", "general"]).optional(),
     autonomousMode: z.boolean().optional(),
     qualityPasses: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional(),
@@ -350,6 +352,7 @@ export const AzureSettingsSchema = z
     deployment: z.string().max(200).optional(),
     deployments: z.array(z.string().max(200)).max(50).optional(),
     apiVersion: z.string().max(200).optional(),
+    reasoningEffort: z.enum(["low", "medium", "high", "extra_high"]).optional(),
     ...ProviderRoutingSettingsSchema,
   })
   .optional();
@@ -1078,6 +1081,30 @@ export const ChatGPTImportSchema = z.object({
   distillModel: z.string().max(200).optional(),
 });
 
+const MAX_PERSONALITY_IMPORT_BYTES = 512 * 1024; // 500KB
+const MAX_PERSONALITY_CONFIG_BYTES = 512 * 1024; // 500KB for save/preview
+export const MAX_PERSONALITY_PREVIEW_BYTES = MAX_PERSONALITY_CONFIG_BYTES;
+
+export const PersonalityImportSchema = z
+  .string()
+  .min(1, "Personality import data cannot be empty")
+  .max(MAX_PERSONALITY_IMPORT_BYTES, `Personality import must be under ${MAX_PERSONALITY_IMPORT_BYTES / 1024}KB`)
+  .refine(
+    (data) => {
+      const trimmed = data.trim();
+      if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+        try {
+          const parsed = JSON.parse(trimmed) as unknown;
+          return parsed !== null && typeof parsed === "object";
+        } catch {
+          return false;
+        }
+      }
+      return true; // SOUL.md or other format
+    },
+    { message: "Invalid JSON structure for personality import" },
+  );
+
 export const TextMemoryImportSchema = z.object({
   workspaceId: WorkspaceIdSchema,
   provider: z.string().trim().min(1).max(80),
@@ -1262,6 +1289,301 @@ export const MCPConnectorOAuthSchema = z.object({
   loginUrl: z.string().url().max(500).optional(),
   subdomain: z.string().max(200).optional(),
   teamDomain: z.string().max(200).optional(),
+});
+
+// ============ Health Platform Schemas ============
+
+export const HealthSourceInputSchema = z.object({
+  provider: z.enum([
+    "apple-health",
+    "fitbit",
+    "oura",
+    "garmin",
+    "whoop",
+    "lab-results",
+    "medical-records",
+    "custom",
+  ]),
+  kind: z.enum(["wearable", "lab", "record", "manual"]),
+  connectionMode: z.enum(["native", "import"]).optional(),
+  name: z.string().min(1).max(200),
+  description: z.string().max(500).optional(),
+  accountLabel: z.string().max(200).optional(),
+  notes: z.string().max(2000).optional(),
+});
+
+export const HealthWorkflowRequestSchema = z.object({
+  workflowType: z.enum([
+    "marathon-training",
+    "visit-prep",
+    "nutrition-plan",
+    "trend-analysis",
+  ]),
+  sourceIds: z.array(z.string().max(200)).max(20).optional(),
+});
+
+/**
+ * Allowed roots for health import file paths (prevents path traversal).
+ * Paths must resolve under one of these directories.
+ */
+function getAllowedHealthImportRoots(): string[] {
+  const roots: string[] = [];
+  try {
+    const home = os.homedir();
+    roots.push(home);
+    roots.push(path.join(home, "Downloads"));
+    roots.push(path.join(home, "Desktop"));
+    roots.push(path.join(home, "Documents"));
+    roots.push(getUserDataDir());
+  } catch {
+    roots.push(process.cwd());
+  }
+  return roots;
+}
+
+function isPathAllowedForHealthImport(filePath: string): boolean {
+  const resolved = path.resolve(filePath);
+  const roots = getAllowedHealthImportRoots();
+  return roots.some((root) => resolved === root || resolved.startsWith(root + path.sep));
+}
+
+export const HealthImportFilesSchema = z
+  .object({
+    sourceId: z.string().min(1).max(200),
+    filePaths: z.array(z.string().min(1).max(MAX_PATH_LENGTH)).min(1).max(20),
+  })
+  .superRefine((data, ctx) => {
+    for (let i = 0; i < data.filePaths.length; i++) {
+      const p = data.filePaths[i];
+      if (!path.isAbsolute(p)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["filePaths", i],
+          message: "Health import paths must be absolute",
+        });
+      } else if (!isPathAllowedForHealthImport(p)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["filePaths", i],
+          message:
+            "Health import path must be under home, Downloads, Desktop, Documents, or app user data",
+        });
+      }
+    }
+  });
+
+const AwarenessSourceSchema = z.enum([
+  "conversation", "feedback", "files", "git", "apps", "browser", "calendar", "notifications", "clipboard", "tasks",
+]);
+const AwarenessSourcePolicySchema = z.object({
+  enabled: z.boolean().optional(),
+  ttlMinutes: z.number().int().min(1).max(60 * 24 * 7).optional(),
+  allowPromotion: z.boolean().optional(),
+  allowPromptInjection: z.boolean().optional(),
+  allowHeartbeat: z.boolean().optional(),
+});
+
+export const AwarenessConfigSchema = z.object({
+  privateModeEnabled: z.boolean().optional(),
+  defaultTtlMinutes: z.number().int().min(1).max(60 * 24 * 7).optional(),
+  sources: z.record(AwarenessSourceSchema, AwarenessSourcePolicySchema).optional(),
+});
+
+const ChiefOfStaffActionTypeSchema = z.enum([
+  "prepare_briefing", "create_task", "schedule_follow_up", "draft_message", "draft_agenda",
+  "organize_work_session", "nudge_user", "execute_local_action",
+]);
+const AutonomyPolicyLevelSchema = z.enum([
+  "observe_only", "suggest_only", "execute_local", "execute_with_approval", "never",
+]);
+const ActionPolicySchema = z.object({
+  actionType: ChiefOfStaffActionTypeSchema.optional(),
+  level: AutonomyPolicyLevelSchema.optional(),
+  allowExternalSideEffects: z.boolean().optional(),
+  cooldownMinutes: z.number().int().min(0).max(10080).optional(),
+});
+
+export const AutonomyConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+  autoEvaluate: z.boolean().optional(),
+  maxPendingDecisions: z.number().int().min(1).max(100).optional(),
+  actionPolicies: z.record(ChiefOfStaffActionTypeSchema, ActionPolicySchema).optional(),
+});
+
+export const QAStartRunSchema = z.object({
+  taskId: z.string().min(1).max(200),
+  workspaceId: WorkspaceIdSchema,
+  config: z
+    .object({
+      targetUrl: z.string().url().max(500).optional(),
+      serverCommand: z.string().max(500).optional(),
+      serverCwd: z.string().max(MAX_PATH_LENGTH).optional(),
+      serverPort: z.number().int().min(1).max(65535).optional(),
+      headless: z.boolean().optional(),
+      autoFix: z.boolean().optional(),
+      enabledChecks: z.array(z.string().max(50)).max(20).optional(),
+    })
+    .optional(),
+});
+
+// ============ Personality V2 Schemas ============
+
+export const ContextModeSchema = z.enum(["coding", "chat", "planning", "writing", "research", "all"]);
+const PersonaIdSchema = z.enum([
+  "none", "jarvis", "friday", "hal", "computer", "alfred", "intern", "sensei", "companion",
+]);
+
+const PersonalityTraitSchema = z.object({
+  id: z.string().max(80),
+  label: z.string().max(200),
+  intensity: z.number().int().min(0).max(100),
+  description: z.string().max(500),
+});
+const BehavioralRuleSchema = z.object({
+  id: z.string().max(100),
+  type: z.enum(["always", "never", "prefer", "avoid"]),
+  rule: z.string().max(2000),
+  enabled: z.boolean(),
+  context: z.array(ContextModeSchema).max(10).optional(),
+});
+const CommunicationStyleSchema = z.object({
+  emojiUsage: z.enum(["none", "minimal", "moderate", "expressive"]).optional(),
+  responseLength: z.enum(["terse", "balanced", "detailed"]).optional(),
+  codeCommentStyle: z.enum(["minimal", "moderate", "thorough"]).optional(),
+  explanationDepth: z.enum(["minimal", "balanced", "thorough"]).optional(),
+  formality: z.enum(["casual", "balanced", "formal"]).optional(),
+  structurePreference: z.enum(["prose", "bullets", "mixed"]).optional(),
+  proactivity: z.enum(["reactive", "balanced", "proactive"]).optional(),
+  errorHandling: z.enum(["gentle", "direct", "technical"]).optional(),
+});
+const ExpertiseAreaSchema = z.object({
+  id: z.string().max(100),
+  domain: z.string().max(200),
+  level: z.enum(["familiar", "proficient", "expert"]),
+  notes: z.string().max(2000).optional(),
+});
+const ConversationExampleSchema = z.object({
+  id: z.string().max(100),
+  userMessage: z.string().max(5000),
+  idealResponse: z.string().max(10000),
+  context: z.string().max(200).optional(),
+});
+const ContextOverrideSchema = z.object({
+  mode: ContextModeSchema,
+  traitOverrides: z.record(z.number().int().min(0).max(100)).optional(),
+  additionalRules: z.array(BehavioralRuleSchema).max(20).optional(),
+  styleOverrides: CommunicationStyleSchema.partial().optional(),
+});
+const CustomInstructionsSchema = z.object({
+  aboutUser: z.string().max(20000).optional(),
+  responseGuidance: z.string().max(20000).optional(),
+});
+const PersonalityQuirksV2Schema = z.object({
+  catchphrase: z.string().max(200).optional(),
+  signOff: z.string().max(200).optional(),
+  analogyDomain: z.string().max(100).optional(),
+  greetingStyle: z.enum(["none", "brief", "warm", "humorous"]).optional(),
+  thinkingNarration: z.boolean().optional(),
+});
+const RelationshipDataSchema = z.object({
+  userName: z.string().max(200).optional(),
+  tasksCompleted: z.number().int().min(0).optional(),
+  firstInteraction: z.number().optional(),
+  lastInteraction: z.number().optional(),
+  lastMilestoneCelebrated: z.number().optional(),
+  projectsWorkedOn: z.array(z.string().max(200)).max(100).optional(),
+});
+
+export const PersonalityConfigV2Schema = z
+  .object({
+    version: z.literal(2).optional(),
+    agentName: z.string().max(200).optional(),
+    traits: z.array(PersonalityTraitSchema).max(20).optional(),
+    rules: z.array(BehavioralRuleSchema).max(100).optional(),
+    style: CommunicationStyleSchema.optional(),
+    expertise: z.array(ExpertiseAreaSchema).max(50).optional(),
+    examples: z.array(ConversationExampleSchema).max(50).optional(),
+    customInstructions: CustomInstructionsSchema.optional(),
+    contextOverrides: z.array(ContextOverrideSchema).max(20).optional(),
+    activePersona: PersonaIdSchema.optional(),
+    quirks: PersonalityQuirksV2Schema.optional(),
+    relationship: RelationshipDataSchema.optional(),
+    workStyle: z.enum(["planner", "flexible"]).optional(),
+    soulDocument: z.string().max(200000).optional(),
+    metadata: z
+      .object({
+        name: z.string().max(200),
+        description: z.string().max(500).optional(),
+        author: z.string().max(200).optional(),
+        createdAt: z.number(),
+        exportedAt: z.number().optional(),
+      })
+      .optional(),
+    activePersonality: PersonalityIdSchema.optional(),
+    customPrompt: z.string().max(200000).optional(),
+    customName: z.string().max(200).optional(),
+  })
+  .passthrough()
+  .refine(
+    (data) => {
+      try {
+        const s = JSON.stringify(data);
+        return s.length <= MAX_PERSONALITY_CONFIG_BYTES;
+      } catch {
+        return false;
+      }
+    },
+    { message: `Personality config must be under ${MAX_PERSONALITY_CONFIG_BYTES / 1024}KB` },
+  );
+
+export const AwarenessUpdateBeliefSchema = z.object({
+  id: z.string().min(1).max(200),
+  patch: z
+    .record(z.unknown())
+    .optional()
+    .refine(
+      (p) => p == null || (typeof p === "object" && JSON.stringify(p).length <= 50000),
+      { message: "Patch must be under 50KB" },
+    ),
+});
+
+export const AutonomyUpdateDecisionSchema = z.object({
+  id: z.string().min(1).max(200),
+  patch: z
+    .record(z.unknown())
+    .optional()
+    .refine(
+      (p) => p == null || (typeof p === "object" && JSON.stringify(p).length <= 50000),
+      { message: "Patch must be under 50KB" },
+    ),
+});
+
+// ============ Health Platform Schemas ============
+
+export const HealthWritebackRequestSchema = z.object({
+  sourceId: z.string().min(1).max(200),
+  items: z.array(
+    z.object({
+      id: z.string().min(1).max(200),
+      type: z.enum([
+        "steps",
+        "sleep",
+        "heart_rate",
+        "hrv",
+        "weight",
+        "workout",
+        "glucose",
+        "nutrition",
+        "custom",
+      ]),
+      label: z.string().min(1).max(200),
+      value: z.string().min(1).max(200),
+      unit: z.string().max(50).optional(),
+      startDate: z.number().optional(),
+      endDate: z.number().optional(),
+      sourceId: z.string().max(200).optional(),
+    }),
+  ),
 });
 
 // ============ Hooks (Webhooks) Schemas ============

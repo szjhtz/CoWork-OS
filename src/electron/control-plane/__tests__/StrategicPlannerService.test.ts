@@ -328,4 +328,34 @@ describeWithSqlite("StrategicPlannerService", () => {
     expect(secondRun.status).toBe("completed");
     expect(createdTaskIds).toHaveLength(1);
   });
+
+  it("repairs stale planner role references instead of failing on config writes", async () => {
+    const company = core.getDefaultCompany();
+    const plannerAgent =
+      agentRoleRepo.findByName("project_manager") ||
+      agentRoleRepo.create({
+        name: "planner-agent-stale-ref",
+        displayName: "Planner Agent",
+        capabilities: ["plan", "manage"],
+        heartbeatEnabled: true,
+      });
+
+    planner.updateConfig(company.id, {
+      enabled: true,
+      plannerAgentRoleId: plannerAgent.id,
+    });
+
+    db.exec("PRAGMA foreign_keys = OFF");
+    db.prepare("DELETE FROM agent_roles WHERE id = ?").run(plannerAgent.id);
+    db.exec("PRAGMA foreign_keys = ON");
+
+    expect(() =>
+      planner.updateConfig(company.id, {
+        lastRunAt: Date.now(),
+      }),
+    ).not.toThrow();
+
+    const repaired = planner.getConfig(company.id);
+    expect(repaired.plannerAgentRoleId).toBeUndefined();
+  });
 });

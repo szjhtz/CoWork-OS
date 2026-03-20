@@ -7,6 +7,8 @@ import { DisclaimerModal } from "./components/DisclaimerModal";
 import { Onboarding } from "./components/Onboarding";
 import { BrowserView } from "./components/BrowserView";
 import { HomeDashboard } from "./components/HomeDashboard";
+import { HealthPanel } from "./components/HealthPanel";
+import { DispatchPanel } from "./components/DispatchPanel";
 import { DevicesPanel } from "./components/DevicesPanel";
 // TaskQueuePanel moved to RightPanel
 import { ToastContainer } from "./components/Toast";
@@ -64,7 +66,7 @@ function getEffectiveTheme(themeMode: ThemeMode): "light" | "dark" {
   return themeMode;
 }
 
-type AppView = "home" | "main" | "settings" | "browser" | "devices";
+type AppView = "home" | "main" | "settings" | "browser" | "devices" | "health" | "dispatch";
 type RemoteTaskView = {
   deviceId: string;
   deviceName: string;
@@ -191,7 +193,7 @@ export function App() {
     | "morechannels"
     | "integrations"
     | "updates"
-    | "guardrails"
+    | "system"
     | "queue"
     | "skills"
     | "scheduled"
@@ -202,7 +204,10 @@ export function App() {
     | "mcp"
     | "triggers"
     | "improvement"
+    | "health"
+    | "suggestions"
   >("appearance");
+  const [homeAutomationFocusTick, setHomeAutomationFocusTick] = useState(0);
   const [events, setEvents] = useState<TaskEvent[]>([]);
   const [childEvents, setChildEvents] = useState<TaskEvent[]>([]);
 
@@ -287,6 +292,47 @@ export function App() {
   // Timestamp of when onboarding was completed
   const [onboardingCompletedAt, setOnboardingCompletedAt] = useState<string | undefined>(undefined);
   const hasElectronAPI = typeof window !== "undefined" && !!window.electronAPI;
+
+  const reconcileTaskFromCanonical = useCallback(
+    async (taskId: string, options?: { refreshEventsWhenTerminal?: boolean }) => {
+      if (!window.electronAPI?.getTask) return null;
+
+      const canonicalTask = (await window.electronAPI.getTask(taskId)) as Task | null;
+      if (!canonicalTask) return null;
+
+      setTasks((prev) => {
+        let found = false;
+        const next = prev.map((t) => {
+          if (t.id !== taskId) return t;
+          found = true;
+          return { ...t, ...canonicalTask };
+        });
+        return found ? next : [canonicalTask, ...next];
+      });
+
+      if (
+        options?.refreshEventsWhenTerminal &&
+        !isTaskPossiblyRunning(canonicalTask.status) &&
+        window.electronAPI?.getTaskEvents
+      ) {
+        const refreshedEvents = await window.electronAPI.getTaskEvents(taskId);
+        pendingToolEventsRef.current = [];
+        if (pendingToolEventsFlushTimerRef.current) {
+          clearTimeout(pendingToolEventsFlushTimerRef.current);
+          pendingToolEventsFlushTimerRef.current = null;
+        }
+        setEvents(capTaskEvents(refreshedEvents));
+        const latestTimestamp = getLatestEventTimestamp(refreshedEvents);
+        taskLastEventTimestampRef.current.set(
+          taskId,
+          latestTimestamp > 0 ? latestTimestamp : Date.now(),
+        );
+      }
+
+      return canonicalTask;
+    },
+    [],
+  );
 
   // Platform detection for Windows-specific UI (custom window controls, opaque backgrounds)
   const isWindows = hasElectronAPI && window.electronAPI.getPlatform() === "win32";
@@ -1497,43 +1543,10 @@ export function App() {
 
       staleTaskReconcileInFlightRef.current = true;
       try {
-        const canonicalTask = (await window.electronAPI.getTask(taskId)) as Task | null;
+        const canonicalTask = await reconcileTaskFromCanonical(taskId, {
+          refreshEventsWhenTerminal: true,
+        });
         if (cancelled || !canonicalTask || canonicalTask.id !== taskId) return;
-
-        const statusChanged =
-          canonicalTask.status !== currentTask.status ||
-          canonicalTask.completedAt !== currentTask.completedAt ||
-          canonicalTask.updatedAt !== currentTask.updatedAt ||
-          canonicalTask.terminalStatus !== currentTask.terminalStatus ||
-          canonicalTask.error !== currentTask.error;
-
-        if (statusChanged) {
-          setTasks((prev) => {
-            let found = false;
-            const next = prev.map((t) => {
-              if (t.id !== taskId) return t;
-              found = true;
-              return { ...t, ...canonicalTask };
-            });
-            return found ? next : [canonicalTask, ...next];
-          });
-        }
-
-        if (!isTaskPossiblyRunning(canonicalTask.status) && window.electronAPI?.getTaskEvents) {
-          const refreshedEvents = await window.electronAPI.getTaskEvents(taskId);
-          if (cancelled) return;
-          pendingToolEventsRef.current = [];
-          if (pendingToolEventsFlushTimerRef.current) {
-            clearTimeout(pendingToolEventsFlushTimerRef.current);
-            pendingToolEventsFlushTimerRef.current = null;
-          }
-          setEvents(capTaskEvents(refreshedEvents));
-          const latestTimestamp = getLatestEventTimestamp(refreshedEvents);
-          taskLastEventTimestampRef.current.set(
-            taskId,
-            latestTimestamp > 0 ? latestTimestamp : Date.now(),
-          );
-        }
       } catch (error) {
         console.error("Failed to reconcile stale task status:", error);
       } finally {
@@ -1550,7 +1563,40 @@ export function App() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [selectedTaskId, remoteTaskView]);
+  }, [selectedTaskId, remoteTaskView, reconcileTaskFromCanonical]);
+
+  // Queue updates are authoritative about whether a task is still running.
+  // If the selected task disappears from the running set, reconcile it now
+  // so collaborative panels do not keep showing a stale spinner.
+  useEffect(() => {
+    if (!selectedTaskId || !queueStatus || remoteTaskView) return;
+
+    const currentTask = tasksRef.current.find((t) => t.id === selectedTaskId);
+    if (!currentTask || !isTaskPossiblyRunning(currentTask.status)) return;
+    if (queueStatus.runningTaskIds.includes(selectedTaskId)) return;
+    if (staleTaskReconcileInFlightRef.current) return;
+
+    let cancelled = false;
+    staleTaskReconcileInFlightRef.current = true;
+
+    void (async () => {
+      try {
+        await reconcileTaskFromCanonical(selectedTaskId, {
+          refreshEventsWhenTerminal: true,
+        });
+      } catch (error) {
+        if (!cancelled) {
+          console.error("Failed to reconcile selected task after queue completion:", error);
+        }
+      } finally {
+        staleTaskReconcileInFlightRef.current = false;
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [queueStatus, remoteTaskView, reconcileTaskFromCanonical, selectedTaskId]);
 
   // Load historical events from dispatched child tasks
   useEffect(() => {
@@ -2311,6 +2357,29 @@ export function App() {
               <button
                 type="button"
                 className="title-bar-btn"
+                onClick={() => setCurrentView("health")}
+                title="Health"
+                aria-label="Health"
+              >
+                <svg
+                  aria-hidden="true"
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="#6b7280"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  style={{ display: "block", flexShrink: 0 }}
+                >
+                  <path d="M20 13.5c0 4.3-3.5 6.5-8 9-4.5-2.5-8-4.7-8-9A5.5 5.5 0 0 1 9.5 8c1.6 0 3 0.8 4.5 2.5C15.5 8.8 16.9 8 18.5 8A5.5 5.5 0 0 1 20 13.5Z" />
+                  <path d="M8 13h2l1.2-2.4L13 16l1.3-3H18" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                className="title-bar-btn"
                 onClick={handleNewSession}
                 title="New Session"
                 aria-label="New Session"
@@ -2391,6 +2460,27 @@ export function App() {
               // Prioritize taskId to show the completed task result
               if (notification.taskId) {
                 void openTaskById(notification.taskId);
+                return;
+              }
+              if (notification.suggestionId) {
+                void (async () => {
+                  try {
+                    if (notification.workspaceId) {
+                      const workspaces = await window.electronAPI.listWorkspaces();
+                      const targetWorkspace = workspaces.find(
+                        (workspace) => workspace.id === notification.workspaceId,
+                      );
+                      if (targetWorkspace) {
+                        setCurrentWorkspace(targetWorkspace);
+                      }
+                    }
+                  } catch {
+                    // best-effort
+                  } finally {
+                    setCurrentView("home");
+                    setHomeAutomationFocusTick((tick) => tick + 1);
+                  }
+                })();
                 return;
               }
               // Fall back to scheduled tasks settings if only cronJobId
@@ -2556,7 +2646,7 @@ export function App() {
           </button>
         </div>
       )}
-      {(currentView === "main" || currentView === "home" || currentView === "devices") && (
+      {(currentView === "main" || currentView === "home" || currentView === "devices" || currentView === "health" || currentView === "dispatch") && (
         <>
           <div
             className={`app-layout ${leftSidebarCollapsed ? "left-collapsed" : ""} ${effectiveRightCollapsed ? "right-collapsed" : ""}`}
@@ -2567,10 +2657,14 @@ export function App() {
                 tasks={tasks}
                 selectedTaskId={selectedTaskId}
                 isHomeActive={currentView === "home"}
+                isHealthActive={currentView === "health"}
+                isDispatchActive={currentView === "dispatch"}
                 isDevicesActive={currentView === "devices"}
                 completionAttentionTaskIds={unseenCompletedTaskIds}
                 onSelectTask={handleSelectTaskFromShell}
                 onOpenHome={() => setCurrentView("home")}
+                onOpenHealth={() => setCurrentView("health")}
+                onOpenDispatch={() => setCurrentView("dispatch")}
                 onOpenDevices={() => setCurrentView("devices")}
                 onNewSession={handleNewSession}
                 onOpenSettings={() => setCurrentView("settings")}
@@ -2588,6 +2682,7 @@ export function App() {
               <HomeDashboard
                 workspace={currentWorkspace}
                 tasks={tasks}
+                automationInboxFocusTick={homeAutomationFocusTick}
                 onOpenTask={(taskId) => {
                   setSelectedTaskId(taskId);
                   setCurrentView("main");
@@ -2609,6 +2704,7 @@ export function App() {
                   setSettingsTab("improvement");
                   setCurrentView("settings");
                 }}
+                onCreateTask={handleCreateTask}
               />
             ) : currentView === "devices" ? (
               <DevicesPanel
@@ -2684,6 +2780,24 @@ export function App() {
                   setCurrentView("settings");
                 }}
                 availableProviders={availableProviders}
+              />
+            ) : currentView === "health" ? (
+              <HealthPanel
+                onOpenSettings={() => {
+                  setSettingsTab("health");
+                  setCurrentView("settings");
+                }}
+                onCreateTask={(title, prompt) => {
+                  setCurrentView("main");
+                  handleCreateTask(title, prompt);
+                }}
+              />
+            ) : currentView === "dispatch" ? (
+              <DispatchPanel
+                onOpenSettings={(tab) => {
+                  setSettingsTab((tab as typeof settingsTab) || "telegram");
+                  setCurrentView("settings");
+                }}
               />
             ) : (
               <MainContent

@@ -257,6 +257,12 @@ function getShellArgs(shell: string, command: string): string[] {
   return ["-c", command];
 }
 
+function resolveCommandCwd(workspacePath: string, cwd?: string): string {
+  if (!cwd || cwd === ".") return workspacePath;
+  if (path.isAbsolute(cwd)) return cwd;
+  return path.resolve(workspacePath, cwd);
+}
+
 /**
  * Get all descendant process IDs for a given parent PID.
  * Uses pgrep on Unix, wmic on Windows.
@@ -820,7 +826,11 @@ export class ShellTools {
       }
     }
 
-    const cwd = options?.cwd || this.workspace.path;
+    const cwd = resolveCommandCwd(this.workspace.path, options?.cwd);
+    const dirName = (() => {
+      const parts = cwd.replace(/\\/g, "/").split("/").filter(Boolean);
+      return parts[parts.length - 1] ?? "";
+    })();
 
     // Wrap CLI agent commands with `script` to allocate a PTY (prevents hang bug)
     let effectiveCommand = command;
@@ -835,11 +845,12 @@ export class ShellTools {
     }
 
     // Emit the command being executed (show original command, not wrapped)
+    const promptPrefix = dirName ? `$ ${dirName} % ` : `$ `;
     this.daemon.logEvent(this.taskId, "command_output", {
       command,
       cwd,
       type: "start",
-      output: `$ ${command}\n`,
+      output: `${promptPrefix}${command}\n`,
     });
 
     return new Promise((resolve) => {
@@ -1074,4 +1085,5 @@ export const _testUtils = {
   isProcessOwnedByCurrentUser,
   getDescendantPids,
   killProcessTree,
+  resolveCommandCwd,
 };

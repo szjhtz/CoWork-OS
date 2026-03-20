@@ -2,6 +2,10 @@
 
 This doc provides copy-paste prompts you can run to validate each flow end-to-end.
 
+## Ideas Panel
+
+The **Ideas** tab in the sidebar shows use case prompts that use built-in capabilities (channels, inbox, /inbox, /brief, /simplify, /batch, browser, file I/O). See [Ideas Capabilities](ideas-capabilities.md) for what’s supported. Advanced use cases (e.g. legal skills) require optional skills and are listed below as copy-paste prompts.
+
 ## Use Case Coverage (High Level)
 
 Use cases:

@@ -91,14 +91,10 @@ export async function computeWorkspaceKitStatus(
 ): Promise<WorkspaceKitStatus> {
   const kitRoot = path.join(workspacePath, KIT_DIR_NAME);
   const lifecycle = await ensureBootstrapLifecycleState(workspacePath);
-
-  const hasKitDir = (() => {
-    try {
-      return fs.existsSync(kitRoot);
-    } catch {
-      return false;
-    }
-  })();
+  const trackedHealthPaths = new Set(
+    WORKSPACE_HEALTH_FILES.map((fileName) => path.join(KIT_DIR_NAME, fileName)),
+  );
+  const trackedDirectoryPaths = new Set(TRACKED_KIT_DIRECTORIES);
 
   const files: WorkspaceKitStatus["files"] = [];
   let missingCount = 0;
@@ -162,6 +158,22 @@ export async function computeWorkspaceKitStatus(
     (sum, entry) => sum + (entry.issues?.filter((issue) => issue.level === "error").length || 0),
     0,
   );
+
+  const hasTrackedKitContent =
+    lifecycle.state.bootstrapSeededAt !== undefined ||
+    files.some(
+      (entry) =>
+        entry.exists &&
+        (trackedHealthPaths.has(entry.relPath) || trackedDirectoryPaths.has(entry.relPath)),
+    );
+
+  const hasKitDir = (() => {
+    try {
+      return fs.existsSync(kitRoot) && hasTrackedKitContent;
+    } catch {
+      return false;
+    }
+  })();
 
   return {
     workspaceId,

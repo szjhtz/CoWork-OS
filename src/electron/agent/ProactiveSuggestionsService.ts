@@ -771,7 +771,10 @@ export class ProactiveSuggestionsService {
     this.getPendingTitles(workspaceId)?.add(suggestion.title.toLowerCase().trim().slice(0, 60));
 
     try {
-      await MemoryService.capture(workspaceId, undefined, "insight", content);
+      await MemoryService.capture(workspaceId, undefined, "insight", content, false, {
+        origin: "proactive",
+        batchable: false,
+      });
       this.recordTelemetry(workspaceId, id, "created");
       return {
         id,

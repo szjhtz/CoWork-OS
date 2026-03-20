@@ -58,6 +58,9 @@ function createExecuteHarness(options: HarnessOptions) {
   executor.waitingForUserInput = false;
   executor.requiresTestRun = false;
   executor.testRunObserved = false;
+  executor.testRunSuccessful = false;
+  executor.requiresVisualQARun = false;
+  executor.visualQARunObserved = false;
   executor.partialSuccessForCronEnabled = true;
   executor.taskCompleted = false;
   executor.lastAssistantOutput = options.lastOutput;
@@ -199,6 +202,28 @@ describe("TaskExecutor completion contract integration", () => {
       expect.objectContaining({
         status: "failed",
         error: expect.stringContaining("missing artifact evidence"),
+      }),
+    );
+  });
+
+  it("does not complete web-app shipping tasks when Playwright QA never ran", async () => {
+    const executor = createExecuteHarness({
+      title: "Build a simple todo app in React",
+      prompt: "Build a simple todo app in React, test it to catch any bugs before shipping.",
+      lastOutput: "Implemented the app and wrote tests.",
+      createdFiles: ["package.json", "src/App.jsx", "src/App.test.jsx"],
+      planStepDescription: "Implement the app and verify it",
+    });
+    executor.requiresVisualQARun = true;
+
+    await (executor as Any).execute();
+
+    expect(executor.daemon.completeTask).not.toHaveBeenCalled();
+    expect(executor.daemon.updateTask).toHaveBeenCalledWith(
+      "task-1",
+      expect.objectContaining({
+        status: "failed",
+        error: expect.stringContaining("Playwright visual QA"),
       }),
     );
   });

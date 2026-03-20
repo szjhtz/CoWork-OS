@@ -5,7 +5,7 @@ import remarkGfm from "remark-gfm";
 import { Loader2 } from "lucide-react";
 import { normalizeMarkdownForCollab } from "../utils/markdown-inline-lists";
 import type { AgentThought, AgentTeamRunPhase, AgentRole } from "../../shared/types";
-import { getEmojiIcon } from "../utils/emoji-icon-map";
+import { resolveTwinIcon } from "../utils/twin-icons";
 
 interface CollaborativeThoughtsPanelProps {
   teamRunId: string;
@@ -302,7 +302,7 @@ export function CollaborativeThoughtsPanel({
               >
                 <span className="team-member-icon">
                   {(() => {
-                    const Icon = getEmojiIcon(m.role.icon);
+                    const Icon = resolveTwinIcon(m.role.icon);
                     return <Icon size={16} strokeWidth={1.5} />;
                   })()}
                 </span>
@@ -331,7 +331,7 @@ export function CollaborativeThoughtsPanel({
               >
                 <span className="team-member-icon">
                   {(() => {
-                  const Icon = getEmojiIcon(t.agentIcon);
+                  const Icon = resolveTwinIcon(t.agentIcon);
                   return <Icon size={16} strokeWidth={1.5} />;
                   })()}
                 </span>
@@ -372,7 +372,7 @@ export function CollaborativeThoughtsPanel({
                   <div className="stream-agent-header-inline">
                     <span className="stream-agent-icon">
                       {(() => {
-                        const Icon = getEmojiIcon(st.agentIcon);
+                        const Icon = resolveTwinIcon(st.agentIcon);
                         return <Icon size={14} strokeWidth={1.5} />;
                       })()}
                     </span>
@@ -410,7 +410,7 @@ export function CollaborativeThoughtsPanel({
                   <div className="stream-agent-header-inline">
                     <span className="stream-agent-icon">
                       {(() => {
-                        const Icon = getEmojiIcon(thought.agentIcon);
+                        const Icon = resolveTwinIcon(thought.agentIcon);
                         return <Icon size={14} strokeWidth={1.5} />;
                       })()}
                     </span>
@@ -459,7 +459,7 @@ export function CollaborativeThoughtsPanel({
                   <div className="stream-agent-header-inline">
                     <span className="stream-agent-icon">
                       {(() => {
-                        const Icon = getEmojiIcon(st.agentIcon);
+                        const Icon = resolveTwinIcon(st.agentIcon);
                         return <Icon size={14} strokeWidth={1.5} />;
                       })()}
                     </span>

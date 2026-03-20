@@ -39,6 +39,7 @@ import * as fs from "fs";
 import * as fsPromises from "fs/promises";
 import * as path from "path";
 import * as os from "os";
+import { createHash } from "crypto";
 import { AgentDaemon } from "./daemon";
 import { ToolRegistry } from "./tools/registry";
 import { SandboxRunner } from "./sandbox/runner";
@@ -3021,7 +3022,10 @@ export class TaskExecutor {
   }
 
   private isExplicitChatExecutionMode(): boolean {
-    return this.task.agentConfig?.executionMode === "chat";
+    return (
+      this.task.agentConfig?.executionMode === "chat" &&
+      this.getEffectiveExecutionModeSource() === "user"
+    );
   }
 
   private stripPinnedSummaryPrefixFromFirstUserMessage(messages: LLMMessage[]): LLMMessage[] {
@@ -7199,6 +7203,74 @@ ${transcript}
     this.visualQARunObserved = true;
   }
 
+  private getObservedWorkspaceFilePaths(): string[] {
+    const createdFiles = (this.fileOperationTracker?.getCreatedFiles?.() || []).map((file) =>
+      String(file || ""),
+    );
+    const modifiedFiles = this.daemon
+      .getTaskEvents(this.task.id, { types: ["file_modified"] })
+      .map((event) => String(event.payload?.path || event.payload?.to || event.payload?.from || ""))
+      .filter((file) => file.length > 0);
+
+    return Array.from(
+      new Set(
+        [...createdFiles, ...modifiedFiles]
+          .map((file) =>
+            file
+              .replace(/\\/g, "/")
+              .replace(/^\.\//, "")
+              .trim()
+              .toLowerCase(),
+          )
+          .filter(Boolean),
+      ),
+    );
+  }
+
+  private hasMaterializedWebAppArtifacts(): boolean {
+    const observedFiles = this.getObservedWorkspaceFilePaths();
+    if (observedFiles.length === 0) return false;
+
+    const webArtifactPatterns = [
+      /(^|\/)package\.json$/,
+      /(^|\/)index\.html$/,
+      /(^|\/)(vite|webpack|rollup|next|nuxt|astro|svelte)\.config\.[jt]s$/,
+      /(^|\/)src\/(main|app)\.[jt]sx?$/,
+      /(^|\/)app\/page\.[jt]sx?$/,
+      /(^|\/)pages\/index\.[jt]sx?$/,
+      /(^|\/)(portal|dashboard|site|web|public)\/.*\.(html|css|js|jsx|ts|tsx)$/,
+    ];
+
+    return observedFiles.some((file) => webArtifactPatterns.some((pattern) => pattern.test(file)));
+  }
+
+  private planBuildsWebAppArtifacts(steps: PlanStep[]): boolean {
+    return steps.some((step) => {
+      const desc = String(step?.description || "").toLowerCase();
+      if (!desc.trim()) return false;
+
+      const writeIntent = /\b(create|build|implement|scaffold|develop|generate|ship)\b/.test(desc);
+      const webTarget =
+        /\b(web app|website|frontend|react|vue|svelte|next\.js|nextjs|dashboard|portal|landing page|spa)\b/.test(
+          desc,
+        ) ||
+        /`[^`]*(portal|dashboard|site|web)\/[^`]*`/.test(desc) ||
+        /(^|[^a-z])(portal|dashboard)\/[a-z0-9/_\-.]+/i.test(desc);
+
+      return writeIntent && webTarget;
+    });
+  }
+
+  private shouldEnforceVisualQARequirement(): boolean {
+    return this.requiresVisualQARun && this.hasMaterializedWebAppArtifacts();
+  }
+
+  private shouldSkipVisualQAStep(stepContract: StepExecutionContract): boolean {
+    if (!this.requiresVisualQARun) return false;
+    if (!stepContract.requiredTools.has("qa_run")) return false;
+    return !this.hasMaterializedWebAppArtifacts();
+  }
+
   private buildVisualQAPlanStepDescription(): string {
     return "Visual QA with Playwright: use qa_run to launch the app in a browser, test core user flows, fix any critical/major issues found, re-run qa_run until clean, then call qa_cleanup.";
   }
@@ -7220,7 +7292,11 @@ ${transcript}
       steps: Array.isArray(plan?.steps) ? [...plan.steps] : [],
     };
 
-    if (this.requiresVisualQARun && !this.planContainsVisualQAStep(nextPlan.steps)) {
+    if (
+      this.requiresVisualQARun &&
+      this.planBuildsWebAppArtifacts(nextPlan.steps) &&
+      !this.planContainsVisualQAStep(nextPlan.steps)
+    ) {
       nextPlan.steps.push({
         id: String(nextPlan.steps.length + 1),
         description: this.buildVisualQAPlanStepDescription(),
@@ -8163,6 +8239,26 @@ ${transcript}
     if (prompt) return prompt;
 
     return String(this.task.userPrompt || "");
+  }
+
+  private getSkillRoutingQuery(): string {
+    const prompt = this.getContractPrompt();
+    const title = String(this.task.title || "").trim();
+    return [title, prompt].filter(Boolean).join("\n");
+  }
+
+  private logSkillRoutingContext(stage: string, query: string): void {
+    const preview = query.replace(/\s+/g, " ").trim().slice(0, 160);
+    this.emitEvent("log", {
+      message: `[skill-routing] ${stage}`,
+      taskId: this.task.id,
+      queryHash: createHash("sha1").update(query).digest("hex").slice(0, 12),
+      preview,
+      titlePreview: String(this.task.title || "").replace(/\s+/g, " ").trim().slice(0, 120),
+      promptPreview: String(this.task.prompt || "").replace(/\s+/g, " ").trim().slice(0, 120),
+      rawPromptPreview: String(this.task.rawPrompt || "").replace(/\s+/g, " ").trim().slice(0, 120),
+      userPromptPreview: String(this.task.userPrompt || "").replace(/\s+/g, " ").trim().slice(0, 120),
+    });
   }
 
   private buildCompletionContract(): CompletionContract {
@@ -9553,6 +9649,9 @@ ${transcript}
   private applyIntentFilter(tools: Any[]): Any[] {
     const taskIntent = this.task.agentConfig?.taskIntent;
     if (!taskIntent) return this.capToolCount(tools);
+    if (taskIntent === "chat" && this.getEffectiveExecutionMode() === "execute") {
+      return this.capToolCount(tools);
+    }
 
     const relevantTools = TaskStrategyService.getRelevantToolSet(
       taskIntent,
@@ -9580,6 +9679,11 @@ ${transcript}
     stepKind: "analysis" | "mutation_required" | "verification",
     taskDomain: TaskDomain,
   ): Set<string> {
+    const taskIntent = String(this.task.agentConfig?.taskIntent || "").toLowerCase();
+    if (taskIntent === "chat" && this.getEffectiveExecutionMode() === "execute") {
+      return new Set<string>();
+    }
+
     const always = new Set<string>([
       "revise_plan",
       "request_user_input",
@@ -9626,6 +9730,7 @@ ${transcript}
       "create_presentation",
       "generate_presentation",
       "create_diagram",
+      "generate_image",
       "run_command",
       "run_applescript",
     ]);
@@ -14722,6 +14827,18 @@ You are continuing a previous conversation. The context from the previous conver
     return last?.id === step.id;
   }
 
+  // Only the final non-verification / non-recovery step should render as a user-facing bubble.
+  // Earlier primary steps are execution narration and stay hidden in summary view.
+  private isLastVisibleAssistantStep(step: PlanStep): boolean {
+    if (!this.plan || this.plan.steps.length === 0) return false;
+    const visibleSteps = this.plan.steps.filter(
+      (candidate) => candidate.kind !== "verification" && candidate.kind !== "recovery",
+    );
+    if (visibleSteps.length === 0) return false;
+    const lastVisible = visibleSteps[visibleSteps.length - 1];
+    return lastVisible?.id === step.id;
+  }
+
   private taskLikelyNeedsWebEvidence(): boolean {
     // Sub-agent tasks in collaborative mode are doing delegated work (often local
     // file exploration), not web research — skip the web evidence requirement.
@@ -15366,8 +15483,19 @@ You are continuing a previous conversation. The context from the previous conver
   }
 
   private async maybeHandleHighConfidenceSkillRouting(): Promise<boolean> {
-    const rawQuery = `${this.task.title || ""}\n${this.task.prompt || ""}`.trim();
+    const contractPrompt = this.getContractPrompt();
+    const rawQuery = `${this.task.title || ""}\n${contractPrompt}`.trim();
     if (!rawQuery) return false;
+    const isDelegatedChildTask =
+      Boolean(this.task.parentTaskId) ||
+      this.task.agentType === "sub" ||
+      this.task.agentType === "parallel";
+
+    const preserveContractPrompt = () => {
+      if (!String(this.task.rawPrompt || "").trim() && contractPrompt.trim()) {
+        this.task.rawPrompt = contractPrompt;
+      }
+    };
 
     try {
       const skillLoader = getCustomSkillLoader();
@@ -15393,6 +15521,7 @@ You are continuing a previous conversation. The context from the previous conver
           return false;
         }
 
+        preserveContractPrompt();
         const expanded = await this.expandSkillPrompt(best.id, {}, `skill '${best.id}'`);
         this.task.prompt = expanded;
         this.emitEvent("log", {
@@ -15412,6 +15541,14 @@ You are continuing a previous conversation. The context from the previous conver
     // entirely and directly expands the skill prompt, so we need strong confidence.
     const HIGH_CONFIDENCE_THRESHOLD = 0.78;
     const MIN_MARGIN_OVER_NEXT = 0.12;
+
+    if (isDelegatedChildTask) {
+      this.emitEvent("log", {
+        message:
+          "Skipped deterministic natural-language skill routing for delegated child task to preserve the assigned mission.",
+      });
+      return false;
+    }
 
     try {
       const skillLoader = getCustomSkillLoader();
@@ -15446,11 +15583,8 @@ You are continuing a previous conversation. The context from the previous conver
         return false;
       }
 
-      const expanded = await this.expandSkillPrompt(
-        best.skill.id,
-        {},
-        `skill '${best.skill.id}'`,
-      );
+      preserveContractPrompt();
+      const expanded = await this.expandSkillPrompt(best.skill.id, {}, `skill '${best.skill.id}'`);
       this.task.prompt = expanded;
       this.emitEvent("log", {
         message:
@@ -16320,8 +16454,7 @@ You are continuing a previous conversation. The context from the previous conver
     if (!this.shouldEmitAnswerFirst()) return false;
     if (this.getEffectiveExecutionMode() === "execute") {
       const intent = String(this.task.agentConfig?.taskIntent || "").toLowerCase();
-      const isNaturallyNonExecuteIntent =
-        intent === "chat" || intent === "advice" || intent === "planning" || intent === "thinking";
+      const isNaturallyNonExecuteIntent = intent === "advice" || intent === "planning" || intent === "thinking";
       if (!isNaturallyNonExecuteIntent) return false;
     }
     if (!this.hasDirectAnswerReady()) return false;
@@ -16474,9 +16607,8 @@ You are continuing a previous conversation. The context from the previous conver
         });
       }
 
-      // Chat mode is a pure single-turn LLM response. Skip all task routing,
-      // planning, and tool selection so the session behaves like ChatGPT.
-      if (this.getEffectiveExecutionMode() === "chat") {
+      // Only explicit user-selected chat mode skips the task pipeline entirely.
+      if (this.isExplicitChatExecutionMode()) {
         await this.handleCompanionPrompt();
         return;
       }
@@ -16490,11 +16622,6 @@ You are continuing a previous conversation. The context from the previous conver
       const handledSkillSlashOrInline = await this.maybeHandleSkillSlashCommandOrInlineChain();
       if (!handledSkillSlashOrInline) {
         await this.maybeHandleHighConfidenceSkillRouting();
-      }
-
-      if (this.resolveConversationMode(this.task.prompt, true) === "chat") {
-        await this.handleCompanionPrompt();
-        return;
       }
 
       // Phase 0: Pre-task Analysis (like Cowork's AskUserQuestion)
@@ -16710,7 +16837,7 @@ You are continuing a previous conversation. The context from the previous conver
       if (this.requiresTestRun && !this.testRunSuccessful) {
         throw new Error("Task required running tests, but no test command completed successfully.");
       }
-      if (this.requiresVisualQARun && !this.visualQARunObserved) {
+      if (this.shouldEnforceVisualQARequirement() && !this.visualQARunObserved) {
         throw new Error("Task required Playwright visual QA, but qa_run did not complete successfully.");
       }
 
@@ -16974,11 +17101,13 @@ You are continuing a previous conversation. The context from the previous conver
 
     const roleContext = this.getRoleContextPrompt();
     const gatewayContext = this.task.agentConfig?.gatewayContext ?? "private";
+    const skillRoutingQuery = this.getSkillRoutingQuery();
+    this.logSkillRoutingContext("plan.create.start", skillRoutingQuery);
     let kitContext = "";
     try {
       const features = MemoryFeaturesManager.loadSettings();
       if (gatewayContext === "private" && features.contextPackInjectionEnabled) {
-        kitContext = buildWorkspaceKitContext(this.workspace.path, this.task.prompt, new Date(), {
+        kitContext = buildWorkspaceKitContext(this.workspace.path, this.getContractPrompt(), new Date(), {
           agentRoleId: this.task.assignedAgentRoleId || null,
         });
       }
@@ -16989,7 +17118,7 @@ You are continuing a previous conversation. The context from the previous conver
     const toolDescriptions = this.toolRegistry.getToolDescriptions(
       availableTools.map((tool) => tool.name),
       {
-        skillRoutingQuery: `${this.task.title}\n${this.task.prompt}`,
+        skillRoutingQuery,
       },
     );
 
@@ -17107,12 +17236,12 @@ Return ONLY a JSON object:
       // Use retry wrapper for resilient API calls
       // Detect high-confidence skill matches and inject explicit hints into the planning prompt.
       // This ensures even weaker models route to the right skills instead of guessing commands.
-      const highConfidenceSkillHints = this.getHighConfidenceSkillHints(
-        `${this.task.title}\n${this.task.prompt}`,
-      );
+      this.logSkillRoutingContext("plan.high-confidence-hints", skillRoutingQuery);
+      const highConfidenceSkillHints = this.getHighConfidenceSkillHints(skillRoutingQuery);
+      const planningPrompt = this.getContractPrompt();
       const planTextPrompt = highConfidenceSkillHints
-        ? `Task: ${this.task.title}\n\nDetails: ${this.task.prompt}\n\n${highConfidenceSkillHints}\n\nCreate an execution plan.`
-        : `Task: ${this.task.title}\n\nDetails: ${this.task.prompt}\n\nCreate an execution plan.`;
+        ? `Task: ${this.task.title}\n\nDetails: ${planningPrompt}\n\n${highConfidenceSkillHints}\n\nCreate an execution plan.`
+        : `Task: ${this.task.title}\n\nDetails: ${planningPrompt}\n\nCreate an execution plan.`;
       const planUserContent = await this.buildUserContent(planTextPrompt, this.initialImages);
       const planMessages: LLMMessage[] = [
         {
@@ -18053,6 +18182,27 @@ Return ONLY a JSON object:
     });
     this.emitVerificationPreflightPolicyEvents(step, stepContract.verificationPathDecisions || []);
     this.enforceSearchStepBudget(step);
+
+    if (this.shouldSkipVisualQAStep(stepContract)) {
+      step.status = "skipped";
+      step.completedAt = Date.now();
+      const reason =
+        "Skipped Visual QA step because no materialized web app artifacts were detected in the task outputs.";
+      this.emitEvent("step_skipped", {
+        step,
+        reason,
+        contract_mode: stepContract.mode,
+        contract_reason: stepContract.contractReason,
+        contract_enforcement_level: stepContract.enforcementLevel,
+      });
+      this.emitEvent("log", {
+        message: reason,
+        taskId: this.task.id,
+        stepId: step.id,
+      });
+      console.log(`${this.logTag} Step "${step.description}" skipped | reason=${reason}`);
+      return;
+    }
 
     step.status = "in_progress";
     step.startedAt = Date.now();
@@ -19465,7 +19615,7 @@ TASK / CONVERSATION HISTORY:
           eventPayload: {
             stepId: step.id,
             stepDescription: step.description,
-            internal: isPlanVerifyStep,
+            internal: isPlanVerifyStep || !this.isLastVisibleAssistantStep(step),
           },
           updateLastAssistantText: true,
         });
@@ -23465,7 +23615,7 @@ TASK / CONVERSATION HISTORY:
 
     if (
       !shouldResumeAfterFollowup &&
-      (this.getEffectiveExecutionMode() === "chat" || this.resolveConversationMode(message) === "chat")
+      this.isExplicitChatExecutionMode()
     ) {
       await this.respondInChatMode(message, previousStatus);
       return;

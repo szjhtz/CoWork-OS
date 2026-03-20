@@ -36,11 +36,22 @@ export function toOpenAICompatibleMessages(
 
     for (const item of msg.content) {
       if (item.type === "tool_result") {
-        result.push({
-          role: "tool",
-          content: item.content,
-          tool_call_id: item.tool_use_id,
-        });
+        // OpenAI/Azure require: tool messages must follow an assistant message with tool_calls.
+        // After compaction, we can end up with orphaned tool_result (e.g. pinned message
+        // between assistant and user, or compaction edge case). Skip orphaned tool results
+        // to avoid "messages with role 'tool' must be a response to a preceding message
+        // with 'tool_calls'" API errors.
+        const last = result[result.length - 1];
+        const lastHasToolCalls =
+          last?.role === "assistant" && Array.isArray((last as Any).tool_calls);
+        const lastIsTool = last?.role === "tool";
+        if (lastHasToolCalls || lastIsTool) {
+          result.push({
+            role: "tool",
+            content: item.content,
+            tool_call_id: item.tool_use_id,
+          });
+        }
       } else if (item.type === "tool_use") {
         toolCalls.push({
           id: item.id,

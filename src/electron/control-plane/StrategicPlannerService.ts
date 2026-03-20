@@ -102,7 +102,16 @@ export class StrategicPlannerService {
     const row = this.deps.db
       .prepare("SELECT * FROM strategic_planner_configs WHERE company_id = ?")
       .get(companyId) as Any;
-    if (row) return this.mapConfig(row);
+    if (row) {
+      const config = this.sanitizeConfigReferences(this.mapConfig(row));
+      if (
+        config.planningWorkspaceId !== this.mapConfig(row).planningWorkspaceId ||
+        config.plannerAgentRoleId !== this.mapConfig(row).plannerAgentRoleId
+      ) {
+        this.persistConfig(config);
+      }
+      return config;
+    }
 
     const now = Date.now();
     const config: StrategicPlannerConfig = {
@@ -154,6 +163,12 @@ export class StrategicPlannerService {
       updatedAt: Date.now(),
     };
 
+    const sanitized = this.sanitizeConfigReferences(next);
+    this.persistConfig(sanitized);
+    return this.getConfig(companyId);
+  }
+
+  private persistConfig(config: StrategicPlannerConfig): void {
     this.deps.db
       .prepare(
         `
@@ -165,20 +180,18 @@ export class StrategicPlannerService {
         `,
       )
       .run(
-        next.enabled ? 1 : 0,
-        next.intervalMinutes,
-        next.planningWorkspaceId || null,
-        next.plannerAgentRoleId || null,
-        next.autoDispatch ? 1 : 0,
-        next.approvalPreset,
-        next.maxIssuesPerRun,
-        next.staleIssueDays,
-        next.lastRunAt ?? null,
-        next.updatedAt,
-        next.companyId,
+        config.enabled ? 1 : 0,
+        config.intervalMinutes,
+        config.planningWorkspaceId || null,
+        config.plannerAgentRoleId || null,
+        config.autoDispatch ? 1 : 0,
+        config.approvalPreset,
+        config.maxIssuesPerRun,
+        config.staleIssueDays,
+        config.lastRunAt ?? null,
+        config.updatedAt,
+        config.companyId,
       );
-
-    return this.getConfig(companyId);
   }
 
   listRuns(input?: { companyId?: string; limit?: number; offset?: number }): StrategicPlannerRun[] {
@@ -785,6 +798,26 @@ export class StrategicPlannerService {
       updatedAt: row.updated_at,
       lastRunAt: typeof row.last_run_at === "number" ? row.last_run_at : undefined,
     };
+  }
+
+  private sanitizeConfigReferences(config: StrategicPlannerConfig): StrategicPlannerConfig {
+    const next = { ...config };
+
+    if (next.plannerAgentRoleId) {
+      const role = this.agentRoleRepo.findById(next.plannerAgentRoleId);
+      if (!role || role.isActive === false) {
+        next.plannerAgentRoleId = undefined;
+      }
+    }
+
+    if (next.planningWorkspaceId) {
+      const workspace = this.workspaceRepo.findById(next.planningWorkspaceId);
+      if (!workspace) {
+        next.planningWorkspaceId = undefined;
+      }
+    }
+
+    return next;
   }
 
   private mapRun(row: Any): StrategicPlannerRun {

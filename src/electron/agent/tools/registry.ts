@@ -98,6 +98,7 @@ import { KnowledgeGraphTools } from "./knowledge-graph-tools";
 import { ScrapingTools } from "./scraping-tools";
 import { DocumentTools } from "./document-tools";
 import { ScratchpadTools } from "./scratchpad-tools";
+import { QATools } from "./qa-tools";
 import { CitationTracker } from "../citation/CitationTracker";
 import { OrchestrationRepository } from "../OrchestrationRepository";
 import {
@@ -373,6 +374,7 @@ export class ToolRegistry {
   private memoryTools: MemoryTools;
   private documentTools: DocumentTools;
   private scratchpadTools: ScratchpadTools;
+  private qaTools: QATools;
   private citationTracker?: CitationTracker;
   private gatewayContext?: GatewayContextType;
   private _deepWorkMode = false;
@@ -432,6 +434,7 @@ export class ToolRegistry {
       daemon.logEvent(tid, "artifact_created", { path: fp, mimeType: mime }),
     );
     this.scratchpadTools = new ScratchpadTools(taskId, workspace.path);
+    this.qaTools = new QATools(workspace, daemon, taskId);
     // Some unit tests stub daemon as a plain object. Make channel history tools optional.
     const dbGetter = (daemon as Any)?.getDatabase;
     if (typeof dbGetter === "function") {
@@ -825,6 +828,7 @@ export class ToolRegistry {
     this.montyTools.setWorkspace(workspace);
     this.textTools.setWorkspace(workspace);
     this.browserTools.setWorkspace(workspace);
+    this.qaTools.setWorkspace(workspace);
     this.shellTools.setWorkspace(workspace);
     this.imageTools.setWorkspace(workspace);
     this.visionTools.setWorkspace(workspace);
@@ -1055,6 +1059,9 @@ export class ToolRegistry {
     // Session scratchpad tools (agent self-notes during long runs)
     allTools.push(...ScratchpadTools.getToolDefinitions());
 
+    // Playwright QA tools (automated visual testing for web apps)
+    allTools.push(...QATools.getToolDefinitions());
+
     // Always add mention tools (enables multi-agent collaboration)
     allTools.push(...MentionTools.getToolDefinitions());
 
@@ -1120,6 +1127,8 @@ export class ToolRegistry {
           "set_user_name",
           "set_response_style",
           "set_quirks",
+          "add_behavioral_rule",
+          "set_expertise",
           "set_vibes",
           "update_lore",
           "manage_heartbeat",
@@ -1669,6 +1678,9 @@ Skills:
 - edit_document: Edit/append content to existing DOCX files
 - create_presentation: Create PowerPoint presentations
 - generate_presentation: Generate PPTX presentations from structured slides
+- generate_epub: Generate EPUB ebooks from chapter content
+- generate_landing_page: Generate polished standalone HTML landing pages
+- generate_narration_audio: Generate MP3 narration from text using the configured voice service
 - organize_folder: Organize and structure files in folders
 - use_skill: Invoke a custom skill by ID to help accomplish tasks (see available skills below). Use explicit IDs for deterministic workflows ("Use the <skill id> skill."). If the skill writes files, use the "{artifactDir}" placeholder for deterministic workspace output.
 
@@ -1847,7 +1859,9 @@ ${
     ? `
 Channel Message Log (Local Gateway):
 - channel_list_chats: List recently active chats for a channel (discover chat IDs)
-- channel_history: Fetch recent messages for a specific chat ID (use for summarization/monitoring)`
+- channel_history: Fetch recent messages for a specific chat ID (use for summarization/monitoring)
+- channel_fetch_discord_messages: Fetch messages directly from Discord API (live, not local log)
+- channel_download_discord_attachment: Download attachments from a Discord message`
     : ""
 }
 
@@ -2037,6 +2051,40 @@ ${skillDescriptions}`;
       return await this.browserTools.executeTool(name, input);
     }
 
+    // QA tools (Playwright automated visual testing)
+    if (name.startsWith("qa_")) {
+      const result = await this.qaTools.execute(name, input);
+      // QA tools return JSON; treat explicit error payloads as tool failures.
+      if (typeof result === "string") {
+        try {
+          const parsed = JSON.parse(result) as {
+            success?: boolean;
+            report?: string;
+            error?: string;
+          };
+          if (typeof parsed.success === "boolean") {
+            const content =
+              typeof parsed.report === "string"
+                ? parsed.report
+                : typeof parsed.error === "string"
+                  ? parsed.error
+                  : result;
+            return {
+              content,
+              success: parsed.success,
+              isError: !parsed.success,
+            };
+          }
+          if (typeof parsed.error === "string") {
+            return { content: parsed.error, success: false, isError: true };
+          }
+        } catch {
+          // Not JSON, use as-is
+        }
+      }
+      return { content: result };
+    }
+
     // Search tools
     if (name === "web_search") {
       const result = await this.searchTools.webSearch(input);
@@ -2197,6 +2245,20 @@ ${skillDescriptions}`;
       return await this.channelTools.channelHistory(input);
     }
 
+    // Discord live API tools
+    if (name === "channel_fetch_discord_messages") {
+      if (!this.channelTools) {
+        throw new Error("Channel tools unavailable (database not accessible)");
+      }
+      return await this.channelTools.fetchDiscordMessages(input);
+    }
+    if (name === "channel_download_discord_attachment") {
+      if (!this.channelTools) {
+        throw new Error("Channel tools unavailable (database not accessible)");
+      }
+      return await this.channelTools.downloadDiscordAttachment(input);
+    }
+
     // Email IMAP tools (direct inbox access)
     if (name === "email_imap_unread") {
       if (!this.emailImapTools) {
@@ -2219,6 +2281,10 @@ ${skillDescriptions}`;
     if (name === "generate_presentation")
       return await this.documentTools.generatePresentation(input);
     if (name === "generate_spreadsheet") return await this.documentTools.generateSpreadsheet(input);
+    if (name === "generate_epub") return await this.documentTools.generateEPUB(input);
+    if (name === "generate_landing_page") return await this.documentTools.generateLandingPage(input);
+    if (name === "generate_narration_audio")
+      return await this.documentTools.generateNarrationAudio(input);
 
     // Mermaid diagram tool
     if (name === "create_diagram") {
@@ -2422,6 +2488,14 @@ ${skillDescriptions}`;
 
     if (name === "set_quirks") {
       return this.setQuirks(input);
+    }
+
+    if (name === "add_behavioral_rule") {
+      return this.addBehavioralRule(input);
+    }
+
+    if (name === "set_expertise") {
+      return this.setExpertise(input);
     }
 
     if (name === "set_vibes") {
@@ -2757,6 +2831,7 @@ ${skillDescriptions}`;
    */
   async cleanup(): Promise<void> {
     await this.browserTools.cleanup();
+    await this.qaTools.execute("qa_cleanup", {}).catch(() => {});
   }
 
   /**
@@ -6169,15 +6244,29 @@ ${skillDescriptions}`;
   }
 
   /**
-   * Set the agent's personality
+   * Set the agent's personality (preset, adjust traits, or legacy personality id)
    */
-  private setPersonality(input: { personality: string }): {
+  private setPersonality(input: {
+    personality?: string;
+    preset?: string;
+    adjust?: Record<string, number>;
+  }): {
     success: boolean;
-    personality: string;
+    personality?: string;
     description: string;
     message: string;
   } {
-    const personalityId = input.personality as PersonalityId;
+    if (input.adjust && typeof input.adjust === "object") {
+      PersonalityManager.adjustTraits(input.adjust);
+      const parts = Object.entries(input.adjust).map(([k, v]) => `${k}: ${v}`);
+      return {
+        success: true,
+        description: "Trait adjustments applied",
+        message: `Adjusted personality traits: ${parts.join(", ")}. This will take effect in future responses.`,
+      };
+    }
+
+    const presetOrId = (input.preset ?? input.personality) as string | undefined;
     const validIds: PersonalityId[] = [
       "professional",
       "friendly",
@@ -6187,16 +6276,15 @@ ${skillDescriptions}`;
       "casual",
     ];
 
-    if (!validIds.includes(personalityId)) {
+    if (!presetOrId || !validIds.includes(presetOrId as PersonalityId)) {
       throw new Error(
-        `Invalid personality: ${personalityId}. Valid options are: ${validIds.join(", ")}`,
+        `Invalid personality/preset: ${presetOrId}. Valid options are: ${validIds.join(", ")}`,
       );
     }
 
-    // Save the new personality
+    const personalityId = presetOrId as PersonalityId;
     PersonalityManager.setActivePersonality(personalityId);
 
-    // Get the personality definition for the response
     const personality = PERSONALITY_DEFINITIONS.find((p) => p.id === personalityId);
     const description = personality?.description || "";
     const name = personality?.name || personalityId;
@@ -6208,6 +6296,59 @@ ${skillDescriptions}`;
       personality: personalityId,
       description,
       message: `Personality changed to "${name}". ${description}. This will take effect in future responses.`,
+    };
+  }
+
+  /**
+   * Add a behavioral rule (always/never/prefer/avoid)
+   */
+  private addBehavioralRule(input: { type: string; rule: string }): {
+    success: boolean;
+    message: string;
+  } {
+    const validTypes = ["always", "never", "prefer", "avoid"];
+    const type = (input.type ?? "always").toLowerCase();
+    if (!validTypes.includes(type)) {
+      throw new Error(`Invalid rule type: ${type}. Valid: ${validTypes.join(", ")}`);
+    }
+    const rule = String(input.rule ?? "").trim();
+    if (!rule) {
+      throw new Error("Rule text cannot be empty");
+    }
+    PersonalityManager.addBehavioralRule({
+      type: type as "always" | "never" | "prefer" | "avoid",
+      rule,
+    });
+    return {
+      success: true,
+      message: `Added ${type.toUpperCase()} rule: "${rule}". This will shape future responses.`,
+    };
+  }
+
+  /**
+   * Set expertise for a domain
+   */
+  private setExpertise(input: { domain: string; level: string }): {
+    success: boolean;
+    message: string;
+  } {
+    const domain = String(input.domain ?? "").trim();
+    if (!domain) {
+      throw new Error("Domain cannot be empty");
+    }
+    const validLevels = ["familiar", "proficient", "expert"];
+    const level = (input.level ?? "proficient").toLowerCase();
+    if (!validLevels.includes(level)) {
+      throw new Error(`Invalid level: ${level}. Valid: ${validLevels.join(", ")}`);
+    }
+    PersonalityManager.setExpertise(
+      domain,
+      level as "familiar" | "proficient" | "expert",
+      undefined,
+    );
+    return {
+      success: true,
+      message: `Set expertise: ${domain} (${level}). The assistant will emphasize this in relevant responses.`,
     };
   }
 
@@ -8303,20 +8444,67 @@ ${skillDescriptions}`;
       {
         name: "set_personality",
         description:
-          "Change the assistant's communication style and personality. Use this when the user asks you to be more friendly, " +
-          "professional, concise, creative, technical, or casual. Available personalities: professional (formal, business-oriented), " +
-          "friendly (warm, encouraging), concise (brief, to-the-point), creative (imaginative, expressive), " +
-          "technical (detailed, precise), casual (relaxed, informal). The change takes effect for all future interactions.",
+          "Change the assistant's communication style. Use when the user asks to be more friendly, professional, concise, etc. " +
+          "Accepts: preset (professional, friendly, concise, creative, technical, casual), or adjust (e.g. { warmth: 80 }) for fine-tuning.",
         input_schema: {
           type: "object",
           properties: {
             personality: {
               type: "string",
               enum: ["professional", "friendly", "concise", "creative", "technical", "casual"],
-              description: "The personality to switch to",
+              description: "The personality preset to switch to (legacy)",
+            },
+            preset: {
+              type: "string",
+              enum: ["professional", "friendly", "concise", "creative", "technical", "casual"],
+              description: "Quick preset to apply",
+            },
+            adjust: {
+              type: "object",
+              additionalProperties: { type: "number" },
+              description: "Trait adjustments, e.g. { warmth: 80, directness: 70 }",
             },
           },
-          required: ["personality"],
+        },
+      },
+      {
+        name: "add_behavioral_rule",
+        description:
+          "Add a behavioral rule that shapes how the assistant responds. Use when the user wants explicit do/don't instructions.",
+        input_schema: {
+          type: "object",
+          properties: {
+            type: {
+              type: "string",
+              enum: ["always", "never", "prefer", "avoid"],
+              description: "Rule type",
+            },
+            rule: {
+              type: "string",
+              description: "The rule text, e.g. 'Explain your reasoning step by step'",
+            },
+          },
+          required: ["rule"],
+        },
+      },
+      {
+        name: "set_expertise",
+        description:
+          "Set the assistant's expertise level for a domain. Use when the user wants the assistant to be stronger in a specific area.",
+        input_schema: {
+          type: "object",
+          properties: {
+            domain: {
+              type: "string",
+              description: "Domain, e.g. TypeScript, React, Marketing",
+            },
+            level: {
+              type: "string",
+              enum: ["familiar", "proficient", "expert"],
+              description: "Proficiency level",
+            },
+          },
+          required: ["domain"],
         },
       },
       {

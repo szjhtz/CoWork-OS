@@ -181,7 +181,7 @@ export function CustomizePanel({
       {/* Sidebar */}
       <div className="cp-sidebar">
         <div className="cp-sidebar-header">
-          <h3>Customize</h3>
+          <h3>Plugin Packs</h3>
           <button
             className="cp-store-btn"
             onClick={() => setShowStore(true)}

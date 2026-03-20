@@ -186,6 +186,13 @@ describe("isAutomatedSession", () => {
     expect(isAutomatedSession(createTask({ source: "api", title: "Heartbeat: CoWork OS Ops Lead" }))).toBe(true);
     expect(isAutomatedSession(createTask({ title: "Heartbeat: cowork os inc Company Planner" }))).toBe(true);
   });
+
+  it("treats chief-of-staff autonomy task titles as automated", () => {
+    expect(isAutomatedSession(createTask({ source: "hook", title: "Chief of Staff briefing" }))).toBe(true);
+    expect(isAutomatedSession(createTask({ source: "hook", title: "Routine prep: active pipeline" }))).toBe(true);
+    expect(isAutomatedSession(createTask({ source: "hook", title: "Follow up: launch checklist" }))).toBe(true);
+    expect(isAutomatedSession(createTask({ source: "hook", title: "Organize work session: onboarding redesign" }))).toBe(true);
+  });
 });
 
 describe("isActiveSessionStatus", () => {

@@ -1,4 +1,5 @@
 import type { AgentCapability } from "../../electron/preload";
+import { resolveTwinIcon } from "../utils/twin-icons";
 
 interface PersonaTemplateData {
   id: string;
@@ -84,7 +85,12 @@ export function PersonaTemplateCard({ template, onActivate }: PersonaTemplateCar
   return (
     <div className="pt-card" onClick={() => onActivate(template)}>
       <div className="pt-card-header">
-        <span className="pt-card-icon">{template.icon}</span>
+        <span className="pt-card-icon">
+          {(() => {
+            const Icon = resolveTwinIcon(template.icon);
+            return <Icon size={18} strokeWidth={2} />;
+          })()}
+        </span>
         <span className="pt-card-name">{template.name}</span>
       </div>
 

@@ -12,6 +12,7 @@ import type {
   AgentMention,
   Task,
   Activity,
+  ProactiveSuggestion,
 } from "../../../shared/types";
 import { HeartbeatService, type HeartbeatServiceDeps } from "../HeartbeatService";
 
@@ -28,6 +29,9 @@ let mockMentions: Map<string, AgentMention>;
 let mockTasks: Map<string, Task>;
 let heartbeatEvents: HeartbeatEvent[];
 let createdTasks: Task[];
+let createdSuggestions: ProactiveSuggestion[];
+let notifications: Array<Record<string, unknown>>;
+let capturedMemories: Array<Record<string, unknown>>;
 let tmpDir: string;
 let workspacePaths: Map<string, string>;
 
@@ -118,6 +122,9 @@ describe("HeartbeatService", () => {
     mockTasks = new Map();
     heartbeatEvents = [];
     createdTasks = [];
+    createdSuggestions = [];
+    notifications = [];
+    capturedMemories = [];
     taskIdCounter = 0;
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "cowork-heartbeat-"));
     process.env.COWORK_USER_DATA_DIR = path.join(tmpDir, "user-data");
@@ -224,6 +231,39 @@ describe("HeartbeatService", () => {
         contextPackInjectionEnabled: true,
         heartbeatMaintenanceEnabled: true,
       }),
+      getAwarenessSummary: () => null,
+      listActiveSuggestions: () => createdSuggestions,
+      createCompanionSuggestion: async (workspaceId, suggestion) => {
+        const created: ProactiveSuggestion = {
+          id: `suggestion-${createdSuggestions.length + 1}`,
+          type: suggestion.type || "insight",
+          title: suggestion.title,
+          description: suggestion.description,
+          actionPrompt: suggestion.actionPrompt,
+          sourceTaskId: suggestion.sourceTaskId,
+          sourceEntity: suggestion.sourceEntity,
+          confidence: suggestion.confidence,
+          suggestionClass: suggestion.suggestionClass,
+          urgency: suggestion.urgency,
+          learningSignalIds: suggestion.learningSignalIds,
+          workspaceScope: suggestion.workspaceScope,
+          sourceSignals: suggestion.sourceSignals,
+          recommendedDelivery: suggestion.recommendedDelivery,
+          companionStyle: suggestion.companionStyle,
+          createdAt: Date.now(),
+          expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000,
+          dismissed: false,
+          actedOn: false,
+        };
+        createdSuggestions.push(created);
+        return created;
+      },
+      addNotification: async (params) => {
+        notifications.push(params);
+      },
+      captureMemory: async (workspaceId, taskId, type, content, isPrivate) => {
+        capturedMemories.push({ workspaceId, taskId, type, content, isPrivate });
+      },
     };
 
     service = new HeartbeatService(deps);
@@ -413,6 +453,184 @@ describe("HeartbeatService", () => {
       expect(result.taskCreated).toBeDefined();
       expect(createdTasks).toHaveLength(1);
       expect(createdTasks[0].assignedAgentRoleId).toBe("agent-1");
+    });
+
+    it("creates heartbeat work from awareness signals without mentions or assigned tasks", async () => {
+      createAgent("agent-1", { heartbeatEnabled: true });
+      deps.getAwarenessSummary = () => ({
+        generatedAt: Date.now(),
+        workspaceId: "workspace-1",
+        currentFocus: "VS Code — launch-checklist.md",
+        whatChanged: [],
+        whatMattersNow: [
+          {
+            id: "focus-1",
+            title: "Editing launch-checklist.md",
+            detail: "Recent focus shifted into release prep.",
+            source: "apps",
+            score: 0.82,
+            tags: ["focus", "context"],
+            requiresHeartbeat: true,
+          },
+        ],
+        dueSoon: [
+          {
+            id: "due-1",
+            title: "Launch checklist review",
+            detail: "Due in 2 hours",
+            source: "tasks",
+            score: 0.95,
+            tags: ["due_soon"],
+            requiresHeartbeat: true,
+          },
+        ],
+        beliefs: [],
+        wakeReasons: ["focus_shift", "deadline_risk"],
+      });
+      service = new HeartbeatService(deps);
+      service.on("heartbeat", (event) => heartbeatEvents.push(event));
+
+      const result = await service.triggerHeartbeat("agent-1");
+
+      expect(result.status).toBe("work_done");
+      expect(result.outputType).toBe("status_digest");
+      expect(createdTasks).toHaveLength(1);
+      expect(createdTasks[0].prompt).toContain("Awareness Signals");
+      expect(createdTasks[0].prompt).toContain("Due Soon");
+    });
+
+    it("stays silent when only weak passive signals exist", async () => {
+      createAgent("agent-1", { heartbeatEnabled: true });
+      deps.getAwarenessSummary = () => ({
+        generatedAt: Date.now(),
+        workspaceId: "workspace-1",
+        currentFocus: "",
+        whatChanged: [],
+        whatMattersNow: [],
+        dueSoon: [],
+        beliefs: [],
+        wakeReasons: [],
+      });
+      service = new HeartbeatService(deps);
+      service.on("heartbeat", (event) => heartbeatEvents.push(event));
+
+      const result = await service.triggerHeartbeat("agent-1");
+
+      expect(result.status).toBe("ok");
+      expect(result.decisionMode).toBe("silent");
+      expect(createdTasks).toHaveLength(0);
+      expect(createdSuggestions).toHaveLength(0);
+    });
+
+    it("creates an inbox suggestion for repeated cross-workspace pressure", async () => {
+      createAgent("agent-1", { heartbeatEnabled: true });
+      deps.getAwarenessSummary = (workspaceId?: string) => ({
+        generatedAt: Date.now(),
+        workspaceId: workspaceId || "workspace-1",
+        currentFocus: "",
+        whatChanged: [],
+        whatMattersNow: [
+          {
+            id: `priority-${workspaceId}`,
+            title: `Priority in ${workspaceId}`,
+            detail: "Competing attention detected.",
+            source: "tasks",
+            score: 0.7,
+            tags: ["priority"],
+            requiresHeartbeat: false,
+          },
+        ],
+        dueSoon: [],
+        beliefs: [],
+        wakeReasons: ["focus_shift"],
+      });
+      service = new HeartbeatService(deps);
+      service.on("heartbeat", (event) => heartbeatEvents.push(event));
+
+      const result = await service.triggerHeartbeat("agent-1");
+
+      expect(result.status).toBe("work_done");
+      expect(result.decisionMode).toBe("inbox_suggestion");
+      expect(result.workspaceScope).toBe("all");
+      expect(createdTasks).toHaveLength(0);
+      expect(createdSuggestions).toHaveLength(1);
+      expect(notifications).toHaveLength(1);
+      expect(notifications[0]?.type).toBe("companion_suggestion");
+    });
+
+    it("creates a low-risk follow-up task when open-loop pressure is high", async () => {
+      createAgent("agent-1", { heartbeatEnabled: true, autonomyLevel: "lead" });
+      deps.getAwarenessSummary = () => ({
+        generatedAt: Date.now(),
+        workspaceId: "workspace-1",
+        currentFocus: "VS Code",
+        whatChanged: [],
+        whatMattersNow: [],
+        dueSoon: [],
+        beliefs: [],
+        wakeReasons: [],
+      });
+      deps.getAutonomyState = () => ({
+        goals: [],
+        openLoops: [
+          { id: "loop-1", title: "Follow up QA" },
+          { id: "loop-2", title: "Review docs" },
+          { id: "loop-3", title: "Triage build" },
+        ],
+      });
+      deps.getAutonomyDecisions = () => [
+        {
+          id: "decision-1",
+          title: "Consolidate blockers",
+          description: "Several work items need a single owner.",
+          status: "suggested",
+          priority: "high",
+        },
+      ] as Any[];
+      service = new HeartbeatService(deps);
+      service.on("heartbeat", (event) => heartbeatEvents.push(event));
+
+      const result = await service.triggerHeartbeat("agent-1");
+
+      expect(result.status).toBe("work_done");
+      expect(result.decisionMode).toBe("task_creation");
+      expect(result.signalFamily).toBe("open_loop_pressure");
+      expect(createdTasks).toHaveLength(1);
+    });
+
+    it("nudges only for high-confidence urgent states", async () => {
+      createAgent("agent-1", { heartbeatEnabled: true });
+      deps.getAwarenessSummary = () => ({
+        generatedAt: Date.now(),
+        workspaceId: "workspace-1",
+        currentFocus: "Calendar",
+        whatChanged: [],
+        whatMattersNow: [],
+        dueSoon: [
+          {
+            id: "due-urgent",
+            title: "Production incident follow-up",
+            detail: "Due in 15 minutes",
+            source: "tasks",
+            score: 0.96,
+            tags: ["due_soon"],
+            requiresHeartbeat: false,
+          },
+        ],
+        beliefs: [],
+        wakeReasons: ["deadline_risk"],
+      });
+      service = new HeartbeatService(deps);
+      service.on("heartbeat", (event) => heartbeatEvents.push(event));
+
+      const result = await service.triggerHeartbeat("agent-1");
+
+      expect(result.status).toBe("work_done");
+      expect(result.decisionMode).toBe("nudge");
+      expect(createdTasks).toHaveLength(0);
+      expect(createdSuggestions).toHaveLength(1);
+      expect(notifications).toHaveLength(1);
+      expect(notifications[0]?.recommendedDelivery).toBe("nudge");
     });
 
     it("should emit heartbeat events", async () => {

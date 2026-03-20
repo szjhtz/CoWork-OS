@@ -37,6 +37,39 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 export class IntentRouter {
+  private static normalizeSkillInvocationQuery(text: string): string {
+    return String(text || "")
+      .toLowerCase()
+      .replace(/[-_\s]+/g, " ")
+      .trim();
+  }
+
+  private static queryContainsSkillInvocationPhrase(query: string, phrase: string): boolean {
+    const normalizedQuery = this.normalizeSkillInvocationQuery(query);
+    const normalizedPhrase = this.normalizeSkillInvocationQuery(phrase);
+    if (!normalizedQuery || !normalizedPhrase) return false;
+
+    const pattern = normalizedPhrase
+      .split(" ")
+      .filter(Boolean)
+      .map((segment) => segment.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+      .join("\\s+");
+    if (!pattern) return false;
+
+    return new RegExp(`(?:^|[^a-z0-9])${pattern}(?:$|[^a-z0-9])`, "i").test(normalizedQuery);
+  }
+
+  private static isExplicitSkillInvocation(text: string): boolean {
+    const normalized = this.normalizeSkillInvocationQuery(text);
+    if (!normalized) return false;
+
+    const activationCue =
+      /\b(?:use|run|call|invoke|activate|apply|launch|start|enable|turn on|work on|help with|help me with)\b/;
+    if (!activationCue.test(normalized)) return false;
+
+    return this.queryContainsSkillInvocationPhrase(normalized, "skill");
+  }
+
   private static getRedirectSignals(lower: string): string[] {
     const signals: string[] = [];
 
@@ -223,6 +256,12 @@ export class IntentRouter {
       2,
       "path-or-command",
       /`[^`]+`|\/[a-z0-9_./-]+|\bnpm\b|\byarn\b|\bpnpm\b|\bgit\b/.test(lower),
+    );
+    add(
+      "execution",
+      4,
+      "explicit-skill-invocation",
+      this.isExplicitSkillInvocation(lower),
     );
     const shellCommandMentioned =
       /\b(ssh|scp|sftp|ping|traceroute|mtr|nc|netcat|telnet|dig|nslookup|nmap|ifconfig|ipconfig|route)\b/.test(

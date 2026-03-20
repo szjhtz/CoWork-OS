@@ -13,7 +13,10 @@ export type ConnectorCapabilityId =
   | "asana"
   | "okta"
   | "resend"
-  | "google-workspace";
+  | "google-workspace"
+  | "figma"
+  | "vercel"
+  | "monday";
 
 export type Tier1IntegrationProvider =
   | "resend"
@@ -253,6 +256,54 @@ const CAPABILITIES: Record<ConnectorCapabilityId, ConnectorCapability> = {
       oauth_docs: "https://developers.google.com/workspace/guides/auth-overview",
     },
     tier1: true,
+  },
+  figma: {
+    id: "figma",
+    name: "Figma",
+    registryEntryId: "figma",
+    authMethods: ["api_key"],
+    readinessAny: [["FIGMA_ACCESS_TOKEN"]],
+    readinessByAuth: {
+      api_key: [["FIGMA_ACCESS_TOKEN"]],
+    },
+    healthTool: "figma.health",
+    links: {
+      dashboard: "https://www.figma.com/developers/api",
+      create_api_key: "https://www.figma.com/developers/api#access-tokens",
+      api_keys_docs: "https://www.figma.com/developers/api#access-tokens",
+    },
+  },
+  vercel: {
+    id: "vercel",
+    name: "Vercel",
+    registryEntryId: "vercel",
+    authMethods: ["api_key"],
+    readinessAny: [["VERCEL_TOKEN"]],
+    readinessByAuth: {
+      api_key: [["VERCEL_TOKEN"]],
+    },
+    healthTool: "vercel.health",
+    links: {
+      dashboard: "https://vercel.com/account/tokens",
+      create_api_key: "https://vercel.com/account/tokens",
+      api_keys_docs: "https://vercel.com/docs/rest-api",
+    },
+  },
+  monday: {
+    id: "monday",
+    name: "monday.com",
+    registryEntryId: "monday",
+    authMethods: ["api_key"],
+    readinessAny: [["MONDAY_API_TOKEN"]],
+    readinessByAuth: {
+      api_key: [["MONDAY_API_TOKEN"]],
+    },
+    healthTool: "monday.health",
+    links: {
+      dashboard: "https://monday.com/developers/apps",
+      create_api_key: "https://monday.com/developers/apps",
+      api_keys_docs: "https://developer.monday.com/api-reference/docs/getting-started",
+    },
   },
 };
 

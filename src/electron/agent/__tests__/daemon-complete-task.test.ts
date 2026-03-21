@@ -97,6 +97,41 @@ describe("AgentDaemon.completeTask", () => {
     );
   });
 
+  it("treats strategy-sourced chat as a normal completion path", () => {
+    const daemonLike = createDaemonLike();
+    daemonLike.taskRepo.findById.mockReturnValue({
+      id: "task-1",
+      title: "Task 1",
+      status: "executing",
+      workspaceId: "workspace-1",
+      parentTaskId: "parent-task",
+      agentType: "sub",
+      agentConfig: {
+        executionMode: "chat",
+        executionModeSource: "strategy",
+        conversationMode: "chat",
+      },
+    });
+
+    AgentDaemon.prototype.completeTask.call(daemonLike, "task-1", "done");
+
+    expect(daemonLike.logEvent).toHaveBeenCalledWith(
+      "task-1",
+      "task_completed",
+      expect.objectContaining({
+        message: "Task completed successfully",
+      }),
+    );
+    expect(daemonLike.logEvent).not.toHaveBeenCalledWith(
+      "task-1",
+      "task_status",
+      expect.objectContaining({
+        message: "Chat turn completed",
+      }),
+    );
+    expect(daemonLike.queueManager.onTaskFinished).toHaveBeenCalledWith("task-1");
+  });
+
   it("keeps outputSummary absent when metadata is not provided", () => {
     const daemonLike = createDaemonLike();
 

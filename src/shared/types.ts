@@ -4237,6 +4237,7 @@ export const BUILTIN_LLM_PROVIDER_TYPES = [
   "openrouter",
   "openai",
   "azure",
+  "azure-anthropic",
   "groq",
   "xai",
   "kimi",
@@ -4286,7 +4287,8 @@ export const MULTI_LLM_PROVIDER_DISPLAY: Record<
   gemini: { name: "Gemini", icon: "\u{2728}", color: "#6366f1" },
   openrouter: { name: "OpenRouter", icon: "\u{1F310}", color: "#8b5cf6" },
   openai: { name: "OpenAI", icon: "\u{1F916}", color: "#10b981" },
-  azure: { name: "Azure", icon: "\u{1F7E6}", color: "#0078d4" },
+  azure: { name: "Azure OpenAI", icon: "\u{1F7E6}", color: "#0078d4" },
+  "azure-anthropic": { name: "Azure Anthropic", icon: "\u{1F7E6}", color: "#0078d4" },
   groq: { name: "Groq", icon: "\u{26A1}", color: "#f97316" },
   xai: { name: "xAI", icon: "\u{1F4A0}", color: "#ef4444" },
   kimi: { name: "Kimi", icon: "\u{1F319}", color: "#a855f7" },
@@ -4310,6 +4312,7 @@ export interface CustomProviderConfig {
   profileRoutingEnabled?: boolean;
   strongModelKey?: string;
   cheapModelKey?: string;
+  automatedTaskModelKey?: string;
   preferStrongForVerification?: boolean;
 }
 
@@ -4317,6 +4320,8 @@ export interface ProviderRoutingSettings {
   profileRoutingEnabled?: boolean;
   strongModelKey?: string;
   cheapModelKey?: string;
+  /** Optional dedicated model for automated tasks (cron, improvement, heartbeat). When set, overrides cheap model for these tasks. */
+  automatedTaskModelKey?: string;
   preferStrongForVerification?: boolean;
 }
 
@@ -4368,6 +4373,13 @@ export interface LLMSettingsData {
     apiVersion?: string;
     reasoningEffort?: AzureReasoningEffort;
   } & ProviderRoutingSettings;
+  azureAnthropic?: {
+    apiKey?: string;
+    endpoint?: string;
+    deployment?: string;
+    deployments?: string[];
+    apiVersion?: string;
+  } & ProviderRoutingSettings;
   groq?: {
     apiKey?: string;
     model?: string;
@@ -4398,6 +4410,13 @@ export interface LLMSettingsData {
     model?: string;
     apiKey?: string;
   } & ProviderRoutingSettings;
+  /** Text-to-image model selection. Default tried first; backup used on failure. */
+  imageGeneration?: {
+    /** Primary model: gpt-image-1.5 (OpenAI/Azure/OpenRouter) or nano-banana-2 (Gemini/Vertex) */
+    defaultModel?: "gpt-image-1.5" | "nano-banana-2";
+    /** Fallback model when default fails */
+    backupModel?: "gpt-image-1.5" | "nano-banana-2";
+  };
   // Cached models from API (populated when user refreshes)
   cachedGeminiModels?: CachedModelInfo[];
   cachedOpenRouterModels?: CachedModelInfo[];

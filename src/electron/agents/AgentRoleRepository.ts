@@ -11,6 +11,7 @@ import {
   HeartbeatConfig,
   DEFAULT_AGENT_ROLES,
 } from "../../shared/types";
+import { normalizeAgentRoleIcon } from "./agent-role-display";
 
 /**
  * Safely parse JSON with error handling
@@ -42,7 +43,7 @@ export class AgentRoleRepository {
       companyId: request.companyId,
       displayName: request.displayName,
       description: request.description,
-      icon: request.icon || "🤖",
+      icon: normalizeAgentRoleIcon(request.icon),
       color: request.color || "#6366f1",
       personalityId: request.personalityId,
       modelKey: request.modelKey,
@@ -214,7 +215,7 @@ export class AgentRoleRepository {
     }
     if (request.icon !== undefined) {
       fields.push("icon = ?");
-      values.push(request.icon);
+      values.push(normalizeAgentRoleIcon(request.icon));
     }
     if (request.color !== undefined) {
       fields.push("color = ?");
@@ -518,7 +519,7 @@ export class AgentRoleRepository {
       companyId: row.company_id || undefined,
       displayName: row.display_name,
       description: row.description || undefined,
-      icon: row.icon || "🤖",
+      icon: normalizeAgentRoleIcon(row.icon),
       color: row.color || "#6366f1",
       personalityId: row.personality_id || undefined,
       modelKey: row.model_key || undefined,

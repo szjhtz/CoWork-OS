@@ -3790,8 +3790,8 @@ export function MainContent({
   const [verificationAgentEnabled, setVerificationAgentEnabled] = useState(false);
   const isChatTask =
     executionMode === "chat" ||
-    isChatExecutionTask(task?.agentConfig?.executionMode) ||
-    task?.agentConfig?.conversationMode === "chat";
+    (isChatExecutionTask(task?.agentConfig?.executionMode) &&
+      task?.agentConfig?.executionModeSource === "user");
   const setAutonomousModeSelection = useCallback((enabled: boolean) => {
     setAutonomousModeEnabled(enabled);
     if (enabled) {
@@ -6748,351 +6748,7 @@ export function MainContent({
                       <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" />
                     </svg>
                   </button>
-                  {uiDensity === "focused" ? (
-                    <>
-                      <div className="overflow-menu-container" ref={overflowMenuRef}>
-                        <button
-                          ref={overflowToggleBtnRef}
-                          className={`overflow-menu-btn ${showOverflowMenu ? "active" : ""}`}
-                          onClick={() => setShowOverflowMenu(!showOverflowMenu)}
-                          onKeyDown={handleOverflowButtonKeyDown}
-                          title="More options"
-                          aria-label="More options"
-                          aria-haspopup="menu"
-                          aria-expanded={showOverflowMenu}
-                        >
-                          <svg
-                            width="16"
-                            height="16"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="2"
-                          >
-                            <circle cx="12" cy="12" r="1" />
-                            <circle cx="19" cy="12" r="1" />
-                            <circle cx="5" cy="12" r="1" />
-                          </svg>
-                        </button>
-                        {showOverflowMenu && (
-                          <div
-                            className="overflow-menu-dropdown"
-                            role="menu"
-                            aria-label="More options"
-                            onKeyDown={handleOverflowMenuKeyDown}
-                          >
-                            <div className="overflow-menu-item" role="none">
-                              <button
-                                className="folder-selector"
-                                onClick={() => {
-                                  setOverflowSubmenu(null);
-                                  setShowOverflowMenu(false);
-                                  handleWorkspaceDropdownToggle();
-                                }}
-                                role="menuitem"
-                                data-overflow-menu-item
-                              >
-                                <svg
-                                  width="14"
-                                  height="14"
-                                  viewBox="0 0 24 24"
-                                  fill="none"
-                                  stroke="currentColor"
-                                  strokeWidth="2"
-                                >
-                                  <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" />
-                                </svg>
-                                <span>
-                                  {workspace?.isTemp || isTempWorkspaceId(workspace?.id)
-                                    ? "Work in a folder"
-                                    : workspace?.name || "Work in a folder"}
-                                </span>
-                              </button>
-                            </div>
-                            <div className="overflow-menu-item" role="none">
-                              <button
-                                className={`shell-toggle ${shellEnabled ? "enabled" : ""}`}
-                                onClick={() => {
-                                  setOverflowSubmenu(null);
-                                  handleShellToggle();
-                                  setShowOverflowMenu(false);
-                                }}
-                                role="menuitemcheckbox"
-                                aria-checked={shellEnabled}
-                                aria-label={`Shell commands ${shellEnabled ? "on" : "off"}`}
-                                data-overflow-menu-item
-                              >
-                                <svg
-                                  width="14"
-                                  height="14"
-                                  viewBox="0 0 24 24"
-                                  fill="none"
-                                  stroke="currentColor"
-                                  strokeWidth="2"
-                                >
-                                  <path d="M4 17l6-6-6-6M12 19h8" />
-                                </svg>
-                                <span>Shell</span>
-                                <span
-                                  className={`goal-mode-switch-track ${shellEnabled ? "on" : ""}`}
-                                  aria-hidden="true"
-                                >
-                                  <span className="goal-mode-switch-thumb" />
-                                </span>
-                              </button>
-                            </div>
-                            <div className="overflow-menu-item" role="none">
-                              <button
-                                className="skills-menu-btn"
-                                onClick={() => {
-                                  setOverflowSubmenu(null);
-                                  setShowOverflowMenu(false);
-                                  setShowSkillsMenu(!showSkillsMenu);
-                                }}
-                                role="menuitem"
-                                data-overflow-menu-item
-                              >
-                                <span>/</span>
-                                <span>Custom Skills</span>
-                              </button>
-                            </div>
-                            <div className="overflow-menu-item" role="none">
-                              <button
-                                className="goal-mode-toggle goal-mode-toggle-switch-row menu-tooltip-target"
-                                style={{ margin: 0 }}
-                                onClick={() => {
-                                  setOverflowSubmenu(null);
-                                  setAutonomousModeSelection(!autonomousModeEnabled);
-                                }}
-                                data-tooltip="Runs without asking for approval"
-                                role="menuitemcheckbox"
-                                aria-checked={autonomousModeEnabled}
-                                data-overflow-menu-item
-                              >
-                                <span className="goal-mode-toggle-switch-content">
-                                  <span className="goal-mode-toggle-text">
-                                    <span className="goal-mode-label">Autonomous</span>
-                                  </span>
-                                  <span
-                                    className={`goal-mode-switch-track ${
-                                      autonomousModeEnabled ? "on" : ""
-                                    }`}
-                                    aria-hidden="true"
-                                  >
-                                    <span className="goal-mode-switch-thumb" />
-                                  </span>
-                                </span>
-                              </button>
-                            </div>
-                            <div className="overflow-menu-item" role="none">
-                              <button
-                                className="goal-mode-toggle goal-mode-toggle-switch-row menu-tooltip-target"
-                                style={{ margin: 0 }}
-                                onClick={() => {
-                                  setOverflowSubmenu(null);
-                                  setCollaborativeModeSelection(!collaborativeModeEnabled);
-                                }}
-                                data-tooltip="Multiple agents share perspectives"
-                                role="menuitemcheckbox"
-                                aria-checked={collaborativeModeEnabled}
-                                data-overflow-menu-item
-                              >
-                                <span className="goal-mode-toggle-switch-content">
-                                  <span className="goal-mode-toggle-text">
-                                    <span className="goal-mode-label">Collab</span>
-                                  </span>
-                                  <span
-                                    className={`goal-mode-switch-track ${
-                                      collaborativeModeEnabled ? "on" : ""
-                                    }`}
-                                    aria-hidden="true"
-                                  >
-                                    <span className="goal-mode-switch-thumb" />
-                                  </span>
-                                </span>
-                              </button>
-                            </div>
-                            {availableProviders.filter((p) => p.configured).length >= 2 && (
-                              <div className="overflow-menu-item" role="none">
-                                <button
-                                  className="goal-mode-toggle goal-mode-toggle-switch-row menu-tooltip-target"
-                                  style={{ margin: 0 }}
-                                  onClick={() => {
-                                    setOverflowSubmenu(null);
-                                    setMultiLlmModeSelection(!multiLlmModeEnabled);
-                                  }}
-                                  data-tooltip="Sends task to multiple AI models"
-                                  role="menuitemcheckbox"
-                                  aria-checked={multiLlmModeEnabled}
-                                  data-overflow-menu-item
-                                >
-                                  <span className="goal-mode-toggle-switch-content">
-                                    <span className="goal-mode-toggle-text">
-                                      <span className="goal-mode-label">Multi-LLM</span>
-                                    </span>
-                                    <span
-                                      className={`goal-mode-switch-track ${
-                                        multiLlmModeEnabled ? "on" : ""
-                                      }`}
-                                      aria-hidden="true"
-                                    >
-                                      <span className="goal-mode-switch-thumb" />
-                                    </span>
-                                  </span>
-                                </button>
-                              </div>
-                            )}
-                            {renderWelcomeExecutionModeRow()}
-                            {renderWelcomeTaskDomainRow()}
-                          </div>
-                        )}
-                        {showOverflowMenu && renderWelcomeOverflowSubmenu()}
-                      </div>
-                      <div className="workspace-dropdown-container" ref={workspaceDropdownRef}>
-                        {showWorkspaceDropdown && (
-                          <div className="workspace-dropdown">
-                            {workspacesList.length > 0 && (
-                              <>
-                                <div className="workspace-dropdown-header">Recent Folders</div>
-                                <div className="workspace-dropdown-list">
-                                  {workspacesList.slice(0, 10).map((w) => (
-                                    <button
-                                      key={w.id}
-                                      className={`workspace-dropdown-item ${workspace?.id === w.id ? "active" : ""}`}
-                                      onClick={() => handleWorkspaceSelect(w)}
-                                    >
-                                      <svg
-                                        width="14"
-                                        height="14"
-                                        viewBox="0 0 24 24"
-                                        fill="none"
-                                        stroke="currentColor"
-                                        strokeWidth="2"
-                                      >
-                                        <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" />
-                                      </svg>
-                                      <div className="workspace-item-info">
-                                        <span className="workspace-item-name">{w.name}</span>
-                                        <span className="workspace-item-path">{w.path}</span>
-                                      </div>
-                                      {workspace?.id === w.id && (
-                                        <svg
-                                          width="14"
-                                          height="14"
-                                          viewBox="0 0 24 24"
-                                          fill="none"
-                                          stroke="currentColor"
-                                          strokeWidth="2"
-                                          className="check-icon"
-                                        >
-                                          <path d="M20 6L9 17l-5-5" />
-                                        </svg>
-                                      )}
-                                    </button>
-                                  ))}
-                                </div>
-                                <div className="workspace-dropdown-divider" />
-                              </>
-                            )}
-                            <button
-                              className="workspace-dropdown-item new-folder"
-                              onClick={handleSelectNewFolder}
-                            >
-                              <svg
-                                width="14"
-                                height="14"
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="currentColor"
-                                strokeWidth="2"
-                              >
-                                <path d="M12 5v14M5 12h14" />
-                              </svg>
-                              <span>Work in another folder...</span>
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                      <div className="skills-menu-container" ref={skillsMenuRef}>
-                        {showSkillsMenu && (
-                          <div className="skills-dropdown">
-                            <div className="skills-dropdown-header">Custom Skills</div>
-                            <div className="skills-dropdown-search">
-                              <svg
-                                width="14"
-                                height="14"
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="currentColor"
-                                strokeWidth="2"
-                              >
-                                <circle cx="11" cy="11" r="8" />
-                                <path d="M21 21l-4.35-4.35" />
-                              </svg>
-                              <input
-                                type="text"
-                                placeholder="Search skills..."
-                                value={skillsSearchQuery}
-                                onChange={(e) => setSkillsSearchQuery(e.target.value)}
-                                autoFocus
-                              />
-                            </div>
-                            {customSkills.length > 0 ? (
-                              filteredSkills.length > 0 ? (
-                                <div className="skills-dropdown-list">
-                                  {filteredSkills.map((skill) => (
-                                    <div
-                                      key={skill.id}
-                                      className="skills-dropdown-item"
-                                      style={{ cursor: "pointer" }}
-                                      onClick={() => handleSkillSelect(skill)}
-                                    >
-                                      <span className="skills-dropdown-icon">{skill.icon}</span>
-                                      <div className="skills-dropdown-info">
-                                        <span className="skills-dropdown-name">{skill.name}</span>
-                                        <span className="skills-dropdown-desc">
-                                          {skill.description}
-                                        </span>
-                                      </div>
-                                    </div>
-                                  ))}
-                                </div>
-                              ) : (
-                                <div className="skills-dropdown-empty">
-                                  No skills match "{skillsSearchQuery}"
-                                </div>
-                              )
-                            ) : (
-                              <div className="skills-dropdown-empty">No custom skills yet.</div>
-                            )}
-                            <div className="skills-dropdown-footer">
-                              <button
-                                className="skills-dropdown-create"
-                                onClick={() => {
-                                  setShowSkillsMenu(false);
-                                  setSkillsSearchQuery("");
-                                  onOpenSettings?.("skills");
-                                }}
-                              >
-                                <svg
-                                  width="14"
-                                  height="14"
-                                  viewBox="0 0 24 24"
-                                  fill="none"
-                                  stroke="currentColor"
-                                  strokeWidth="2"
-                                >
-                                  <line x1="12" y1="5" x2="12" y2="19" />
-                                  <line x1="5" y1="12" x2="19" y2="12" />
-                                </svg>
-                                Create New Skill
-                              </button>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    </>
-                  ) : (
+                  {uiDensity === "focused" ? null : (
                     <>
                       <div className="workspace-dropdown-container" ref={workspaceDropdownRef}>
                         <button className="folder-selector" onClick={handleWorkspaceDropdownToggle}>
@@ -7655,6 +7311,318 @@ export function MainContent({
                 />
               )}
             </div>
+            {uiDensity === "focused" && (
+              <div className="input-status-text welcome-input-status">
+                <div className="input-status-left">
+                  <div className="workspace-dropdown-container" ref={workspaceDropdownRef}>
+                    <button
+                      className="input-status-workspace"
+                      onClick={handleWorkspaceDropdownToggle}
+                      title={workspace?.path || "Select a workspace folder"}
+                    >
+                      <svg
+                        width="12"
+                        height="12"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        aria-hidden
+                      >
+                        <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
+                        <line x1="8" y1="21" x2="16" y2="21" />
+                        <line x1="12" y1="17" x2="12" y2="21" />
+                      </svg>
+                      <span className="input-status-workspace-path">
+                        {workspace?.isTemp || isTempWorkspaceId(workspace?.id)
+                          ? "Work in a folder"
+                          : workspace?.path
+                            ? (() => {
+                                const parts = workspace.path.split(/[/\\]/).filter(Boolean);
+                                return parts.length > 2
+                                  ? `~/.../${parts.slice(-2).join("/")}`
+                                  : workspace.path;
+                              })()
+                            : "No folder selected"}
+                      </span>
+                    </button>
+                    {showWorkspaceDropdown && (
+                      <div className="workspace-dropdown">
+                        {workspacesList.length > 0 && (
+                          <>
+                            <div className="workspace-dropdown-header">Recent Folders</div>
+                            <div className="workspace-dropdown-list">
+                              {workspacesList.slice(0, 10).map((w) => (
+                                <button
+                                  key={w.id}
+                                  className={`workspace-dropdown-item ${workspace?.id === w.id ? "active" : ""}`}
+                                  onClick={() => handleWorkspaceSelect(w)}
+                                >
+                                  <svg
+                                    width="14"
+                                    height="14"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    strokeWidth="2"
+                                  >
+                                    <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" />
+                                  </svg>
+                                  <div className="workspace-item-info">
+                                    <span className="workspace-item-name">{w.name}</span>
+                                    <span className="workspace-item-path">{w.path}</span>
+                                  </div>
+                                  {workspace?.id === w.id && (
+                                    <svg
+                                      width="14"
+                                      height="14"
+                                      viewBox="0 0 24 24"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      strokeWidth="2"
+                                      className="check-icon"
+                                    >
+                                      <path d="M20 6L9 17l-5-5" />
+                                    </svg>
+                                  )}
+                                </button>
+                              ))}
+                            </div>
+                            <div className="workspace-dropdown-divider" />
+                          </>
+                        )}
+                        <button
+                          className="workspace-dropdown-item new-folder"
+                          onClick={handleSelectNewFolder}
+                        >
+                          <svg
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                          >
+                            <path d="M12 5v14M5 12h14" />
+                          </svg>
+                          <span>Work in another folder...</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    className={`input-status-shell ${shellEnabled ? "enabled" : ""}`}
+                    onClick={handleShellToggle}
+                    role="switch"
+                    aria-checked={shellEnabled}
+                    aria-label={`Shell commands ${shellEnabled ? "on" : "off"}`}
+                    title={
+                      shellEnabled
+                        ? "Shell commands enabled - click to disable"
+                        : "Shell commands disabled - click to enable"
+                    }
+                  >
+                    <svg
+                      width="12"
+                      height="12"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                    >
+                      <path d="M4 17l6-6-6-6M12 19h8" />
+                    </svg>
+                    <span>Shell</span>
+                    <span
+                      className={`goal-mode-switch-track ${shellEnabled ? "on" : ""}`}
+                      aria-hidden="true"
+                    >
+                      <span className="goal-mode-switch-thumb" />
+                    </span>
+                  </button>
+                </div>
+                <div className="input-status-right">
+                  <div className="input-status-mode-wrap" ref={modeDropdownRef}>
+                    <button
+                      type="button"
+                      className="input-status-mode menu-tooltip-target"
+                      onClick={() => {
+                        setShowDomainDropdown(false);
+                        setShowModeDropdown((v) => !v);
+                      }}
+                      data-tooltip={`Current mode: ${EXECUTION_MODE_LABEL[executionMode]} · ${EXECUTION_MODE_HINT[executionMode]}`}
+                      aria-haspopup="listbox"
+                      aria-expanded={showModeDropdown}
+                    >
+                      {(() => {
+                        const Icon = EXECUTION_MODE_ICON[executionMode];
+                        return <Icon size={12} aria-hidden />;
+                      })()}
+                      {EXECUTION_MODE_LABEL[executionMode]}
+                    </button>
+                    {showModeDropdown && (
+                      <div
+                        className="input-status-mode-dropdown"
+                        role="listbox"
+                        aria-label="Execution mode"
+                      >
+                        {EXECUTION_MODE_ORDER.map((value) => {
+                          const Icon = EXECUTION_MODE_ICON[value];
+                          return (
+                            <button
+                              key={value}
+                              type="button"
+                              className={`input-status-mode-option ${executionMode === value ? "active" : ""}`}
+                              onClick={() => {
+                                setExecutionMode(value);
+                                setShowModeDropdown(false);
+                              }}
+                              role="option"
+                              aria-selected={executionMode === value}
+                            >
+                              <Icon size={14} aria-hidden />
+                              {EXECUTION_MODE_LABEL[value]}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                  <div className="input-status-domain-wrap" ref={domainDropdownRef}>
+                    <button
+                      type="button"
+                      className="input-status-domain"
+                      onClick={() => {
+                        setShowModeDropdown(false);
+                        setShowDomainDropdown((v) => !v);
+                      }}
+                      title={TASK_DOMAIN_HINT[taskDomain]}
+                      aria-haspopup="listbox"
+                      aria-expanded={showDomainDropdown}
+                    >
+                      {(() => {
+                        const Icon = TASK_DOMAIN_ICON[taskDomain];
+                        return <Icon size={12} aria-hidden />;
+                      })()}
+                      {TASK_DOMAIN_LABEL[taskDomain]}
+                    </button>
+                    {showDomainDropdown && (
+                      <div
+                        className="input-status-domain-dropdown"
+                        role="listbox"
+                        aria-label="Task domain"
+                      >
+                        {TASK_DOMAIN_ORDER.map((value) => {
+                          const Icon = TASK_DOMAIN_ICON[value];
+                          return (
+                            <button
+                              key={value}
+                              type="button"
+                              className={`input-status-domain-option ${taskDomain === value ? "active" : ""}`}
+                              onClick={() => {
+                                setTaskDomain(value);
+                                setShowDomainDropdown(false);
+                              }}
+                              role="option"
+                              aria-selected={taskDomain === value}
+                            >
+                              <Icon size={14} aria-hidden />
+                              {TASK_DOMAIN_LABEL[value]}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                  <div className="skills-menu-container" ref={skillsMenuRef}>
+                    <button
+                      className={`input-status-skills ${showSkillsMenu ? "active" : ""}`}
+                      onClick={() => setShowSkillsMenu(!showSkillsMenu)}
+                      title="Custom Skills"
+                    >
+                      <span>/</span>
+                      <span>Custom Skills</span>
+                    </button>
+                    {showSkillsMenu && (
+                      <div className="skills-dropdown">
+                        <div className="skills-dropdown-header">Custom Skills</div>
+                        <div className="skills-dropdown-search">
+                          <svg
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                          >
+                            <circle cx="11" cy="11" r="8" />
+                            <path d="M21 21l-4.35-4.35" />
+                          </svg>
+                          <input
+                            type="text"
+                            placeholder="Search skills..."
+                            value={skillsSearchQuery}
+                            onChange={(e) => setSkillsSearchQuery(e.target.value)}
+                            autoFocus
+                          />
+                        </div>
+                        {customSkills.length > 0 ? (
+                          filteredSkills.length > 0 ? (
+                            <div className="skills-dropdown-list">
+                              {filteredSkills.map((skill) => (
+                                <div
+                                  key={skill.id}
+                                  className="skills-dropdown-item"
+                                  style={{ cursor: "pointer" }}
+                                  onClick={() => handleSkillSelect(skill)}
+                                >
+                                  <span className="skills-dropdown-icon">{skill.icon}</span>
+                                  <div className="skills-dropdown-info">
+                                    <span className="skills-dropdown-name">{skill.name}</span>
+                                    <span className="skills-dropdown-desc">
+                                      {skill.description}
+                                    </span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="skills-dropdown-empty">
+                              No skills match "{skillsSearchQuery}"
+                            </div>
+                          )
+                        ) : (
+                          <div className="skills-dropdown-empty">No custom skills yet.</div>
+                        )}
+                        <div className="skills-dropdown-footer">
+                          <button
+                            className="skills-dropdown-create"
+                            onClick={() => {
+                              setShowSkillsMenu(false);
+                              setSkillsSearchQuery("");
+                              onOpenSettings?.("skills");
+                            }}
+                          >
+                            <svg
+                              width="14"
+                              height="14"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                            >
+                              <line x1="12" y1="5" x2="12" y2="19" />
+                              <line x1="5" y1="12" x2="19" y2="12" />
+                            </svg>
+                            Create New Skill
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 

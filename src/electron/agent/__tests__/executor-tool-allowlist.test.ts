@@ -64,6 +64,28 @@ describe("TaskExecutor tool allow-list semantics", () => {
     expect(executor.getAvailableTools).not.toHaveBeenCalled();
   });
 
+  it("keeps execute-mode chat intent on a minimal step allowlist", () => {
+    const executor = Object.create(TaskExecutor.prototype) as Any;
+    executor.task = {
+      agentConfig: {
+        taskIntent: "chat",
+      },
+    };
+    executor.getEffectiveExecutionMode = vi.fn().mockReturnValue("execute");
+
+    const allowlist = (TaskExecutor as Any).prototype.buildStepToolAllowlist.call(
+      executor,
+      { requiredTools: new Set<string>() },
+      "analysis",
+      "general",
+    );
+
+    expect(allowlist.has("scratchpad_write")).toBe(false);
+    expect(allowlist.has("count_text")).toBe(false);
+    expect(allowlist.has("text_metrics")).toBe(false);
+    expect(allowlist.size).toBe(0);
+  });
+
   it("infers create_diagram for inline diagram steps", () => {
     const executor = Object.create(TaskExecutor.prototype) as Any;
     executor.getEffectiveExecutionMode = vi.fn().mockReturnValue("execute");

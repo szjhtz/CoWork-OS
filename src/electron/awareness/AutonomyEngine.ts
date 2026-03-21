@@ -38,6 +38,7 @@ interface AutonomyEngineDeps {
   getDefaultWorkspaceId?: () => string | undefined;
   listWorkspaceIds?: () => string[];
   createTask?: (workspaceId: string, title: string, prompt: string) => Promise<{ id?: string }>;
+  hasActiveManualTask?: (workspaceId: string) => boolean;
   recordActivity?: (params: {
     workspaceId: string;
     title: string;
@@ -78,12 +79,12 @@ export const DEFAULT_AUTONOMY_CONFIG: AutonomyConfig = {
   autoEvaluate: true,
   maxPendingDecisions: 12,
   actionPolicies: {
-    prepare_briefing: buildActionPolicy("prepare_briefing", "execute_local", 180),
+    prepare_briefing: buildActionPolicy("prepare_briefing", "suggest_only", 180),
     create_task: buildActionPolicy("create_task", "execute_local", 240),
     schedule_follow_up: buildActionPolicy("schedule_follow_up", "suggest_only", 180),
     draft_message: buildActionPolicy("draft_message", "execute_with_approval", 240, true),
     draft_agenda: buildActionPolicy("draft_agenda", "suggest_only", 180),
-    organize_work_session: buildActionPolicy("organize_work_session", "execute_local", 180),
+    organize_work_session: buildActionPolicy("organize_work_session", "suggest_only", 180),
     nudge_user: buildActionPolicy("nudge_user", "suggest_only", 90),
     execute_local_action: buildActionPolicy("execute_local_action", "execute_local", 180),
   },
@@ -642,6 +643,21 @@ export class AutonomyEngine {
     const pending = this.state.decisions
       .filter((decision) => decision.workspaceId === workspaceId && decision.status === "pending")
       .slice(0, 3);
+    if (pending.length === 0) return;
+
+    if (this.deps.hasActiveManualTask?.(workspaceId)) {
+      const now = Date.now();
+      for (const decision of pending) {
+        decision.status = "suggested";
+        decision.updatedAt = now;
+      }
+      this.deps.log?.(
+        "Skipped local autonomy execution because a manual task is already active in this workspace",
+        { workspaceId, decisionIds: pending.map((decision) => decision.id) },
+      );
+      return;
+    }
+
     for (const decision of pending) {
       if (!this.canExecuteLocally(decision.actionType)) {
         decision.status = "suggested";

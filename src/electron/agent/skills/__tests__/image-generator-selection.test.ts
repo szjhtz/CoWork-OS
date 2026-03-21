@@ -19,9 +19,9 @@ describe("selectImageProviderOrder", () => {
       providerOverride: "auto",
     });
 
-    expect(order[0]).toBe("azure");
-    expect(order).toContain("gemini");
-    expect(order).toContain("azure");
+    expect(order[0]?.provider).toBe("azure");
+    expect(order.map((e) => e.provider)).toContain("gemini");
+    expect(order.map((e) => e.provider)).toContain("azure");
   });
 
   it("switches to openai when prompt mentions gpt-image", () => {
@@ -41,7 +41,7 @@ describe("selectImageProviderOrder", () => {
       providerOverride: "auto",
     });
 
-    expect(order[0]).toBe("azure");
+    expect(order[0]?.provider).toBe("azure");
   });
 
   it("switches to azure when provider override is azure", () => {
@@ -61,6 +61,6 @@ describe("selectImageProviderOrder", () => {
       providerOverride: "azure",
     });
 
-    expect(order[0]).toBe("azure");
+    expect(order[0]?.provider).toBe("azure");
   });
 });

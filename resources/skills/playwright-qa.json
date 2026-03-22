@@ -4,7 +4,7 @@
   "description": "Automated visual QA testing using Playwright — navigate web apps like a real user, capture screenshots, find bugs, and fix them.",
   "icon": "🎭",
   "category": "Development",
-  "prompt": "Run automated visual QA on the web application at {{url}}.\n\n{{#if server_command}}Start the dev server with: {{server_command}}{{/if}}\n\nChecks to run: {{checks}}\n\nWorkflow:\n1. Use qa_run to start the full QA pipeline\n2. Review the report for issues\n3. Fix any critical or major issues found\n4. Re-run qa_run to verify fixes\n5. Call qa_cleanup when done\n\nProvide a summary of all findings and fixes.",
+  "prompt": "Run automated visual QA on the web application at {{url}}.\n\nIf `server_command` is provided, start the dev server with `{{server_command}}` before QA begins.\n\nChecks to run: {{checks}}\n\nWorkflow:\n1. Use qa_run to start the full QA pipeline\n2. Review the report for issues\n3. Fix any critical or major issues found\n4. Re-run qa_run to verify fixes\n5. Call qa_cleanup when done\n\nProvide a summary of all findings and fixes.",
   "parameters": [
     {
       "name": "url",
@@ -30,6 +30,9 @@
   ],
   "enabled": true,
   "metadata": {
+    "authoring": {
+      "complexity": "low"
+    },
     "routing": {
       "useWhen": "Any web app task that mentions testing, catching bugs, verifying it works, shipping, or quality — even without explicitly mentioning Playwright or visual QA. Trigger on phrases like 'test it', 'catch bugs', 'before shipping', 'make sure it works', 'verify it', 'does it work', 'ship it', 'check for issues' alongside web app work.",
       "dontUseWhen": "The task is purely about unit tests (jest/vitest), API testing, non-web application testing, or native mobile app testing.",

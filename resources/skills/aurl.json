@@ -46,7 +46,8 @@
         ],
         "negative": [
           "Fetch this URL (use http_request)",
-          "Make a simple GET request to example.com"
+          "Make a simple GET request to example.com",
+          "Open this webpage in the browser and click around"
         ]
       }
     },

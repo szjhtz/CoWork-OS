@@ -9,6 +9,7 @@ CoWork OS is **free and open source**. To run tasks, configure your own model cr
 | Provider | Configuration | Billing |
 |----------|---------------|---------|
 | Anthropic API | API key in Settings | Pay-per-token |
+| Azure Anthropic | API key + endpoint + deployment in Settings | Pay-per-token via Azure |
 | Google Gemini | API key in Settings | Pay-per-token (free tier available) |
 | OpenRouter | API key in Settings (default provider) | Free tier available, pay-per-token for premium models |
 | OpenAI (API Key) | API key in Settings | Pay-per-token |
@@ -49,6 +50,24 @@ CoWork OS is **free and open source**. To run tasks, configure your own model cr
 | Anthropic-Compatible (Custom) | API key + base URL in Settings | Provider billing |
 
 **Your usage is billed directly by your provider.** CoWork OS does not proxy or resell model access.
+
+---
+
+## Azure Anthropic
+
+Use Azure-hosted Claude models through your Azure subscription.
+
+### Setup
+
+1. Deploy a Claude model in your Azure AI Studio account.
+2. Open **Settings** > **LLM** and select **Azure Anthropic**.
+3. Enter your Azure API key, endpoint URL (e.g. `https://<resource>.services.ai.azure.com`), and deployment name.
+
+### Notes
+
+- Uses the Anthropic messages API format, not the Azure OpenAI format.
+- Separate from the existing **Azure OpenAI** provider — use this for Claude models, Azure OpenAI for GPT models.
+- All billing goes through your Azure subscription.
 
 ---
 

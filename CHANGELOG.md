@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.12] - 2026-03-22
+
+### Added
+- **Heartbeat v3**: signal-driven Pulse/Dispatch pipeline replaces the queue-first heartbeat internals. `Pulse` runs cheap deterministic gating with no LLM calls; `Dispatch` escalates only when Pulse justifies it. Includes signal ledger with fingerprint-based merging, deferred-state compression, run tracking, heartbeat profiles (`observer`/`operator`/`dispatcher`), dispatch guardrails, foreground suppression, and richer Mission Control status. See [Heartbeat v3](docs/heartbeat-v3.md).
+- **Ideas panel**: curated launch panel with pre-written idea prompts accessible from the sidebar above Sessions. Includes an `/ideas` gateway route and [capabilities reference doc](docs/ideas-capabilities.md).
+- **Azure Anthropic provider**: Azure-hosted Claude deployments are now a built-in provider. Configure API key, endpoint, and deployment in Settings > LLM > Azure Anthropic.
+- **OpenRouter image generation**: image generation requests can now be routed through OpenRouter, including preset model support.
+- **Document editing sessions**: inline PDF region editing, DOCX block replacement, version browsing, and document-aware file viewing for active editing sessions.
+- **Video generation**: new provider routing layer for text-to-video and image-to-video models, video model settings, polling tools, and inline video preview in the task feed.
+- **Mission Control task controls**: start, pause, stop, and retry task actions are now accessible from Mission Control without navigating to the individual task view.
+- **Release notes for 0.5.12**: added a detailed summary page. See [Release Notes 0.5.12](docs/release-notes-0.5.12.md).
+
+### Changed
+- **Memory compression**: workspace context summaries compressed in batches, compact summary preservation across session compaction, concise playbook imports, chat prompt summarization on import, and context summary validation.
+- **Task routing and execution**: chat-mode sessions locked to user-configured tasks; tighter execution contracts; strategy tool allowlists per execution mode; skill routing query precision; improved completion contract parsing; more reliable daemon completion flow; better structured input request handling; consistent child task lifecycle.
+- **Agent role labels**: role labels now formatted consistently across Mission Control, collaborative task headers, and agent detail views.
+- **Provider factory routing**: custom routing rules for per-provider model-pattern overrides; Azure Anthropic and OpenRouter routing as first-class factory routes.
+- **Image provider ordering**: configurable priority ordering across Gemini, OpenAI, Azure OpenAI, and OpenRouter for image generation.
+- **Automated task model routing**: automated (heartbeat/cron) tasks can be routed to a different model than interactive tasks.
+
 ## [0.5.11] - 2026-03-20
 
 ### Added

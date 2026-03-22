@@ -57,18 +57,19 @@
 - **Runtime resilience** — Adaptive turn budgets, context-overflow recovery, and safe path normalization keep long-running tasks moving without silent file drift.
 - **Local-first & BYOK** — Your data and API keys stay on your machine. No telemetry. No middleman.
 
-### Release 0.5.11 Highlights
+### Release 0.5.12 Highlights
 
-The 0.5.11 release adds a broader operating surface around mission control, health, QA, connector profiling, and autonomous follow-up, while also refreshing the core agent runtime and documentation.
+The 0.5.12 release restructures the heartbeat system into a signal-driven Pulse/Dispatch pipeline, introduces the Ideas panel as a curated workflow entry point, adds Azure Anthropic as a built-in provider, expands image generation to OpenRouter, adds document editing sessions and video generation, and tightens task routing and memory compression throughout.
 
-- **Mission Control and health surfaces** — new Mission Control tabs, a dedicated Health panel, Dispatch panel, and connector profile view for operating and inspecting the system from the UI.
-- **QA and validation workflow** — Playwright QA tooling, QA IPC handlers, and browser-based validation panels for structured verification tasks.
-- **New native and connector integrations** — Figma, Monday, and Vercel MCP connectors; live Discord fetch support; and a native HealthKit bridge for Apple Health data.
-- **Runtime and agent routing** — chat-mode and context-mode detection, proactive suggestions, managed output paths, better tool-policy handling, and executor/provider refresh work.
-- **Operator intelligence updates** — autonomy/awareness services, heartbeat and briefing changes, strategic planner updates, mode-suggestion detection, automated-task detection, connector profiles, and health primitives.
-- **Shared release assets** — new bundled skills (`aurl`, `autonovel`, `autoresearch-report`, `playwright-qa`), document generators, and broad renderer polish across sidebar, settings, notifications, and personality tabs.
+- **Heartbeat v3** — signal-driven `Pulse`/`Dispatch` pipeline: cheap deterministic Pulse runs without LLM calls; Dispatch escalates only when signals, cadence, or manual override justify visible work. Includes signal ledger with fingerprint merging, deferred-state compression during foreground tasks, run tracking, heartbeat profiles, and Mission Control status improvements.
+- **Ideas panel** — curated launch panel accessible from the sidebar with pre-written workflow prompts and an ideas capabilities reference. Deeplinks via `/ideas` gateway route.
+- **Azure Anthropic provider** — Azure-hosted Claude deployments are now a built-in provider. Configure API key, endpoint, and deployment in Settings > LLM > Azure Anthropic.
+- **Image generation expanded** — OpenRouter image generation with preset support; configurable image provider ordering across Gemini, OpenAI, Azure OpenAI, and OpenRouter.
+- **Document editing sessions** — inline PDF region editing, DOCX block replacement, version browsing, and document-aware file viewing for active editing sessions.
+- **Video generation** — new provider routing for text-to-video and image-to-video models, video model settings, polling tools, and inline preview.
+- **Task routing and memory tightening** — chat-mode locked to user-configured tasks; tighter execution contracts; batch memory compression; concise playbook imports; consistent child task and completion handling.
 
-See [release notes for 0.5.11](docs/release-notes-0.5.11.md), [Features](docs/features.md), [Research Channels](docs/research-channels.md), and [Providers](docs/providers.md) for the current runtime details.
+See [release notes for 0.5.12](docs/release-notes-0.5.12.md), [Features](docs/features.md), [Heartbeat v3](docs/heartbeat-v3.md), and [Providers](docs/providers.md) for the current runtime details.
 
 ## Quick Start
 

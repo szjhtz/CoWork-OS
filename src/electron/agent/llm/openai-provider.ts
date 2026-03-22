@@ -673,6 +673,7 @@ export class OpenAIProvider implements LLMProvider {
         ? {
             inputTokens: response.usage.input || 0,
             outputTokens: response.usage.output || 0,
+            cachedTokens: response.usage.cacheRead || undefined,
           }
         : undefined,
     };
@@ -839,6 +840,7 @@ export class OpenAIProvider implements LLMProvider {
         ? {
             inputTokens: response.usage.prompt_tokens,
             outputTokens: response.usage.completion_tokens,
+            cachedTokens: response.usage.prompt_tokens_details?.cached_tokens || undefined,
           }
         : undefined,
     };

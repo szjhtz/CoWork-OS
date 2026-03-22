@@ -8,22 +8,25 @@
 /**
  * Supported channel types
  */
-export type ChannelType =
-  | "telegram"
-  | "discord"
-  | "slack"
-  | "whatsapp"
-  | "imessage"
-  | "signal"
-  | "mattermost"
-  | "matrix"
-  | "twitch"
-  | "line"
-  | "bluebubbles"
-  | "email"
-  | "teams"
-  | "googlechat"
-  | "x";
+export const CHANNEL_TYPES = [
+  "telegram",
+  "discord",
+  "slack",
+  "whatsapp",
+  "imessage",
+  "signal",
+  "mattermost",
+  "matrix",
+  "twitch",
+  "line",
+  "bluebubbles",
+  "email",
+  "teams",
+  "googlechat",
+  "x",
+] as const;
+
+export type ChannelType = (typeof CHANNEL_TYPES)[number];
 
 /**
  * Channel connection status

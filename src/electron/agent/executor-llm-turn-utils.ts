@@ -1,5 +1,10 @@
 import type { LLMMessage } from "./llm";
 
+export interface QualityPassDraftResult {
+  text: string;
+  accepted: boolean;
+}
+
 export async function requestLLMResponseWithAdaptiveBudget(opts: {
   messages: LLMMessage[];
   retryLabel: string;
@@ -112,7 +117,7 @@ export async function maybeApplyQualityPasses(opts: {
     contextLabel: string;
     userIntent: string;
     draft: string;
-  }) => Promise<string>;
+  }) => Promise<QualityPassDraftResult>;
 }): Promise<Any> {
   if (!opts.enabled) return opts.response;
 
@@ -134,7 +139,10 @@ export async function maybeApplyQualityPasses(opts: {
     userIntent: opts.userIntent,
     draft: draftText,
   });
-  const improvedTrimmed = String(improved || "").trim();
+  if (!improved.accepted) {
+    return opts.response;
+  }
+  const improvedTrimmed = String(improved.text || "").trim();
   if (!improvedTrimmed || improvedTrimmed === draftText) {
     return opts.response;
   }

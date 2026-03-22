@@ -3324,7 +3324,7 @@ ${transcript}
       );
 
       if (response.usage) {
-        this.updateTracking(response.usage.inputTokens, response.usage.outputTokens);
+        this.updateTracking(response.usage.inputTokens, response.usage.outputTokens, response.usage.cachedTokens);
       }
 
       const text = (response.content || [])
@@ -3478,7 +3478,7 @@ ${transcript}
       );
 
       if (response.usage) {
-        this.updateTracking(response.usage.inputTokens, response.usage.outputTokens);
+        this.updateTracking(response.usage.inputTokens, response.usage.outputTokens, response.usage.cachedTokens);
       }
 
       const text = (response.content || [])
@@ -4551,7 +4551,7 @@ ${transcript}
       );
 
       if (response.usage) {
-        this.updateTracking(response.usage.inputTokens, response.usage.outputTokens);
+        this.updateTracking(response.usage.inputTokens, response.usage.outputTokens, response.usage.cachedTokens);
       }
 
       let text = this.extractTextFromLLMContent(response.content || []);
@@ -4572,7 +4572,7 @@ ${transcript}
             "Chat-mode continuation response",
           );
           if (contResponse.usage) {
-            this.updateTracking(contResponse.usage.inputTokens, contResponse.usage.outputTokens);
+            this.updateTracking(contResponse.usage.inputTokens, contResponse.usage.outputTokens, contResponse.usage.cachedTokens);
           }
           const contText = this.extractTextFromLLMContent(contResponse.content || []);
           if (contText) {
@@ -5041,7 +5041,8 @@ ${transcript}
       callLLMWithRetry: (requestFn, operation) => this.callLLMWithRetry(requestFn, operation),
       createMessageWithTimeout: (request, timeoutMs, operation) =>
         this.createMessageWithTimeout(request, timeoutMs, operation),
-      updateTracking: (inputTokens, outputTokens) => this.updateTracking(inputTokens, outputTokens),
+      updateTracking: (inputTokens, outputTokens, cachedTokens) =>
+        this.updateTracking(inputTokens, outputTokens, cachedTokens),
       log: (message) => console.log(`${this.logTag}${message}`),
     });
   }
@@ -6335,10 +6336,11 @@ ${transcript}
   /**
    * Update tracking after an LLM response
    */
-  private updateTracking(inputTokens: number, outputTokens: number): void {
+  private updateTracking(inputTokens: number, outputTokens: number, cachedTokens = 0): void {
     const safeInput = Number.isFinite(inputTokens) ? inputTokens : 0;
     const safeOutput = Number.isFinite(outputTokens) ? outputTokens : 0;
-    const deltaCost = calculateCost(this.modelId, safeInput, safeOutput);
+    const safeCached = Number.isFinite(cachedTokens) ? cachedTokens : 0;
+    const deltaCost = calculateCost(this.modelId, safeInput, safeOutput, safeCached);
 
     this.totalInputTokens += safeInput;
     this.totalOutputTokens += safeOutput;
@@ -16164,7 +16166,7 @@ You are continuing a previous conversation. The context from the previous conver
       );
 
       if (response.usage) {
-        this.updateTracking(response.usage.inputTokens, response.usage.outputTokens);
+        this.updateTracking(response.usage.inputTokens, response.usage.outputTokens, response.usage.cachedTokens);
       }
 
       const text = this.extractTextFromLLMContent(response.content || []);
@@ -16276,7 +16278,7 @@ You are continuing a previous conversation. The context from the previous conver
       );
 
       if (response.usage) {
-        this.updateTracking(response.usage.inputTokens, response.usage.outputTokens);
+        this.updateTracking(response.usage.inputTokens, response.usage.outputTokens, response.usage.cachedTokens);
       }
 
       let text = this.extractTextFromLLMContent(response.content || []);
@@ -16299,7 +16301,7 @@ You are continuing a previous conversation. The context from the previous conver
             "Companion continuation",
           );
           if (contResponse.usage) {
-            this.updateTracking(contResponse.usage.inputTokens, contResponse.usage.outputTokens);
+            this.updateTracking(contResponse.usage.inputTokens, contResponse.usage.outputTokens, contResponse.usage.cachedTokens);
           }
           const contText = this.extractTextFromLLMContent(contResponse.content || []);
           if (contText) {
@@ -16454,7 +16456,7 @@ You are continuing a previous conversation. The context from the previous conver
       );
 
       if (response.usage) {
-        this.updateTracking(response.usage.inputTokens, response.usage.outputTokens);
+        this.updateTracking(response.usage.inputTokens, response.usage.outputTokens, response.usage.cachedTokens);
       }
 
       const text = this.extractTextFromLLMContent(response.content || []);
@@ -16604,7 +16606,7 @@ You are continuing a previous conversation. The context from the previous conver
     );
 
     if (response.usage) {
-      this.updateTracking(response.usage.inputTokens, response.usage.outputTokens);
+      this.updateTracking(response.usage.inputTokens, response.usage.outputTokens, response.usage.cachedTokens);
     }
 
     const text = String(this.extractTextFromLLMContent(response.content || []) || "").trim();
@@ -16646,7 +16648,7 @@ You are continuing a previous conversation. The context from the previous conver
         "Pre-flight framing",
       );
       if (response.usage) {
-        this.updateTracking(response.usage.inputTokens, response.usage.outputTokens);
+        this.updateTracking(response.usage.inputTokens, response.usage.outputTokens, response.usage.cachedTokens);
       }
       const text = String(this.extractTextFromLLMContent(response.content || []) || "").trim();
       if (text) {
@@ -17375,7 +17377,7 @@ Return ONLY a JSON object:
 
       // Update tracking after response
       if (response.usage) {
-        this.updateTracking(response.usage.inputTokens, response.usage.outputTokens);
+        this.updateTracking(response.usage.inputTokens, response.usage.outputTokens, response.usage.cachedTokens);
       }
 
       console.log(`[Task ${this.task.id}] LLM response received in ${Date.now() - startTime}ms`);
@@ -23049,7 +23051,7 @@ TASK / CONVERSATION HISTORY:
         );
 
         if (response.usage) {
-          this.updateTracking(response.usage.inputTokens, response.usage.outputTokens);
+          this.updateTracking(response.usage.inputTokens, response.usage.outputTokens, response.usage.cachedTokens);
         }
 
         const text = this.extractTextFromLLMContent(response.content).trim();
@@ -23108,7 +23110,7 @@ TASK / CONVERSATION HISTORY:
       );
 
       if (critiqueResp.usage) {
-        this.updateTracking(critiqueResp.usage.inputTokens, critiqueResp.usage.outputTokens);
+        this.updateTracking(critiqueResp.usage.inputTokens, critiqueResp.usage.outputTokens, critiqueResp.usage.cachedTokens);
       }
 
       critique = this.extractTextFromLLMContent(critiqueResp.content).trim();
@@ -23164,7 +23166,7 @@ TASK / CONVERSATION HISTORY:
       );
 
       if (refineResp.usage) {
-        this.updateTracking(refineResp.usage.inputTokens, refineResp.usage.outputTokens);
+        this.updateTracking(refineResp.usage.inputTokens, refineResp.usage.outputTokens, refineResp.usage.cachedTokens);
       }
 
       const text = this.extractTextFromLLMContent(refineResp.content).trim();

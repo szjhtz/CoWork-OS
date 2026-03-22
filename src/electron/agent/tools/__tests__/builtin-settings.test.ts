@@ -76,6 +76,12 @@ describe("BuiltinToolsSettingsManager - webfetch category", () => {
       expect(defaults.runCommandApprovalMode).toBe("per_command");
       expect(BuiltinToolsSettingsManager.getRunCommandApprovalMode()).toBe("per_command");
     });
+
+    it("should default Codex runtime mode to native", () => {
+      const defaults = BuiltinToolsSettingsManager.getDefaultSettings();
+      expect(defaults.codexRuntimeMode).toBe("native");
+      expect(BuiltinToolsSettingsManager.getCodexRuntimeMode()).toBe("native");
+    });
   });
 
   describe("tool category mapping", () => {

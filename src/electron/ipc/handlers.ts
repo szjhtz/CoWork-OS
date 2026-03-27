@@ -13,10 +13,11 @@ import { z } from "zod";
 import { getUserDataDir } from "../utils/user-data-dir";
 import { resolveImageOcrChars, runOcrFromImagePath, shouldRunImageOcr } from "./image-viewer-ocr";
 import { extractPptxContentFromFile } from "../utils/pptx-extractor";
-import { parsePdfBuffer } from "../utils/pdf-parser";
+import { extractPdfReviewData } from "../utils/pdf-review";
 import ExcelJS from "exceljs";
 import { createMediaPlaybackUrl } from "../media";
 import { DocumentEditorSessionService } from "../documents/DocumentEditorSessionService";
+import { MailboxService } from "../mailbox/MailboxService";
 
 import { DatabaseManager } from "../database/schema";
 import {
@@ -71,7 +72,9 @@ import {
   isTempWorkspaceId,
   AgentConfig,
   LLM_PROVIDER_TYPES,
+  PdfReviewSummary,
 } from "../../shared/types";
+import type { MailboxCommitmentState } from "../../shared/mailbox";
 import * as os from "os";
 import { AgentDaemon } from "../agent/daemon";
 import { LLMProviderFactory, LLMProviderConfig, ModelKey, OpenAIOAuth } from "../agent/llm";
@@ -238,6 +241,7 @@ type FileViewerRequestOptions = {
   enableImageOcr?: boolean;
   imageOcrMaxChars?: number;
   includeImageContent?: boolean;
+  includePdfBase64?: boolean;
 };
 type MacSystemSettingsTarget = "microphone" | "dictation";
 
@@ -695,6 +699,7 @@ export async function setupIpcHandlers(
     artifactRepo,
     agentDaemon,
   );
+  const mailboxService = new MailboxService(db);
   const contextPolicyManager = new ContextPolicyManager(db);
   const emitTaskStatusEvent = (
     taskId: string,
@@ -1123,6 +1128,7 @@ export async function setupIpcHandlers(
         enableImageOcr,
         imageOcrMaxChars,
         includeImageContent = true,
+        includePdfBase64 = false,
       } = data;
 
       const { resolvedPath, attemptedPaths } = await resolveExistingPathForViewer(
@@ -1224,6 +1230,8 @@ export async function setupIpcHandlers(
 
       // Size limits
       const MAX_TEXT_SIZE = 5 * 1024 * 1024; // 5MB
+      const MAX_PDF_SIZE = 75 * 1024 * 1024; // 75MB
+      const MAX_PDF_BASE64_SIZE = 25 * 1024 * 1024; // 25MB for inline review surfaces
       const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB
       const MAX_VIDEO_SIZE = 500 * 1024 * 1024; // 500MB
       const MAX_PPTX_VIEWER_SIZE = 50 * 1024 * 1024; // 50MB before hard-stop
@@ -1242,12 +1250,16 @@ export async function setupIpcHandlers(
       if (fileType === "xlsx" && stats.size > MAX_XLSX_SIZE) {
         return { success: false, error: "Spreadsheet too large for extraction (max 20MB)" };
       }
+      if (fileType === "pdf" && stats.size > MAX_PDF_SIZE) {
+        return { success: false, error: "PDF file too large for review (max 75MB)" };
+      }
       if (
         fileType !== "image" &&
         fileType !== "video" &&
         fileType !== "unsupported" &&
         fileType !== "pptx" &&
         fileType !== "xlsx" &&
+        fileType !== "pdf" &&
         stats.size > MAX_TEXT_SIZE
       ) {
         return { success: false, error: "File too large for preview (max 5MB for text files)" };
@@ -1258,6 +1270,8 @@ export async function setupIpcHandlers(
         let htmlContent: string | undefined;
         let ocrText: string | undefined;
         let pdfThumbnailDataUrl: string | undefined;
+        let pdfDataBase64: string | undefined;
+        let pdfReviewSummary: PdfReviewSummary | undefined;
         let playbackUrl: string | undefined;
         let mimeType: string | undefined;
 
@@ -1278,10 +1292,19 @@ export async function setupIpcHandlers(
           }
 
           case "pdf": {
-            const buffer = await fs.readFile(resolvedPath);
-            const pdfData = await parsePdfBuffer(buffer);
-            content = pdfData.text;
+            const pdfReview = await extractPdfReviewData(resolvedPath, {
+              maxPages: 12,
+              maxCharsPerPage: 1800,
+              maxOcrPages: 4,
+              includeOcr: true,
+            });
+            content = pdfReview.content;
+            pdfReviewSummary = pdfReview;
             pdfThumbnailDataUrl = await renderPdfFirstPageThumbnail(resolvedPath);
+            if (includePdfBase64 && stats.size <= MAX_PDF_BASE64_SIZE) {
+              const buffer = await fs.readFile(resolvedPath);
+              pdfDataBase64 = buffer.toString("base64");
+            }
             break;
           }
 
@@ -1401,6 +1424,8 @@ export async function setupIpcHandlers(
             size: stats.size,
             ocrText,
             pdfThumbnailDataUrl,
+            pdfDataBase64,
+            pdfReviewSummary,
             playbackUrl,
             mimeType,
           },
@@ -1613,6 +1638,97 @@ export async function setupIpcHandlers(
     const validated = validateInput(DocumentEditRequestSchema, data, "document edit request");
     return documentEditorSessionService.startEditTask(validated);
   });
+
+  ipcMain.handle(IPC_CHANNELS.MAILBOX_GET_SYNC_STATUS, async () => {
+    return mailboxService.getSyncStatus();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.MAILBOX_SYNC, async (_, data?: { limit?: number }) => {
+    return mailboxService.sync(data?.limit);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.MAILBOX_LIST_THREADS, async (_, data?: Any) => {
+    return mailboxService.listThreads({
+      query: typeof data?.query === "string" ? data.query : undefined,
+      category: typeof data?.category === "string" ? data.category : "all",
+      needsReply: typeof data?.needsReply === "boolean" ? data.needsReply : undefined,
+      cleanupCandidate:
+        typeof data?.cleanupCandidate === "boolean" ? data.cleanupCandidate : undefined,
+      limit: typeof data?.limit === "number" ? data.limit : undefined,
+    });
+  });
+
+  ipcMain.handle(IPC_CHANNELS.MAILBOX_GET_THREAD, async (_, threadId: string) => {
+    return mailboxService.getThread(threadId);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.MAILBOX_SUMMARIZE_THREAD, async (_, data?: { threadId?: string }) => {
+    if (!data?.threadId) throw new Error("Missing threadId for mailbox summarize");
+    return mailboxService.summarizeThread(data.threadId);
+  });
+
+  ipcMain.handle(
+    IPC_CHANNELS.MAILBOX_GENERATE_DRAFT,
+    async (_, data?: { threadId?: string; tone?: Any; includeAvailability?: boolean }) => {
+      if (!data?.threadId) throw new Error("Missing threadId for mailbox draft generation");
+      return mailboxService.generateDraft(data.threadId, {
+        tone: data.tone,
+        includeAvailability: data.includeAvailability,
+      });
+    },
+  );
+
+  ipcMain.handle(IPC_CHANNELS.MAILBOX_EXTRACT_COMMITMENTS, async (_, data?: { threadId?: string }) => {
+    if (!data?.threadId) throw new Error("Missing threadId for mailbox commitment extraction");
+    return mailboxService.extractCommitments(data.threadId);
+  });
+
+  ipcMain.handle(
+    IPC_CHANNELS.MAILBOX_REVIEW_BULK_ACTION,
+    async (_, data?: { type?: "cleanup" | "follow_up"; limit?: number }) => {
+      if (data?.type !== "cleanup" && data?.type !== "follow_up") {
+        throw new Error('Mailbox bulk review requires type "cleanup" or "follow_up"');
+      }
+      return mailboxService.reviewBulkAction({
+        type: data.type,
+        limit: data.limit,
+      });
+    },
+  );
+
+  ipcMain.handle(IPC_CHANNELS.MAILBOX_SCHEDULE_REPLY, async (_, data?: { threadId?: string }) => {
+    if (!data?.threadId) throw new Error("Missing threadId for mailbox schedule reply");
+    return mailboxService.scheduleReply(data.threadId);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.MAILBOX_RESEARCH_CONTACT, async (_, data?: { threadId?: string }) => {
+    if (!data?.threadId) throw new Error("Missing threadId for mailbox research");
+    return mailboxService.researchContact(data.threadId);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.MAILBOX_APPLY_ACTION, async (_, data?: Any) => {
+    return mailboxService.applyAction({
+      proposalId: typeof data?.proposalId === "string" ? data.proposalId : undefined,
+      threadId: typeof data?.threadId === "string" ? data.threadId : undefined,
+      type: data?.type,
+      label: typeof data?.label === "string" ? data.label : undefined,
+      draftId: typeof data?.draftId === "string" ? data.draftId : undefined,
+      commitmentId: typeof data?.commitmentId === "string" ? data.commitmentId : undefined,
+    });
+  });
+
+  ipcMain.handle(
+    IPC_CHANNELS.MAILBOX_UPDATE_COMMITMENT_STATE,
+    async (_, data?: { commitmentId?: string; state?: Any }) => {
+      if (!data?.commitmentId || typeof data?.state !== "string") {
+        throw new Error("Missing commitmentId/state for mailbox commitment update");
+      }
+      return mailboxService.updateCommitmentState(
+        data.commitmentId,
+        data.state as MailboxCommitmentState,
+      );
+    },
+  );
 
   // Workspace handlers
   ipcMain.handle(IPC_CHANNELS.WORKSPACE_CREATE, async (_, data) => {

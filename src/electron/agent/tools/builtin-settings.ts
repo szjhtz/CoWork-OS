@@ -44,6 +44,7 @@ export interface BuiltinToolsSettings {
     skill: ToolCategoryConfig;
     shell: ToolCategoryConfig;
     image: ToolCategoryConfig;
+    computer_use: ToolCategoryConfig;
   };
   // Individual tool overrides (tool name -> override)
   toolOverrides: Record<string, ToolOverride>;
@@ -109,6 +110,11 @@ const DEFAULT_SETTINGS: BuiltinToolsSettings = {
       priority: "normal",
       description: "AI image generation (requires Gemini API)",
     },
+    computer_use: {
+      enabled: true,
+      priority: "normal",
+      description: "Computer use tools (native mouse, keyboard, screenshot control — macOS only)",
+    },
   },
   toolOverrides: {},
   toolTimeouts: {},
@@ -140,6 +146,7 @@ const TOOL_CATEGORIES: Record<string, keyof BuiltinToolsSettings["categories"]> 
   onedrive_action: "webfetch",
   google_drive_action: "webfetch",
   gmail_action: "webfetch",
+  mailbox_action: "webfetch",
   email_imap_unread: "webfetch",
   calendar_action: "webfetch",
   apple_calendar_action: "webfetch",
@@ -178,6 +185,13 @@ const TOOL_CATEGORIES: Record<string, keyof BuiltinToolsSettings["categories"]> 
   get_env: "system",
   get_app_paths: "system",
   run_applescript: "system",
+  // Computer use tools
+  computer_screenshot: "computer_use",
+  computer_click: "computer_use",
+  computer_type: "computer_use",
+  computer_key: "computer_use",
+  computer_move_mouse: "computer_use",
+  batch_image_process: "computer_use",
   // File tools
   read_file: "file",
   read_files: "file",

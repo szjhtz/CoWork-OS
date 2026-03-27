@@ -7,11 +7,13 @@
   <key>CFBundleExecutable</key>
   <string>HealthKitBridge</string>
   <key>CFBundleIdentifier</key>
-  <string>com.cowork.healthkitbridge</string>
+  <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>
-  <string>HealthKitBridge</string>
+  <string>CoWork Health Sync</string>
+  <key>CFBundleDisplayName</key>
+  <string>CoWork Health Sync</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>

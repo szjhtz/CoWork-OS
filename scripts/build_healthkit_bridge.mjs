@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, copyFileSync, chmodSync, writeFileSync, cpSync } from "fs";
+import { existsSync, mkdirSync, copyFileSync, chmodSync, writeFileSync, cpSync, readFileSync, readdirSync } from "fs";
+import { homedir } from "os";
 import { join } from "path";
 import { spawnSync } from "child_process";
 
@@ -17,6 +18,19 @@ const appContents = join(appBundle, "Contents");
 const appMacOS = join(appContents, "MacOS");
 const appExecutable = join(appMacOS, "HealthKitBridge");
 const pkgInfo = "APPL????\n";
+const localConfigPath = join(process.cwd(), ".cowork", "healthkit-bridge.json");
+const localConfig = readLocalConfig(localConfigPath);
+const appName = process.env.COWORK_HEALTHKIT_APP_NAME || localConfig.appName || "CoWork Health Sync";
+const useXcodeBuild =
+  process.env.COWORK_HEALTHKIT_USE_XCODE_BUILD === "1" || localConfig.useXcodeBuild === true;
+const developmentTeam =
+  process.env.COWORK_HEALTHKIT_DEVELOPMENT_TEAM || process.env.DEVELOPMENT_TEAM || localConfig.developmentTeam || "";
+const bundleIdentifier =
+  process.env.COWORK_HEALTHKIT_BUNDLE_IDENTIFIER ||
+  process.env.HEALTHKIT_BRIDGE_BUNDLE_IDENTIFIER ||
+  localConfig.bundleIdentifier ||
+  process.env.PRODUCT_BUNDLE_IDENTIFIER ||
+  "com.cowork.healthkitbridge";
 const infoPlist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -26,11 +40,13 @@ const infoPlist = `<?xml version="1.0" encoding="UTF-8"?>
   <key>CFBundleExecutable</key>
   <string>HealthKitBridge</string>
   <key>CFBundleIdentifier</key>
-  <string>com.cowork.healthkitbridge</string>
+  <string>${bundleIdentifier}</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>
-  <string>HealthKitBridge</string>
+  <string>${appName}</string>
+  <key>CFBundleDisplayName</key>
+  <string>${appName}</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleSupportedPlatforms</key>
@@ -57,34 +73,142 @@ const infoPlist = `<?xml version="1.0" encoding="UTF-8"?>
 </plist>
 `;
 
+function readLocalConfig(configPath) {
+  if (!existsSync(configPath)) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(readFileSync(configPath, "utf8"));
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch (error) {
+    console.warn(`[healthkit-bridge] Ignoring invalid local config at ${configPath}: ${error.message}`);
+    return {};
+  }
+}
+
+function findAppleDevelopmentIdentityForTeam(teamId, identities) {
+  if (!teamId) {
+    return "";
+  }
+
+  for (const identity of identities) {
+    if (!identity.startsWith("Apple Development: ")) {
+      continue;
+    }
+
+    const certificate = spawnSync("security", ["find-certificate", "-c", identity, "-p"], {
+      encoding: "utf8",
+      env: process.env,
+    });
+    if (certificate.status !== 0 || !certificate.stdout) {
+      continue;
+    }
+
+    const subject = spawnSync("openssl", ["x509", "-noout", "-subject"], {
+      encoding: "utf8",
+      env: process.env,
+      input: certificate.stdout,
+    });
+    if (subject.status !== 0 || !subject.stdout) {
+      continue;
+    }
+
+    if (subject.stdout.includes(`OU=${teamId}`)) {
+      return identity;
+    }
+  }
+
+  return "";
+}
+
+function findMatchingProvisioningProfile(teamId, bundleId) {
+  if (!teamId || !bundleId) {
+    return "";
+  }
+
+  const candidateDirectories = [
+    join(homedir(), "Library", "Developer", "Xcode", "UserData", "Provisioning Profiles"),
+    join(homedir(), "Library", "MobileDevice", "Provisioning Profiles"),
+  ];
+
+  for (const directory of candidateDirectories) {
+    if (!existsSync(directory)) {
+      continue;
+    }
+
+    for (const entry of readdirSync(directory)) {
+      if (!entry.endsWith(".mobileprovision") && !entry.endsWith(".provisionprofile")) {
+        continue;
+      }
+
+      const candidatePath = join(directory, entry);
+      const decodedProfile = spawnSync("security", ["cms", "-D", "-i", candidatePath], {
+        encoding: "utf8",
+        env: process.env,
+      });
+      if (decodedProfile.status !== 0 || !decodedProfile.stdout) {
+        continue;
+      }
+
+      const profileXml = decodedProfile.stdout;
+      if (!profileXml.includes(`<string>${teamId}</string>`)) {
+        continue;
+      }
+      if (!profileXml.includes(`${teamId}.${bundleId}`)) {
+        continue;
+      }
+      if (!profileXml.includes("com.apple.developer.healthkit")) {
+        continue;
+      }
+
+      return candidatePath;
+    }
+  }
+
+  return "";
+}
+
 const identities = spawnSync("security", ["find-identity", "-v", "-p", "codesigning"], {
   encoding: "utf8",
   env: process.env,
 });
-const identityMatch = identities.stdout?.match(/Apple Development: [^("]+/);
-const signingIdentity = identityMatch?.[0]?.trim() || "-";
-const developmentTeam = process.env.COWORK_HEALTHKIT_DEVELOPMENT_TEAM || process.env.DEVELOPMENT_TEAM || "LJNM8V8M95";
+const identitiesOutput = identities.stdout || "";
+const quotedIdentityMatches = [...identitiesOutput.matchAll(/"([^"]+)"/g)].map((match) => match[1]);
+const matchingTeamIdentity = findAppleDevelopmentIdentityForTeam(developmentTeam, quotedIdentityMatches);
+const firstAppleDevelopmentIdentity = quotedIdentityMatches.find((identity) => identity.startsWith("Apple Development: "));
+const signingIdentity =
+  process.env.COWORK_HEALTHKIT_SIGNING_IDENTITY ||
+  localConfig.signingIdentity ||
+  matchingTeamIdentity ||
+  firstAppleDevelopmentIdentity ||
+  "-";
 
 const xcodeProjectPath = join(packagePath, "HealthKitBridge.xcodeproj");
 const xcodeAppBundle = join(packagePath, ".build", "xcode", "Build", "Products", "Release", "HealthKitBridge.app");
 
-if (existsSync(xcodeProjectPath)) {
+if (existsSync(xcodeProjectPath) && developmentTeam && useXcodeBuild) {
+  const xcodebuildArgs = [
+    "-project",
+    xcodeProjectPath,
+    "-scheme",
+    "HealthKitBridge",
+    "-configuration",
+    "Release",
+    "-derivedDataPath",
+    join(packagePath, ".build", "xcode"),
+    "-allowProvisioningUpdates",
+    "CODE_SIGN_STYLE=Automatic",
+    "CODE_SIGN_IDENTITY=Apple Development",
+    `PRODUCT_BUNDLE_IDENTIFIER=${bundleIdentifier}`,
+    "ENABLE_HARDENED_RUNTIME=YES",
+  ];
+  if (developmentTeam) {
+    xcodebuildArgs.push(`DEVELOPMENT_TEAM=${developmentTeam}`);
+  }
   const xcodebuild = spawnSync(
     "xcodebuild",
-    [
-      "-project",
-      xcodeProjectPath,
-      "-scheme",
-      "HealthKitBridge",
-      "-configuration",
-      "Release",
-      "-derivedDataPath",
-      join(packagePath, ".build", "xcode"),
-      "-allowProvisioningUpdates",
-      "CODE_SIGN_STYLE=Automatic",
-      `DEVELOPMENT_TEAM=${developmentTeam}`,
-      "ENABLE_HARDENED_RUNTIME=YES",
-    ],
+    xcodebuildArgs,
     { stdio: "inherit", env: process.env },
   );
 
@@ -98,6 +222,10 @@ if (existsSync(xcodeProjectPath)) {
   }
 
   console.warn("[healthkit-bridge] Xcode app build failed or did not produce a bundle; falling back to SwiftPM packaging.");
+} else if (!developmentTeam) {
+  console.log("[healthkit-bridge] Skipping Xcode app build because no development team is configured.");
+} else if (!useXcodeBuild) {
+  console.log("[healthkit-bridge] Skipping Xcode app build; set COWORK_HEALTHKIT_USE_XCODE_BUILD=1 to enable it.");
 }
 
 const build = spawnSync("swift", ["build", "--package-path", packagePath, "-c", "release"], {
@@ -124,8 +252,13 @@ writeFileSync(join(appContents, "PkgInfo"), pkgInfo);
 copyFileSync(buildOutput, appExecutable);
 chmodSync(appExecutable, 0o755);
 const provisioningProfile = process.env.COWORK_HEALTHKIT_PROVISIONING_PROFILE || process.env.HEALTHKIT_BRIDGE_PROVISIONING_PROFILE;
-if (provisioningProfile && existsSync(provisioningProfile)) {
-  copyFileSync(provisioningProfile, join(appContents, "embedded.provisionprofile"));
+const resolvedProvisioningProfile =
+  provisioningProfile ||
+  localConfig.provisioningProfile ||
+  findMatchingProvisioningProfile(developmentTeam, bundleIdentifier);
+if (resolvedProvisioningProfile && existsSync(resolvedProvisioningProfile)) {
+  copyFileSync(resolvedProvisioningProfile, join(appContents, "embedded.provisionprofile"));
+  console.log(`[healthkit-bridge] Embedded provisioning profile ${resolvedProvisioningProfile}`);
 }
 const codesign = spawnSync(
   "codesign",

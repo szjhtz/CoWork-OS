@@ -214,7 +214,14 @@ function toErrorMessage(reason: unknown): string {
   }
 }
 
+// WebSocket close codes that are transient network events, not bugs.
+// 1006 = abnormal closure (connection dropped without close frame, common in WhatsApp Web reconnects).
+const TRANSIENT_WS_CLOSE_CODES = new Set([1006]);
+
 function isTransientMainProcessError(reason: unknown): boolean {
+  if (typeof reason === "number" && TRANSIENT_WS_CLOSE_CODES.has(reason)) {
+    return true;
+  }
   return TRANSIENT_MAIN_PROCESS_ERROR_RE.test(toErrorMessage(reason));
 }
 

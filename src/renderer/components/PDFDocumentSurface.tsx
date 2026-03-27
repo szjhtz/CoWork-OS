@@ -19,6 +19,7 @@ type PDFDocumentSurfaceProps = {
   pdfDataBase64: string;
   selection: PdfRegionSelection | null;
   onSelectionChange: (selection: PdfRegionSelection | null) => void;
+  readOnly?: boolean;
 };
 
 type DraftSelection = {
@@ -51,6 +52,7 @@ export function PDFDocumentSurface({
   pdfDataBase64,
   selection,
   onSelectionChange,
+  readOnly = false,
 }: PDFDocumentSurfaceProps) {
   const pageCanvases = useRef<Array<HTMLCanvasElement | null>>([]);
   const pageLayers = useRef<Array<HTMLDivElement | null>>([]);
@@ -201,6 +203,11 @@ export function PDFDocumentSurface({
   };
 
   const commitDraft = () => {
+    if (readOnly) {
+      dragStartRef.current = null;
+      setDraftSelection(null);
+      return;
+    }
     if (!draftSelection || draftSelection.w < 0.01 || draftSelection.h < 0.01) {
       onSelectionChange(null);
       setDraftSelection(null);
@@ -244,23 +251,31 @@ export function PDFDocumentSurface({
                 pageLayers.current[pageIndex] = node;
               }}
               style={{ width: `${page.width}px`, height: `${page.height}px` }}
-              onPointerDown={(event) => {
-                const rect = event.currentTarget.getBoundingClientRect();
-                dragStartRef.current = {
-                  pageIndex,
-                  x: (event.clientX - rect.left) / rect.width,
-                  y: (event.clientY - rect.top) / rect.height,
-                };
-                setDraftSelection({ pageIndex, x: 0, y: 0, w: 0, h: 0 });
-                event.currentTarget.setPointerCapture(event.pointerId);
-                updateDraft(pageIndex, event.clientX, event.clientY);
-              }}
-              onPointerMove={(event) => updateDraft(pageIndex, event.clientX, event.clientY)}
-              onPointerUp={(event) => {
-                updateDraft(pageIndex, event.clientX, event.clientY);
-                event.currentTarget.releasePointerCapture(event.pointerId);
-                commitDraft();
-              }}
+              onPointerDown={
+                readOnly
+                  ? undefined
+                  : (event) => {
+                      const rect = event.currentTarget.getBoundingClientRect();
+                      dragStartRef.current = {
+                        pageIndex,
+                        x: (event.clientX - rect.left) / rect.width,
+                        y: (event.clientY - rect.top) / rect.height,
+                      };
+                      setDraftSelection({ pageIndex, x: 0, y: 0, w: 0, h: 0 });
+                      event.currentTarget.setPointerCapture(event.pointerId);
+                      updateDraft(pageIndex, event.clientX, event.clientY);
+                    }
+              }
+              onPointerMove={readOnly ? undefined : (event) => updateDraft(pageIndex, event.clientX, event.clientY)}
+              onPointerUp={
+                readOnly
+                  ? undefined
+                  : (event) => {
+                      updateDraft(pageIndex, event.clientX, event.clientY);
+                      event.currentTarget.releasePointerCapture(event.pointerId);
+                      commitDraft();
+                    }
+              }
             >
               <canvas
                 ref={(node) => {
@@ -268,7 +283,7 @@ export function PDFDocumentSurface({
                 }}
                 className="pdf-page-canvas"
               />
-              {showSelection && selectionStyle && (
+              {!readOnly && showSelection && selectionStyle && (
                 <div className="pdf-selection-box" style={selectionStyle} />
               )}
             </div>

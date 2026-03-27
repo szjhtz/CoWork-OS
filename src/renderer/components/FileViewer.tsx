@@ -5,6 +5,7 @@ import remarkGfm from "remark-gfm";
 import { FileViewerResult } from "../../electron/preload";
 import { useAgentContext } from "../hooks/useAgentContext";
 import { createVideoObjectUrl } from "../utils/videoPlayback";
+import { PDFDocumentSurface } from "./PDFDocumentSurface";
 import { ThemeIcon } from "./ThemeIcon";
 import {
   AlertTriangleIcon,
@@ -35,7 +36,9 @@ export function FileViewer({ filePath, workspacePath, onClose }: FileViewerProps
       setLoading(true);
       setError(null);
       try {
-        const result = await window.electronAPI.readFileForViewer(filePath, workspacePath);
+        const result = await window.electronAPI.readFileForViewer(filePath, workspacePath, {
+          includePdfBase64: true,
+        });
         if (result.success && result.data) {
           setFileData(result.data);
         } else {
@@ -166,7 +169,48 @@ export function FileViewer({ filePath, workspacePath, onClose }: FileViewerProps
       case "pdf":
         return (
           <div className="file-viewer-pdf">
-            <pre className="file-viewer-code">{fileData.content}</pre>
+            {fileData.pdfReviewSummary && (
+              <div className="file-viewer-pdf-summary">
+                <div className="file-viewer-pdf-summary-row">
+                  <span>Pages</span>
+                  <strong>{fileData.pdfReviewSummary.pageCount}</strong>
+                </div>
+                <div className="file-viewer-pdf-summary-row">
+                  <span>Native text</span>
+                  <strong>{fileData.pdfReviewSummary.nativeTextPages}</strong>
+                </div>
+                <div className="file-viewer-pdf-summary-row">
+                  <span>OCR</span>
+                  <strong>{fileData.pdfReviewSummary.ocrPages}</strong>
+                </div>
+                {fileData.pdfReviewSummary.truncatedPages && (
+                  <div className="file-viewer-pdf-summary-note">
+                    Preview limited to the first extracted pages.
+                  </div>
+                )}
+              </div>
+            )}
+            {fileData.pdfDataBase64 ? (
+              <PDFDocumentSurface
+                fileName={fileData.fileName}
+                pdfDataBase64={fileData.pdfDataBase64}
+                selection={null}
+                onSelectionChange={() => {}}
+                readOnly
+              />
+            ) : (
+              <>
+                {fileData.pdfThumbnailDataUrl && (
+                  <div className="file-viewer-pdf-thumbnail">
+                    <img
+                      src={fileData.pdfThumbnailDataUrl}
+                      alt={`${fileData.fileName} first page`}
+                    />
+                  </div>
+                )}
+                <pre className="file-viewer-code">{fileData.content}</pre>
+              </>
+            )}
           </div>
         );
 

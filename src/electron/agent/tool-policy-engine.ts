@@ -87,6 +87,7 @@ const INTEGRATION_TOOLS = new Set([
   "onedrive_action",
   "google_drive_action",
   "gmail_action",
+  "mailbox_action",
   "calendar_action",
   "apple_calendar_action",
   "apple_reminders_action",

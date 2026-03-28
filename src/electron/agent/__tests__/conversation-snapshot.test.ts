@@ -11,6 +11,7 @@
 
 import { describe, it, expect, vi as _vi, beforeEach as _beforeEach } from "vitest";
 import type { TaskEvent, LLMMessage as _LLMMessage } from "../../../shared/types";
+import { sanitizeToolCallHistory } from "../llm/openai-compatible";
 
 // Type for conversation message (matches LLMMessage structure)
 interface ConversationMessage {
@@ -50,7 +51,12 @@ function restoreFromSnapshot(events: TaskEvent[]): {
 
   try {
     // Restore the conversation history
-    const conversationHistory = payload.conversationHistory.map((msg: Any) => ({
+    const conversationHistory = sanitizeToolCallHistory(
+      payload.conversationHistory.map((msg: Any) => ({
+        role: msg.role as "user" | "assistant",
+        content: msg.content,
+      })),
+    ).map((msg) => ({
       role: msg.role as "user" | "assistant",
       content: msg.content,
     }));
@@ -693,7 +699,7 @@ describe("Size-limited serialization", () => {
   const MAX_TOOL_RESULT_LENGTH = 10000;
 
   function serializeWithSizeLimit(history: ConversationMessage[]): Any[] {
-    return history.map((msg) => {
+    return sanitizeToolCallHistory(history as Any).map((msg) => {
       if (typeof msg.content === "string") {
         return {
           role: msg.role,
@@ -747,6 +753,10 @@ describe("Size-limited serialization", () => {
     const longResult = "B".repeat(15000);
     const history: ConversationMessage[] = [
       {
+        role: "assistant",
+        content: [{ type: "tool_use", id: "abc", name: "read_file", input: { path: "/test" } }],
+      },
+      {
         role: "user",
         content: [{ type: "tool_result", tool_use_id: "abc", content: longResult }],
       },
@@ -754,8 +764,9 @@ describe("Size-limited serialization", () => {
 
     const serialized = serializeWithSizeLimit(history);
 
-    expect(serialized[0].content[0].content.length).toBeLessThan(longResult.length);
-    expect(serialized[0].content[0].content).toContain("[... truncated ...]");
+    expect(serialized).toHaveLength(2);
+    expect(serialized[1].content[0].content.length).toBeLessThan(longResult.length);
+    expect(serialized[1].content[0].content).toContain("[... truncated ...]");
   });
 
   it("should not truncate small content", () => {
@@ -776,13 +787,41 @@ describe("Size-limited serialization", () => {
           { type: "tool_use", id: "tool-1", name: "read_file", input: { path: "/test" } },
         ],
       },
+      {
+        role: "user",
+        content: [{ type: "tool_result", tool_use_id: "tool-1", content: "file contents" }],
+      },
     ];
 
     const serialized = serializeWithSizeLimit(history);
 
+    expect(serialized).toHaveLength(2);
     expect(serialized[0].content).toHaveLength(2);
     expect(serialized[0].content[0].text).toBe("Short text");
     expect(serialized[0].content[1].name).toBe("read_file");
+    expect(serialized[1].content[0].type).toBe("tool_result");
+  });
+
+  it("drops incomplete tool-use batches before snapshot serialization", () => {
+    const history: ConversationMessage[] = [
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "Fetching..." },
+          { type: "tool_use", id: "tool-1", name: "read_file", input: { path: "/test" } },
+          { type: "tool_use", id: "tool-2", name: "read_file", input: { path: "/other" } },
+        ],
+      },
+      {
+        role: "user",
+        content: [{ type: "tool_result", tool_use_id: "tool-1", content: "only one result" }],
+      },
+      { role: "assistant", content: [{ type: "text", text: "Recovered later" }] },
+    ];
+
+    const serialized = serializeWithSizeLimit(history);
+
+    expect(serialized).toEqual([{ role: "assistant", content: [{ type: "text", text: "Recovered later" }] }]);
   });
 });
 

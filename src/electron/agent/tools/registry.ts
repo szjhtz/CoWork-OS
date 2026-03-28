@@ -5442,6 +5442,7 @@ ${skillDescriptions}`;
                 "mark_read",
                 "label",
                 "send_draft",
+                "discard_draft",
                 "schedule_event",
                 "dismiss_proposal",
               ],

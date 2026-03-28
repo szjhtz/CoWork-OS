@@ -29,11 +29,11 @@ interface MailboxActionInput {
   include_availability?: boolean;
   proposal_id?: string;
   draft_id?: string;
-  type?: "cleanup" | "follow_up" | "archive" | "trash" | "mark_read" | "label" | "send_draft" | "schedule_event" | "dismiss_proposal";
+  type?: "cleanup" | "follow_up" | "archive" | "trash" | "mark_read" | "label" | "send_draft" | "discard_draft" | "schedule_event" | "dismiss_proposal";
   label?: string;
 }
 
-const MUTATING_ACTION_TYPES = new Set(["archive", "trash", "mark_read", "label", "send_draft", "schedule_event"]);
+const MUTATING_ACTION_TYPES = new Set(["archive", "trash", "mark_read", "label", "send_draft", "discard_draft", "schedule_event"]);
 
 export class MailboxTools {
   private mailboxService: MailboxService;

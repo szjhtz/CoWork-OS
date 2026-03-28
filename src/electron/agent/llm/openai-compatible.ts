@@ -1,4 +1,4 @@
-import { LLMContent, LLMImageContent, LLMMessage, LLMResponse, LLMTool } from "./types";
+import { LLMContent, LLMImageContent, LLMMessage, LLMResponse, LLMTool, LLMToolUse, LLMToolResult } from "./types";
 import { imageToTextFallback } from "./image-utils";
 import { createLogger } from "../../utils/logger";
 
@@ -9,11 +9,83 @@ export interface OpenAICompatibleMessageOptions {
   supportsImages?: boolean;
 }
 
+function extractAssistantToolUseIds(msg: LLMMessage | undefined): string[] {
+  if (!msg || msg.role !== "assistant" || !Array.isArray(msg.content)) return [];
+  return msg.content
+    .filter((item): item is LLMToolUse => item !== null && typeof item === "object" && item.type === "tool_use")
+    .map((item) => String(item.id || "").trim())
+    .filter(Boolean);
+}
+
+function isToolResultOnlyUserMessage(msg: LLMMessage | undefined): boolean {
+  if (!msg) return false;
+  return (
+    msg.role === "user" &&
+    Array.isArray(msg.content) &&
+    msg.content.length > 0 &&
+    msg.content.every((item) => item?.type === "tool_result")
+  );
+}
+
+export function sanitizeToolCallHistory(messages: LLMMessage[]): LLMMessage[] {
+  const cleaned: LLMMessage[] = [];
+
+  for (let i = 0; i < messages.length; i += 1) {
+    const msg = messages[i];
+    if (!msg) continue;
+    const toolUseIds = extractAssistantToolUseIds(msg);
+
+    if (toolUseIds.length === 0) {
+      if (!isToolResultOnlyUserMessage(msg)) {
+        cleaned.push(msg);
+      }
+      continue;
+    }
+
+    const expectedIds = new Set(toolUseIds);
+    const batchMessages: LLMMessage[] = [];
+    let j = i + 1;
+    while (j < messages.length && isToolResultOnlyUserMessage(messages[j])) {
+      batchMessages.push(messages[j]);
+      j += 1;
+    }
+
+    const coveredIds = new Set<string>();
+    const filteredBatchMessages = batchMessages.reduce<LLMMessage[]>((acc, batchMsg) => {
+      const content = (batchMsg.content as LLMToolResult[]).filter((item) => {
+        const toolUseId = String(item?.tool_use_id || "").trim();
+        if (!toolUseId || !expectedIds.has(toolUseId)) return false;
+        coveredIds.add(toolUseId);
+        return true;
+      });
+      if (content.length > 0) {
+        acc.push({ ...batchMsg, content });
+      }
+      return acc;
+    }, []);
+
+    const allCovered = toolUseIds.every((id) => coveredIds.has(id));
+    if (allCovered) {
+      cleaned.push(msg, ...filteredBatchMessages);
+    } else {
+      const missingIds = toolUseIds.filter((id) => !coveredIds.has(id));
+      logger.warn(
+        `[sanitizeToolCallHistory] Dropping incomplete tool-call round — assistant turn had ${toolUseIds.length} tool_use block(s) but results were missing for: ${missingIds.join(", ")}. This turn will be excluded from the serialized history.`,
+      );
+    }
+
+    i = j - 1;
+  }
+
+  return cleaned;
+}
+
 export function toOpenAICompatibleMessages(
   messages: LLMMessage[],
   system?: string,
   options?: OpenAICompatibleMessageOptions,
 ): Array<{ role: string; content: Any; tool_call_id?: string; tool_calls?: Any[] }> {
+  const sanitizedMessages = sanitizeToolCallHistory(messages);
   const result: Array<{ role: string; content: Any; tool_call_id?: string; tool_calls?: Any[] }> =
     [];
   const supportsImages = options?.supportsImages === true;
@@ -22,7 +94,7 @@ export function toOpenAICompatibleMessages(
     result.push({ role: "system", content: system });
   }
 
-  for (const msg of messages) {
+  for (const msg of sanitizedMessages) {
     if (typeof msg.content === "string") {
       result.push({ role: msg.role, content: msg.content });
       continue;

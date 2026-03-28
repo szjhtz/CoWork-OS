@@ -1,5 +1,8 @@
 export type MailboxProvider = "gmail" | "imap";
 
+export type MailboxThreadSortOrder = "priority" | "recent";
+export type MailboxThreadMailboxView = "inbox" | "sent" | "all";
+
 export type MailboxThreadCategory =
   | "priority"
   | "calendar"
@@ -8,6 +11,8 @@ export type MailboxThreadCategory =
   | "updates"
   | "personal"
   | "other";
+
+export type MailboxClassificationState = "pending" | "backfill_pending" | "classified" | "error";
 
 export type MailboxPriorityBand = "critical" | "high" | "medium" | "low";
 
@@ -40,6 +45,7 @@ export interface MailboxAccount {
   status: "connected" | "degraded" | "disconnected";
   capabilities: string[];
   lastSyncedAt?: number;
+  classificationInitialBatchAt?: number;
 }
 
 export interface MailboxSyncStatus {
@@ -48,12 +54,28 @@ export interface MailboxSyncStatus {
   accounts: MailboxAccount[];
   lastSyncedAt?: number;
   syncInFlight: boolean;
+  syncProgress?: MailboxSyncProgress | null;
   threadCount: number;
   unreadCount: number;
   needsReplyCount: number;
   proposalCount: number;
   commitmentCount: number;
+  classificationPendingCount: number;
   statusLabel: string;
+}
+
+export interface MailboxSyncProgress {
+  phase: "fetching" | "ingesting" | "classifying" | "done" | "error";
+  accountId?: string;
+  totalThreads: number;
+  processedThreads: number;
+  totalMessages: number;
+  processedMessages: number;
+  newThreads: number;
+  classifiedThreads: number;
+  skippedThreads: number;
+  label: string;
+  updatedAt: number;
 }
 
 export interface MailboxSummaryCard {
@@ -98,6 +120,7 @@ export interface MailboxCommitment {
   state: MailboxCommitmentState;
   ownerEmail?: string;
   sourceExcerpt?: string;
+  followUpTaskId?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -114,6 +137,13 @@ export interface MailboxContactMemory {
   responseTendency?: string;
   lastInteractionAt?: number;
   openCommitments: number;
+  totalThreads?: number;
+  totalMessages?: number;
+  averageResponseHours?: number;
+  lastOutboundAt?: number;
+  recentSubjects?: string[];
+  styleSignals?: string[];
+  recentOutboundExample?: string;
 }
 
 export interface MailboxMessage {
@@ -128,6 +158,7 @@ export interface MailboxMessage {
   subject: string;
   snippet: string;
   body: string;
+  bodyHtml?: string;
   receivedAt: number;
   unread: boolean;
 }
@@ -153,6 +184,7 @@ export interface MailboxThreadListItem {
   messageCount: number;
   lastMessageAt: number;
   summary?: MailboxSummaryCard;
+  classificationState?: MailboxClassificationState;
 }
 
 export interface MailboxResearchResult {
@@ -162,6 +194,11 @@ export interface MailboxResearchResult {
   crmHints: string[];
   learnedFacts: string[];
   recommendedQueries: string[];
+  relationshipSummary?: string;
+  styleSignals?: string[];
+  recentSubjects?: string[];
+  recentOutboundExample?: string;
+  nextSteps?: string[];
 }
 
 export interface MailboxThreadDetail extends MailboxThreadListItem {
@@ -176,8 +213,13 @@ export interface MailboxThreadDetail extends MailboxThreadListItem {
 export interface MailboxListThreadsInput {
   query?: string;
   category?: MailboxThreadCategory | "all";
+  mailboxView?: MailboxThreadMailboxView;
+  unreadOnly?: boolean;
   needsReply?: boolean;
+  hasSuggestedProposal?: boolean;
+  hasOpenCommitment?: boolean;
   cleanupCandidate?: boolean;
+  sortBy?: MailboxThreadSortOrder;
   limit?: number;
 }
 
@@ -186,6 +228,19 @@ export interface MailboxSyncResult {
   syncedThreads: number;
   syncedMessages: number;
   lastSyncedAt: number;
+}
+
+export interface MailboxReclassifyResult {
+  accountId: string;
+  scannedThreads: number;
+  reclassifiedThreads: number;
+}
+
+export interface MailboxReclassifyInput {
+  accountId?: string;
+  threadId?: string;
+  scope?: "thread" | "account" | "backfill";
+  limit?: number;
 }
 
 export interface MailboxDraftOptions {
@@ -213,6 +268,7 @@ export interface MailboxApplyActionInput {
     | "mark_read"
     | "label"
     | "send_draft"
+    | "discard_draft"
     | "schedule_event"
     | "dismiss_proposal";
   label?: string;

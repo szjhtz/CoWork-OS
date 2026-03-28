@@ -64,7 +64,7 @@ export class WebFetchTools {
           "Make HTTP requests like curl. Supports all HTTP methods, custom headers, and request bodies. " +
           "Returns raw response without HTML-to-markdown conversion. " +
           "Use this for APIs, raw file downloads, or when you need full control over the HTTP request. " +
-          "For reading web pages as markdown, prefer web_fetch instead.",
+          "For reading web pages as markdown, prefer web_fetch instead. For research/discovery, prefer web_search first and then web_fetch specific source URLs instead of hand-building search engine requests.",
         input_schema: {
           type: "object",
           properties: {
@@ -260,8 +260,10 @@ export class WebFetchTools {
     });
 
     try {
+      const normalizedUrl = this.normalizeHttpRequestUrl(url);
+
       // Validate URL
-      const parsedUrl = new URL(url);
+      const parsedUrl = new URL(normalizedUrl);
       if (!["http:", "https:"].includes(parsedUrl.protocol)) {
         throw new Error("Only HTTP and HTTPS URLs are supported");
       }
@@ -272,13 +274,15 @@ export class WebFetchTools {
 
       // Default headers
       const requestHeaders: Record<string, string> = {
-        "User-Agent": "CoWork-OS/1.0 (curl-like http_request tool)",
-        Accept: "*/*",
+        "User-Agent":
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
         ...headers,
       };
 
       // Make the request
-      const response = await fetch(url, {
+      const response = await fetch(normalizedUrl, {
         method,
         headers: requestHeaders,
         body: ["POST", "PUT", "PATCH"].includes(method) ? body : undefined,
@@ -324,6 +328,7 @@ export class WebFetchTools {
         tool: "http_request",
         result: {
           url,
+          normalizedUrl: normalizedUrl !== url ? normalizedUrl : undefined,
           method,
           status: response.status,
           contentLength: responseBody.length,
@@ -359,6 +364,31 @@ export class WebFetchTools {
         error: errorMessage,
       };
     }
+  }
+
+  private normalizeHttpRequestUrl(rawUrl: string): string {
+    const url = String(rawUrl || "").trim();
+    for (const prefix of [
+      "https://r.jina.ai/http://r.jina.ai/http://",
+      "http://r.jina.ai/http://r.jina.ai/http://",
+    ]) {
+      if (url.startsWith(prefix)) {
+        const scheme = prefix.startsWith("http://") ? "http" : "https";
+        return `${scheme}://r.jina.ai/http://${url.slice(prefix.length)}`;
+      }
+    }
+
+    for (const prefix of ["https://r.jina.ai/http://", "http://r.jina.ai/http://"]) {
+      if (!url.startsWith(prefix)) continue;
+      const proxiedTarget = url.slice(prefix.length);
+      if (/^https?:\/\//i.test(proxiedTarget)) {
+        throw new Error(
+          "Malformed proxied URL: nested absolute target after r.jina.ai/http://. Use a single proxied target host/path.",
+        );
+      }
+    }
+
+    return url;
   }
 
   /**

@@ -814,7 +814,9 @@ describe("WebFetchTools", () => {
           "https://example.com",
           expect.objectContaining({
             headers: expect.objectContaining({
-              "User-Agent": expect.stringContaining("CoWork-OS"),
+              "User-Agent": expect.stringContaining("Mozilla/5.0"),
+              Accept: expect.stringContaining("text/html"),
+              "Accept-Language": "en-US,en;q=0.9",
             }),
           }),
         );
@@ -953,6 +955,36 @@ describe("WebFetchTools", () => {
 
         expect(result.success).toBe(false);
         expect(result.status).toBe(500);
+      });
+
+      it("normalizes duplicated r.jina.ai proxy prefixes", async () => {
+        mockFetch.mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          headers: new Map([["content-type", "text/plain"]]),
+          text: async () => "proxied",
+        });
+
+        const result = await webFetchTools.httpRequest({
+          url: "https://r.jina.ai/http://r.jina.ai/http://www.google.com/search?q=ai+agents",
+        });
+
+        expect(result.success).toBe(true);
+        expect(mockFetch).toHaveBeenCalledWith(
+          "https://r.jina.ai/http://www.google.com/search?q=ai+agents",
+          expect.anything(),
+        );
+      });
+
+      it("rejects malformed nested proxied absolute URLs", async () => {
+        const result = await webFetchTools.httpRequest({
+          url: "https://r.jina.ai/http://https://example.com/article",
+        });
+
+        expect(result.success).toBe(false);
+        expect(result.error).toContain("Malformed proxied URL");
+        expect(mockFetch).not.toHaveBeenCalled();
       });
     });
 
@@ -1105,6 +1137,28 @@ describe("WebFetchTools", () => {
           tool: "http_request",
           error: "Connection failed",
         });
+      });
+
+      it("uses browser-like default headers for public web requests", async () => {
+        mockFetch.mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          headers: new Map([["content-type", "text/plain"]]),
+          text: async () => "ok",
+        });
+
+        await webFetchTools.httpRequest({ url: "https://example.com" });
+
+        expect(mockFetch).toHaveBeenCalledWith(
+          "https://example.com",
+          expect.objectContaining({
+            headers: expect.objectContaining({
+              "Accept-Language": "en-US,en;q=0.9",
+              Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            }),
+          }),
+        );
       });
     });
   });

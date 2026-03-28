@@ -910,6 +910,7 @@ export class DatabaseManager {
         status TEXT NOT NULL DEFAULT 'connected',
         capabilities_json TEXT,
         sync_cursor TEXT,
+        classification_initial_batch_at INTEGER,
         last_synced_at INTEGER,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
@@ -935,6 +936,14 @@ export class DatabaseManager {
         message_count INTEGER NOT NULL DEFAULT 0,
         last_message_at INTEGER NOT NULL,
         last_synced_at INTEGER,
+        classification_state TEXT NOT NULL DEFAULT 'pending',
+        classification_fingerprint TEXT,
+        classification_model_key TEXT,
+        classification_prompt_version TEXT,
+        classification_confidence REAL NOT NULL DEFAULT 0,
+        classification_updated_at INTEGER,
+        classification_error TEXT,
+        classification_json TEXT,
         metadata_json TEXT,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
@@ -2708,6 +2717,51 @@ export class DatabaseManager {
         updated_at INTEGER DEFAULT (strftime('%s', 'now') * 1000)
       );
     `);
+
+    // Migration: Add body_html column to mailbox_messages for rendering original HTML email content
+    try {
+      this.db.exec("ALTER TABLE mailbox_messages ADD COLUMN body_html TEXT");
+    } catch {
+      // Column already exists, ignore
+    }
+
+    // Mailbox classifier state/provenance
+    try {
+      this.db.exec("ALTER TABLE mailbox_accounts ADD COLUMN classification_initial_batch_at INTEGER");
+    } catch {
+      // Column already exists, ignore
+    }
+    const mailboxThreadMigrations = [
+      "ALTER TABLE mailbox_threads ADD COLUMN classification_state TEXT NOT NULL DEFAULT 'pending'",
+      "ALTER TABLE mailbox_threads ADD COLUMN classification_fingerprint TEXT",
+      "ALTER TABLE mailbox_threads ADD COLUMN classification_model_key TEXT",
+      "ALTER TABLE mailbox_threads ADD COLUMN classification_prompt_version TEXT",
+      "ALTER TABLE mailbox_threads ADD COLUMN classification_confidence REAL NOT NULL DEFAULT 0",
+      "ALTER TABLE mailbox_threads ADD COLUMN classification_updated_at INTEGER",
+      "ALTER TABLE mailbox_threads ADD COLUMN classification_error TEXT",
+      "ALTER TABLE mailbox_threads ADD COLUMN classification_json TEXT",
+    ];
+    for (const migration of mailboxThreadMigrations) {
+      try {
+        this.db.exec(migration);
+      } catch {
+        // Column already exists, ignore
+      }
+    }
+    try {
+      this.db.exec(
+        "UPDATE mailbox_threads SET classification_state = 'backfill_pending' WHERE classification_state = 'pending' AND classification_updated_at IS NULL",
+      );
+    } catch {
+      // Ignore migration update failures
+    }
+
+    // Migration: Add metadata_json to mailbox_commitments for follow-up task tracking
+    try {
+      this.db.exec("ALTER TABLE mailbox_commitments ADD COLUMN metadata_json TEXT");
+    } catch {
+      // Column already exists, ignore
+    }
 
     // Seed built-in entity types for all workspaces that don't have them yet
     this.seedKnowledgeGraphTypes();

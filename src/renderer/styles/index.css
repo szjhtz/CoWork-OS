@@ -5912,6 +5912,8 @@ a,
 .event-details.event-details-file-preview {
   font-family: var(--font-ui);
   padding: 10px;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .inline-image-preview {
@@ -6308,7 +6310,10 @@ a,
   border: 1px solid var(--color-border);
   border-radius: 8px;
   overflow: hidden;
+  width: 100%;
   max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   background: var(--color-bg-secondary);
 }
 
@@ -6453,8 +6458,11 @@ a,
 
 .inline-document-markdown {
   padding: 12px;
+  width: 100%;
   max-height: 320px;
   overflow: auto;
+  min-width: 0;
+  box-sizing: border-box;
   background: var(--color-bg-primary);
 }
 
@@ -6472,6 +6480,10 @@ a,
   color: var(--color-text-muted);
   text-align: center;
   border-top: 1px solid var(--color-border);
+}
+
+.markdown-content {
+  min-width: 0;
 }
 
 /* Markdown content styling */
@@ -6907,6 +6919,7 @@ a,
 .markdown-table-wrapper {
   width: 100%;
   max-width: 100%;
+  min-width: 0;
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
 }
@@ -6921,6 +6934,10 @@ a,
   border-collapse: collapse;
   margin: 12px 0;
   font-size: 13px;
+}
+
+.markdown-content .markdown-table-wrapper > table {
+  width: max-content;
 }
 
 .markdown-content thead {
@@ -18882,6 +18899,52 @@ button {
   color: var(--color-error, #ef4444);
   border-color: rgba(239, 68, 68, 0.35);
   background: rgba(239, 68, 68, 0.08);
+}
+
+.settings-setup-steps {
+  margin: 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.settings-setup-steps li {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+}
+
+.settings-setup-steps--nested {
+  margin-top: 6px;
+  padding-left: 16px;
+  list-style-type: lower-alpha;
+}
+
+.settings-setup-steps li strong {
+  color: var(--color-text);
+}
+
+.settings-setup-steps li code {
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  background: var(--color-bg-tertiary);
+  border-radius: 3px;
+  padding: 1px 4px;
+}
+
+.btn-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--color-accent);
+  font-size: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.btn-link:hover {
+  opacity: 0.8;
 }
 
 .settings-toggle {

@@ -3921,6 +3921,7 @@ export function MainContent({
   const voiceInput = useVoiceInput({
     onTranscript: (text) => {
       // Append transcribed text to input
+      pendingProgrammaticResizeRef.current = true;
       setInputValue((prev) => (prev ? `${prev} ${text}` : text));
     },
     onError: (error) => {
@@ -5339,6 +5340,7 @@ export function MainContent({
       setSelectedSkillForParams(skill);
     } else {
       // No parameters, just set the prompt directly
+      pendingProgrammaticResizeRef.current = true;
       setInputValue(skill.prompt);
     }
   };
@@ -5538,15 +5540,22 @@ export function MainContent({
   const placeholderMeasureRef = useRef<HTMLSpanElement>(null);
   const [cursorLeft, setCursorLeft] = useState<number>(0);
 
-  // Auto-resize textarea as content changes (uses requestAnimationFrame to batch with browser paint)
+  // Auto-resize textarea; prefer direct event-path resizing to avoid an extra
+  // effect/layout cycle on every keypress in long sessions.
   const resizeRafRef = useRef<number>(0);
-  const autoResizeTextarea = useCallback(() => {
+  const pendingProgrammaticResizeRef = useRef(false);
+  const autoResizeTextarea = useCallback((textarea?: HTMLTextAreaElement | null, shrink = false) => {
     if (resizeRafRef.current) cancelAnimationFrame(resizeRafRef.current);
     resizeRafRef.current = requestAnimationFrame(() => {
-      const textarea = textareaRef.current;
-      if (textarea) {
-        textarea.style.height = "auto";
-        textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
+      const target = textarea ?? textareaRef.current;
+      if (!target) return;
+      if (shrink) {
+        target.style.height = "auto";
+      }
+      const nextHeight = Math.min(target.scrollHeight, 200);
+      const nextHeightPx = `${nextHeight}px`;
+      if (target.style.height !== nextHeightPx) {
+        target.style.height = nextHeightPx;
       }
     });
   }, []);
@@ -5558,9 +5567,11 @@ export function MainContent({
     };
   }, []);
 
-  // Auto-resize when input value changes
+  // Programmatic input updates still need a resize pass.
   useEffect(() => {
-    autoResizeTextarea();
+    if (!pendingProgrammaticResizeRef.current) return;
+    pendingProgrammaticResizeRef.current = false;
+    autoResizeTextarea(undefined, true);
   }, [inputValue, autoResizeTextarea]);
 
   // Active placeholder: rotating prompt when available, personality fallback otherwise
@@ -5957,6 +5968,7 @@ export function MainContent({
         onSendMessage(message, imagePayload);
       }
 
+      pendingProgrammaticResizeRef.current = true;
       setInputValue("");
       setPendingAttachments([]);
       setMentionOpen(false);
@@ -6190,10 +6202,12 @@ export function MainContent({
 
     if (option.hasParams) {
       // Show parameter modal
+      pendingProgrammaticResizeRef.current = true;
       setInputValue("");
       setSelectedSkillForParams(option.skill);
     } else {
       // No parameters — create task directly with skill prompt
+      pendingProgrammaticResizeRef.current = true;
       setInputValue("");
       if (onCreateTask) {
         const title = buildTaskTitle(option.skill.prompt);
@@ -6205,6 +6219,7 @@ export function MainContent({
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const value = e.target.value;
     const cursor = e.target.selectionStart;
+    autoResizeTextarea(e.target, value.length < inputValue.length);
     setInputValue(value);
     // Defer mention/slash autocomplete updates so typing stays responsive
     startTransition(() => {
@@ -6249,6 +6264,7 @@ export function MainContent({
     const after = inputValue.slice(mentionTarget.end);
     const needsSpace = after.length === 0 ? true : !after.startsWith(" ");
     const nextValue = `${before}${insertText}${needsSpace ? " " : ""}${after}`;
+    pendingProgrammaticResizeRef.current = true;
     setInputValue(nextValue);
     setMentionOpen(false);
     setMentionQuery("");
@@ -6425,6 +6441,7 @@ export function MainContent({
   };
 
   const handleQuickAction = (action: string) => {
+    pendingProgrammaticResizeRef.current = true;
     setInputValue(action);
   };
 
@@ -6453,16 +6470,45 @@ export function MainContent({
     return assistantMessages.length > 0 ? assistantMessages[assistantMessages.length - 1] : null;
   }, [events]);
 
-  const displayPrompt =
-    typeof task?.userPrompt === "string" && task.userPrompt.trim().length > 0
-      ? task.userPrompt
-      : typeof task?.prompt === "string"
-        ? task.prompt
-        : "";
-  const cleanedDisplayPrompt = displayPrompt
-    ? stripStrategyContextBlock(stripPptxBubbleContent(displayPrompt))
-    : "";
-  const trimmedPrompt = cleanedDisplayPrompt.trim();
+  const {
+    cleanedDisplayPrompt,
+    trimmedPrompt,
+    promptAttachmentNames,
+    headerTitle,
+    headerTooltip,
+  } = useMemo(() => {
+    const displayPromptValue =
+      typeof task?.userPrompt === "string" && task.userPrompt.trim().length > 0
+        ? task.userPrompt
+        : typeof task?.prompt === "string"
+          ? task.prompt
+          : "";
+    const cleanedDisplayPromptValue = displayPromptValue
+      ? stripStrategyContextBlock(stripPptxBubbleContent(displayPromptValue))
+      : "";
+    const trimmedPromptValue = cleanedDisplayPromptValue.trim();
+    const promptAttachmentNamesValue = displayPromptValue
+      ? extractAttachmentNames(displayPromptValue)
+      : [];
+    const baseTitleValue = task?.title || buildTaskTitle(trimmedPromptValue);
+    const normalizedTitle = baseTitleValue.replace(TITLE_ELLIPSIS_REGEX, "");
+    const titleMatchesPrompt =
+      normalizedTitle.length > 0 && trimmedPromptValue.startsWith(normalizedTitle);
+    const isTitleTruncated =
+      titleMatchesPrompt && trimmedPromptValue.length > normalizedTitle.length;
+    const headerTitleValue =
+      isTitleTruncated && !TITLE_ELLIPSIS_REGEX.test(baseTitleValue)
+        ? `${baseTitleValue}...`
+        : baseTitleValue;
+
+    return {
+      cleanedDisplayPrompt: cleanedDisplayPromptValue,
+      trimmedPrompt: trimmedPromptValue,
+      promptAttachmentNames: promptAttachmentNamesValue,
+      headerTitle: headerTitleValue,
+      headerTooltip: trimmedPromptValue || baseTitleValue,
+    };
+  }, [task?.prompt, task?.title, task?.userPrompt]);
   const initialPromptEventId = useMemo(() => {
     if (!trimmedPrompt) return null;
     for (const event of events) {
@@ -6476,24 +6522,68 @@ export function MainContent({
     return null;
   }, [events, trimmedPrompt]);
 
-  const baseTitle = task?.title || buildTaskTitle(trimmedPrompt);
-  const normalizedTitle = baseTitle.replace(TITLE_ELLIPSIS_REGEX, "");
-  const titleMatchesPrompt =
-    normalizedTitle.length > 0 && trimmedPrompt.startsWith(normalizedTitle);
-  const isTitleTruncated = titleMatchesPrompt && trimmedPrompt.length > normalizedTitle.length;
-  const headerTitle =
-    isTitleTruncated && !TITLE_ELLIPSIS_REGEX.test(baseTitle) ? `${baseTitle}...` : baseTitle;
-  const headerTooltip = trimmedPrompt || baseTitle;
-  const latestPauseEvent = [...events]
-    .reverse()
-    .find((event) => getEffectiveTaskEventType(event) === "task_paused");
-  const latestApprovalEvent = [...events]
-    .reverse()
-    .find(
-      (event) =>
+  const latestPauseEvent = useMemo(() => {
+    for (let i = events.length - 1; i >= 0; i -= 1) {
+      if (getEffectiveTaskEventType(events[i]) === "task_paused") {
+        return events[i];
+      }
+    }
+    return undefined;
+  }, [events]);
+  const latestApprovalEvent = useMemo(() => {
+    for (let i = events.length - 1; i >= 0; i -= 1) {
+      const event = events[i];
+      if (
         getEffectiveTaskEventType(event) === "approval_requested" &&
-        event.payload?.autoApproved !== true,
+        event.payload?.autoApproved !== true
+      ) {
+        return event;
+      }
+    }
+    return undefined;
+  }, [events]);
+  const hasNonConversationEvents = useMemo(() => {
+    if (isChatTask) return false;
+    return events.some((event) => {
+      const effectiveType = getEffectiveTaskEventType(event);
+      return effectiveType !== "user_message" && effectiveType !== "assistant_message";
+    });
+  }, [events, isChatTask]);
+  const initialPromptBubble = useMemo(() => {
+    if (!trimmedPrompt) return null;
+    return (
+      <div className="chat-message user-message">
+        <CollapsibleUserBubble>
+          <ReactMarkdown remarkPlugins={userMarkdownPlugins} components={markdownComponents}>
+            {cleanedDisplayPrompt}
+          </ReactMarkdown>
+          {promptAttachmentNames.length > 0 && (
+            <div className="bubble-attachments">
+              {promptAttachmentNames.map((name, i) => (
+                <span className="bubble-attachment-chip" key={i}>
+                  <svg
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                  >
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                    <path d="M14 2v6h6" />
+                  </svg>
+                  <span className="bubble-attachment-name" title={name}>
+                    {name}
+                  </span>
+                </span>
+              ))}
+            </div>
+          )}
+        </CollapsibleUserBubble>
+        <MessageCopyButton text={cleanedDisplayPrompt} />
+      </div>
     );
+  }, [cleanedDisplayPrompt, markdownComponents, promptAttachmentNames, trimmedPrompt]);
   const hasActiveStructuredInputRequest = Boolean(
     task &&
       inputRequest &&
@@ -7901,45 +7991,10 @@ export function MainContent({
       <div className="main-body" ref={mainBodyRef} onScroll={handleScroll}>
         <div className="task-content">
           {/* Always anchor the initial user prompt above the timeline. */}
-          {trimmedPrompt && (
-            <div className="chat-message user-message">
-              <CollapsibleUserBubble>
-                <ReactMarkdown remarkPlugins={userMarkdownPlugins} components={markdownComponents}>
-                  {cleanedDisplayPrompt}
-                </ReactMarkdown>
-                {extractAttachmentNames(displayPrompt).length > 0 && (
-                  <div className="bubble-attachments">
-                    {extractAttachmentNames(displayPrompt).map((name, i) => (
-                      <span className="bubble-attachment-chip" key={i}>
-                        <svg
-                          width="12"
-                          height="12"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                        >
-                          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                          <path d="M14 2v6h6" />
-                        </svg>
-                        <span className="bubble-attachment-name" title={name}>
-                          {name}
-                        </span>
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </CollapsibleUserBubble>
-              <MessageCopyButton text={cleanedDisplayPrompt} />
-            </div>
-          )}
+          {initialPromptBubble}
 
           {/* View steps toggle - show right after original prompt */}
-          {!isChatTask &&
-            events.some((event) => {
-              const effectiveType = getEffectiveTaskEventType(event);
-              return effectiveType !== "user_message" && effectiveType !== "assistant_message";
-            }) && (
+          {hasNonConversationEvents && (
             <div className="timeline-controls">
               <button
                 className={`view-steps-btn ${showSteps ? "expanded" : ""}`}

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { XMentionBridgeService } from "../bridge-service";
+import { getXMentionTriggerStatusStore } from "../status";
 
 const createTaskFromAgentActionMock = vi.fn();
 const loadSettingsMock = vi.fn();
@@ -26,6 +27,7 @@ vi.mock("../../utils/x-cli", () => ({
 describe("XMentionBridgeService", () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    getXMentionTriggerStatusStore().reset();
     loadSettingsMock.mockReturnValue({
       enabled: true,
       authMethod: "browser",
@@ -55,6 +57,7 @@ describe("XMentionBridgeService", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.clearAllMocks();
+    getXMentionTriggerStatusStore().reset();
   });
 
   it("skips polling when native channel is enabled", async () => {
@@ -130,6 +133,27 @@ describe("XMentionBridgeService", () => {
     await vi.advanceTimersByTimeAsync(0);
 
     expect(createTaskFromAgentActionMock).not.toHaveBeenCalled();
+
+    service.stop();
+  });
+
+  it("marks the bridge as not running while backing off after auth failures", async () => {
+    runBirdCommandMock.mockRejectedValueOnce(
+      new Error("Command failed: bird --cookie-source chrome: Missing auth_token"),
+    );
+
+    const service = new XMentionBridgeService({} as Any, {
+      isNativeXChannelEnabled: () => false,
+    });
+
+    service.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(getXMentionTriggerStatusStore().snapshot()).toMatchObject({
+      mode: "bridge",
+      running: false,
+      lastError: expect.stringContaining("Missing auth_token"),
+    });
 
     service.stop();
   });

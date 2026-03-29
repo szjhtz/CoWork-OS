@@ -47,7 +47,7 @@ features:
     details: Task Queue, Self-Improve, Scheduled Tasks, Webhooks, Event Triggers, and Daily Briefing now live under one Automations operating surface.
   - title: Heartbeat V3
     details: Default two-lane background automation with cheap Pulse checks, selective Dispatch escalation, signal compression, and truthful Mission Control state.
-  - title: 139 Built-in Skills
+  - title: 137 Built-in Skills
     details: Document creation, web research, code generation, image analysis, and more. Extensible via custom skills and plugins.
   - title: Agent Teams
     details: Multi-agent collaboration with shared checklists, collaborative mode, multi-LLM synthesis, and performance reviews.

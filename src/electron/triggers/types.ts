@@ -8,6 +8,7 @@
 export type TriggerSource =
   | "channel_message"
   | "email"
+  | "mailbox_event"
   | "webhook"
   | "connector_event"
   | "file_change"
@@ -87,6 +88,7 @@ export interface TriggerHistoryEntry {
   eventData: Record<string, unknown>;
   actionResult?: string;
   taskId?: string;
+  sourceLabel?: string;
 }
 
 export interface EventTriggerServiceDeps {
@@ -103,4 +105,9 @@ export interface EventTriggerServiceDeps {
   wakeAgent?: (agentRoleId: string, prompt: string) => void;
   getDefaultWorkspaceId: () => string;
   log?: (...args: unknown[]) => void;
+  onTriggerFired?: (payload: {
+    trigger: EventTrigger;
+    event: TriggerEvent;
+    historyEntry: TriggerHistoryEntry;
+  }) => void;
 }

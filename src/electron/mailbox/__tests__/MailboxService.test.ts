@@ -25,6 +25,8 @@ describeWithSqlite("MailboxService", () => {
   let manager: import("../../database/schema").DatabaseManager;
   let service: import("../MailboxService").MailboxService;
   let db: ReturnType<import("../../database/schema").DatabaseManager["getDatabase"]>;
+  let core: import("../../control-plane/ControlPlaneCoreService").ControlPlaneCoreService;
+  let agentRoleRepo: import("../../agents/AgentRoleRepository").AgentRoleRepository;
 
   const now = Date.now();
 
@@ -33,14 +35,18 @@ describeWithSqlite("MailboxService", () => {
     previousUserDataDir = process.env.COWORK_USER_DATA_DIR;
     process.env.COWORK_USER_DATA_DIR = tmpDir;
 
-    const [{ DatabaseManager }, { MailboxService }] = await Promise.all([
+    const [{ DatabaseManager }, { MailboxService }, { ControlPlaneCoreService }, { AgentRoleRepository }] = await Promise.all([
       import("../../database/schema"),
       import("../MailboxService"),
+      import("../../control-plane/ControlPlaneCoreService"),
+      import("../../agents/AgentRoleRepository"),
     ]);
 
     manager = new DatabaseManager();
     db = manager.getDatabase();
     service = new MailboxService(db);
+    core = new ControlPlaneCoreService(db);
+    agentRoleRepo = new AgentRoleRepository(db);
 
     db.prepare(
       `INSERT INTO mailbox_accounts
@@ -654,5 +660,429 @@ describeWithSqlite("MailboxService", () => {
     } finally {
       loadSettingsSpy.mockRestore();
     }
+  });
+
+  it("does not auto-reclassify already classified threads during sync", async () => {
+    const factoryModule = await import("../agent/llm/provider-factory");
+    const loadSettingsSpy = vi.spyOn(factoryModule.LLMProviderFactory, "loadSettings").mockReturnValue({
+      providerType: "openai",
+      modelKey: "gpt-4o-mini",
+      openai: {
+        model: "gpt-4o-mini",
+        automatedTaskModelKey: "gpt-4o-mini",
+        cheapModelKey: "gpt-4o-mini",
+      },
+    } as never);
+    vi.spyOn(factoryModule.LLMProviderFactory, "getProviderRoutingSettings").mockReturnValue({
+      profileRoutingEnabled: true,
+      preferStrongForVerification: false,
+      strongModelKey: "gpt-4o",
+      cheapModelKey: "gpt-4o-mini",
+      automatedTaskModelKey: "gpt-4o-mini",
+    });
+    vi.spyOn(factoryModule.LLMProviderFactory, "resolveTaskModelSelection").mockReturnValue({
+      providerType: "openai",
+      modelId: "gpt-4o-mini",
+      modelKey: "gpt-4o-mini",
+      llmProfileUsed: "cheap",
+      resolvedModelKey: "gpt-4o-mini",
+      modelSource: "profile_model",
+      warnings: [],
+    });
+    vi.spyOn(factoryModule.LLMProviderFactory, "createProvider").mockReturnValue({
+      type: "openai",
+      createMessage: async () => ({
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              category: "updates",
+              needsReply: false,
+              priorityScore: 12,
+              urgencyScore: 4,
+              staleFollowup: false,
+              cleanupCandidate: false,
+              handled: true,
+              confidence: 0.94,
+              rationale: "Transactional notice with no reply requested.",
+              labels: ["transactional", "account"],
+            }),
+          },
+        ],
+        stopReason: "end_turn",
+        usage: { inputTokens: 100, outputTokens: 30 },
+      }),
+    } as never);
+
+    try {
+      await service.reclassifyThread("gmail-thread:alpha");
+
+      const changedThread = (service as any).normalizeGmailThread(
+        "gmail:test@example.com",
+        "test@example.com",
+        {
+          id: "gmail-thread:alpha",
+          messages: [
+            {
+              id: "gmail-thread:alpha-message",
+              internalDate: String(now - 90 * 60 * 1000),
+              snippet: "Updated plan and timing",
+              labelIds: [],
+              payload: {
+                mimeType: "text/plain",
+                headers: [
+                  { name: "Subject", value: "Q2 launch review" },
+                  { name: "From", value: "Alex <alex@acme.com>" },
+                  { name: "To", value: "Test User <test@example.com>" },
+                ],
+                body: {
+                  data: Buffer.from(
+                    "Can you send the revised launch plan by tomorrow? Please also propose two meeting times for the review, and note the updated timeline.",
+                  )
+                    .toString("base64")
+                    .replace(/\+/g, "-")
+                    .replace(/\//g, "_")
+                    .replace(/=+$/, ""),
+                },
+              },
+            },
+          ],
+        },
+      );
+
+      const classifiedUpsert = (service as any).upsertThread(changedThread);
+      expect(classifiedUpsert.shouldClassify).toBe(false);
+
+      const newThread = (service as any).normalizeGmailThread(
+        "gmail:test@example.com",
+        "test@example.com",
+        {
+          id: "gmail-thread:beta",
+          messages: [
+            {
+              id: "gmail-thread:beta-message",
+              internalDate: String(now),
+              snippet: "Need approval on the draft",
+              labelIds: [],
+              payload: {
+                mimeType: "text/plain",
+                headers: [
+                  { name: "Subject", value: "Draft approval" },
+                  { name: "From", value: "Jordan <jordan@acme.com>" },
+                  { name: "To", value: "Test User <test@example.com>" },
+                ],
+                body: {
+                  data: Buffer.from("Can you review and approve the draft?").toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""),
+                },
+              },
+            },
+          ],
+        },
+      );
+
+      const newThreadUpsert = (service as any).upsertThread(newThread);
+      expect(newThreadUpsert.shouldClassify).toBe(true);
+
+      const row = db
+        .prepare(
+          `SELECT classification_state, classification_model_key, classification_prompt_version, category, needs_reply
+           FROM mailbox_threads
+           WHERE id = ?`,
+        )
+        .get("gmail-thread:alpha") as {
+        classification_state: string;
+        classification_model_key: string | null;
+        classification_prompt_version: string | null;
+        category: string;
+        needs_reply: number;
+      };
+
+      expect(row.classification_state).toBe("classified");
+      expect(row.classification_model_key).toBe("gpt-4o-mini");
+      expect(row.classification_prompt_version).toBe("v1");
+      expect(row.category).toBe("updates");
+      expect(row.needs_reply).toBe(0);
+    } finally {
+      loadSettingsSpy.mockRestore();
+    }
+  });
+
+  it("creates a Mission Control issue from a mailbox thread and deduplicates active handoffs", async () => {
+    const company = core.getDefaultCompany();
+    const operator =
+      agentRoleRepo.findByCompanyId(company.id, false).find((role) =>
+        /customer ops|founder office|growth|planner/i.test(role.displayName),
+      ) || agentRoleRepo.findByCompanyId(company.id, false)[0];
+
+    expect(operator).toBeTruthy();
+
+    const preview = await service.previewMissionControlHandoff("gmail-thread:alpha");
+    expect(preview?.threadId).toBe("gmail-thread:alpha");
+    expect(preview?.companyCandidates.length).toBeGreaterThan(0);
+    expect(preview?.operatorRecommendations.length).toBeGreaterThan(0);
+
+    const first = await service.createMissionControlHandoff({
+      threadId: "gmail-thread:alpha",
+      companyId: company.id,
+      operatorRoleId: operator!.id,
+      issueTitle: preview?.issueTitle || "Inbox handoff",
+      issueSummary: preview?.issueSummary,
+    });
+
+    expect(first.issueId).toBeTruthy();
+    expect(first.companyId).toBe(company.id);
+    expect(first.operatorRoleId).toBe(operator!.id);
+    expect(first.issueStatus).toBe("open");
+
+    const createdIssue = core.getIssue(first.issueId);
+    expect(createdIssue?.metadata?.source).toBe("mailbox_handoff");
+    expect(createdIssue?.assigneeAgentRoleId).toBe(operator!.id);
+    expect(createdIssue?.metadata?.plannerManaged).toBe(false);
+    expect(createdIssue?.metadata?.outputContract).toBeTruthy();
+
+    const second = await service.createMissionControlHandoff({
+      threadId: "gmail-thread:alpha",
+      companyId: company.id,
+      operatorRoleId: operator!.id,
+      issueTitle: preview?.issueTitle || "Inbox handoff",
+      issueSummary: preview?.issueSummary,
+    });
+
+    expect(second.id).toBe(first.id);
+
+    const handoffs = service.listMissionControlHandoffs("gmail-thread:alpha");
+    expect(handoffs).toHaveLength(1);
+  });
+
+  it("keeps Slack name-only matches as suggestions and merges WhatsApp exact phone matches into the timeline", async () => {
+    db.prepare(
+      `INSERT INTO mailbox_contacts
+        (id, account_id, email, name, company, role, crm_links_json, learned_facts_json, response_tendency, last_interaction_at, open_commitments, updated_at, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      randomUUID(),
+      "gmail:test@example.com",
+      "alex@acme.com",
+      "Alex",
+      "Acme",
+      "Ops",
+      JSON.stringify([]),
+      JSON.stringify(["Phone: +351 912 345 678"]),
+      "Usually replies within 3.5 hours",
+      now,
+      0,
+      now,
+      now,
+    );
+
+    const slackChannelId = randomUUID();
+    const whatsappChannelId = randomUUID();
+    const slackUserDbId = randomUUID();
+    const whatsappUserDbId = randomUUID();
+
+    db.prepare(
+      `INSERT INTO channels
+        (id, type, name, enabled, config, security_config, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      slackChannelId,
+      "slack",
+      "Slack",
+      1,
+      JSON.stringify({}),
+      JSON.stringify({ mode: "pairing" }),
+      "connected",
+      now,
+      now,
+    );
+    db.prepare(
+      `INSERT INTO channels
+        (id, type, name, enabled, config, security_config, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      whatsappChannelId,
+      "whatsapp",
+      "WhatsApp",
+      1,
+      JSON.stringify({}),
+      JSON.stringify({ mode: "pairing" }),
+      "connected",
+      now,
+      now,
+    );
+
+    db.prepare(
+      `INSERT INTO channel_users
+        (id, channel_id, channel_user_id, display_name, username, allowed, pairing_attempts, created_at, last_seen_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(slackUserDbId, slackChannelId, "U123", "Alex", "alex", 1, 0, now, now);
+    db.prepare(
+      `INSERT INTO channel_users
+        (id, channel_id, channel_user_id, display_name, username, allowed, pairing_attempts, created_at, last_seen_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      whatsappUserDbId,
+      whatsappChannelId,
+      "351912345678",
+      "Alex",
+      null,
+      1,
+      0,
+      now,
+      now,
+    );
+
+    db.prepare(
+      `INSERT INTO channel_messages
+        (id, channel_id, session_id, channel_message_id, chat_id, user_id, direction, content, attachments, timestamp)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      randomUUID(),
+      slackChannelId,
+      null,
+      "slack-1",
+      "D123",
+      slackUserDbId,
+      "incoming",
+      "Can you share the revised launch plan in Slack too?",
+      null,
+      now - 55 * 60 * 1000,
+    );
+    db.prepare(
+      `INSERT INTO channel_messages
+        (id, channel_id, session_id, channel_message_id, chat_id, user_id, direction, content, attachments, timestamp)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      randomUUID(),
+      slackChannelId,
+      null,
+      "slack-2",
+      "D123",
+      null,
+      "outgoing",
+      "I will send it shortly.",
+      null,
+      now - 45 * 60 * 1000,
+    );
+    db.prepare(
+      `INSERT INTO channel_messages
+        (id, channel_id, session_id, channel_message_id, chat_id, user_id, direction, content, attachments, timestamp)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      randomUUID(),
+      whatsappChannelId,
+      null,
+      "wa-1",
+      "351912345678",
+      whatsappUserDbId,
+      "incoming",
+      "Ping me here if you need anything before the review.",
+      null,
+      now - 30 * 60 * 1000,
+    );
+    db.prepare(
+      `INSERT INTO channel_messages
+        (id, channel_id, session_id, channel_message_id, chat_id, user_id, direction, content, attachments, timestamp)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      randomUUID(),
+      whatsappChannelId,
+      null,
+      "wa-2",
+      "351912345678",
+      null,
+      "outgoing",
+      "Will do. I will send the final version tonight.",
+      null,
+      now - 20 * 60 * 1000,
+    );
+
+    const resolution = await service.resolveContactIdentity("gmail-thread:alpha");
+    expect(resolution?.identity?.id).toBeTruthy();
+    expect(
+      resolution?.candidates.some(
+        (candidate) => candidate.channelType === "slack" && candidate.status === "suggested",
+      ),
+    ).toBe(true);
+
+    const research = await service.researchContact("gmail-thread:alpha");
+    expect(research?.linkedChannels?.some((channel) => channel.channelType === "whatsapp")).toBe(true);
+    expect(research?.linkedChannels?.some((channel) => channel.channelType === "slack")).toBe(false);
+    expect(research?.unifiedTimeline?.some((event) => event.source === "whatsapp")).toBe(true);
+
+    const slackCandidate = resolution?.candidates.find((candidate) => candidate.channelType === "slack");
+    expect(slackCandidate).toBeTruthy();
+    await service.confirmIdentityLink(slackCandidate!.id);
+
+    const timeline = await service.getRelationshipTimeline({
+      contactIdentityId: resolution?.identity?.id,
+      limit: 20,
+    });
+    expect(timeline.some((event) => event.source === "slack")).toBe(true);
+
+    const identity = service.getContactIdentity(resolution?.identity?.id || "");
+    const slackHandle = identity?.handles.find((handle) => handle.channelType === "slack");
+    expect(slackHandle).toBeTruthy();
+    expect(service.unlinkIdentityHandle(slackHandle!.id)).toBe(true);
+
+    const signalChannelId = randomUUID();
+    const signalUserDbId = randomUUID();
+    db.prepare(
+      `INSERT INTO channels
+        (id, type, name, enabled, config, security_config, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      signalChannelId,
+      "signal",
+      "Signal",
+      1,
+      JSON.stringify({}),
+      JSON.stringify({ mode: "pairing" }),
+      "connected",
+      now,
+      now,
+    );
+    db.prepare(
+      `INSERT INTO channel_users
+        (id, channel_id, channel_user_id, display_name, username, allowed, pairing_attempts, created_at, last_seen_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(signalUserDbId, signalChannelId, "signal:+351912345678", "Alex", null, 1, 0, now, now);
+    db.prepare(
+      `INSERT INTO channel_sessions
+        (id, channel_id, chat_id, user_id, workspace_id, state, context, created_at, last_activity_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      randomUUID(),
+      signalChannelId,
+      "signal-chat-1",
+      signalUserDbId,
+      identity?.workspaceId || null,
+      "idle",
+      null,
+      now,
+      now,
+    );
+    const linkedSignalHandle = service.linkIdentityHandle({
+      workspaceId: identity?.workspaceId || "workspace-a",
+      contactIdentityId: resolution?.identity?.id || "",
+      handleType: "signal_e164",
+      normalizedValue: "+351912345678",
+      displayValue: "Alex Signal",
+      source: "manual",
+      channelId: signalChannelId,
+      channelType: "signal",
+      channelUserId: "signal:+351912345678",
+    });
+    expect(linkedSignalHandle).toBeTruthy();
+
+    const replyTargets = service.getReplyTargets(resolution?.identity?.id || "");
+    expect(replyTargets.some((target) => target.channelType === "signal")).toBe(true);
+    expect(replyTargets.find((target) => target.channelType === "signal")?.chatId).toBe("signal-chat-1");
+
+    const afterUnlink = await service.getRelationshipTimeline({
+      contactIdentityId: resolution?.identity?.id,
+      limit: 20,
+    });
+    expect(afterUnlink.some((event) => event.source === "slack")).toBe(false);
   });
 });

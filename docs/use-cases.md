@@ -17,6 +17,9 @@ Use cases:
 - Inbox autopilot / Inbox Agent (triage, drafts, cleanup suggestions, commitment tracking)
 - Inbox sent-mail review and follow-up capture
 - Contact intelligence enrichment from email threads
+- Cross-channel reply from Inbox Agent (Slack, Teams, WhatsApp, Signal, iMessage)
+- Manual identity search and link review
+- Mission Control handoff for inbox threads
 - Inbox-aware briefing and Heartbeat follow-up
 - Chief-of-staff briefing (morning executive brief)
 - Dev task queue management (agent-ready backlog execution)
@@ -204,6 +207,36 @@ Prompt:
 Open Inbox Agent and identify low-value threads that are safe to bulk archive or trash.
 Group them by sender or type, explain why each group is a cleanup candidate, and recommend the safest bulk action.
 STOP before applying changes. Ask me which groups to execute.
+```
+
+### 7F) Cross-Channel Reply From Inbox
+
+Prompt:
+```
+Open Inbox Agent and select the current thread.
+If the contact is active on Slack, Teams, WhatsApp, Signal, or iMessage, show the best reply target first and draft a reply for that channel.
+Use the linked channel only if it is the most recent active channel for the contact.
+STOP before sending and ask me to confirm the channel and message.
+```
+
+### 7G) Mission Control Handoff
+
+Prompt:
+```
+Open Inbox Agent and hand this thread off to Mission Control.
+Build a preview with the recommended company, operator, issue title, and issue summary.
+Require explicit confirmation before creating the issue.
+After creation, show the linked handoff record and the issue id.
+```
+
+### 7H) Manual Identity Review
+
+Prompt:
+```
+Open Settings > Integrations > Identity.
+Search for a contact by name, email, phone, handle, or CRM id.
+Show the best candidate matches, then let me manually link the correct handle to the correct contact identity.
+Do not auto-link ambiguous matches.
 ```
 
 ### 8) Morning Briefing Agent (Chief Of Staff)

@@ -108,6 +108,25 @@ describe("TaskExecutor plan parsing", () => {
     expect(executor.plan.steps[1].kind).toBe("verification");
   });
 
+  it("skips leading empty objects and malformed transcript noise before the real plan JSON", async () => {
+    const response = {
+      usage: { inputTokens: 10, outputTokens: 20 },
+      content: [
+        {
+          type: "text",
+          text:
+            '{}【analysis to=skill_list code:\n{"description":"Compare the most recent OpenClaw changes against CoWork OS and identify a short list of feasible updates to adopt.","steps":[{"id":"1","description":"Inspect available project assistance capabilities.","status":"pending"}]}',
+        },
+      ],
+    };
+    const executor = createPlanExecutor(response);
+
+    await executor.createPlan();
+
+    expect(executor.plan?.description).toBe("Compare the most recent OpenClaw changes against CoWork OS and identify a short list of feasible updates to adopt.");
+    expect(executor.plan?.steps?.[0]?.description).toBe("Inspect available project assistance capabilities.");
+  });
+
   it("anchors subsequent relative file paths to detected scaffold root", async () => {
     const response = {
       usage: { inputTokens: 10, outputTokens: 20 },

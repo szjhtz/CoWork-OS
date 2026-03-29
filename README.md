@@ -30,7 +30,7 @@
 </p>
 
 <p align="center">
-  <img src="screenshots/cowork-os-main-focus.png" alt="CoWork OS Interface" width="700">
+  <img src="screenshots/cowork-os-home.png" alt="CoWork OS Interface" width="700">
 </p>
 
 ### Why CoWork OS?

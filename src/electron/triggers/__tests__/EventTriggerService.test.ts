@@ -149,6 +149,29 @@ describe("EventTriggerService", () => {
     expect(deps.createTask).not.toHaveBeenCalled();
   });
 
+  it("treats email and mailbox_event as aliases and labels inbox fires", async () => {
+    const trigger = service.addTrigger({
+      name: "Inbox Automation",
+      enabled: true,
+      source: "mailbox_event",
+      conditions: [],
+      action: { type: "create_task", config: { prompt: "Inbox task" } },
+      workspaceId: "ws-1",
+    });
+
+    await service.evaluateEvent({
+      source: "email",
+      timestamp: Date.now(),
+      fields: {
+        eventType: "thread_classified",
+        subject: "Need a reply",
+      },
+    });
+
+    expect(deps.createTask).toHaveBeenCalledTimes(1);
+    expect(service.getHistory(trigger.id)[0]?.sourceLabel).toBe("Inbox automation");
+  });
+
   it("respects cooldown period", async () => {
     const _t = service.addTrigger({
       name: "Cooldown Test",

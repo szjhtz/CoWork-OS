@@ -102,4 +102,30 @@ describe("RelationshipMemoryService task history capture", () => {
     expect(titles.some((text) => text.includes("Newest run summary"))).toBe(true);
     expect(titles.some((text) => text.includes("Older run summary"))).toBe(false);
   });
+
+  it("returns contact-scoped items before company and global fallback", () => {
+    RelationshipMemoryService.rememberMailboxInsights({
+      facts: ["Global contact note"],
+    });
+    RelationshipMemoryService.rememberMailboxInsights({
+      facts: ["Company-specific note"],
+      companyId: "company-acme",
+    });
+    RelationshipMemoryService.rememberMailboxInsights({
+      facts: ["Identity-specific note"],
+      companyId: "company-acme",
+      contactIdentityId: "identity-alex",
+    });
+
+    const scoped = RelationshipMemoryService.listItems({
+      layer: "context",
+      limit: 10,
+      contactIdentityId: "identity-alex",
+      companyId: "company-acme",
+    });
+
+    expect(scoped[0]?.text).toContain("Identity-specific note");
+    expect(scoped.some((entry) => entry.text.includes("Company-specific note"))).toBe(true);
+    expect(scoped.some((entry) => entry.text.includes("Global contact note"))).toBe(true);
+  });
 });

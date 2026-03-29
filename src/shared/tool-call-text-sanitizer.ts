@@ -34,7 +34,9 @@ const TOOL_TEXT_MARKERS = [
 
 const PLAIN_TOOL_TRANSCRIPT_MARKERS = [
   "to=run_command",
+  "to=skill_list",
   "assistant to=run_command",
+  "assistant to=skill_list",
   "\"cwd\":",
   "\"timeout_ms\":",
   // Full-width CJK bracket separators appear in raw Claude tool-call streams
@@ -69,6 +71,94 @@ function stripFencedToolBlocks(input: string): { text: string; removed: number }
   return { text, removed };
 }
 
+function looksLikePlainToolTranscriptLine(line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed) return false;
+
+  const transcriptLeadMatch = trimmed.match(/\b(?:assistant\s+)?to=[a-z_][\w-]*\b/i);
+  if (!transcriptLeadMatch) return false;
+  if (trimmed.indexOf("{", transcriptLeadMatch.index || 0) !== -1) {
+    return false;
+  }
+
+  const lower = trimmed.toLowerCase();
+  return PLAIN_TOOL_TRANSCRIPT_MARKERS.some((marker) => lower.includes(marker));
+}
+
+function stripLeadingPlainToolTranscriptLines(input: string): { text: string; removed: number } {
+  const lines = input.split(/\r?\n/);
+  let startIndex = 0;
+
+  while (startIndex < lines.length && looksLikePlainToolTranscriptLine(lines[startIndex])) {
+    startIndex += 1;
+  }
+
+  if (startIndex === 0) {
+    return { text: input, removed: 0 };
+  }
+
+  return {
+    text: lines.slice(startIndex).join("\n").trimStart(),
+    removed: startIndex,
+  };
+}
+
+function stripLeadingPlainToolTranscriptPrefix(input: string): { text: string; removed: number } {
+  const source = String(input || "");
+  const firstLineBreak = source.search(/\r?\n/);
+  const firstLine = firstLineBreak === -1 ? source : source.slice(0, firstLineBreak);
+  const rest = firstLineBreak === -1 ? "" : source.slice(firstLineBreak);
+
+  const transcriptLeadMatch = firstLine.match(/\b(?:assistant\s+)?to=[a-z_][\w-]*\b/i);
+  if (!transcriptLeadMatch) {
+    return { text: source, removed: 0 };
+  }
+
+  const jsonStart = firstLine.indexOf("{", transcriptLeadMatch.index || 0);
+  if (jsonStart === -1) {
+    return { text: source, removed: 0 };
+  }
+
+  const prefix = firstLine.slice(0, jsonStart);
+  if (!prefix.trim()) {
+    return { text: source, removed: 0 };
+  }
+
+  return {
+    text: `${firstLine.slice(jsonStart)}${rest}`.trimStart(),
+    removed: 1,
+  };
+}
+
+function stripEmptyObjectThenInlineTranscriptPrefix(input: string): { text: string; removed: number } {
+  const lines = input.split(/\r?\n/);
+  if (lines.length < 2) {
+    return { text: input, removed: 0 };
+  }
+
+  const firstLine = lines[0].trim();
+  if (firstLine !== "{}" && firstLine !== "[]") {
+    return { text: input, removed: 0 };
+  }
+
+  const secondLine = lines[1];
+  const transcriptLeadMatch = secondLine.match(/\b(?:assistant\s+)?to=[a-z_][\w-]*\b/i);
+  if (!transcriptLeadMatch) {
+    return { text: input, removed: 0 };
+  }
+
+  const jsonStart = secondLine.indexOf("{", transcriptLeadMatch.index || 0);
+  if (jsonStart === -1) {
+    return { text: input, removed: 0 };
+  }
+
+  const tail = [secondLine.slice(jsonStart), ...lines.slice(2)].join("\n").trimStart();
+  return {
+    text: tail,
+    removed: 1,
+  };
+}
+
 export function sanitizeToolCallTextFromAssistant(raw: string): ToolCallTextSanitizationResult {
   const input = String(raw || "");
   if (!input.trim()) {
@@ -90,6 +180,18 @@ export function sanitizeToolCallTextFromAssistant(raw: string): ToolCallTextSani
       return "";
     });
   }
+
+  const strippedTranscript = stripLeadingPlainToolTranscriptLines(text);
+  text = strippedTranscript.text;
+  removedSegments += strippedTranscript.removed;
+
+  const strippedPrefix = stripLeadingPlainToolTranscriptPrefix(text);
+  text = strippedPrefix.text;
+  removedSegments += strippedPrefix.removed;
+
+  const strippedEmptyObject = stripEmptyObjectThenInlineTranscriptPrefix(text);
+  text = strippedEmptyObject.text;
+  removedSegments += strippedEmptyObject.removed;
 
   if (looksLikePlainToolTranscript(text)) {
     return {

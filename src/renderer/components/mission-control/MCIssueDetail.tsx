@@ -26,12 +26,19 @@ export function MCIssueDetail({ data, issueId }: MCIssueDetailProps) {
 
   const goalName = issue.goalId ? goals.find((g) => g.id === issue.goalId)?.title : "No goal";
   const projectName = issue.projectId ? projects.find((p) => p.id === issue.projectId)?.name : "No project";
+  const sourceLabel =
+    issue.metadata?.source === "mailbox_handoff"
+      ? "Inbox"
+      : issue.metadata?.source === "strategic_planner"
+        ? "Planner"
+        : null;
 
   return (
     <>
       <div>
         <div className="mc-v2-task-detail-title">
           <h3>{issue.title}</h3>
+          {sourceLabel && <span className="mc-v2-ops-pill">{sourceLabel}</span>}
           <span className={`mc-v2-ops-pill status-${issue.status}`}>{issue.status}</span>
         </div>
         <div className="mc-v2-detail-updated">

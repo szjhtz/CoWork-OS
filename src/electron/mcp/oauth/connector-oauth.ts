@@ -1,6 +1,10 @@
 import http from "http";
 import { randomBytes, createHash } from "crypto";
 import { URL } from "url";
+import {
+  GMAIL_DEFAULT_SCOPES,
+  GOOGLE_WORKSPACE_DEFAULT_SCOPES,
+} from "../../../shared/google-workspace";
 
 export type ConnectorOAuthProvider =
   | "salesforce"
@@ -501,17 +505,14 @@ const GOOGLE_SCOPES_MAP: Record<string, string> = {
     "https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/calendar.events",
   "google-drive":
     "https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file",
-  gmail:
-    "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.labels",
+  gmail: GMAIL_DEFAULT_SCOPES.join(" "),
   // Full Google Workspace: covers Sheets, Docs, Chat, Drive, Gmail, Calendar in one OAuth consent
   "google-workspace":
-    "https://www.googleapis.com/auth/drive " +
-    "https://www.googleapis.com/auth/spreadsheets " +
-    "https://www.googleapis.com/auth/documents " +
-    "https://www.googleapis.com/auth/gmail.modify " +
-    "https://www.googleapis.com/auth/calendar " +
-    "https://www.googleapis.com/auth/chat.messages " +
-    "https://www.googleapis.com/auth/chat.spaces.readonly",
+    GOOGLE_WORKSPACE_DEFAULT_SCOPES.join(" ") +
+    " https://www.googleapis.com/auth/spreadsheets" +
+    " https://www.googleapis.com/auth/documents" +
+    " https://www.googleapis.com/auth/chat.messages" +
+    " https://www.googleapis.com/auth/chat.spaces.readonly",
 };
 
 async function startGoogleOAuth(request: ConnectorOAuthRequest): Promise<ConnectorOAuthResult> {

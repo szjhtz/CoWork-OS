@@ -150,6 +150,16 @@ npx vitest run \
   src/renderer/utils/__tests__/task-event-compat.test.ts
 ```
 
+For sidebar virtualization and `@chenglou/pretext` measurement work in the `CoWork-OS/CoWork-OS` repo, run:
+
+```bash
+npx vitest run \
+  src/renderer/__tests__/sidebar-helpers.test.ts \
+  src/renderer/hooks/__tests__/useVirtualList.test.ts \
+  src/renderer/utils/__tests__/pretext-adapter.test.ts \
+  src/renderer/components/timeline/__tests__/semantic-timeline-projection.test.ts
+```
+
 ## Project Structure
 
 | Directory | Description |

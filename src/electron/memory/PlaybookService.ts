@@ -1,5 +1,8 @@
 import { EventEmitter } from "events";
+import { createLogger } from "../utils/logger";
 import { MemoryService } from "./MemoryService";
+
+const logger = createLogger("PlaybookService");
 
 export type ErrorCategory =
   | "tool_failure"
@@ -38,6 +41,39 @@ const NINETY_DAYS_MS = 90 * 24 * 60 * 60 * 1000;
 export class PlaybookService {
   /** Event emitter for playbook events. Emits "pattern-reinforced" when a pattern is reinforced. */
   static readonly events = new EventEmitter();
+
+  static async captureMailboxPattern(
+    workspaceId: string,
+    input: {
+      title: string;
+      summary: string;
+      evidenceRefs?: string[];
+      payload?: Record<string, unknown>;
+    },
+  ): Promise<void> {
+    const body = [
+      `[PLAYBOOK] Inbox pattern: "${input.title}"`,
+      `Summary: ${input.summary}`,
+      input.evidenceRefs && input.evidenceRefs.length > 0
+        ? `Evidence: ${input.evidenceRefs.join(", ")}`
+        : null,
+      input.payload && Object.keys(input.payload).length > 0
+        ? `Payload: ${JSON.stringify(input.payload).slice(0, 400)}`
+        : null,
+    ]
+      .filter((line): line is string => Boolean(line))
+      .join("\n");
+
+    try {
+      await MemoryService.capture(workspaceId, undefined, "insight", body, false, {
+        origin: "playbook",
+        batchKey: "mailbox-playbook",
+        batchable: false,
+      });
+    } catch (error) {
+      logger.warn("Failed to capture mailbox playbook pattern:", error);
+    }
+  }
 
   /**
    * Capture a playbook entry after task completion or failure.
@@ -80,7 +116,7 @@ export class PlaybookService {
         batchable: false,
       });
     } catch (err) {
-      console.warn("[PlaybookService] Failed to capture playbook entry:", err);
+      logger.warn("Failed to capture playbook entry:", err);
     }
   }
 

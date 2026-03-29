@@ -321,6 +321,19 @@ export class HeartbeatService extends EventEmitter {
     return result.signal;
   }
 
+  submitSignalForAll(input: Omit<SubmitHeartbeatSignalInput, "agentRoleId">): HeartbeatSignal[] {
+    const signals: HeartbeatSignal[] = [];
+    for (const agent of this.deps.agentRoleRepo.findHeartbeatEnabled()) {
+      signals.push(
+        this.submitHeartbeatSignal({
+          ...input,
+          agentRoleId: agent.id,
+        }),
+      );
+    }
+    return signals;
+  }
+
   submitWakeRequest(
     agentRoleId: string,
     request: { text?: string; mode?: HeartbeatWakeMode; source?: HeartbeatWakeSource },

@@ -9,12 +9,14 @@
  */
 
 import { randomUUID } from "crypto";
+import type Database from "better-sqlite3";
 import type {
   ACPAgentCard,
   ACPCapability,
   ACPDiscoverParams,
   ACPAgentRegisterParams,
 } from "./types";
+import { validateRemoteAgentEndpoint } from "./remote-invoker";
 
 /**
  * Minimal interface for the AgentRoleRepository dependency.
@@ -42,6 +44,59 @@ export class ACPAgentRegistry {
 
   /** Maximum messages per inbox before oldest are dropped */
   private maxInboxSize = 100;
+
+  constructor(private db?: Database.Database) {
+    this.loadRemoteAgents();
+  }
+
+  private loadRemoteAgents(): void {
+    if (!this.db) return;
+    const rows = this.db
+      .prepare(
+        "SELECT id, card_json FROM acp_agents WHERE origin = 'remote' ORDER BY registered_at DESC",
+      )
+      .all() as Array<{ id: string; card_json: string }>;
+    for (const row of rows) {
+      try {
+        const card = JSON.parse(row.card_json) as ACPAgentCard;
+        this.remoteAgents.set(card.id, card);
+      } catch {
+        // Ignore malformed persisted registrations.
+      }
+    }
+  }
+
+  private persistRemoteAgent(card: ACPAgentCard): void {
+    if (!this.db) return;
+    this.db
+      .prepare(
+        `INSERT INTO acp_agents (id, origin, endpoint, name, provider, status, registered_at, updated_at, card_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           endpoint = excluded.endpoint,
+           name = excluded.name,
+           provider = excluded.provider,
+           status = excluded.status,
+           updated_at = excluded.updated_at,
+           card_json = excluded.card_json`,
+      )
+      .run(
+        card.id,
+        card.origin,
+        card.endpoint || null,
+        card.name,
+        card.provider || null,
+        card.status,
+        card.registeredAt,
+        Date.now(),
+        JSON.stringify(card),
+      );
+  }
+
+  private deleteRemoteAgentFromDb(agentId: string): void {
+    if (!this.db) return;
+    this.db.prepare("DELETE FROM acp_agents WHERE id = ?").run(agentId);
+  }
 
   /**
    * Build an ACPAgentCard from a local AgentRole
@@ -144,6 +199,9 @@ export class ACPAgentRegistry {
    * Register a remote agent
    */
   registerRemoteAgent(params: ACPAgentRegisterParams): ACPAgentCard {
+    if (params.endpoint) {
+      validateRemoteAgentEndpoint(params.endpoint);
+    }
     const id = `remote:${randomUUID().slice(0, 8)}-${params.name.toLowerCase().replace(/\s+/g, "-")}`;
 
     const card: ACPAgentCard = {
@@ -171,6 +229,7 @@ export class ACPAgentRegistry {
     };
 
     this.remoteAgents.set(id, card);
+    this.persistRemoteAgent(card);
     return card;
   }
 
@@ -178,7 +237,11 @@ export class ACPAgentRegistry {
    * Unregister a remote agent
    */
   unregisterRemoteAgent(agentId: string): boolean {
-    return this.remoteAgents.delete(agentId);
+    const deleted = this.remoteAgents.delete(agentId);
+    if (deleted) {
+      this.deleteRemoteAgentFromDb(agentId);
+    }
+    return deleted;
   }
 
   /**
@@ -189,6 +252,7 @@ export class ACPAgentRegistry {
     if (!agent) return false;
     agent.status = status;
     agent.lastActiveAt = Date.now();
+    this.persistRemoteAgent(agent);
     return true;
   }
 

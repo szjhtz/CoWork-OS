@@ -60,7 +60,7 @@ describe("AgentDaemon automated task model selection", () => {
     ).toBe(false);
     expect(
       daemonLike.shouldResumeTaskOnStartup({
-        title: "Heartbeat: QA / System Test Engineer Twin",
+        title: "Heartbeat: System QA Twin",
         source: "api",
       }),
     ).toBe(false);

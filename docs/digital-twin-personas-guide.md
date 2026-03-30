@@ -13,7 +13,7 @@ This guide covers the full system in detail: how twins work, what each built-in 
 - [Built-In Personas (Detailed)](#built-in-personas-detailed)
   - [Software Engineer](#software-engineer)
   - [Hardware Engineer](#hardware-engineer)
-  - [QA / System Test Engineer](#qa--system-test-engineer)
+  - [System QA](#system-qa)
   - [DevOps / SRE Engineer](#devops--sre-engineer)
   - [Engineering Manager](#engineering-manager)
   - [Technical Director](#technical-director)
@@ -63,7 +63,7 @@ The human assigns work directly:
 - Drag a task onto the twin's column in the Mission Control Kanban board
 - @mention the twin in a conversation: `@sw-twin summarize auth module changes this week`
 - Invoke a bundled skill: `@twin prepare meeting brief for tomorrow's architecture review`
-- Reach the twin via any of CoWork OS's 15 messaging channels (Slack, Teams, Discord, Email, etc.)
+- Reach the twin via any of CoWork OS's 17 messaging channels (Slack, Teams, Discord, Email, Feishu/Lark, WeCom, etc.)
 
 ### What a Persona Template Contains
 
@@ -150,7 +150,7 @@ Each persona template declares 3-4 primary categories. These shape both the proa
 
 ---
 
-### QA / System Test Engineer
+### System QA
 
 **Category**: Engineering | **Autonomy**: Specialist | **Default Heartbeat**: 60 minutes
 
@@ -540,7 +540,7 @@ Digital twins scale linearly. For a 100-person engineering organization:
 | Role | Count | Template | Named Example |
 |------|-------|----------|---------------|
 | Software Engineers | 60 | Software Engineer | "Sarah's Twin", "Alex's Twin" |
-| QA Engineers | 8 | QA / System Test Engineer | "QA-Team-Alpha Twin" |
+| QA Engineers | 8 | System QA | "QA-Team-Alpha Twin" |
 | DevOps/SRE | 5 | DevOps / SRE Engineer | "Platform Twin" |
 | Engineering Managers | 8 | Engineering Manager | "Team-Bravo-EM Twin" |
 | Product Managers | 6 | Product Manager | "Payments-PM Twin" |
@@ -821,7 +821,7 @@ To add a persona for any job function:
 
 ## Channel Integration
 
-Since CoWork OS supports 15 messaging channels, twins are accessible from any surface:
+Since CoWork OS supports 17 messaging channels, twins are accessible from any surface:
 
 | Channel | Example Usage |
 |---------|--------------|

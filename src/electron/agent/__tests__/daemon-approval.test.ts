@@ -127,4 +127,41 @@ describe("AgentDaemon.requestApproval auto-approve controls", () => {
 
     await expect(approvalPromise).resolves.toBe(false);
   });
+
+  it("does not session auto-approve computer_use even when session auto-approve is enabled", async () => {
+    vi.useFakeTimers();
+
+    const approvalRepo = {
+      create: vi.fn().mockReturnValue({ id: "approval-cu" }),
+      update: vi.fn(),
+    };
+
+    const daemonLike = {
+      sessionAutoApproveAll: true,
+      approvalRepo,
+      logEvent: vi.fn(),
+      updateTask: vi.fn(),
+      taskRepo: {
+        findById: vi.fn().mockReturnValue({ agentConfig: { autonomousMode: true } }),
+      },
+      pendingApprovals: new Map(),
+    } as Any;
+
+    void AgentDaemon.prototype.requestApproval.call(
+      daemonLike,
+      "task-cu",
+      "computer_use",
+      "Allow app for session",
+      { kind: "computer_use_app_grant", appName: "Safari" },
+      { allowAutoApprove: false },
+    );
+
+    expect(approvalRepo.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "pending",
+        type: "computer_use",
+      }),
+    );
+    expect(daemonLike.pendingApprovals.size).toBe(1);
+  });
 });

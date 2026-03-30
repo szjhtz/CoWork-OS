@@ -92,7 +92,7 @@ Execution contract:
 |----------|----------|-------------------|
 | **Software Engineer** | Specialist | Review prep, dependency tracking, context switching, documentation |
 | **Hardware Engineer** | Specialist | Documentation, compliance, dependency tracking, decision prep |
-| **QA / System Test Engineer** | Specialist | Review prep, compliance, automation, status reporting |
+| **System QA** | Specialist | Review prep, compliance, automation, status reporting |
 | **DevOps / SRE Engineer** | Specialist | Automation, compliance, dependency tracking, context switching |
 
 ### Management
@@ -313,7 +313,7 @@ Each twin learns over time through the existing playbook and relationship memory
 
 ## Channel Integration
 
-Since CoWork OS supports 15 messaging channels, twins can be reached from anywhere:
+Since CoWork OS supports 17 messaging channels, twins can be reached from anywhere:
 
 | Channel | Example |
 |---------|---------|

@@ -94,6 +94,33 @@ describe("TaskExecutor tool allow-list semantics", () => {
     expect(allowlist.size).toBeGreaterThan(0);
   });
 
+  it("adds native desktop GUI tools for calculator-style steps", () => {
+    const executor = Object.create(TaskExecutor.prototype) as Any;
+    executor.task = {
+      title: "Open Calculator",
+      prompt: "Open Calculator and show me the 159th Fibonacci number.",
+      agentConfig: {
+        taskIntent: "execution",
+      },
+    };
+    executor.getEffectiveExecutionMode = vi.fn().mockReturnValue("execute");
+
+    const allowlist = (TaskExecutor as Any).prototype.buildStepToolAllowlist.call(
+      executor,
+      { requiredTools: new Set<string>() },
+      "mutation_required",
+      "general",
+      "Open Calculator and clear any existing value so the display starts from a clean state.",
+    );
+
+    expect(allowlist.has("open_application")).toBe(true);
+    expect(allowlist.has("computer_screenshot")).toBe(true);
+    expect(allowlist.has("computer_click")).toBe(true);
+    expect(allowlist.has("computer_type")).toBe(true);
+    expect(allowlist.has("computer_key")).toBe(true);
+    expect(allowlist.has("computer_move_mouse")).toBe(true);
+  });
+
   it("infers create_diagram for inline diagram steps", () => {
     const executor = Object.create(TaskExecutor.prototype) as Any;
     executor.getEffectiveExecutionMode = vi.fn().mockReturnValue("execute");

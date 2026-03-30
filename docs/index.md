@@ -15,6 +15,9 @@ hero:
       text: Features
       link: /features
     - theme: alt
+      text: Runtime Visibility
+      link: /operator-runtime-visibility
+    - theme: alt
       text: Heartbeat v3
       link: /heartbeat-v3
     - theme: alt
@@ -39,6 +42,8 @@ features:
     details: WhatsApp, Telegram, Discord, Slack, iMessage, Teams, and more. Chat with your AI from anywhere.
   - title: Chat Mode
     details: Direct LLM chat with no tools, same-session follow-ups, and chat-only streaming for supported providers.
+  - title: Runtime Visibility
+    details: Visible learning progression after each task, unified recall across tasks/messages/files, persistent shell sessions, and live provider routing/fallback status.
   - title: Inbox Agent
     details: Local-first email triage with AI classification, action-needed and commitment queues, draft review, and resync-safe background sync.
   - title: Managed Devices
@@ -48,7 +53,7 @@ features:
   - title: Heartbeat V3
     details: Default two-lane background automation with cheap Pulse checks, selective Dispatch escalation, signal compression, and truthful Mission Control state.
   - title: 137 Built-in Skills
-    details: Document creation, web research, code generation, image analysis, and more. Extensible via custom skills and plugins.
+    details: Document creation, web research, code generation, image analysis, and more. Extensible via custom skills, ClawHub installs, and external skill imports.
   - title: Agent Teams
     details: Multi-agent collaboration with shared checklists, collaborative mode, multi-LLM synthesis, and performance reviews.
   - title: Enterprise Connectors

@@ -825,7 +825,7 @@ export function CompaniesPanel({
                       className="provider-test-button"
                       onClick={() => onOpenDigitalTwins?.(selectedCompany.id)}
                     >
-                      Digital Twins <ArrowRight size={13} />
+                      Agent Personas <ArrowRight size={13} />
                     </button>
                   )}
                 </div>

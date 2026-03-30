@@ -1279,6 +1279,12 @@ export interface AgentConfig {
    * When set (and modelKey is absent), selects a model suited for the given capability.
    */
   capabilityHint?: ModelCapability;
+  /** Execute decomposed workflows as sequential child tasks instead of prompt-only guidance. */
+  useWorkflowPipeline?: boolean;
+  /** Internal metadata for workflow child tasks. */
+  workflowPhaseId?: string;
+  /** Internal metadata for workflow child tasks. */
+  workflowPhaseType?: string;
   /** Optional external runtime for delegated coding-agent tasks. */
   externalRuntime?: ExternalRuntimeConfig;
   /**
@@ -2724,12 +2730,45 @@ export interface CompanyOutputContract {
   expectedOutputType?: CompanyOutputType;
 }
 
+export type AgentRoleKind = "system" | "custom" | "persona_template";
+
+export interface HeartbeatPolicy {
+  id: string;
+  agentRoleId: string;
+  enabled: boolean;
+  cadenceMinutes: number;
+  staggerOffsetMinutes: number;
+  dispatchCooldownMinutes: number;
+  maxDispatchesPerDay: number;
+  profile: HeartbeatProfile;
+  activeHours?: HeartbeatActiveHours | null;
+  primaryCategories: CognitiveOffloadCategory[];
+  proactiveTasks: ProactiveTaskDefinition[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface HeartbeatPolicyInput {
+  enabled?: boolean;
+  cadenceMinutes?: number;
+  staggerOffsetMinutes?: number;
+  dispatchCooldownMinutes?: number;
+  maxDispatchesPerDay?: number;
+  profile?: HeartbeatProfile;
+  activeHours?: HeartbeatActiveHours | null;
+  primaryCategories?: CognitiveOffloadCategory[];
+  proactiveTasks?: ProactiveTaskDefinition[];
+}
+
 /**
  * Agent role defines a specialized agent with specific capabilities and configuration
  */
 export interface AgentRole {
   id: string;
   name: string; // Unique identifier (e.g., 'code-reviewer')
+  roleKind?: AgentRoleKind;
+  sourceTemplateId?: string;
+  sourceTemplateVersion?: string;
   companyId?: string; // Optional company assignment for company operators
   displayName: string; // Human-readable name (e.g., 'Code Reviewer')
   description?: string; // What this agent does
@@ -2747,9 +2786,10 @@ export interface AgentRole {
   createdAt: number;
   updatedAt: number;
 
-  // Mission Control fields
+  // Automation fields
   autonomyLevel?: AgentAutonomyLevel; // How independently the agent can act
   soul?: string; // Extended personality (JSON: communication style, focus areas, preferences)
+  heartbeatPolicy?: HeartbeatPolicy;
   heartbeatEnabled?: boolean; // Whether agent participates in heartbeat system
   heartbeatIntervalMinutes?: number; // How often agent wakes up (default: 15)
   heartbeatStaggerOffset?: number; // Offset in minutes to stagger wakeups
@@ -2780,6 +2820,9 @@ export interface AgentRole {
  */
 export interface CreateAgentRoleRequest {
   name: string;
+  roleKind?: AgentRoleKind;
+  sourceTemplateId?: string;
+  sourceTemplateVersion?: string;
   companyId?: string;
   displayName: string;
   description?: string;
@@ -2791,9 +2834,10 @@ export interface CreateAgentRoleRequest {
   systemPrompt?: string;
   capabilities: AgentCapability[];
   toolRestrictions?: AgentToolRestrictions;
-  // Mission Control fields
+  // Automation fields
   autonomyLevel?: AgentAutonomyLevel;
   soul?: string;
+  heartbeatPolicy?: HeartbeatPolicyInput;
   heartbeatEnabled?: boolean;
   heartbeatIntervalMinutes?: number;
   heartbeatStaggerOffset?: number;
@@ -2817,6 +2861,9 @@ export interface CreateAgentRoleRequest {
  */
 export interface UpdateAgentRoleRequest {
   id: string;
+  roleKind?: AgentRoleKind;
+  sourceTemplateId?: string | null;
+  sourceTemplateVersion?: string | null;
   companyId?: string | null;
   displayName?: string;
   description?: string;
@@ -2830,9 +2877,10 @@ export interface UpdateAgentRoleRequest {
   toolRestrictions?: AgentToolRestrictions;
   isActive?: boolean;
   sortOrder?: number;
-  // Mission Control fields
+  // Automation fields
   autonomyLevel?: AgentAutonomyLevel;
   soul?: string;
+  heartbeatPolicy?: HeartbeatPolicyInput;
   heartbeatEnabled?: boolean;
   heartbeatIntervalMinutes?: number;
   heartbeatStaggerOffset?: number;
@@ -4435,6 +4483,9 @@ export const IPC_CHANNELS = {
   CUSTOM_SKILL_DELETE: "customSkill:delete",
   CUSTOM_SKILL_RELOAD: "customSkill:reload",
   CUSTOM_SKILL_OPEN_FOLDER: "customSkill:openFolder",
+  CUSTOM_SKILL_GET_SETTINGS: "customSkill:getSettings",
+  CUSTOM_SKILL_SET_EXTERNAL_DIRS: "customSkill:setExternalDirs",
+  CUSTOM_SKILL_OPEN_EXTERNAL_FOLDER: "customSkill:openExternalFolder",
 
   // Skill Registry (SkillHub)
   SKILL_REGISTRY_SEARCH: "skillRegistry:search",
@@ -4544,6 +4595,11 @@ export const IPC_CHANNELS = {
   // SharePoint Settings
   SHAREPOINT_GET_SETTINGS: "sharepoint:getSettings",
   SHAREPOINT_SAVE_SETTINGS: "sharepoint:saveSettings",
+  PROFILE_LIST: "profile:list",
+  PROFILE_CREATE: "profile:create",
+  PROFILE_SWITCH: "profile:switch",
+  PROFILE_EXPORT: "profile:export",
+  PROFILE_IMPORT: "profile:import",
   SHAREPOINT_TEST_CONNECTION: "sharepoint:testConnection",
   SHAREPOINT_GET_STATUS: "sharepoint:getStatus",
 
@@ -4668,6 +4724,13 @@ export const IPC_CHANNELS = {
   BUILTIN_TOOLS_GET_SETTINGS: "builtinTools:getSettings",
   BUILTIN_TOOLS_SAVE_SETTINGS: "builtinTools:saveSettings",
   BUILTIN_TOOLS_GET_CATEGORIES: "builtinTools:getCategories",
+
+  // Computer use (desktop automation session)
+  COMPUTER_USE_GET_STATUS: "computerUse:getStatus",
+  COMPUTER_USE_END_SESSION: "computerUse:endSession",
+  COMPUTER_USE_OPEN_ACCESSIBILITY: "computerUse:openAccessibility",
+  COMPUTER_USE_OPEN_SCREEN_RECORDING: "computerUse:openScreenRecording",
+  COMPUTER_USE_EVENT: "computerUse:event",
 
   // Tray (Menu Bar)
   TRAY_GET_SETTINGS: "tray:getSettings",
@@ -4891,6 +4954,7 @@ export const IPC_CHANNELS = {
   COMPARISON_GET_RESULT: "comparison:getResult",
   // Usage Insights
   USAGE_INSIGHTS_GET: "usageInsights:get",
+  USAGE_INSIGHTS_EARLIEST: "usageInsights:earliest",
   // Daily Briefing
   DAILY_BRIEFING_GENERATE: "dailyBriefing:generate",
   // Proactive Suggestions
@@ -5054,11 +5118,17 @@ export interface ProviderRoutingSettings {
   preferStrongForVerification?: boolean;
 }
 
+export interface LLMProviderFallbackConfig {
+  providerType: LLMProviderType;
+  modelKey?: string;
+}
+
 export type AzureReasoningEffort = "low" | "medium" | "high" | "extra_high";
 
 export interface LLMSettingsData {
   providerType: LLMProviderType;
   modelKey: string;
+  fallbackProviders?: LLMProviderFallbackConfig[];
   anthropic?: {
     apiKey?: string;
   } & ProviderRoutingSettings;
@@ -5239,6 +5309,8 @@ export type ChannelType =
   | "email"
   | "teams"
   | "googlechat"
+  | "feishu"
+  | "wecom"
   | "x";
 export type ChannelStatus = "disconnected" | "connecting" | "connected" | "error";
 export type SecurityMode = "open" | "allowlist" | "pairing";
@@ -5340,6 +5412,7 @@ export interface AddChannelRequest {
   allowedNumbers?: string[];
   selfChatMode?: boolean;
   groupRoutingMode?: "all" | "mentionsOnly" | "mentionsOrCommands" | "commandsOnly";
+  telegramAllowedGroupChatIds?: string[];
   trustedGroupMemoryOptIn?: boolean;
   sendReadReceipts?: boolean;
   deduplicationEnabled?: boolean;
@@ -5417,6 +5490,17 @@ export interface AddChannelRequest {
   serviceAccountKeyPath?: string;
   projectId?: string;
   webhookPath?: string;
+  // Feishu-specific fields
+  feishuAppId?: string;
+  feishuAppSecret?: string;
+  feishuVerificationToken?: string;
+  feishuEncryptKey?: string;
+  // WeCom-specific fields
+  wecomCorpId?: string;
+  wecomAgentId?: number;
+  wecomSecret?: string;
+  wecomToken?: string;
+  wecomEncodingAESKey?: string;
   // X-specific fields
   xCommandPrefix?: string;
   xAllowedAuthors?: string[];
@@ -5508,7 +5592,13 @@ export interface TunnelStatusData {
 }
 
 // Search Provider types
-export type SearchProviderType = "tavily" | "brave" | "serpapi" | "google" | "duckduckgo";
+export type SearchProviderType =
+  | "tavily"
+  | "exa"
+  | "brave"
+  | "serpapi"
+  | "google"
+  | "duckduckgo";
 export type SearchType = "web" | "news" | "images";
 export type WebSearchMode = "disabled" | "cached" | "live";
 
@@ -5516,6 +5606,9 @@ export interface SearchSettingsData {
   primaryProvider: SearchProviderType | null;
   fallbackProvider: SearchProviderType | null;
   tavily?: {
+    apiKey?: string;
+  };
+  exa?: {
     apiKey?: string;
   };
   brave?: {
@@ -6009,8 +6102,8 @@ export interface SkillParameter {
 
 export type SkillType = "task" | "guideline";
 
-// Skill source indicates where a skill was loaded from (precedence: workspace > managed > bundled)
-export type SkillSource = "bundled" | "managed" | "workspace";
+// Skill source indicates where a skill was loaded from (precedence: workspace > managed > external > bundled)
+export type SkillSource = "bundled" | "managed" | "external" | "workspace";
 
 // Requirements that must be met for a skill to be eligible
 export interface SkillRequirements {
@@ -6128,6 +6221,7 @@ export interface SkillStatusReport {
   workspaceDir: string;
   managedSkillsDir: string;
   bundledSkillsDir: string;
+  externalSkillDirs: string[];
   skills: SkillStatusEntry[];
   summary: {
     total: number;
@@ -6177,6 +6271,7 @@ export interface SkillInstallProgress {
 
 export interface SkillsConfig {
   skillsDirectory: string; // Default: ~/Library/Application Support/cowork-os/skills/
+  externalSkillDirectories?: string[];
   enabledSkillIds: string[];
   registryUrl?: string; // Default: https://skill-hub.com
   autoUpdate?: boolean; // Auto-update managed skills
@@ -6812,6 +6907,7 @@ export interface ManagedDeviceSummary {
     coworkVersion?: string;
     cwd?: string;
     userDataDir?: string;
+    activeProfileId?: string;
     headless?: boolean;
   };
   tasks: {
@@ -6836,6 +6932,21 @@ export interface ManagedDeviceSummary {
     detail?: string;
     level: ManagedDeviceAttentionState;
   }>;
+}
+
+export interface AppProfileSummary {
+  id: string;
+  label: string;
+  userDataDir: string;
+  isActive: boolean;
+  isDefault: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ProfileExportResult {
+  profile: AppProfileSummary;
+  bundlePath: string;
 }
 
 /**

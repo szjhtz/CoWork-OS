@@ -1,4 +1,11 @@
-import type { ReviewPolicy, Task, TaskEvent, TaskOutputSummary, TaskRiskLevel } from "../../shared/types";
+import type {
+  EntropySweepPolicy,
+  ReviewPolicy,
+  Task,
+  TaskEvent,
+  TaskOutputSummary,
+  TaskRiskLevel,
+} from "../../shared/types";
 import { detectTestRequirement, isTestCommand } from "../agent/executor-prompt-heuristics-utils";
 
 export interface TaskRiskSignals {
@@ -56,7 +63,7 @@ function getRunCommandFromEvent(event: TaskEvent): string {
   return command;
 }
 
-function collectChangedPaths(events: TaskEvent[], outputSummary?: TaskOutputSummary): Set<string> {
+export function collectChangedPaths(events: TaskEvent[], outputSummary?: TaskOutputSummary): Set<string> {
   const changed = new Set<string>();
   const add = (raw: unknown) => {
     if (typeof raw !== "string") return;
@@ -287,4 +294,58 @@ export function deriveReviewGateDecision(params: {
 export function inferMutationFromSummary(summary?: TaskOutputSummary): boolean {
   if (!summary) return false;
   return (summary.created?.length || 0) > 0 || (summary.modifiedFallback?.length || 0) > 0;
+}
+
+/** Sorted list of changed paths for blast-radius scoping (e.g. post-task entropy sweep). */
+export function listChangedPathsForTask(
+  events: TaskEvent[],
+  outputSummary?: TaskOutputSummary,
+  maxPaths = 80,
+): string[] {
+  return Array.from(collectChangedPaths(events, outputSummary))
+    .sort()
+    .slice(0, maxPaths);
+}
+
+export interface EntropySweepDecision {
+  policy: EntropySweepPolicy;
+  runEntropySweep: boolean;
+}
+
+export function resolveEntropySweepPolicy(
+  requested: unknown,
+  reviewPolicy: ReviewPolicy,
+): EntropySweepPolicy {
+  if (requested === "off" || requested === "balanced" || requested === "strict") {
+    return requested;
+  }
+  const envDefault = (process.env.COWORK_ENTROPY_SWEEP_DEFAULT || "").trim().toLowerCase();
+  if (envDefault === "off" || envDefault === "balanced" || envDefault === "strict") {
+    return envDefault;
+  }
+  return reviewPolicy;
+}
+
+export function deriveEntropySweepDecision(params: {
+  policy: EntropySweepPolicy;
+  riskLevel: TaskRiskLevel;
+  isMutatingTask: boolean;
+  deepWorkMode?: boolean;
+}): EntropySweepDecision {
+  const { policy, riskLevel, isMutatingTask, deepWorkMode } = params;
+  if (policy === "off") {
+    return { policy, runEntropySweep: false };
+  }
+  if (policy === "strict") {
+    return {
+      policy,
+      runEntropySweep: isMutatingTask || riskLevel !== "low",
+    };
+  }
+  const mediumOrHigh = riskLevel === "medium" || riskLevel === "high";
+  const run =
+    riskLevel === "high" ||
+    (isMutatingTask && mediumOrHigh) ||
+    (deepWorkMode === true && isMutatingTask);
+  return { policy, runEntropySweep: run };
 }

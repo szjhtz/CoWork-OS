@@ -69,7 +69,7 @@ import {
   isHeadlessMode,
   shouldImportEnvSettingsFromArgsOrEnv,
 } from "../utils/runtime-mode";
-import { getUserDataDir } from "../utils/user-data-dir";
+import { getActiveProfileId, getUserDataDir } from "../utils/user-data-dir";
 import { CanvasManager } from "../canvas/canvas-manager";
 import { TASK_EVENT_BRIDGE_ALLOWLIST } from "./task-event-bridge-contract";
 import { registerControlPlaneCoreMethods } from "./registerControlPlaneCoreMethods";
@@ -529,6 +529,7 @@ async function getLocalConfigSnapshot(): Promise<Any> {
         headless: isHeadlessMode(),
         cwd: process.cwd(),
         userDataDir: getUserDataDir(),
+        activeProfileId: getActiveProfileId(),
       },
       workspaces: { count: 0, workspaces: [] },
       tasks: { total: 0, byStatus: {} },
@@ -567,6 +568,7 @@ async function getLocalConfigSnapshot(): Promise<Any> {
       headless: isHeadlessMode(),
       cwd: process.cwd(),
       userDataDir: getUserDataDir(),
+      activeProfileId: getActiveProfileId(),
     },
     workspaces: {
       count: allWorkspaces.length,
@@ -2010,6 +2012,8 @@ function registerACPMethodsOnServer(
   const taskRepo = new TaskRepository(db);
 
   const acpDeps: ACPHandlerDeps = {
+    db,
+    requireScope,
     getActiveRoles: () => roleRepo.findActive(),
     createTask: async (params) => {
       // Find a workspace — use the provided one or fall back to the first available
@@ -2859,6 +2863,7 @@ function registerTaskAndWorkspaceMethods(
       headless: isHeadlessMode(),
       cwd: process.cwd(),
       userDataDir: getUserDataDir(),
+      activeProfileId: getActiveProfileId(),
       importEnvSettings: envImport,
     };
 

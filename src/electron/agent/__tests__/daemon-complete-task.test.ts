@@ -73,6 +73,11 @@ function createDaemonLike() {
     queueManager: {
       onTaskFinished: vi.fn(),
     },
+    releaseComputerUseSession: vi.fn(),
+    finishQueueSlot: vi.fn(function (this: Any, taskId: string) {
+      this.releaseComputerUseSession(taskId);
+      this.queueManager.onTaskFinished(taskId);
+    }),
   } as Any;
 }
 

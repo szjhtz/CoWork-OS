@@ -122,6 +122,17 @@ Click any task card to see its full details:
 - **Updates**: Activity feed for this task with comment box to post updates
 - **Mentions**: Create and manage mentions with status tracking (pending, acknowledged, completed, dismissed)
 
+### Learning, Recall, and Runtime State
+
+Task details now surface the new runtime visibility signals that used to live only in background services:
+
+- **What Cowork learned**: the completion card shows memory captured, playbook reinforcement, skill proposal state, evidence links, and the next action when a human review is needed
+- **Unified recall**: task detail search spans tasks, messages, files, workspace notes, memory entries, and knowledge-graph context from one surface
+- **Shell session status**: long-lived shell sessions show when cwd/env/alias state is being retained or reset, so operator workflows are easier to trust
+- **Model routing status**: the active provider/model, route reason, and fallback transitions are visible in the task UI and settings surfaces
+
+These signals are also mirrored into the live feed so Mission Control stays the primary desktop control plane for understanding what the runtime is doing.
+
 ### Ops Tab
 
 The `Ops` tab is the company-operations view used by the zero-human-company workflow.
@@ -233,6 +244,8 @@ Mission Control subscribes to live event streams — no manual refresh needed:
 |-------------|-----------------|
 | **Heartbeat v3 events** | Agent status dots, pulse/dispatch indicators, deferred state, feed items |
 | **Activity events** | Comments, mentions, assignments in the feed |
+| **Learning events** | Post-task learning progression, skill promotion states, and evidence-linked completion summaries |
+| **Routing events** | Provider/model switches, fallback transitions, and route-reason updates |
 | **Task events** | New tasks, status changes on the Kanban board |
 | **Task board events** | Column moves, priority changes, label/date updates |
 | **Team run events** | Team and member changes, run progress, item status |

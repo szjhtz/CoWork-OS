@@ -8,7 +8,7 @@
 
 <p align="center">
   <strong>CoWork OS is a local-first option for production workflows.</strong><br>
-  Security-hardened, local-first AI operating system — 34 LLM provider options, 15 messaging channels, 137 built-in skills
+  Security-hardened, local-first AI operating system — 34 LLM provider options, 17 messaging channels, 137 built-in skills
 </p>
 
 <p align="center">
@@ -22,7 +22,7 @@
 <p align="center">
   <a href="docs/getting-started.md">Getting Started</a> &middot;
   <a href="docs/showcase.md">Use Cases</a> &middot;
-  <a href="docs/release-notes-0.5.17.md">Release Notes 0.5.17</a> &middot;
+  <a href="docs/release-notes-0.5.19.md">Release Notes 0.5.19</a> &middot;
   <a href="docs/integration-skill-bootstrap-lifecycle.md">Platform Updates</a> &middot;
   <a href="docs/">Documentation</a> &middot;
   <a href="CHANGELOG.md">Changelog</a> &middot;
@@ -40,23 +40,27 @@
 - **Digital Twin Personas** — Pre-built AI twins for every role (engineer, manager, PM, director). Heartbeat v3 keeps them cheap by default: deterministic Pulse checks run quietly, and Dispatch escalates only when signals, cadence, or manual intervention justify visible work.
 - **Zero-Human Company Ops** — Configure CoWork OS as a founder-directed autonomous company shell with venture workspace kits, a dedicated Companies tab, persistent operator twins, strategic planner loops, and Mission Control ops monitoring.
 - **Managed Devices** — Run and inspect tasks across saved remote machines from a dedicated Devices tab with connection controls, summaries, remote task feeds, and remote file attachment picking.
-- **Automations Control Center** — A single Automations section now groups task queueing, scheduled tasks, event triggers, webhooks, daily briefings, and the self-improvement loop.
+- **Automations Control Center** — A single Automations section now groups task queueing, scheduled tasks, connector-backed event triggers, webhooks, daily briefings, and the self-improvement loop.
 - **34 LLM provider options** — 13 built-in providers plus 21 compatible/gateway options, including Anthropic, OpenAI, Google, Ollama, AWS Bedrock, and OpenRouter. Bring your own keys or run local models.
-- **15 messaging channels** — WhatsApp, Telegram, Discord, Slack, Teams, iMessage, Signal, X, and more. Chat with your AI from anywhere.
+- **17 messaging channels** — WhatsApp, Telegram, Discord, Slack, Teams, Google Chat, Feishu/Lark, WeCom, iMessage, Signal, X, and more. Chat with your AI from anywhere.
 - **44 MCP connectors** — Pre-built enterprise integrations across CRM, support, productivity, analytics, and payments, with native connector support for the most common internal surfaces.
 - **18 bundled role-specific packs** — including Mobile Development, Game Development, and 5 Financial packs, with 55+ skills, in-app Plugin Store for installing community packs, remote registry, and enterprise admin policies for organization-wide control.
 - **137 built-in skills** — Documents, code review, web search, image generation, cloud integrations, game development, mobile development, financial analysis, infrastructure-as-code, and more.
+- **Profiles & portability** — run separate CoWork profiles with isolated app data, export/import complete profile bundles, and keep credentials, channels, skills, and sessions separated by profile.
 - **Active Context sidebar** — Always-visible panel showing 44 available MCP connectors with branded Lucide icons and enabled skills, auto-refreshed every 30 seconds.
-- **Agent teams** — Multi-agent collaboration with shared checklists, collaborative mode, multi-LLM synthesis, and persistent teams.
+- **Agent teams** — Multi-agent collaboration with shared checklists, collaborative mode, multi-LLM synthesis, persistent teams, and ACP-targeted delegation for local or remote specialists.
+- **External agent orchestration** — Discover ACP agents, delegate work to A2A-compatible remote endpoints, and keep remote calls under the same approval and policy model as other governed actions, with persisted ACP tasks, restart-safe resume, and remote cancel support.
 - **Think With Me mode** — Socratic brainstorming that helps you clarify thinking without executing actions.
 - **Chat mode** — Direct LLM chat with no tools, no step timeline, same-session follow-ups, and chat-only streaming for supported providers.
 - **Build Mode** — Go from idea to working prototype with a phased canvas workflow (Concept → Plan → Scaffold → Iterate) and named checkpoints.
 - **AI Playbook** — Auto-captures what worked from successful tasks and injects relevant patterns into future prompts. Repeated patterns auto-promote to governed, one-click-approvable skills via the Playbook-to-Skill pipeline.
 - **Evolving Intelligence** — Unified Memory Synthesizer merges all 6 memory subsystems into a single coherent context block. Adaptive Style Engine learns your communication preferences from message patterns and feedback. Evolution Metrics dashboard quantifies improvement over time (correction rate, knowledge growth, style alignment).
 - **Operator Runtime Visibility** — Task completion now shows what Cowork learned, unified recall spans tasks/messages/files, persistent shell sessions preserve operator state, and model routing/fallback is visible in the UI and Mission Control.
-- **Usage Insights** — Dashboard showing task stats, cost/token tracking by model, activity heatmaps, top skills, and per-pack analytics.
+- **Configurable fallback chains** — LLM and web-search providers can run in an explicit ordered fallback chain, including Exa for search and provider/model-level failover visibility in the UI.
+- **Usage Insights** — Dashboard showing task stats, cost/token tracking by model, activity heatmaps, top skills, per-pack analytics, per-persona success/retry metrics, and task-result satisfaction signals.
 - **ChatGPT History Import** — Import your full ChatGPT conversation history. CoWork OS instantly knows your preferences, past projects, and context — no cold start. All data stays encrypted on your machine and never leaves it.
-- **Security-first** — Approval workflows, sandboxed execution, configurable guardrails, encrypted storage, and 4000+ tests.
+- **Computer use (macOS)** — Native desktop control via `computer_*` tools with a single active session, safety overlay, **Esc** to abort, per-app session consent (not per click), and a Settings onboarding panel for Accessibility + Screen Recording. Prefer browser and shell tools for web and repo work; computer use is routed as a last-resort lane in policy and planning guidance. **Documentation:** [docs/computer-use.md](docs/computer-use.md).
+- **Security-first** — Approval workflows, sandboxed execution, configurable guardrails, encrypted storage, and 4,500+ automated tests.
 - **Structured guidance** — In plan-mode flows, the agent can pause with short multiple-choice prompts instead of ambiguous free-text follow-ups.
 - **Runtime resilience** — Adaptive turn budgets, context-overflow recovery, and safe path normalization keep long-running tasks moving without silent file drift.
 - **Local-first & BYOK** — Your data and API keys stay on your machine. No telemetry. No middleman.
@@ -74,7 +78,7 @@ See [Features](docs/features.md), [Heartbeat v3](docs/heartbeat-v3.md), [Provide
 
 ### Latest Release
 
-`0.5.17` centers on five product areas: visible runtime learning/routing state, Discord supervisor mode, Microsoft OAuth for Outlook.com-family personal mailboxes, ClawHub/external skill imports, and mailbox/security hardening, with additional Devices/Dispatch and Inbox UX cleanup plus release-gate and release-validation fixes. Start with the [Release Notes 0.5.17](docs/release-notes-0.5.17.md), then use the [Changelog](CHANGELOG.md) for the condensed delta from `v0.5.14`.
+**`0.5.19`** ships profiles (export/import), Feishu/Lark and WeCom, gateway upgrades (multi-Slack, Telegram/Discord/Signal/email policies), Exa search, ordered LLM fallbacks, external skill directories, ACP persistence and remote-invocation hardening, computer-use and Usage Insights improvements, and expanded docs. Start with [Release Notes 0.5.19](docs/release-notes-0.5.19.md), then [Features](docs/features.md), [Getting Started](docs/getting-started.md), [Channels](docs/channels.md), and the [Changelog](CHANGELOG.md).
 
 ## Quick Start
 
@@ -132,7 +136,7 @@ See the [Development Guide](docs/development.md) for prerequisites and details.
 
 ### Agent Runtime
 
-Task-based execution with dynamic re-planning, five runtime modes (Chat, Execute, Plan, Analyze, Verified) plus orchestration toggles (Autonomous, Collaborative, Multi-LLM, Think With Me), agent teams with persistence, agent comparison, git worktree isolation, AI playbook, and performance reviews. [Learn more](docs/features.md#agent-capabilities)
+Task-based execution with dynamic re-planning, five runtime modes (Chat, Execute, Plan, Analyze, Verified) plus orchestration toggles (Autonomous, Collaborative, Multi-LLM, Think With Me), optional workflow-pipeline execution with per-phase model routing, agent teams with persistence, agent comparison, git worktree isolation, AI playbook, and performance reviews. [Learn more](docs/features.md#agent-capabilities)
 
 Operator Runtime Visibility makes the runtime's learning and routing visible: task detail surfaces now show the learning progression, unified recall spans tasks/messages/files/workspace notes/memory/KG, shell sessions preserve operator state, and live routing/fallback events are surfaced in Mission Control and the task UI. [Learn more](docs/operator-runtime-visibility.md)
 
@@ -168,7 +172,7 @@ The Devices tab turns CoWork OS into a multi-machine control surface. Save and r
 
 ### Automations
 
-Automations are now organized as a first-class operating surface instead of a scattered set of settings pages. The Automations section in Settings groups Task Queue, Self-Improve, Scheduled Tasks, Webhooks, Event Triggers, and Daily Briefing, while the home dashboard surfaces recent automation runs so you can monitor background systems without hunting through tabs. [Learn more](docs/features.md#automations-control-center)
+Automations are now organized as a first-class operating surface instead of a scattered set of settings pages. The Automations section in Settings groups Task Queue, Self-Improve, Scheduled Tasks, Webhooks, Event Triggers, and Daily Briefing, and Event Triggers can now subscribe to MCP connector/resource changes in addition to channel and webhook events. The home dashboard surfaces recent automation runs so you can monitor background systems without hunting through tabs. [Learn more](docs/features.md#automations-control-center)
 
 ### Zero-Human Company Ops
 
@@ -184,7 +188,7 @@ Agent-driven visual workspace for interactive HTML/CSS/JS content, data visualiz
 
 ### Multichannel Gateway
 
-Unified AI gateway across 15 channels with security modes, rate limiting, ambient mode, scheduled tasks, and chat commands. [Learn more](docs/channels.md)
+Unified AI gateway across 17 channels with security modes, rate limiting, ambient mode, scheduled tasks, and chat commands. Slack now supports multiple workspaces, Telegram supports group-routing policies and allowlists, Discord can be limited to specific guilds, and Feishu/Lark plus WeCom are now first-class channels. [Learn more](docs/channels.md)
 
 ### Inbox Agent
 
@@ -215,7 +219,7 @@ Advanced web scraping powered by [Scrapling](https://github.com/D4Vinci/Scraplin
 ### Integrations
 
 - **Cloud Storage**: 6 integrations, including Notion, Box, OneDrive, Google Workspace, Dropbox, and SharePoint
-- **44 MCP Connectors**: pre-built enterprise integrations for CRM, support, productivity, analytics, and payments (Salesforce, Jira, HubSpot, Zendesk, Stripe, Tavily, Grafana, Metabase, Socket, and more)
+- **44 MCP Connectors**: pre-built enterprise integrations for CRM, support, productivity, analytics, and payments (Salesforce, Jira, HubSpot, Zendesk, Stripe, Tavily, Grafana, Metabase, Socket, and more), with connector notifications available as trigger inputs for automations
 - **Developer Tools**: Claude Code-style `glob`/`grep`/`edit_file`, Playwright browser automation, MCP client/host/registry
 
 [Learn more](docs/features.md)
@@ -226,11 +230,11 @@ Real-time overview of your active integrations, always visible in the right pane
 
 ### Usage Insights
 
-Dashboard with task metrics, cost/token tracking by model, activity heatmaps (day-of-week and hourly), top skills usage, and per-pack analytics (skill usage grouped by plugin pack) with 7/14/30-day period selection. Access from **Settings** > **Usage Insights**. [Learn more](docs/features.md#usage-insights)
+Dashboard with task metrics, cost/token tracking by model, activity heatmaps (day-of-week and hourly), top skills usage, per-pack analytics, persona-level success/retry/cost breakdowns, and task-result thumbs up/down quality signals with 7/14/30-day period selection. Access from **Settings** > **Usage Insights**. [Learn more](docs/features.md#usage-insights)
 
 ### LLM Providers
 
-34 provider options, with 13 built-in providers and 21 compatible/gateway providers. Use cloud APIs or run fully offline with Ollama. [Learn more](docs/providers.md)
+34 provider options, with 13 built-in providers and 21 compatible/gateway providers. Use cloud APIs or run fully offline with Ollama, then configure an ordered fallback chain for runtime failover. [Learn more](docs/providers.md)
 
 ### Plugin Platform & Customize
 
@@ -243,6 +247,7 @@ Unified plugin platform with 18 bundled role-specific packs (Engineering, DevOps
 - **"Try asking" in chat**: Empty chat shows randomized prompt suggestions from active packs
 - **Plugin Store**: In-app marketplace for browsing, installing (Git/URL), and scaffolding custom packs
 - **Skill Store & external skills**: Desktop GUI support for CoWork Registry skills, direct ClawHub installs, and generic external skill imports from Git repos, raw manifests, and `SKILL.md` bundles
+- **External skill directories**: Add shared read-only skill folders without importing or copying those skills into CoWork's managed directory
 - **Remote Registry**: Community pack catalog with search and category filtering
 - **Admin Policies**: Organization-level controls — allow/block/require packs, restrict installations, set agent limits, distribute org-managed packs from a shared directory
 - **Per-pack analytics**: Usage Insights dashboard groups skill usage by parent pack
@@ -337,7 +342,7 @@ See [Architecture](docs/architecture.md) for the full technical deep-dive.
 - **Approval workflows**: User consent required for destructive operations
 - **Sandbox isolation**: macOS `sandbox-exec` (native), Docker containers, or process-level isolation on Windows
 - **Encrypted storage**: OS keychain + AES-256 fallback
-- **4000+ tests** including 132+ security unit tests and 259+ WebSocket protocol tests
+- **4,500+ automated tests** (4,583 passing in `npm run test`) including **135+** security unit tests under `tests/security/` and **250+** control-plane and WebSocket protocol tests
 
 See [Security Guide](docs/security-guide.md) and [Security Architecture](docs/security/) for details.
 
@@ -397,13 +402,14 @@ See [CHANGELOG.md](CHANGELOG.md) for the full history of completed features.
 | Guide | Description |
 |-------|-------------|
 | [Getting Started](docs/getting-started.md) | First-time setup and usage |
+| [Release Notes 0.5.19](docs/release-notes-0.5.19.md) | What is new in the latest release |
 | [Use Case Showcase](docs/showcase.md) | Comprehensive guide to what you can build and automate |
 | [Features](docs/features.md) | Complete feature reference |
 | [Chat Mode](docs/chat-mode.md) | Direct chat-only mode with no tools and same-session follow-ups |
 | [Platform Updates](docs/integration-skill-bootstrap-lifecycle.md) | Detailed implementation notes for integration setup, skill proposals, workspace-kit contracts, and bootstrap lifecycle |
-| [Channels](docs/channels.md) | Messaging channel setup (15 channels) |
+| [Channels](docs/channels.md) | Messaging channel setup (17 channels) |
 | [X Mention Triggers](docs/x-mention-triggers.md) | Configure `do:` mention-triggered task ingress on desktop and headless |
-| [Providers](docs/providers.md) | LLM provider configuration |
+| [Providers](docs/providers.md) | LLM and search provider configuration, costs, and fallback chains |
 | [Migration Guide](docs/migration.md) | Migration checklist and compatibility notes |
 | [Development](docs/development.md) | Build from source, project structure |
 | [Architecture](docs/architecture.md) | Technical architecture deep-dive |

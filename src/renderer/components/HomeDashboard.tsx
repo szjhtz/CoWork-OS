@@ -365,7 +365,6 @@ export function HomeDashboard({
   const [companionSuggestions, setCompanionSuggestions] = useState<CompanionSuggestion[]>([]);
   const [companionLoading, setCompanionLoading] = useState(false);
   const [companionError, setCompanionError] = useState<string | null>(null);
-  const [workspaceNames, setWorkspaceNames] = useState<Map<string, string>>(new Map());
   const [selectedCompanionSuggestionId, setSelectedCompanionSuggestionId] = useState<string | null>(
     null,
   );
@@ -384,31 +383,6 @@ export function HomeDashboard({
       } catch {
         if (cancelled) return;
         setRecentHubFiles([]);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    (async () => {
-      try {
-        const loaded = await window.electronAPI.listWorkspaces();
-        if (cancelled) return;
-        const visible = (Array.isArray(loaded) ? loaded : []).filter(
-          (item) => !String(item.id || "").startsWith("__temp_workspace__"),
-        );
-        const names = new Map<string, string>();
-        for (const item of visible) {
-          names.set(item.id, item.name || item.path?.split("/").pop() || "Workspace");
-        }
-        setWorkspaceNames(names);
-      } catch {
-        if (!cancelled) setWorkspaceNames(new Map());
       }
     })();
 
@@ -453,7 +427,6 @@ export function HomeDashboard({
 
         for (const notification of companionNotifications as CompanionNotification[]) {
           const workspaceName =
-            workspaceNames.get(notification.workspaceId || "") ||
             visibleWorkspaces.find((item) => item.id === notification.workspaceId)?.name ||
             "Workspace";
           merged.set(notification.suggestionId || notification.id, {
@@ -480,7 +453,8 @@ export function HomeDashboard({
         }
 
         for (const entry of suggestionResults) {
-          const workspaceName = workspaceNames.get(entry.workspaceId) || "Workspace";
+          const workspaceName =
+            visibleWorkspaces.find((item) => item.id === entry.workspaceId)?.name || "Workspace";
           for (const suggestion of entry.suggestions as CompanionSuggestion[]) {
             const existing = merged.get(suggestion.id);
             merged.set(suggestion.id, {
@@ -516,7 +490,7 @@ export function HomeDashboard({
     return () => {
       cancelled = true;
     };
-  }, [workspaceNames]);
+  }, []);
 
   useEffect(() => {
     if (!automationInboxFocusTick) return;

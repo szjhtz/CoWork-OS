@@ -31,6 +31,7 @@ import {
   WorkspaceRepository,
   TaskRepository,
   ArtifactRepository,
+  Channel,
 } from "../database/repositories";
 import Database from "better-sqlite3";
 import { AgentDaemon } from "../agent/daemon";
@@ -47,6 +48,7 @@ import { AgentRoleRepository } from "../agents/AgentRoleRepository";
 import * as os from "os";
 import { LLMProviderFactory, LLMSettings } from "../agent/llm/provider-factory";
 import { LLMProviderType } from "../agent/llm/types";
+import { recordLlmCallError, recordLlmCallSuccess } from "../agent/llm/usage-telemetry";
 import { getCustomSkillLoader } from "../agent/custom-skill-loader";
 import { PersonalityManager } from "../settings/personality-manager";
 import { describeSchedule, getCronService, parseIntervalToMs, type CronSchedule } from "../cron";
@@ -115,6 +117,8 @@ type MessageSecurityContext = {
 
 export class MessageRouter {
   private adapters: Map<ChannelType, ChannelAdapter> = new Map();
+  private adaptersByChannelId: Map<string, ChannelAdapter> = new Map();
+  private adapterChannelIds: WeakMap<ChannelAdapter, string> = new WeakMap();
   private securityManager: SecurityManager;
   private sessionManager: SessionManager;
   private config: RouterConfig;
@@ -138,6 +142,7 @@ export class MessageRouter {
     string,
     {
       adapter: ChannelAdapter;
+      channelId: string;
       chatId: string;
       sessionId: string;
       originalMessageId?: string; // For reaction updates
@@ -156,6 +161,7 @@ export class MessageRouter {
       sessionId: string;
       chatId: string;
       channelType: ChannelType;
+      channelId?: string;
       requestingUserId?: string;
       requestingUserName?: string;
       contextType?: "dm" | "group";
@@ -171,6 +177,7 @@ export class MessageRouter {
       sessionId: string;
       chatId: string;
       channelType: ChannelType;
+      channelId?: string;
       requestingUserId?: string;
       requestingUserName?: string;
       contextType: "dm" | "group";
@@ -185,6 +192,7 @@ export class MessageRouter {
     {
       action: "workspace" | "provider" | "model";
       channelType: ChannelType;
+      channelId?: string;
       chatId: string;
       messageId: string;
       requestingUserId: string;
@@ -385,6 +393,8 @@ export class MessageRouter {
     "email",
     "teams",
     "googlechat",
+    "feishu",
+    "wecom",
     "x",
   ]);
 
@@ -625,7 +635,12 @@ export class MessageRouter {
   /**
    * Register a channel adapter
    */
-  registerAdapter(adapter: ChannelAdapter): void {
+  registerAdapter(adapter: ChannelAdapter, channelId?: string): void {
+    if (channelId) {
+      this.adaptersByChannelId.set(channelId, adapter);
+      this.adapterChannelIds.set(adapter, channelId);
+    }
+
     // Set up message handler
     adapter.onMessage(async (message) => {
       await this.handleMessage(adapter, message);
@@ -660,7 +675,7 @@ export class MessageRouter {
       });
 
       // Update channel status in database
-      const channel = this.channelRepo.findByType(adapter.type);
+      const channel = this.getChannelForAdapter(adapter);
       if (channel) {
         this.channelRepo.update(channel.id, {
           status,
@@ -678,7 +693,27 @@ export class MessageRouter {
       }
     });
 
-    this.adapters.set(adapter.type, adapter);
+    if (!this.adapters.has(adapter.type)) {
+      this.adapters.set(adapter.type, adapter);
+    }
+  }
+
+  unregisterAdapter(channelId: string): void {
+    const adapter = this.adaptersByChannelId.get(channelId);
+    if (!adapter) return;
+    this.adaptersByChannelId.delete(channelId);
+
+    const primary = this.adapters.get(adapter.type);
+    if (primary === adapter) {
+      const replacement = Array.from(this.adaptersByChannelId.entries()).find(
+        ([, candidate]) => candidate.type === adapter.type,
+      )?.[1];
+      if (replacement) {
+        this.adapters.set(adapter.type, replacement);
+      } else {
+        this.adapters.delete(adapter.type);
+      }
+    }
   }
 
   /**
@@ -688,11 +723,24 @@ export class MessageRouter {
     return this.adapters.get(type);
   }
 
+  getAdapterByChannelId(channelId: string): ChannelAdapter | undefined {
+    return this.adaptersByChannelId.get(channelId);
+  }
+
   /**
    * Get all registered adapters
    */
   getAllAdapters(): ChannelAdapter[] {
-    return Array.from(this.adapters.values());
+    return Array.from(new Set([...this.adapters.values(), ...this.adaptersByChannelId.values()]));
+  }
+
+  private getChannelIdForAdapter(adapter: ChannelAdapter): string | undefined {
+    return this.adapterChannelIds.get(adapter);
+  }
+
+  private getChannelForAdapter(adapter: ChannelAdapter): Channel | undefined {
+    const channelId = this.getChannelIdForAdapter(adapter);
+    return channelId ? this.channelRepo.findById(channelId) : this.channelRepo.findByType(adapter.type);
   }
 
   /**
@@ -702,7 +750,8 @@ export class MessageRouter {
     const enabledChannels = this.channelRepo.findEnabled();
 
     for (const channel of enabledChannels) {
-      const adapter = this.adapters.get(channel.type as ChannelType);
+      const adapter =
+        this.getAdapterByChannelId(channel.id) || this.adapters.get(channel.type as ChannelType);
       if (!adapter) continue;
 
       if (adapter.status !== "connected") {
@@ -725,7 +774,7 @@ export class MessageRouter {
   }
 
   private async restorePendingTaskRoutes(adapter: ChannelAdapter): Promise<void> {
-    const channel = this.channelRepo.findByType(adapter.type);
+    const channel = this.getChannelForAdapter(adapter);
     if (!channel) return;
 
     const sessions = this.sessionRepo.findActiveByChannelId(channel.id);
@@ -761,6 +810,7 @@ export class MessageRouter {
 
       this.pendingTaskResponses.set(session.taskId, {
         adapter,
+        channelId: channel.id,
         chatId: session.chatId,
         sessionId: session.id,
         requestingUserId,
@@ -956,6 +1006,7 @@ export class MessageRouter {
   private resolveRouteForTask(taskId: string):
     | {
         adapter: ChannelAdapter;
+        channelId: string;
         chatId: string;
         sessionId: string;
         requestingUserId?: string;
@@ -980,7 +1031,8 @@ export class MessageRouter {
       if (session) {
         const channel = this.channelRepo.findById(session.channelId);
         if (!channel) return undefined;
-        const adapter = this.adapters.get(channel.type as ChannelType);
+        const adapter =
+          this.getAdapterByChannelId(channel.id) || this.adapters.get(channel.type as ChannelType);
         if (!adapter) return undefined;
 
         const { requestingUserId, requestingUserName, lastChannelMessageId } =
@@ -988,6 +1040,7 @@ export class MessageRouter {
 
         return {
           adapter,
+          channelId: channel.id,
           chatId: session.chatId,
           sessionId: session.id,
           requestingUserId,
@@ -1022,9 +1075,13 @@ export class MessageRouter {
   /**
    * Send a message through a channel
    */
-  async sendMessage(channelType: ChannelType, message: OutgoingMessage): Promise<string> {
+  async sendMessage(
+    channelType: ChannelType,
+    message: OutgoingMessage,
+    channelId?: string,
+  ): Promise<string> {
     this.cleanupIdempotencyCache();
-    const cacheKey = this.getIdempotencyCacheKey(channelType, message);
+    const cacheKey = this.getIdempotencyCacheKey(channelType, message, channelId);
     if (cacheKey) {
       const existing = this.sentIdempotencyKeys.get(cacheKey);
       if (existing) {
@@ -1032,9 +1089,12 @@ export class MessageRouter {
       }
     }
 
-    const adapter = this.adapters.get(channelType);
+    const adapter = channelId
+      ? this.getAdapterByChannelId(channelId) || this.adapters.get(channelType)
+      : this.adapters.get(channelType);
     if (!adapter) {
-      throw new Error(`No adapter registered for channel type: ${channelType}`);
+      const suffix = channelId ? ` (channel ${channelId})` : "";
+      throw new Error(`No adapter registered for channel type: ${channelType}${suffix}`);
     }
 
     if (adapter.status !== "connected") {
@@ -1048,7 +1108,7 @@ export class MessageRouter {
 
     // Best-effort logging: never fail delivery because persistence failed.
     try {
-      const channel = this.channelRepo.findByType(channelType);
+      const channel = channelId ? this.channelRepo.findById(channelId) : this.channelRepo.findByType(channelType);
       if (channel) {
         this.messageRepo.create({
           channelId: channel.id,
@@ -1095,12 +1155,14 @@ export class MessageRouter {
   private getIdempotencyCacheKey(
     channelType: ChannelType,
     message: OutgoingMessage,
+    channelId?: string,
   ): string | null {
     const idempotencyKey =
       typeof message.idempotencyKey === "string" ? message.idempotencyKey.trim() : "";
     if (!idempotencyKey) return null;
     const chatId = typeof message.chatId === "string" ? message.chatId.trim() : "";
-    return `${channelType}:${chatId}:${idempotencyKey}`;
+    const destination = channelId ? `${channelId}:${chatId}` : chatId;
+    return `${channelType}:${destination}:${idempotencyKey}`;
   }
 
   /**
@@ -1364,6 +1426,17 @@ export class MessageRouter {
           ],
           signal: abort.signal,
         });
+        recordLlmCallSuccess(
+          {
+            workspaceId: params.workspace.id,
+            sourceKind: "gateway_voice_priorities",
+            sourceId: params.message.messageId,
+            providerType: provider.type,
+            modelKey: modelId,
+            modelId,
+          },
+          resp.usage,
+        );
       } finally {
         clearTimeout(timeout);
       }
@@ -1390,6 +1463,14 @@ export class MessageRouter {
         }
       }
     } catch (error) {
+      recordLlmCallError(
+        {
+          workspaceId: params.workspace.id,
+          sourceKind: "gateway_voice_priorities",
+          sourceId: params.message.messageId,
+        },
+        error,
+      );
       console.warn("[Router] Voice priority extraction failed:", error);
       extractedPriorities = [];
       extractedDecisions = [];
@@ -1429,7 +1510,7 @@ export class MessageRouter {
    */
   private async handleMessage(adapter: ChannelAdapter, message: IncomingMessage): Promise<void> {
     const channelType = adapter.type;
-    const channel = this.channelRepo.findByType(channelType);
+    const channel = this.getChannelForAdapter(adapter);
 
     if (!channel) {
       console.error(`No channel configuration found for ${channelType}`);
@@ -2531,7 +2612,7 @@ export class MessageRouter {
       return;
     }
 
-    const channel = this.channelRepo.findByType(adapter.type);
+    const channel = this.getChannelForAdapter(adapter);
     if (!channel) {
       await adapter.sendMessage({
         chatId: message.chatId,
@@ -2672,7 +2753,7 @@ export class MessageRouter {
       return;
     }
 
-    const channel = this.channelRepo.findByType(adapter.type);
+    const channel = this.getChannelForAdapter(adapter);
     if (!channel) {
       await adapter.sendMessage({
         chatId: message.chatId,
@@ -2756,7 +2837,7 @@ export class MessageRouter {
       return;
     }
 
-    const channel = this.channelRepo.findByType(adapter.type);
+    const channel = this.getChannelForAdapter(adapter);
     if (!channel) {
       await adapter.sendMessage({
         chatId: message.chatId,
@@ -2828,7 +2909,7 @@ export class MessageRouter {
       return;
     }
 
-    const channel = this.channelRepo.findByType(adapter.type);
+    const channel = this.getChannelForAdapter(adapter);
     if (!channel) {
       await adapter.sendMessage({
         chatId: message.chatId,
@@ -2894,7 +2975,7 @@ export class MessageRouter {
       return;
     }
 
-    const channel = this.channelRepo.findByType(adapter.type);
+    const channel = this.getChannelForAdapter(adapter);
     if (!channel) {
       await adapter.sendMessage({
         chatId: message.chatId,
@@ -2972,7 +3053,7 @@ export class MessageRouter {
       return;
     }
 
-    const channel = this.channelRepo.findByType(adapter.type);
+    const channel = this.getChannelForAdapter(adapter);
     if (!channel) {
       await adapter.sendMessage({
         chatId: message.chatId,
@@ -3052,7 +3133,7 @@ export class MessageRouter {
       return;
     }
 
-    const channel = this.channelRepo.findByType(adapter.type);
+    const channel = this.getChannelForAdapter(adapter);
     if (!channel) {
       await adapter.sendMessage({
         chatId: message.chatId,
@@ -3122,7 +3203,7 @@ export class MessageRouter {
       return;
     }
 
-    const channel = this.channelRepo.findByType(adapter.type);
+    const channel = this.getChannelForAdapter(adapter);
     if (!channel) {
       await adapter.sendMessage({
         chatId: message.chatId,
@@ -3674,9 +3755,16 @@ export class MessageRouter {
       },
     });
 
+    const routedChannel = this.getChannelForAdapter(adapter);
+    if (!routedChannel) {
+      console.error(`No channel configuration found for ${adapter.type}`);
+      return;
+    }
+
     // Track this task for response handling (do not link it to the session).
     this.pendingTaskResponses.set(task.id, {
       adapter,
+      channelId: routedChannel.id,
       chatId: message.chatId,
       sessionId,
       originalMessageId: message.messageId,
@@ -3761,7 +3849,7 @@ export class MessageRouter {
       return;
     }
 
-    const channel = this.channelRepo.findByType(adapter.type);
+    const channel = this.getChannelForAdapter(adapter);
     if (!channel) {
       await adapter.sendMessage({
         chatId: message.chatId,
@@ -3892,7 +3980,7 @@ export class MessageRouter {
       return;
     }
 
-    const channel = this.channelRepo.findByType(adapter.type);
+    const channel = this.getChannelForAdapter(adapter);
     if (!channel) {
       await adapter.sendMessage({
         chatId: message.chatId,
@@ -4449,6 +4537,8 @@ export class MessageRouter {
       "email",
       "teams",
       "googlechat",
+      "feishu",
+      "wecom",
       "x",
     ]);
 
@@ -5708,7 +5798,7 @@ export class MessageRouter {
     message: IncomingMessage,
     code: string,
   ): Promise<void> {
-    const channel = this.channelRepo.findByType(adapter.type);
+    const channel = this.getChannelForAdapter(adapter);
     if (!channel) return;
 
     const result = await this.securityManager.verifyPairingCode(channel, message.userId, code);
@@ -5851,6 +5941,7 @@ export class MessageRouter {
               // Re-register task for response tracking (may have been removed after initial completion)
               this.pendingTaskResponses.set(session!.taskId!, {
                 adapter,
+                channelId: session!.channelId,
                 chatId: message.chatId,
                 sessionId,
                 requestingUserId,
@@ -5895,7 +5986,7 @@ export class MessageRouter {
     );
 
     // Resolve agent role: router rule > session preference > channel default
-    const routedChannel = this.channelRepo.findByType(adapter.type);
+    const routedChannel = this.getChannelForAdapter(adapter);
     const trustedGroupMemoryOptIn = routedChannel?.config?.trustedGroupMemoryOptIn === true;
     const allowSharedContextMemory = gatewayContext !== "private" && trustedGroupMemoryOptIn;
     const resolvedAgentRoleId =
@@ -5931,9 +6022,15 @@ export class MessageRouter {
       taskRequesterUserName: message.userName,
     });
 
+    const sessionChannelId = session?.channelId || this.getChannelIdForAdapter(adapter);
+    if (!sessionChannelId) {
+      throw new Error(`Unable to resolve channel id for ${adapter.type} task routing`);
+    }
+
     // Track this task for response handling
     this.pendingTaskResponses.set(task.id, {
       adapter,
+      channelId: sessionChannelId,
       chatId: message.chatId,
       sessionId,
       originalMessageId: message.messageId, // Track for reaction updates
@@ -6035,7 +6132,7 @@ export class MessageRouter {
               chatId: pendingEntry.chatId,
               text: chunk,
               parseMode: "markdown",
-            });
+            }, pendingEntry.channelId);
           }
           return;
         }
@@ -6044,7 +6141,7 @@ export class MessageRouter {
           chatId: pendingEntry.chatId,
           text: normalizedText,
           parseMode: "markdown",
-        });
+        }, pendingEntry.channelId);
       };
 
       const trimmed = (text || "").trim();
@@ -6167,7 +6264,7 @@ export class MessageRouter {
       this.telegramDraftStreamTouchedTasks.delete(taskId);
 
       try {
-        const channel = this.channelRepo.findByType(pending.adapter.type);
+        const channel = this.channelRepo.findById(pending.channelId);
         if (channel && finalizedMessageId) {
           this.messageRepo.create({
             channelId: channel.id,
@@ -6268,7 +6365,7 @@ export class MessageRouter {
 
         // Log outgoing message so transcript-based features can see assistant output.
         try {
-          const channel = this.channelRepo.findByType(pending.adapter.type);
+          const channel = this.channelRepo.findById(pending.channelId);
           if (channel && finalizedMessageId) {
             this.messageRepo.create({
               channelId: channel.id,
@@ -6685,6 +6782,7 @@ export class MessageRouter {
   private async sendFollowupToTaskFromGateway(opts: {
     taskId: string;
     adapter: ChannelAdapter;
+    channelId: string;
     chatId: string;
     sessionId: string;
     requestingUserId?: string;
@@ -6707,6 +6805,7 @@ export class MessageRouter {
     // Ensure responses to this follow-up route back to the same chat.
     this.pendingTaskResponses.set(opts.taskId, {
       adapter: opts.adapter,
+      channelId: opts.channelId,
       chatId: opts.chatId,
       sessionId: opts.sessionId,
       requestingUserId: opts.requestingUserId,
@@ -6870,6 +6969,7 @@ export class MessageRouter {
     await this.sendFollowupToTaskFromGateway({
       taskId,
       adapter,
+      channelId: session!.channelId,
       chatId: message.chatId,
       sessionId,
       requestingUserId: requester.requestingUserId ?? message.userId,
@@ -7634,7 +7734,7 @@ ${status.queuedCount > 0 ? `Queued task IDs: ${status.queuedTaskIds.join(", ")}`
     text += `🔧 Shell commands: ${session?.shellEnabled ? "✅" : "❌"}\n`;
     text += `📝 Debug mode: ${session?.debugMode ? "✅" : "❌"}\n`;
 
-    const channel = this.channelRepo.findByType(adapter.type);
+    const channel = this.getChannelForAdapter(adapter);
     const channelConfig = (channel?.config || {}) as Record<string, unknown>;
     if (adapter.type === "whatsapp") {
       const rawMode =
@@ -7838,7 +7938,7 @@ Node.js: \`${nodeVersion}\`
         }
       };
 
-      const channel = this.channelRepo.findByType(adapter.type);
+      const channel = this.getChannelForAdapter(adapter);
       if (!channel) {
         console.error(`No channel configuration found for ${adapter.type}`);
         return;
@@ -8291,9 +8391,19 @@ Node.js: \`${nodeVersion}\`
         userName: query.userName,
       });
 
+      const followupChannelId = req.channelId || this.getChannelIdForAdapter(adapter);
+      if (!followupChannelId) {
+        await adapter.sendMessage({
+          chatId: req.chatId,
+          text: this.getUiCopy("agentUnavailable"),
+        });
+        return;
+      }
+
       await this.sendFollowupToTaskFromGateway({
         taskId,
         adapter,
+        channelId: followupChannelId,
         chatId: req.chatId,
         sessionId: req.sessionId,
         requestingUserId: req.requestingUserId ?? query.userId,

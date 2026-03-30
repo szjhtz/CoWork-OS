@@ -59,7 +59,7 @@ Operator Runtime Visibility is an observability and operator-experience upgrade,
 
 CoWork OS still centers on:
 
-- desktop control plane
+- desktop control plane (including **macOS computer use**: governed `computer_*` sessions with overlay, **Esc** abort, and per-app consent — see [Computer use (macOS)](computer-use.md))
 - channels and inbox
 - devices and remote execution
 - governed automation and approvals
@@ -69,8 +69,9 @@ The new surfaces make the runtime easier to trust and understand without changin
 
 ## Related docs
 
+- [Computer use (macOS)](computer-use.md)
 - [Features](features.md)
 - [Mission Control](mission-control.md)
 - [Evolving Agent Intelligence](evolving-agent-intelligence.md)
-- [OpenClaw / CoWork comparison](openclaw-hermes-cowork-comparison.md)
+- [OpenClaw / CoWork comparison](openclaw-comparison.md)
 - [Changelog](changelog.md)

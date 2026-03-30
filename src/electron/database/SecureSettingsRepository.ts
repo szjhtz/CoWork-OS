@@ -36,6 +36,8 @@ export interface LoadResult<T> {
 
 /** Settings categories supported */
 export type SettingsCategory =
+  | "skills"
+  | "acp"
   | "voice"
   | "memory"
   | "llm"

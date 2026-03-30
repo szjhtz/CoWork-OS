@@ -1508,6 +1508,9 @@ export class DatabaseManager {
         CREATE TABLE IF NOT EXISTS agent_roles (
           id TEXT PRIMARY KEY,
           name TEXT NOT NULL UNIQUE,
+          role_kind TEXT DEFAULT 'custom',
+          source_template_id TEXT,
+          source_template_version TEXT,
           company_id TEXT REFERENCES companies(id) ON DELETE SET NULL,
           display_name TEXT NOT NULL,
           description TEXT,
@@ -1867,6 +1870,9 @@ export class DatabaseManager {
 
     // Migration: Add heartbeat and autonomy columns to agent_roles
     const missionControlColumns = [
+      "ALTER TABLE agent_roles ADD COLUMN role_kind TEXT DEFAULT 'custom'",
+      "ALTER TABLE agent_roles ADD COLUMN source_template_id TEXT",
+      "ALTER TABLE agent_roles ADD COLUMN source_template_version TEXT",
       "ALTER TABLE agent_roles ADD COLUMN autonomy_level TEXT DEFAULT 'specialist'",
       "ALTER TABLE agent_roles ADD COLUMN soul TEXT",
       "ALTER TABLE agent_roles ADD COLUMN heartbeat_enabled INTEGER DEFAULT 0",
@@ -1905,6 +1911,130 @@ export class DatabaseManager {
       this.db.exec("CREATE INDEX IF NOT EXISTS idx_agent_roles_company ON agent_roles(company_id)");
     } catch {
       // Index already exists, ignore
+    }
+
+    try {
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS heartbeat_policies (
+          id TEXT PRIMARY KEY,
+          agent_role_id TEXT NOT NULL UNIQUE REFERENCES agent_roles(id) ON DELETE CASCADE,
+          enabled INTEGER NOT NULL DEFAULT 0,
+          cadence_minutes INTEGER NOT NULL DEFAULT 15,
+          stagger_offset_minutes INTEGER NOT NULL DEFAULT 0,
+          dispatch_cooldown_minutes INTEGER NOT NULL DEFAULT 120,
+          max_dispatches_per_day INTEGER NOT NULL DEFAULT 6,
+          profile TEXT NOT NULL DEFAULT 'observer',
+          active_hours TEXT,
+          primary_categories TEXT,
+          proactive_tasks TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_heartbeat_policies_enabled ON heartbeat_policies(enabled, updated_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_heartbeat_policies_agent_role ON heartbeat_policies(agent_role_id);
+      `);
+    } catch {
+      // Table already exists, ignore
+    }
+
+    try {
+      const existingPolicyRoleIds = new Set(
+        (
+          this.db.prepare("SELECT agent_role_id FROM heartbeat_policies").all() as Array<{
+            agent_role_id?: string;
+          }>
+        )
+          .map((row) => (typeof row.agent_role_id === "string" ? row.agent_role_id : ""))
+          .filter(Boolean),
+      );
+      const roles = this.db.prepare(
+        `SELECT id, name, role_kind, source_template_id, source_template_version, soul,
+                heartbeat_enabled, heartbeat_interval_minutes, heartbeat_stagger_offset,
+                heartbeat_pulse_every_minutes, heartbeat_dispatch_cooldown_minutes,
+                heartbeat_max_dispatches_per_day, heartbeat_profile, heartbeat_active_hours,
+                created_at, updated_at
+         FROM agent_roles`,
+      ).all() as Array<Record<string, unknown>>;
+      const insertPolicy = this.db.prepare(
+        `INSERT INTO heartbeat_policies (
+          id, agent_role_id, enabled, cadence_minutes, stagger_offset_minutes,
+          dispatch_cooldown_minutes, max_dispatches_per_day, profile, active_hours,
+          primary_categories, proactive_tasks, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      );
+      const updateRoleMetadata = this.db.prepare(
+        `UPDATE agent_roles
+         SET role_kind = COALESCE(role_kind, ?),
+             source_template_id = COALESCE(source_template_id, ?),
+             source_template_version = COALESCE(source_template_version, ?)
+         WHERE id = ?`,
+      );
+
+      for (const role of roles) {
+        const roleId = typeof role.id === "string" ? role.id : "";
+        if (!roleId) continue;
+
+        let primaryCategories: unknown[] = [];
+        let proactiveTasks: unknown[] = [];
+        let sourceTemplateId: string | null = null;
+        let sourceTemplateVersion: string | null = null;
+
+        if (typeof role.soul === "string" && role.soul.trim().length > 0) {
+          try {
+            const parsed = JSON.parse(role.soul) as Record<string, unknown>;
+            const cognitiveOffload =
+              parsed.cognitiveOffload && typeof parsed.cognitiveOffload === "object"
+                ? (parsed.cognitiveOffload as Record<string, unknown>)
+                : null;
+            primaryCategories = Array.isArray(cognitiveOffload?.primaryCategories)
+              ? (cognitiveOffload?.primaryCategories as unknown[])
+              : [];
+            proactiveTasks = Array.isArray(cognitiveOffload?.proactiveTasks)
+              ? (cognitiveOffload?.proactiveTasks as unknown[])
+              : [];
+            sourceTemplateId =
+              typeof parsed.sourceTemplateId === "string" ? parsed.sourceTemplateId : null;
+            sourceTemplateVersion =
+              typeof parsed.sourceTemplateVersion === "string" ? parsed.sourceTemplateVersion : null;
+          } catch {
+            // Ignore malformed soul JSON during migration.
+          }
+        }
+
+        const derivedRoleKind =
+          sourceTemplateId || (typeof role.name === "string" && role.name.startsWith("twin-"))
+            ? "persona_template"
+            : "custom";
+        updateRoleMetadata.run(
+          derivedRoleKind,
+          sourceTemplateId,
+          sourceTemplateVersion,
+          roleId,
+        );
+
+        if (!existingPolicyRoleIds.has(roleId)) {
+          insertPolicy.run(
+            typeof crypto?.randomUUID === "function"
+              ? crypto.randomUUID()
+              : `${roleId}-heartbeat-policy`,
+            roleId,
+            role.heartbeat_enabled === 1 ? 1 : 0,
+            Number(role.heartbeat_pulse_every_minutes || role.heartbeat_interval_minutes || 15),
+            Number(role.heartbeat_stagger_offset || 0),
+            Number(role.heartbeat_dispatch_cooldown_minutes || 120),
+            Number(role.heartbeat_max_dispatches_per_day || 6),
+            typeof role.heartbeat_profile === "string" ? role.heartbeat_profile : "observer",
+            typeof role.heartbeat_active_hours === "string" ? role.heartbeat_active_hours : null,
+            JSON.stringify(primaryCategories),
+            JSON.stringify(proactiveTasks),
+            Number(role.created_at || Date.now()),
+            Number(role.updated_at || Date.now()),
+          );
+        }
+      }
+    } catch (error) {
+      console.error("[DatabaseManager] Failed to migrate heartbeat policies:", error);
     }
 
     // Fix broken FK reference in tasks table caused by previous heartbeat_runs migration.
@@ -3207,6 +3337,105 @@ export class DatabaseManager {
 
     // Seed built-in entity types for all workspaces that don't have them yet
     this.seedKnowledgeGraphTypes();
+
+    try {
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS llm_pricing (
+          model_key TEXT PRIMARY KEY,
+          provider TEXT NOT NULL,
+          display_name TEXT NOT NULL,
+          input_cost_per_mtok REAL NOT NULL DEFAULT 0,
+          output_cost_per_mtok REAL NOT NULL DEFAULT 0,
+          cached_input_cost_per_mtok REAL NOT NULL DEFAULT 0,
+          updated_at INTEGER NOT NULL
+        );
+      `);
+    } catch {
+      // Table already exists, ignore
+    }
+
+    try {
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS llm_call_events (
+          id TEXT PRIMARY KEY,
+          timestamp INTEGER NOT NULL,
+          workspace_id TEXT,
+          task_id TEXT,
+          source_kind TEXT NOT NULL,
+          source_id TEXT,
+          provider_type TEXT,
+          model_key TEXT,
+          model_id TEXT,
+          input_tokens INTEGER NOT NULL DEFAULT 0,
+          output_tokens INTEGER NOT NULL DEFAULT 0,
+          cached_tokens INTEGER NOT NULL DEFAULT 0,
+          cost REAL NOT NULL DEFAULT 0,
+          success INTEGER NOT NULL DEFAULT 1,
+          error_code TEXT,
+          error_message TEXT,
+          FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
+          FOREIGN KEY (task_id) REFERENCES tasks(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_llm_call_events_timestamp
+          ON llm_call_events(timestamp DESC);
+        CREATE INDEX IF NOT EXISTS idx_llm_call_events_workspace
+          ON llm_call_events(workspace_id, timestamp DESC);
+        CREATE INDEX IF NOT EXISTS idx_llm_call_events_source
+          ON llm_call_events(source_kind, timestamp DESC);
+      `);
+    } catch {
+      // Table or indexes already exist, ignore
+    }
+    try {
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS acp_agents (
+          id TEXT PRIMARY KEY,
+          origin TEXT NOT NULL,
+          endpoint TEXT,
+          name TEXT NOT NULL,
+          provider TEXT,
+          status TEXT NOT NULL,
+          registered_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          card_json TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_acp_agents_origin_status
+          ON acp_agents(origin, status, updated_at DESC);
+      `);
+    } catch {
+      // Table or indexes already exist, ignore
+    }
+    try {
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS acp_tasks (
+          id TEXT PRIMARY KEY,
+          requester_id TEXT NOT NULL,
+          assignee_id TEXT NOT NULL,
+          title TEXT NOT NULL,
+          prompt TEXT NOT NULL,
+          status TEXT NOT NULL,
+          result TEXT,
+          error TEXT,
+          cowork_task_id TEXT,
+          remote_task_id TEXT,
+          workspace_id TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          completed_at INTEGER
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_acp_tasks_requester_status
+          ON acp_tasks(requester_id, status, updated_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_acp_tasks_assignee_status
+          ON acp_tasks(assignee_id, status, updated_at DESC);
+      `);
+    } catch {
+      // Table or indexes already exist, ignore
+    }
+    this.seedLlmPricing();
   }
 
   private initializeKnowledgeGraphFTS() {
@@ -3338,6 +3567,150 @@ export class DatabaseManager {
       }
     } catch (error) {
       console.warn("[DatabaseManager] Failed to seed knowledge graph types:", error);
+    }
+  }
+
+  private seedLlmPricing() {
+    try {
+      const now = Date.now();
+      type P = { key: string; provider: string; display: string; input: number; output: number; cached: number };
+      const models: P[] = [
+        // ── OpenAI 5.4 ──
+        { key: "gpt-5.4",              provider: "OpenAI", display: "GPT-5.4",             input: 2.50,   output: 15.00,  cached: 0.25 },
+        { key: "gpt-5.4-mini",         provider: "OpenAI", display: "GPT-5.4 Mini",        input: 0.75,   output: 4.50,   cached: 0.075 },
+        { key: "gpt-5.4-nano",         provider: "OpenAI", display: "GPT-5.4 Nano",        input: 0.20,   output: 1.25,   cached: 0.02 },
+        { key: "gpt-5.4-pro",          provider: "OpenAI", display: "GPT-5.4 Pro",         input: 30.00,  output: 180.00, cached: 0 },
+        // ── OpenAI 5.3 ──
+        { key: "gpt-5.3-chat",         provider: "OpenAI", display: "GPT-5.3 Chat",        input: 1.75,   output: 14.00,  cached: 0.175 },
+        { key: "gpt-5.3-codex-spark",  provider: "OpenAI", display: "GPT-5.3 Codex Spark", input: 1.75,   output: 14.00,  cached: 0.175 },
+        { key: "gpt-5.3-codex",        provider: "OpenAI", display: "GPT-5.3 Codex",       input: 1.75,   output: 14.00,  cached: 0.175 },
+        // ── OpenAI 5.2 ──
+        { key: "gpt-5.2",              provider: "OpenAI", display: "GPT-5.2",             input: 1.75,   output: 14.00,  cached: 0.175 },
+        { key: "gpt-5.2-pro",          provider: "OpenAI", display: "GPT-5.2 Pro",         input: 21.00,  output: 168.00, cached: 0 },
+        // ── OpenAI 5.1 / 5.0 ──
+        { key: "gpt-5.1",              provider: "OpenAI", display: "GPT-5.1",             input: 1.25,   output: 10.00,  cached: 0.125 },
+        { key: "gpt-5.1-codex-mini",   provider: "OpenAI", display: "GPT-5.1 Codex Mini",  input: 0.25,   output: 2.00,   cached: 0.025 },
+        { key: "gpt-5",                provider: "OpenAI", display: "GPT-5",               input: 1.25,   output: 10.00,  cached: 0.125 },
+        { key: "gpt-5-mini",           provider: "OpenAI", display: "GPT-5 Mini",          input: 0.25,   output: 2.00,   cached: 0.025 },
+        { key: "gpt-5-nano",           provider: "OpenAI", display: "GPT-5 Nano",          input: 0.05,   output: 0.40,   cached: 0.005 },
+        { key: "gpt-5-pro",            provider: "OpenAI", display: "GPT-5 Pro",           input: 15.00,  output: 120.00, cached: 0 },
+        // ── OpenAI 4.x ──
+        { key: "gpt-4.1",              provider: "OpenAI", display: "GPT-4.1",             input: 2.00,   output: 8.00,   cached: 0.50 },
+        { key: "gpt-4.1-mini",         provider: "OpenAI", display: "GPT-4.1 Mini",        input: 0.40,   output: 1.60,   cached: 0.10 },
+        { key: "gpt-4.1-nano",         provider: "OpenAI", display: "GPT-4.1 Nano",        input: 0.10,   output: 0.40,   cached: 0.025 },
+        { key: "gpt-4o",               provider: "OpenAI", display: "GPT-4o",              input: 2.50,   output: 10.00,  cached: 1.25 },
+        { key: "gpt-4o-mini",          provider: "OpenAI", display: "GPT-4o Mini",         input: 0.15,   output: 0.60,   cached: 0.075 },
+        { key: "gpt-4-turbo",          provider: "OpenAI", display: "GPT-4 Turbo",         input: 10.00,  output: 30.00,  cached: 0 },
+        { key: "gpt-3.5-turbo",        provider: "OpenAI", display: "GPT-3.5 Turbo",       input: 0.50,   output: 1.50,   cached: 0 },
+        // ── OpenAI reasoning ──
+        { key: "o4-mini",              provider: "OpenAI", display: "o4-mini",             input: 1.10,   output: 4.40,   cached: 0.275 },
+        { key: "o3",                   provider: "OpenAI", display: "o3",                  input: 2.00,   output: 8.00,   cached: 0.50 },
+        { key: "o3-mini",              provider: "OpenAI", display: "o3-mini",             input: 1.10,   output: 4.40,   cached: 0.55 },
+        { key: "o3-pro",               provider: "OpenAI", display: "o3-pro",              input: 20.00,  output: 80.00,  cached: 0 },
+        { key: "o1",                   provider: "OpenAI", display: "o1",                  input: 15.00,  output: 60.00,  cached: 7.50 },
+        { key: "o1-mini",              provider: "OpenAI", display: "o1-mini",             input: 1.10,   output: 4.40,   cached: 0.55 },
+        { key: "o1-pro",               provider: "OpenAI", display: "o1-pro",              input: 150.00, output: 600.00, cached: 0 },
+
+        // ── Anthropic ──
+        { key: "claude-opus-4-6",      provider: "Anthropic", display: "Claude Opus 4.6",      input: 5.00,  output: 25.00, cached: 0.50 },
+        { key: "claude-sonnet-4-6",    provider: "Anthropic", display: "Claude Sonnet 4.6",    input: 3.00,  output: 15.00, cached: 0.30 },
+        { key: "claude-opus-4-5",      provider: "Anthropic", display: "Claude Opus 4.5",      input: 5.00,  output: 25.00, cached: 0.50 },
+        { key: "claude-sonnet-4-5",    provider: "Anthropic", display: "Claude Sonnet 4.5",    input: 3.00,  output: 15.00, cached: 0.30 },
+        { key: "claude-opus-4-1",      provider: "Anthropic", display: "Claude Opus 4.1",      input: 15.00, output: 75.00, cached: 1.50 },
+        { key: "claude-sonnet-4",      provider: "Anthropic", display: "Claude Sonnet 4",      input: 3.00,  output: 15.00, cached: 0.30 },
+        { key: "claude-opus-4",        provider: "Anthropic", display: "Claude Opus 4",        input: 15.00, output: 75.00, cached: 1.50 },
+        { key: "claude-haiku-4-5",     provider: "Anthropic", display: "Claude Haiku 4.5",     input: 1.00,  output: 5.00,  cached: 0.10 },
+        { key: "claude-haiku-3-5",     provider: "Anthropic", display: "Claude Haiku 3.5",     input: 0.80,  output: 4.00,  cached: 0.08 },
+        { key: "claude-3-haiku",       provider: "Anthropic", display: "Claude 3 Haiku",       input: 0.25,  output: 1.25,  cached: 0.03 },
+        { key: "claude-3-opus",        provider: "Anthropic", display: "Claude 3 Opus",        input: 15.00, output: 75.00, cached: 1.50 },
+        { key: "claude-3-sonnet",      provider: "Anthropic", display: "Claude 3 Sonnet",      input: 3.00,  output: 15.00, cached: 0.30 },
+        { key: "claude-sonnet-3-7",    provider: "Anthropic", display: "Claude Sonnet 3.7",    input: 3.00,  output: 15.00, cached: 0.30 },
+
+        // ── Google Gemini ──
+        { key: "gemini-3.1-pro",       provider: "Google", display: "Gemini 3.1 Pro",         input: 2.00,  output: 12.00, cached: 0.20 },
+        { key: "gemini-3.1-flash-lite", provider: "Google", display: "Gemini 3.1 Flash Lite", input: 0.25,  output: 1.50,  cached: 0.025 },
+        { key: "gemini-3-flash",       provider: "Google", display: "Gemini 3 Flash",         input: 0.50,  output: 3.00,  cached: 0.05 },
+        { key: "gemini-2.5-pro",       provider: "Google", display: "Gemini 2.5 Pro",         input: 1.25,  output: 10.00, cached: 0.125 },
+        { key: "gemini-2.5-flash",     provider: "Google", display: "Gemini 2.5 Flash",       input: 0.30,  output: 2.50,  cached: 0.03 },
+        { key: "gemini-2.5-flash-lite", provider: "Google", display: "Gemini 2.5 Flash Lite", input: 0.10,  output: 0.40,  cached: 0.01 },
+        { key: "gemini-2.0-flash",     provider: "Google", display: "Gemini 2.0 Flash",       input: 0.10,  output: 0.40,  cached: 0.025 },
+        { key: "gemini-1.5-pro",       provider: "Google", display: "Gemini 1.5 Pro",         input: 1.25,  output: 5.00,  cached: 0.3125 },
+        { key: "gemini-1.5-flash",     provider: "Google", display: "Gemini 1.5 Flash",       input: 0.075, output: 0.30,  cached: 0.01875 },
+
+        // ── xAI Grok ──
+        { key: "grok-4",               provider: "xAI", display: "Grok 4",                 input: 3.00,  output: 15.00, cached: 0.75 },
+        { key: "grok-4.20",            provider: "xAI", display: "Grok 4.20",              input: 2.00,  output: 6.00,  cached: 0.20 },
+        { key: "grok-4-1-fast",        provider: "xAI", display: "Grok 4.1 Fast",          input: 0.20,  output: 0.50,  cached: 0.05 },
+        { key: "grok-4.1-fast",        provider: "xAI", display: "Grok 4.1 Fast",          input: 0.20,  output: 0.50,  cached: 0.05 },
+        { key: "grok-3",               provider: "xAI", display: "Grok 3",                 input: 3.00,  output: 15.00, cached: 0.75 },
+        { key: "grok-3-mini",          provider: "xAI", display: "Grok 3 Mini",            input: 0.30,  output: 0.50,  cached: 0.075 },
+        { key: "grok-code-fast-1",     provider: "xAI", display: "Grok Code Fast 1",       input: 0.20,  output: 1.50,  cached: 0.05 },
+
+        // ── DeepSeek ──
+        { key: "deepseek-chat",        provider: "DeepSeek", display: "DeepSeek Chat V3.2",   input: 0.28,  output: 0.42,  cached: 0.028 },
+        { key: "deepseek-reasoner",    provider: "DeepSeek", display: "DeepSeek Reasoner",    input: 0.55,  output: 2.19,  cached: 0.14 },
+        { key: "deepseek-v3",          provider: "DeepSeek", display: "DeepSeek V3",          input: 0.28,  output: 0.42,  cached: 0.028 },
+        { key: "deepseek-v3.1",        provider: "DeepSeek", display: "DeepSeek V3.1",        input: 0.15,  output: 0.75,  cached: 0.015 },
+        { key: "deepseek-r1",          provider: "DeepSeek", display: "DeepSeek R1",          input: 0.55,  output: 2.19,  cached: 0.14 },
+
+        // ── Mistral ──
+        { key: "mistral-large",        provider: "Mistral", display: "Mistral Large 3",      input: 0.50,  output: 1.50,  cached: 0.05 },
+        { key: "mistral-small",        provider: "Mistral", display: "Mistral Small 3.2",    input: 0.07,  output: 0.20,  cached: 0.007 },
+        { key: "mistral-small-4",      provider: "Mistral", display: "Mistral Small 4",      input: 0.15,  output: 0.60,  cached: 0.015 },
+        { key: "codestral",            provider: "Mistral", display: "Codestral",            input: 0.30,  output: 0.90,  cached: 0.03 },
+        { key: "mistral-medium",       provider: "Mistral", display: "Mistral Medium",       input: 2.75,  output: 8.10,  cached: 0.275 },
+
+        // ── Meta Llama ──
+        { key: "llama-4-maverick",     provider: "Meta", display: "Llama 4 Maverick",       input: 0.15,  output: 0.60,  cached: 0 },
+        { key: "llama-4-scout",        provider: "Meta", display: "Llama 4 Scout",          input: 0.08,  output: 0.30,  cached: 0 },
+        { key: "llama-3.3-70b",        provider: "Meta", display: "Llama 3.3 70B",          input: 0.10,  output: 0.30,  cached: 0 },
+        { key: "llama-3.1-405b",       provider: "Meta", display: "Llama 3.1 405B",         input: 0.80,  output: 0.80,  cached: 0 },
+        { key: "llama-3.1-70b",        provider: "Meta", display: "Llama 3.1 70B",          input: 0.10,  output: 0.30,  cached: 0 },
+        { key: "llama-3.1-8b",         provider: "Meta", display: "Llama 3.1 8B",           input: 0.03,  output: 0.05,  cached: 0 },
+
+        // ── Moonshot Kimi ──
+        { key: "kimi-k2.5",            provider: "Moonshot", display: "Kimi K2.5",           input: 0.42,  output: 2.20,  cached: 0 },
+        { key: "kimi-k2",              provider: "Moonshot", display: "Kimi K2",             input: 0.40,  output: 2.00,  cached: 0 },
+        { key: "kimi-k2.5-turbo",      provider: "Moonshot", display: "Kimi K2.5 Turbo",    input: 0.60,  output: 3.00,  cached: 0 },
+        { key: "moonshot-v1-8k",       provider: "Moonshot", display: "Moonshot v1 8K",      input: 0.42,  output: 2.20,  cached: 0 },
+
+        // ── Cohere ──
+        { key: "command-a",            provider: "Cohere", display: "Command A",             input: 2.50,  output: 10.00, cached: 0 },
+        { key: "command-r",            provider: "Cohere", display: "Command R",             input: 0.15,  output: 0.60,  cached: 0 },
+        { key: "command-r-plus",       provider: "Cohere", display: "Command R+",            input: 2.50,  output: 10.00, cached: 0 },
+        { key: "command-r7b",          provider: "Cohere", display: "Command R7B",           input: 0.037, output: 0.15,  cached: 0 },
+
+        // ── MiniMax ──
+        { key: "MiniMax-M2.7",         provider: "MiniMax", display: "MiniMax M2.7",         input: 0.30,  output: 1.20,  cached: 0 },
+        { key: "MiniMax-M2.5",         provider: "MiniMax", display: "MiniMax M2.5",         input: 0.20,  output: 1.10,  cached: 0.10 },
+        { key: "MiniMax-M2.5-highspeed", provider: "MiniMax", display: "MiniMax M2.5 Highspeed", input: 0.20, output: 2.40, cached: 0.10 },
+        { key: "MiniMax-M2.1",         provider: "MiniMax", display: "MiniMax M2.1",         input: 0.20,  output: 1.10,  cached: 0.10 },
+        { key: "MiniMax-M2",           provider: "MiniMax", display: "MiniMax M2",           input: 0.20,  output: 1.10,  cached: 0.10 },
+
+        // ── Free: ":free" suffix ──
+        { key: "nvidia/nemotron-3-nano-30b-a3b:free",   provider: "NVIDIA", display: "Nemotron 3 Nano 30B (free)", input: 0, output: 0, cached: 0 },
+        { key: "nvidia/nemotron-3-super-120b-a12b:free", provider: "NVIDIA", display: "Nemotron 3 Super 120B (free)", input: 0, output: 0, cached: 0 },
+
+        // ── Local / Ollama — always free ──
+        { key: "qwen3.5:latest",       provider: "Local", display: "Qwen 3.5 (Ollama)",     input: 0, output: 0, cached: 0 },
+        { key: "llama3:latest",         provider: "Local", display: "Llama 3 (Ollama)",      input: 0, output: 0, cached: 0 },
+        { key: "mistral:latest",        provider: "Local", display: "Mistral (Ollama)",      input: 0, output: 0, cached: 0 },
+        { key: "codellama:latest",      provider: "Local", display: "Code Llama (Ollama)",   input: 0, output: 0, cached: 0 },
+        { key: "phi-3:latest",          provider: "Local", display: "Phi-3 (Ollama)",        input: 0, output: 0, cached: 0 },
+        { key: "gemma:latest",          provider: "Local", display: "Gemma (Ollama)",        input: 0, output: 0, cached: 0 },
+      ];
+
+      const stmt = this.db.prepare(`
+        INSERT OR REPLACE INTO llm_pricing
+          (model_key, provider, display_name, input_cost_per_mtok, output_cost_per_mtok, cached_input_cost_per_mtok, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `);
+
+      for (const m of models) {
+        stmt.run(m.key, m.provider, m.display, m.input, m.output, m.cached, now);
+      }
+    } catch (error) {
+      console.warn("[DatabaseManager] Failed to seed LLM pricing:", error);
     }
   }
 

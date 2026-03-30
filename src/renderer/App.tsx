@@ -9,7 +9,6 @@ import { Onboarding } from "./components/Onboarding";
 import { BrowserView } from "./components/BrowserView";
 import { HomeDashboard } from "./components/HomeDashboard";
 import { HealthPanel } from "./components/HealthPanel";
-import { DispatchPanel } from "./components/DispatchPanel";
 import { DevicesPanel } from "./components/DevicesPanel";
 import { IdeasPanel } from "./components/IdeasPanel";
 import { InboxAgentPanel } from "./components/InboxAgentPanel";
@@ -78,7 +77,6 @@ type AppView =
   | "browser"
   | "devices"
   | "health"
-  | "dispatch"
   | "ideas"
   | "inboxAgent";
 type RemoteTaskView = {
@@ -2688,7 +2686,7 @@ export function App() {
           </button>
         </div>
       )}
-      {(currentView === "main" || currentView === "home" || currentView === "devices" || currentView === "health" || currentView === "dispatch" || currentView === "ideas" || currentView === "inboxAgent") && (
+      {(currentView === "main" || currentView === "home" || currentView === "devices" || currentView === "health" || currentView === "ideas" || currentView === "inboxAgent") && (
         <>
           <div
             className={`app-layout ${leftSidebarCollapsed ? "left-collapsed" : ""} ${effectiveRightCollapsed ? "right-collapsed" : ""}`}
@@ -2702,7 +2700,6 @@ export function App() {
                 isIdeasActive={currentView === "ideas"}
                 isInboxAgentActive={currentView === "inboxAgent"}
                 isHealthActive={currentView === "health"}
-                isDispatchActive={currentView === "dispatch"}
                 isDevicesActive={currentView === "devices"}
                 completionAttentionTaskIds={unseenCompletedTaskIds}
                 onSelectTask={handleSelectTaskFromShell}
@@ -2710,7 +2707,6 @@ export function App() {
                 onOpenIdeas={() => setCurrentView("ideas")}
                 onOpenInboxAgent={() => setCurrentView("inboxAgent")}
                 onOpenHealth={() => setCurrentView("health")}
-                onOpenDispatch={() => setCurrentView("dispatch")}
                 onOpenDevices={() => setCurrentView("devices")}
                 onNewSession={handleNewSession}
                 onOpenSettings={() => setCurrentView("settings")}
@@ -2842,13 +2838,6 @@ export function App() {
               <IdeasPanel onCreateTaskFromPrompt={handleCreateTaskFromIdea} />
             ) : currentView === "inboxAgent" ? (
               <InboxAgentPanel />
-            ) : currentView === "dispatch" ? (
-              <DispatchPanel
-                onOpenSettings={(tab) => {
-                  setSettingsTab((tab as typeof settingsTab) || "telegram");
-                  setCurrentView("settings");
-                }}
-              />
             ) : (
               <MainContent
                 task={selectedTask}

@@ -703,7 +703,7 @@ See [Inbox Agent](inbox-agent.md) for the full feature workflow.
 
 ### Multi-Channel Messaging
 
-Manage conversations across 15 messaging channels — reply to messages, monitor discussions, and send updates from anywhere.
+Manage conversations across 17 messaging channels — reply to messages, monitor discussions, and send updates from anywhere.
 
 **What it handles:**
 - WhatsApp, Telegram, Discord, Slack, Teams, iMessage, Signal, and more
@@ -1696,7 +1696,7 @@ Rate the attractiveness of entering with a [specific angle].
 | **Enterprise** | Salesforce, Jira, Discord, Google Workspace, Zendesk, HubSpot, Stripe, Tavily, Grafana, and 36 more | 44 shipped MCP connectors |
 | **Data & Analytics** | CSV analysis, SQL, financial modeling, market screening | Data Analysis pack, 8+ financial skills |
 | **Content & Marketing** | Blog, social, email campaigns, SEO, copywriting | Marketing pack, marketing strategist skill |
-| **Personal Productivity** | Briefings, inbox, multi-channel messaging, task capture | 15 channels, scheduling, 10+ productivity skills |
+| **Personal Productivity** | Briefings, inbox, multi-channel messaging, task capture | 17 channels, scheduling, 10+ productivity skills |
 | **Team & Management** | Sprints, 1-on-1 prep, status reports, digital twins | EM pack, PM pack, 10 persona templates |
 | **Security** | Vulnerability scanning, compliance, dependency auditing | Security audit skill, dependency check skill |
 | **Remote Ops** | Chat-driven deployment, headless mode, WebSocket API | Gateway, headless daemon, remote access |

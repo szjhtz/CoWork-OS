@@ -119,6 +119,28 @@ From there, users can:
 
 Imported and installed external skills are stored in CoWork’s managed skills directory.
 
+## Optional External Skill Directories
+
+CoWork OS can also load additional skill folders without importing them into the managed directory.
+
+Use this when:
+- your team already keeps shared skills in a Git checkout or synced folder
+- you want CoWork to read those skills without taking ownership of the files
+
+How it works:
+- add one or more absolute directory paths in **Settings → Skills**
+- CoWork loads matching skill manifests from those folders as **external** skills
+- external skills are **read-only** in the app
+- managed installs still go into CoWork’s managed skills directory
+
+Precedence order:
+- workspace skills
+- managed skills
+- external skill directories
+- bundled skills
+
+This means a local workspace override or a managed install can replace a shared external skill with the same ID.
+
 Default locations:
 - macOS: `~/Library/Application Support/cowork-os/skills/`
 - Windows: `%APPDATA%\\cowork-os\\skills\\`

@@ -199,6 +199,8 @@ export interface DiscordConfig extends ChannelConfig {
   applicationId: string;
   /** Guild IDs to operate in (empty = all guilds) */
   guildIds?: string[];
+  /** Supervisor-mode settings for controlled bot-to-bot coordination */
+  supervisor?: import("../../../shared/types").DiscordSupervisorConfig;
 }
 
 /**
@@ -462,6 +464,26 @@ export interface EmailConfig extends ChannelConfig {
   protocol?: "imap-smtp" | "loom";
 
   // Legacy IMAP/SMTP mode
+  /** Authentication mode for IMAP/SMTP transport */
+  authMethod?: "password" | "oauth";
+  /** OAuth provider name when authMethod is oauth */
+  oauthProvider?: "microsoft";
+  /** OAuth client ID used for refreshes */
+  oauthClientId?: string;
+  /** OAuth client secret if configured */
+  oauthClientSecret?: string;
+  /** OAuth tenant/authority (defaults depend on provider) */
+  oauthTenant?: string;
+  /** OAuth access token */
+  accessToken?: string;
+  /** OAuth refresh token */
+  refreshToken?: string;
+  /** OAuth token expiry timestamp (ms since epoch) */
+  tokenExpiresAt?: number;
+  /** Granted OAuth scopes */
+  scopes?: string[];
+  /** Runtime-only access token provider */
+  oauthAccessTokenProvider?: () => Promise<string>;
   /** IMAP server host */
   imapHost?: string;
   /** IMAP server port (default: 993) */

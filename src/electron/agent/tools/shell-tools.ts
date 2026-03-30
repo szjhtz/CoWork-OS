@@ -1,8 +1,8 @@
 import { spawn, ChildProcess, execSync } from "child_process";
 import * as path from "path";
 import { existsSync } from "fs";
-import { Workspace, CommandTerminationReason } from "../../../shared/types";
-import { AgentDaemon } from "../daemon";
+import type { Workspace, CommandTerminationReason } from "../../../shared/types";
+import type { AgentDaemon } from "../daemon";
 import { GuardrailManager } from "../../guardrails/guardrail-manager";
 import { BuiltinToolsSettingsManager, type RunCommandApprovalMode } from "./builtin-settings";
 import {

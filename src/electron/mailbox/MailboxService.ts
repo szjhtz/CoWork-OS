@@ -1,5 +1,9 @@
 import Database from "better-sqlite3";
-import { createHash, randomUUID } from "crypto";
+import { createCipheriv, createDecipheriv, createHash, pbkdf2Sync, randomBytes, randomUUID } from "crypto";
+import { createLogger } from "../utils/logger";
+import fs from "fs";
+import os from "os";
+import path from "path";
 import { ChannelRepository, TaskRepository, WorkspaceRepository } from "../database/repositories";
 import { AgentRoleRepository } from "../agents/AgentRoleRepository";
 import { LLMProviderFactory } from "../agent/llm/provider-factory";
@@ -10,6 +14,9 @@ import { googleCalendarRequest } from "../utils/google-calendar-api";
 import { EmailClient } from "../gateway/channels/email-client";
 import { LoomEmailClient } from "../gateway/channels/loom-client";
 import { assertSafeLoomMailboxFolder } from "../utils/loom";
+import { refreshMicrosoftEmailAccessToken } from "../utils/microsoft-email-oauth";
+import { getSafeStorage, type SafeStorageLike } from "../utils/safe-storage";
+import { getUserDataDir } from "../utils/user-data-dir";
 import { RelationshipMemoryService } from "../memory/RelationshipMemoryService";
 import { PlaybookService } from "../memory/PlaybookService";
 import { KnowledgeGraphService } from "../knowledge-graph/KnowledgeGraphService";
@@ -73,8 +80,10 @@ import {
   MailboxThreadMailboxView,
   RelationshipTimelineEvent,
   RelationshipTimelineQuery,
+  getMailboxNoReplySender,
   stripMailboxSummaryHtmlArtifacts,
 } from "../../shared/mailbox";
+import { MICROSOFT_EMAIL_DEFAULT_TENANT } from "../../shared/microsoft-email";
 import type { AgentRole, CompanyEvidenceRef, CompanyOutputContract, Issue, Task } from "../../shared/types";
 import { isTempWorkspaceId } from "../../shared/types";
 
@@ -105,6 +114,7 @@ type MailboxThreadRow = {
   stale_followup: number;
   cleanup_candidate: number;
   handled: number;
+  local_inbox_hidden: number;
   unread_count: number;
   message_count: number;
   last_message_at: number;
@@ -319,6 +329,128 @@ type DraftStyleProfile = {
   styleSignals: string[];
   recentOutboundExample?: string;
 };
+
+type MailboxCipherState = {
+  safeStorage: SafeStorageLike | null;
+  encryptionAvailable: boolean;
+  machineId: string | null;
+};
+
+const MAILBOX_CIPHER_PREFIX = "mbox:";
+const MAILBOX_CIPHER_SALT = "cowork-mailbox-content-v1";
+const MAILBOX_MACHINE_ID_FILE = ".cowork-machine-id";
+
+let mailboxCipherState: MailboxCipherState | null = null;
+
+const mailboxLogger = createLogger("MailboxService");
+
+function ensureMailboxCipherState(): MailboxCipherState {
+  if (mailboxCipherState) return mailboxCipherState;
+
+  const safeStorage = getSafeStorage();
+  let encryptionAvailable = false;
+  try {
+    encryptionAvailable = safeStorage?.isEncryptionAvailable() ?? false;
+  } catch {
+    encryptionAvailable = false;
+  }
+
+  let machineId: string | null = null;
+  try {
+    const userDataDir = getUserDataDir();
+    const machineIdPath = path.join(userDataDir, MAILBOX_MACHINE_ID_FILE);
+    if (!fs.existsSync(userDataDir)) {
+      fs.mkdirSync(userDataDir, { recursive: true, mode: 0o700 });
+    }
+    if (fs.existsSync(machineIdPath)) {
+      machineId = fs.readFileSync(machineIdPath, "utf-8").trim() || null;
+      fs.chmodSync(machineIdPath, 0o600);
+    } else {
+      machineId = randomUUID();
+      fs.writeFileSync(machineIdPath, machineId, { mode: 0o600 });
+    }
+  } catch (error) {
+    mailboxLogger.warn("Failed to initialize mailbox encryption identity:", error);
+    machineId = null;
+  }
+
+  mailboxCipherState = {
+    safeStorage,
+    encryptionAvailable,
+    machineId,
+  };
+  return mailboxCipherState;
+}
+
+function deriveMailboxCipherKey(machineId: string): Buffer {
+  // machineId is the secret (password); MAILBOX_CIPHER_SALT is the domain separator (salt).
+  return pbkdf2Sync(machineId, MAILBOX_CIPHER_SALT, 100000, 32, "sha512");
+}
+
+function encryptMailboxValue(value: string | null | undefined): string | null {
+  if (value === null || value === undefined) return null;
+
+  const state = ensureMailboxCipherState();
+  if (state.encryptionAvailable && state.safeStorage) {
+    try {
+      return `${MAILBOX_CIPHER_PREFIX}os:${state.safeStorage.encryptString(value).toString("base64")}`;
+    } catch (error) {
+      mailboxLogger.warn("OS encryption failed, falling back to app-level encryption:", error);
+    }
+  }
+
+  const key = deriveMailboxCipherKey(state.machineId || `${os.hostname()}:${os.homedir()}:${process.env.USER || process.env.USERNAME || "default-user"}`);
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", key, iv);
+  let encrypted = cipher.update(value, "utf8", "base64");
+  encrypted += cipher.final("base64");
+  const authTag = cipher.getAuthTag();
+  return `${MAILBOX_CIPHER_PREFIX}app:${iv.toString("base64")}:${authTag.toString("base64")}:${encrypted}`;
+}
+
+function decryptMailboxValue(value: string | null | undefined): string | null {
+  if (value === null || value === undefined) return null;
+  if (!value.startsWith(MAILBOX_CIPHER_PREFIX)) return value;
+
+  const state = ensureMailboxCipherState();
+
+  if (value.startsWith(`${MAILBOX_CIPHER_PREFIX}os:`)) {
+    if (!state.encryptionAvailable || !state.safeStorage) {
+      mailboxLogger.warn("Mailbox value was encrypted with OS keychain but it is unavailable.");
+      return "";
+    }
+    try {
+      const encrypted = Buffer.from(value.slice(`${MAILBOX_CIPHER_PREFIX}os:`.length), "base64");
+      return state.safeStorage.decryptString(encrypted);
+    } catch (error) {
+      mailboxLogger.warn("Failed to decrypt OS-encrypted mailbox value:", error);
+      return "";
+    }
+  }
+
+  if (value.startsWith(`${MAILBOX_CIPHER_PREFIX}app:`)) {
+    try {
+      const parts = value.slice(`${MAILBOX_CIPHER_PREFIX}app:`.length).split(":");
+      if (parts.length !== 3) {
+        throw new Error("Invalid mailbox ciphertext format");
+      }
+      const [ivBase64, authTagBase64, encrypted] = parts;
+      const key = deriveMailboxCipherKey(
+        state.machineId || `${os.hostname()}:${os.homedir()}:${process.env.USER || process.env.USERNAME || "default-user"}`,
+      );
+      const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(ivBase64, "base64"));
+      decipher.setAuthTag(Buffer.from(authTagBase64, "base64"));
+      let decrypted = decipher.update(encrypted, "base64", "utf8");
+      decrypted += decipher.final("utf8");
+      return decrypted;
+    } catch (error) {
+      mailboxLogger.warn("Failed to decrypt app-encrypted mailbox value:", error);
+      return "";
+    }
+  }
+
+  return value;
+}
 
 let activeMailboxService: MailboxService | null = null;
 
@@ -543,7 +675,13 @@ function normalizeWhitespace(value: string, maxLength = 600): string {
   return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text;
 }
 
-function normalizeEmailAddress(value?: string | null): string | null {
+function normalizeEmailAddress(value?: unknown): string | null {
+  const objectValue = asObject(value);
+  if (objectValue) {
+    const objectEmail = asString(objectValue.email) || asString(objectValue.address);
+    if (objectEmail) return objectEmail.trim().toLowerCase();
+  }
+
   const raw = asString(value);
   if (!raw) return null;
   const match = raw.match(/<([^>]+)>/);
@@ -618,7 +756,11 @@ function classifyTone(messages: string[]): DraftStyleProfile["tone"] {
   return "direct";
 }
 
-function extractDisplayName(value?: string | null): string | undefined {
+function extractDisplayName(value?: unknown): string | undefined {
+  const objectValue = asObject(value);
+  const structuredName = asString(objectValue?.name);
+  if (structuredName) return structuredName;
+
   const raw = asString(value);
   if (!raw) return undefined;
   const match = raw.match(/^(.*?)\s*<[^>]+>$/);
@@ -629,6 +771,18 @@ function extractDisplayName(value?: string | null): string | undefined {
 function parseAddressList(input: unknown): MailboxParticipant[] {
   if (Array.isArray(input)) {
     return input.flatMap((entry) => parseAddressList(entry));
+  }
+
+  const objectValue = asObject(input);
+  if (objectValue) {
+    const email = normalizeEmailAddress(objectValue);
+    if (!email) return [];
+    return [
+      {
+        email,
+        name: extractDisplayName(objectValue),
+      },
+    ];
   }
 
   const raw = asString(input);
@@ -1104,7 +1258,8 @@ export class MailboxService {
              SUM(CASE WHEN classification_state IN ('pending', 'backfill_pending') THEN 1 ELSE 0 END),
              0
            ) AS classification_pending_count
-         FROM mailbox_threads`,
+         FROM mailbox_threads
+         WHERE local_inbox_hidden = 0`,
       )
       .get() as {
       thread_count: number;
@@ -1115,15 +1270,19 @@ export class MailboxService {
     const proposalCountRow = this.db
       .prepare(
         `SELECT COUNT(*) AS count
-         FROM mailbox_action_proposals
-         WHERE status = 'suggested'`,
+         FROM mailbox_action_proposals map
+         JOIN mailbox_threads mt ON mt.id = map.thread_id
+         WHERE map.status = 'suggested'
+           AND mt.local_inbox_hidden = 0`,
       )
       .get() as { count: number };
     const commitmentCountRow = this.db
       .prepare(
         `SELECT COUNT(*) AS count
-         FROM mailbox_commitments
-         WHERE state IN ('suggested', 'accepted')`,
+         FROM mailbox_commitments mc
+         JOIN mailbox_threads mt ON mt.id = mc.thread_id
+         WHERE mc.state IN ('suggested', 'accepted')
+           AND mt.local_inbox_hidden = 0`,
       )
       .get() as { count: number };
 
@@ -1488,7 +1647,8 @@ export class MailboxService {
              0
            ) AS classification_pending_count,
            COALESCE(SUM(CASE WHEN sensitive_content_json IS NOT NULL AND sensitive_content_json != '' THEN 1 ELSE 0 END), 0) AS sensitive_thread_count
-         FROM mailbox_threads`,
+         FROM mailbox_threads
+         WHERE local_inbox_hidden = 0`,
       )
       .get() as {
       thread_count: number;
@@ -1501,30 +1661,38 @@ export class MailboxService {
     const proposalCountRow = this.db
       .prepare(
         `SELECT COUNT(*) AS count
-         FROM mailbox_action_proposals
-         WHERE status = 'suggested'`,
+         FROM mailbox_action_proposals map
+         JOIN mailbox_threads mt ON mt.id = map.thread_id
+         WHERE map.status = 'suggested'
+           AND mt.local_inbox_hidden = 0`,
       )
       .get() as { count: number };
     const commitmentCountRow = this.db
       .prepare(
         `SELECT COUNT(*) AS count
-         FROM mailbox_commitments
-         WHERE state IN ('suggested', 'accepted')`,
+         FROM mailbox_commitments mc
+         JOIN mailbox_threads mt ON mt.id = mc.thread_id
+         WHERE mc.state IN ('suggested', 'accepted')
+           AND mt.local_inbox_hidden = 0`,
       )
       .get() as { count: number };
     const draftCountRow = this.db
       .prepare(
         `SELECT COUNT(*) AS count
-         FROM mailbox_drafts`,
+         FROM mailbox_drafts md
+         JOIN mailbox_threads mt ON mt.id = md.thread_id
+         WHERE mt.local_inbox_hidden = 0`,
       )
       .get() as { count: number };
     const overdueCommitmentCountRow = this.db
       .prepare(
         `SELECT COUNT(*) AS count
-         FROM mailbox_commitments
-         WHERE state IN ('suggested', 'accepted')
-           AND due_at IS NOT NULL
-           AND due_at < ?`,
+         FROM mailbox_commitments mc
+         JOIN mailbox_threads mt ON mt.id = mc.thread_id
+         WHERE mc.state IN ('suggested', 'accepted')
+           AND mc.due_at IS NOT NULL
+           AND mc.due_at < ?
+           AND mt.local_inbox_hidden = 0`,
       )
       .get(Date.now()) as { count: number };
     const eventCountRow = this.db
@@ -1714,30 +1882,40 @@ export class MailboxService {
     });
     try {
       const accounts: MailboxAccount[] = [];
+      const syncErrors: string[] = [];
       let syncedThreads = 0;
       let syncedMessages = 0;
 
       if (GoogleWorkspaceSettingsManager.loadSettings().enabled) {
-        const result = await this.syncGmail(limit);
-        if (result) {
-          accounts.push(result.account);
-          syncedThreads += result.syncedThreads;
-          syncedMessages += result.syncedMessages;
+        try {
+          const result = await this.syncGmail(limit);
+          if (result) {
+            accounts.push(result.account);
+            syncedThreads += result.syncedThreads;
+            syncedMessages += result.syncedMessages;
+          }
+        } catch (error) {
+          syncErrors.push(`Gmail sync failed: ${error instanceof Error ? error.message : String(error)}`);
         }
       }
 
-      if (accounts.length === 0 && this.hasEmailChannel()) {
-        const result = await this.syncImap(limit);
-        if (result) {
-          accounts.push(result.account);
-          syncedThreads += result.syncedThreads;
-          syncedMessages += result.syncedMessages;
+      if (this.hasEmailChannel()) {
+        try {
+          const result = await this.syncImap(limit);
+          if (result) {
+            accounts.push(result.account);
+            syncedThreads += result.syncedThreads;
+            syncedMessages += result.syncedMessages;
+          }
+        } catch (error) {
+          syncErrors.push(`Email channel sync failed: ${error instanceof Error ? error.message : String(error)}`);
         }
       }
 
       if (accounts.length === 0) {
         throw new Error(
-          "No connected mailbox was found. Enable Google Workspace or configure the Email channel.",
+          syncErrors[0] ||
+            "No connected mailbox was found. Enable Google Workspace or configure the Email channel.",
         );
       }
 
@@ -1848,29 +2026,11 @@ export class MailboxService {
   async listThreads(input: MailboxListThreadsInput = {}): Promise<MailboxThreadListItem[]> {
     const conditions: string[] = [];
     const values: unknown[] = [];
+    const queryText = input.query?.trim() || "";
 
-    if (input.query) {
-      conditions.push(`(
-        subject LIKE ?
-        OR snippet LIKE ?
-        OR participants_json LIKE ?
-        OR EXISTS (
-          SELECT 1
-          FROM mailbox_messages mm
-          WHERE mm.thread_id = mailbox_threads.id
-            AND (
-              mm.subject LIKE ?
-              OR mm.snippet LIKE ?
-              OR mm.body_text LIKE ?
-              OR COALESCE(mm.from_name, '') LIKE ?
-              OR COALESCE(mm.from_email, '') LIKE ?
-              OR COALESCE(mm.to_json, '') LIKE ?
-              OR COALESCE(mm.cc_json, '') LIKE ?
-            )
-        )
-      )`);
-      const like = `%${input.query}%`;
-      values.push(like, like, like, like, like, like, like, like, like, like);
+    if (input.accountId) {
+      conditions.push("account_id = ?");
+      values.push(input.accountId);
     }
     if (input.category && input.category !== "all") {
       conditions.push("category = ?");
@@ -1878,6 +2038,7 @@ export class MailboxService {
     }
     const mailboxView: MailboxThreadMailboxView = input.mailboxView || "inbox";
     if (mailboxView === "inbox") {
+      conditions.push("local_inbox_hidden = 0");
       conditions.push(
         `EXISTS (
           SELECT 1
@@ -1886,7 +2047,7 @@ export class MailboxService {
             AND m.direction = 'incoming'
         )`,
       );
-         } else if (mailboxView === "sent") {
+    } else if (mailboxView === "sent") {
       conditions.push(
         `NOT EXISTS (
           SELECT 1
@@ -1948,6 +2109,7 @@ export class MailboxService {
       sortBy === "recent"
         ? "last_message_at DESC, priority_score DESC, urgency_score DESC"
         : "priority_score DESC, urgency_score DESC, last_message_at DESC";
+    const limitClause = queryText ? "" : " LIMIT ?";
     const rows = this.db
       .prepare(
         `SELECT
@@ -1964,21 +2126,27 @@ export class MailboxService {
            urgency_score,
            needs_reply,
            stale_followup,
-          cleanup_candidate,
-          handled,
-          unread_count,
-          message_count,
-          last_message_at,
-          sensitive_content_json,
-          classification_state
+           cleanup_candidate,
+           handled,
+           local_inbox_hidden,
+           unread_count,
+           message_count,
+           last_message_at,
+           sensitive_content_json,
+           classification_state
          FROM mailbox_threads
          ${conditions.length ? `WHERE ${conditions.join(" AND ")}` : ""}
-         ORDER BY ${orderBy}
-         LIMIT ?`,
+         ORDER BY ${orderBy}${limitClause}`,
       )
-      .all(...values, limit) as MailboxThreadRow[];
+      .all(...(queryText ? values : [...values, limit])) as MailboxThreadRow[];
 
-    return rows.map((row) => this.mapThreadRow(row, this.getSummaryForThread(row.id) ?? undefined));
+    const filteredRows = queryText
+      ? rows.filter((row) => this.threadMatchesQuery(row, queryText))
+      : rows;
+
+    return filteredRows
+      .slice(0, limit)
+      .map((row) => this.mapThreadRow(row, this.getSummaryForThread(row.id) ?? undefined));
   }
 
   async getThread(threadId: string): Promise<MailboxThreadDetail | null> {
@@ -2000,6 +2168,7 @@ export class MailboxService {
            stale_followup,
            cleanup_candidate,
            handled,
+           local_inbox_hidden,
            unread_count,
            message_count,
            last_message_at,
@@ -2035,6 +2204,7 @@ export class MailboxService {
   async summarizeThread(threadId: string): Promise<MailboxSummaryCard | null> {
     const detail = await this.getThreadCore(threadId);
     if (!detail) return null;
+    const noReplySender = getMailboxNoReplySender(detail.messages, detail.participants);
 
     const combinedText = detail.messages
       .map((message) => message.body || message.snippet)
@@ -2061,9 +2231,11 @@ export class MailboxService {
         detail.snippet?.trim() ||
         `Recent email activity in ${detail.subject || "this thread"}`;
     }
-    const nextAction = detail.needsReply
-      ? "Draft a reply"
-      : detail.cleanupCandidate
+    const nextAction = noReplySender
+      ? "Keep as reference"
+      : detail.needsReply
+        ? "Draft a reply"
+        : detail.cleanupCandidate
         ? "Queue for cleanup review"
         : detail.category === "calendar"
           ? "Propose scheduling options"
@@ -2085,7 +2257,7 @@ export class MailboxService {
       )
       .run(
         threadId,
-        normalizeWhitespace(summaryText, 340),
+        encryptMailboxValue(normalizeWhitespace(summaryText, 340)),
         JSON.stringify(asks),
         JSON.stringify(questions),
         nextAction,
@@ -2128,6 +2300,12 @@ export class MailboxService {
   ): Promise<MailboxDraftSuggestion | null> {
     const detail = await this.getThreadCore(threadId);
     if (!detail) return null;
+    const noReplySender = getMailboxNoReplySender(detail.messages, detail.participants);
+    if (noReplySender && options.allowNoreplySender !== true) {
+      throw new Error(
+        `Draft generation is blocked because this thread comes from a no-reply sender (${noReplySender.email}). Confirm the manual override to continue.`,
+      );
+    }
 
     const summary = this.getSummaryForThread(threadId) || (await this.summarizeThread(threadId));
     const scheduleSuggestion =
@@ -2160,7 +2338,7 @@ export class MailboxService {
                ORDER BY m.received_at ASC`,
             )
             .all(detail.accountId, `%${contactEmail}%`)
-            .map((row) => normalizeWhitespace((row as { body_text: string }).body_text, 600))
+            .map((row) => normalizeWhitespace(decryptMailboxValue((row as { body_text: string }).body_text) || "", 600))
         : [],
       averageResponseHours: contactEmail ? this.getPrimaryContactMemory(threadId)?.averageResponseHours : undefined,
     });
@@ -2240,7 +2418,7 @@ export class MailboxService {
         draftId,
         threadId,
         detail.subject.startsWith("Re:") ? detail.subject : `Re: ${detail.subject}`,
-        body,
+        encryptMailboxValue(body),
         tone,
         rationale,
         scheduleNotes || null,
@@ -2331,19 +2509,19 @@ export class MailboxService {
             (id, thread_id, message_id, title, due_at, state, owner_email, source_excerpt, metadata_json, created_at, updated_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
-        .run(
-          id,
-          threadId,
-          null,
-          candidate.title,
-          candidate.dueAt || null,
-          "suggested",
-          detail.participants[0]?.email || null,
-          candidate.sourceExcerpt || null,
-          JSON.stringify({ source: "mailbox-extraction" }),
-          now,
-          now,
-        );
+      .run(
+        id,
+        threadId,
+        null,
+        candidate.title,
+        candidate.dueAt || null,
+        "suggested",
+        detail.participants[0]?.email || null,
+        encryptMailboxValue(candidate.sourceExcerpt || null),
+        JSON.stringify({ source: "mailbox-extraction" }),
+        now,
+        now,
+      );
       RelationshipMemoryService.rememberMailboxInsights({
         commitments: [
           {
@@ -2555,7 +2733,9 @@ export class MailboxService {
       patch.ownerEmail === undefined ? row.owner_email : patch.ownerEmail?.trim() || null;
     const nextState = patch.state || row.state;
     const nextSourceExcerpt =
-      patch.sourceExcerpt === undefined ? row.source_excerpt : patch.sourceExcerpt?.trim() || null;
+      patch.sourceExcerpt === undefined
+        ? row.source_excerpt
+        : encryptMailboxValue(patch.sourceExcerpt?.trim() || null);
     const metadata = parseCommitmentMetadata(row.metadata_json);
 
     if (nextState === "accepted") {
@@ -2642,13 +2822,15 @@ export class MailboxService {
            stale_followup,
            cleanup_candidate,
            handled,
+           local_inbox_hidden,
            unread_count,
            message_count,
            last_message_at,
            sensitive_content_json,
            classification_state
          FROM mailbox_threads
-         WHERE cleanup_candidate = 1 OR (handled = 1 AND category IN ('promotions', 'updates'))
+         WHERE local_inbox_hidden = 0
+           AND (cleanup_candidate = 1 OR (handled = 1 AND category IN ('promotions', 'updates')))
          ORDER BY last_message_at ASC
          LIMIT ?`,
       )
@@ -2659,10 +2841,10 @@ export class MailboxService {
         threadId: row.id,
         type: "cleanup",
         title: `Queue cleanup for ${row.subject}`,
-        reasoning: "Low-priority handled thread suitable for archive or trash review.",
+        reasoning: "Hide this low-priority handled thread from the Cowork inbox. Use Archive or Trash for a server-side mailbox change.",
         preview: {
           threadId: row.id,
-          suggestedAction: row.category === "promotions" ? "trash" : "archive",
+          suggestedAction: "hide from Cowork inbox",
         },
       });
     }
@@ -2691,13 +2873,16 @@ export class MailboxService {
            stale_followup,
            cleanup_candidate,
            handled,
+           local_inbox_hidden,
            unread_count,
            message_count,
            last_message_at,
            sensitive_content_json,
            classification_state
          FROM mailbox_threads
-         WHERE needs_reply = 1 AND stale_followup = 1
+         WHERE local_inbox_hidden = 0
+           AND needs_reply = 1
+           AND stale_followup = 1
          ORDER BY urgency_score DESC, last_message_at ASC
          LIMIT ?`,
       )
@@ -2877,6 +3062,7 @@ export class MailboxService {
   async researchContact(threadId: string): Promise<MailboxResearchResult | null> {
     const detail = await this.getThreadCore(threadId);
     if (!detail) return null;
+    const noReplySender = getMailboxNoReplySender(detail.messages, detail.participants);
 
     const primary = detail.participants[0] || null;
     const domain = primary?.email?.split("@")[1];
@@ -2916,10 +3102,10 @@ export class MailboxService {
       .filter((entry): entry is string => Boolean(entry))
       .join(" · ");
     const nextSteps = [
-      detail.needsReply ? "Generate or review a reply draft." : null,
+      detail.needsReply && !noReplySender ? "Generate or review a reply draft." : null,
       detail.category === "calendar" ? "Choose one of the proposed time slots and create the event." : null,
       detail.cleanupCandidate ? "Archive or trash after confirming no action is needed." : null,
-      !detail.summary ? "Generate an AI summary before replying." : null,
+      !detail.summary && !noReplySender ? "Generate an AI summary before replying." : null,
     ].filter((entry): entry is string => Boolean(entry));
 
     const result: MailboxResearchResult = {
@@ -2997,6 +3183,9 @@ export class MailboxService {
     const primaryContact = thread.participants[0];
 
     switch (input.type) {
+      case "cleanup_local":
+        this.applyLocalCleanup(thread);
+        break;
       case "archive":
         await this.applyArchive(thread);
         break;
@@ -3381,7 +3570,7 @@ export class MailboxService {
         pollInterval: asNumber(cfg.loomPollInterval) ?? 30000,
         verbose: process.env.NODE_ENV === "development",
       });
-      const messages = await client.fetchUnreadEmails(Math.min(Math.max(limit, 5), 50));
+      const messages = await client.fetchRecentEmails(Math.min(Math.max(limit, 5), 50));
       const accountId = `imap:${identity.toLowerCase()}`;
       const existingAccount = this.db
         .prepare(
@@ -3527,26 +3716,15 @@ export class MailboxService {
     }
 
     const email = asString(cfg.email);
+    const authMethod = asString(cfg.authMethod) === "oauth" ? "oauth" : "password";
     const password = asString(cfg.password);
     const imapHost = asString(cfg.imapHost);
     const smtpHost = asString(cfg.smtpHost);
-    if (!email || !password || !imapHost || !smtpHost) return null;
+    if (!email || !imapHost || !smtpHost) return null;
+    if (authMethod === "password" && !password) return null;
 
-    const client = new EmailClient({
-      imapHost,
-      imapPort: asNumber(cfg.imapPort) ?? 993,
-      imapSecure: asBoolean(cfg.imapSecure) ?? true,
-      smtpHost,
-      smtpPort: asNumber(cfg.smtpPort) ?? 587,
-      smtpSecure: asBoolean(cfg.smtpSecure) ?? false,
-      email,
-      password,
-      displayName: asString(cfg.displayName) || undefined,
-      mailbox: asString(cfg.mailbox) || "INBOX",
-      pollInterval: 30000,
-      verbose: process.env.NODE_ENV === "development",
-    });
-    const messages = await client.fetchUnreadEmails(Math.min(Math.max(limit, 5), 50));
+    const client = this.createStandardEmailClient(channel.id, cfg);
+    const messages = await client.fetchRecentEmails(Math.min(Math.max(limit, 5), 50));
     const accountId = `imap:${email.toLowerCase()}`;
     const existingAccount = this.db
       .prepare(
@@ -3709,12 +3887,19 @@ export class MailboxService {
     return Array.from(groups.entries()).map(([groupKey, group]: [string, Any[]]) => {
       const normalizedMessages: NormalizedMailboxMessage[] = group.map(
         (message: Any): NormalizedMailboxMessage => {
+          const providerMessageId = String(message?.uid || message?.messageId || randomUUID());
           const fromEmail = normalizeEmailAddress(message?.from);
-          const body = normalizeWhitespace(asString(message?.text) || asString(message?.snippet) || "", 4000);
+          const bodyHtml = asString(message?.html) || undefined;
+          const bodySource =
+            asString(message?.text) ||
+            (bodyHtml ? stripHtml(bodyHtml) : null) ||
+            asString(message?.snippet) ||
+            "";
+          const body = normalizeWhitespace(bodySource, 4000);
           const subject = normalizeWhitespace(asString(message?.subject) || "(No subject)", 160);
           return {
-            id: `imap-message:${asString(message?.uid) || randomUUID()}`,
-            providerMessageId: String(message?.uid || message?.messageId || randomUUID()),
+            id: `imap-message:${providerMessageId}`,
+            providerMessageId,
             direction: fromEmail === accountEmail ? ("outgoing" as const) : ("incoming" as const),
             from: fromEmail
               ? {
@@ -3723,11 +3908,12 @@ export class MailboxService {
                 }
               : undefined,
             to: parseAddressList(message?.to),
-            cc: [],
-            bcc: [],
+            cc: parseAddressList(message?.cc),
+            bcc: parseAddressList(message?.bcc),
             subject,
             snippet: normalizeWhitespace(asString(message?.snippet) || body || subject, 260),
             body,
+            bodyHtml,
             receivedAt: new Date(message?.date || Date.now()).getTime(),
             unread: !message?.isRead,
           };
@@ -3806,6 +3992,57 @@ export class MailboxService {
       );
   }
 
+  private reconcileMailboxMessageIdentity(
+    accountId: string,
+    targetThreadId: string,
+    targetMessageId: string,
+    providerMessageId: string,
+  ): void {
+    const duplicates = this.db
+      .prepare(
+        `SELECT m.id, m.thread_id
+           FROM mailbox_messages m
+           JOIN mailbox_threads t ON t.id = m.thread_id
+          WHERE t.account_id = ?
+            AND m.provider_message_id = ?
+            AND m.id != ?`,
+      )
+      .all(accountId, providerMessageId, targetMessageId) as Array<{
+      id: string;
+      thread_id: string;
+    }>;
+
+    if (duplicates.length === 0) return;
+
+    const orphanedThreadIds = new Set<string>();
+    for (const duplicate of duplicates) {
+      this.db.prepare("DELETE FROM mailbox_messages WHERE id = ?").run(duplicate.id);
+      if (duplicate.thread_id !== targetThreadId) {
+        orphanedThreadIds.add(duplicate.thread_id);
+      }
+    }
+
+    for (const threadId of orphanedThreadIds) {
+      this.deleteThreadIfEmpty(threadId);
+    }
+  }
+
+  private deleteThreadIfEmpty(threadId: string): void {
+    const row = this.db
+      .prepare("SELECT COUNT(*) AS count FROM mailbox_messages WHERE thread_id = ?")
+      .get(threadId) as { count: number } | undefined;
+    if ((row?.count || 0) > 0) return;
+
+    this.db.prepare("DELETE FROM mailbox_summaries WHERE thread_id = ?").run(threadId);
+    this.db.prepare("DELETE FROM mailbox_drafts WHERE thread_id = ?").run(threadId);
+    this.db.prepare("DELETE FROM mailbox_action_proposals WHERE thread_id = ?").run(threadId);
+    this.db.prepare("DELETE FROM mailbox_commitments WHERE thread_id = ?").run(threadId);
+    this.db.prepare("DELETE FROM mailbox_events WHERE thread_id = ?").run(threadId);
+    this.db.prepare("DELETE FROM mailbox_automations WHERE thread_id = ?").run(threadId);
+    this.db.prepare("DELETE FROM mailbox_mission_control_handoffs WHERE thread_id = ?").run(threadId);
+    this.db.prepare("DELETE FROM mailbox_threads WHERE id = ?").run(threadId);
+  }
+
   private upsertThread(thread: NormalizedThreadInput): ThreadUpsertResult {
     const now = Date.now();
     const fingerprint = mailboxClassificationFingerprint({
@@ -3838,6 +4075,8 @@ export class MailboxService {
            stale_followup,
            cleanup_candidate,
            handled,
+           local_inbox_hidden,
+           last_message_at,
            classification_state,
            classification_fingerprint,
            classification_model_key,
@@ -3858,6 +4097,8 @@ export class MailboxService {
           stale_followup: number;
           cleanup_candidate: number;
           handled: number;
+          local_inbox_hidden: number;
+          last_message_at: number;
           classification_state: MailboxClassificationState;
           classification_fingerprint: string | null;
           classification_model_key: string | null;
@@ -3882,6 +4123,8 @@ export class MailboxService {
         : "pending";
     const classificationValues = keepExistingClassification || preserveBackfillState ? existing : null;
     const shouldClassify = !existing || existing.classification_state !== "classified";
+    const preserveLocalInboxHidden =
+      existing?.local_inbox_hidden === 1 && thread.lastMessageAt <= existing.last_message_at;
     const sensitiveContent = this.createThreadSensitiveContent([
       thread.subject,
       thread.snippet,
@@ -3891,8 +4134,8 @@ export class MailboxService {
     this.db
       .prepare(
         `INSERT INTO mailbox_threads
-          (id, account_id, provider_thread_id, provider, subject, snippet, participants_json, labels_json, category, priority_score, urgency_score, needs_reply, stale_followup, cleanup_candidate, handled, unread_count, message_count, last_message_at, last_synced_at, classification_state, classification_fingerprint, classification_model_key, classification_prompt_version, classification_confidence, classification_updated_at, classification_error, classification_json, sensitive_content_json, metadata_json, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          (id, account_id, provider_thread_id, provider, subject, snippet, participants_json, labels_json, category, priority_score, urgency_score, needs_reply, stale_followup, cleanup_candidate, handled, local_inbox_hidden, unread_count, message_count, last_message_at, last_synced_at, classification_state, classification_fingerprint, classification_model_key, classification_prompt_version, classification_confidence, classification_updated_at, classification_error, classification_json, sensitive_content_json, metadata_json, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            account_id = excluded.account_id,
            provider_thread_id = excluded.provider_thread_id,
@@ -3908,6 +4151,7 @@ export class MailboxService {
            stale_followup = excluded.stale_followup,
            cleanup_candidate = excluded.cleanup_candidate,
            handled = excluded.handled,
+           local_inbox_hidden = excluded.local_inbox_hidden,
            unread_count = excluded.unread_count,
            message_count = excluded.message_count,
            last_message_at = excluded.last_message_at,
@@ -3940,6 +4184,7 @@ export class MailboxService {
         classificationValues?.stale_followup ?? (thread.staleFollowup ? 1 : 0),
         classificationValues?.cleanup_candidate ?? (thread.cleanupCandidate ? 1 : 0),
         classificationValues?.handled ?? (thread.handled ? 1 : 0),
+        preserveLocalInboxHidden ? 1 : 0,
         thread.unreadCount,
         thread.messages.length,
         thread.lastMessageAt,
@@ -3961,6 +4206,12 @@ export class MailboxService {
       );
 
     for (const message of thread.messages) {
+      this.reconcileMailboxMessageIdentity(
+        thread.accountId,
+        thread.id,
+        message.id,
+        message.providerMessageId,
+      );
       this.db
         .prepare(
           `INSERT INTO mailbox_messages
@@ -3995,8 +4246,8 @@ export class MailboxService {
           JSON.stringify(message.bcc),
           message.subject,
           message.snippet,
-          message.body,
-          message.bodyHtml || null,
+          encryptMailboxValue(message.body),
+          encryptMailboxValue(message.bodyHtml || null),
           message.receivedAt,
           message.unread ? 1 : 0,
           JSON.stringify({}),
@@ -4466,7 +4717,7 @@ export class MailboxService {
         threadId: thread.id,
         type: "cleanup",
         title: `Clean up ${thread.subject}`,
-        reasoning: "Thread looks promotional or low value and is a candidate for archive/trash review.",
+        reasoning: "Hide this thread from the Cowork inbox. Use Archive or Trash if you want to change the server-side mailbox.",
       });
     }
     if (thread.staleFollowup) {
@@ -4762,7 +5013,7 @@ export class MailboxService {
 
     const outgoingMessages = messageRows
       .filter((row) => row.direction === "outgoing")
-      .map((row) => normalizeWhitespace(row.body_text, 600))
+      .map((row) => normalizeWhitespace(decryptMailboxValue(row.body_text) || "", 600))
       .filter(Boolean);
 
     const responseSamples: number[] = [];
@@ -4853,6 +5104,7 @@ export class MailboxService {
            stale_followup,
            cleanup_candidate,
            handled,
+           local_inbox_hidden,
            unread_count,
            message_count,
            last_message_at,
@@ -5308,7 +5560,15 @@ export class MailboxService {
     }
 
     this.db
-      .prepare("UPDATE mailbox_threads SET handled = 1, cleanup_candidate = 0, updated_at = ? WHERE id = ?")
+      .prepare("UPDATE mailbox_threads SET handled = 1, cleanup_candidate = 0, local_inbox_hidden = 1, updated_at = ? WHERE id = ?")
+      .run(Date.now(), thread.id);
+  }
+
+  private applyLocalCleanup(thread: MailboxThreadDetail | (MailboxThreadListItem & { messages: MailboxMessage[] })): void {
+    this.db
+      .prepare(
+        "UPDATE mailbox_threads SET handled = 1, cleanup_candidate = 0, local_inbox_hidden = 1, updated_at = ? WHERE id = ?",
+      )
       .run(Date.now(), thread.id);
   }
 
@@ -5324,7 +5584,7 @@ export class MailboxService {
     }
 
     this.db
-      .prepare("UPDATE mailbox_threads SET handled = 1, cleanup_candidate = 0, updated_at = ? WHERE id = ?")
+      .prepare("UPDATE mailbox_threads SET handled = 1, cleanup_candidate = 0, local_inbox_hidden = 1, updated_at = ? WHERE id = ?")
       .run(Date.now(), thread.id);
   }
 
@@ -5365,20 +5625,7 @@ export class MailboxService {
         }
         await client.markAsRead(uid);
       } else {
-        const client = new EmailClient({
-          imapHost: asString(cfg.imapHost) || "",
-          imapPort: asNumber(cfg.imapPort) ?? 993,
-          imapSecure: asBoolean(cfg.imapSecure) ?? true,
-          smtpHost: asString(cfg.smtpHost) || "",
-          smtpPort: asNumber(cfg.smtpPort) ?? 587,
-          smtpSecure: asBoolean(cfg.smtpSecure) ?? false,
-          email: asString(cfg.email) || "",
-          password: asString(cfg.password) || "",
-          displayName: asString(cfg.displayName) || undefined,
-          mailbox: asString(cfg.mailbox) || "INBOX",
-          pollInterval: 30000,
-          verbose: process.env.NODE_ENV === "development",
-        });
+        const client = this.createStandardEmailClient(channel.id, cfg);
         const latest = thread.messages.filter((message) => message.unread).slice(-1)[0];
         const uid = Number(latest?.providerMessageId);
         if (!Number.isFinite(uid)) {
@@ -5429,10 +5676,11 @@ export class MailboxService {
 
     if (thread.provider === "gmail") {
       const settings = GoogleWorkspaceSettingsManager.loadSettings();
+      const stripCRLF = (v: string) => v.replace(/[\r\n]/g, "");
       const raw = Buffer.from(
         [
-          `To: ${recipient}`,
-          `Subject: ${draft.subject}`,
+          `To: ${stripCRLF(recipient)}`,
+          `Subject: ${stripCRLF(draft.subject)}`,
           "MIME-Version: 1.0",
           'Content-Type: text/plain; charset="UTF-8"',
           "",
@@ -5455,20 +5703,7 @@ export class MailboxService {
       const channel = this.channelRepo.findByType("email");
       if (!channel) throw new Error("Email channel is not configured");
       const cfg = (channel.config as Any) || {};
-      const client = new EmailClient({
-        imapHost: asString(cfg.imapHost) || "",
-        imapPort: asNumber(cfg.imapPort) ?? 993,
-        imapSecure: asBoolean(cfg.imapSecure) ?? true,
-        smtpHost: asString(cfg.smtpHost) || "",
-        smtpPort: asNumber(cfg.smtpPort) ?? 587,
-        smtpSecure: asBoolean(cfg.smtpSecure) ?? false,
-        email: asString(cfg.email) || "",
-        password: asString(cfg.password) || "",
-        displayName: asString(cfg.displayName) || undefined,
-        mailbox: asString(cfg.mailbox) || "INBOX",
-        pollInterval: 30000,
-        verbose: process.env.NODE_ENV === "development",
-      });
+      const client = this.createStandardEmailClient(channel.id, cfg);
       await client.sendEmail({
         to: recipient,
         subject: draft.subject,
@@ -5642,6 +5877,75 @@ export class MailboxService {
     return Boolean(channel?.enabled);
   }
 
+  private async getEmailOAuthAccessToken(channelId: string): Promise<string> {
+    const channel = this.channelRepo.findById(channelId);
+    if (!channel || channel.type !== "email") {
+      throw new Error("Email channel not found");
+    }
+
+    const config = (channel.config as Any) || {};
+    if ((config.authMethod as string | undefined) !== "oauth") {
+      throw new Error("Email channel is not configured for OAuth");
+    }
+
+    const accessToken = asString(config.accessToken);
+    const tokenExpiresAt = asNumber(config.tokenExpiresAt);
+    const now = Date.now();
+    if (accessToken && (!tokenExpiresAt || now < tokenExpiresAt - 2 * 60 * 1000)) {
+      return accessToken;
+    }
+
+    if ((config.oauthProvider as string | undefined) !== "microsoft") {
+      throw new Error("Unsupported email OAuth provider");
+    }
+
+    const oauthClientId = asString(config.oauthClientId);
+    const refreshToken = asString(config.refreshToken);
+    if (!oauthClientId || !refreshToken) {
+      if (accessToken) return accessToken;
+      throw new Error("Email OAuth refresh token is required");
+    }
+
+    const refreshed = await refreshMicrosoftEmailAccessToken({
+      clientId: oauthClientId,
+      clientSecret: asString(config.oauthClientSecret) || undefined,
+      refreshToken,
+      tenant: asString(config.oauthTenant) || MICROSOFT_EMAIL_DEFAULT_TENANT,
+    });
+
+    const nextConfig = {
+      ...config,
+      accessToken: refreshed.accessToken,
+      refreshToken: refreshed.refreshToken || refreshToken,
+      tokenExpiresAt: refreshed.expiresIn ? Date.now() + refreshed.expiresIn * 1000 : tokenExpiresAt,
+      scopes: refreshed.scopes || (config.scopes as string[] | undefined),
+    };
+    this.channelRepo.update(channelId, { config: nextConfig });
+    return refreshed.accessToken;
+  }
+
+  private createStandardEmailClient(channelId: string, config: Any): EmailClient {
+    const authMethod = asString(config.authMethod) === "oauth" ? "oauth" : "password";
+    return new EmailClient({
+      authMethod,
+      accessToken: authMethod === "oauth" ? asString(config.accessToken) || undefined : undefined,
+      oauthAccessTokenProvider:
+        authMethod === "oauth" ? async () => this.getEmailOAuthAccessToken(channelId) : undefined,
+      imapHost: asString(config.imapHost) || "",
+      imapPort: asNumber(config.imapPort) ?? 993,
+      imapSecure: asBoolean(config.imapSecure) ?? true,
+      smtpHost: asString(config.smtpHost) || "",
+      smtpPort: asNumber(config.smtpPort) ?? 587,
+      smtpSecure: asBoolean(config.smtpSecure) ?? false,
+      email: asString(config.email) || "",
+      password: authMethod === "password" ? asString(config.password) || "" : undefined,
+      displayName: asString(config.displayName) || undefined,
+      mailbox: asString(config.mailbox) || "INBOX",
+      pollInterval: 30000,
+      verbose: process.env.NODE_ENV === "development",
+    });
+  }
+
   private mapAccountRow(row: MailboxAccountRow): MailboxAccount {
     return {
       id: row.id,
@@ -5653,6 +5957,44 @@ export class MailboxService {
       lastSyncedAt: row.last_synced_at || undefined,
       classificationInitialBatchAt: row.classification_initial_batch_at || undefined,
     };
+  }
+
+  private threadMatchesQuery(row: MailboxThreadRow, query: string): boolean {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return true;
+
+    const threadText = [
+      row.subject,
+      row.snippet,
+      ...parseJsonArray<MailboxParticipant>(row.participants_json).flatMap((participant) => [
+        participant.email,
+        participant.name || "",
+      ]),
+      ...parseJsonArray<string>(row.labels_json),
+    ]
+      .join(" ")
+      .toLowerCase();
+    if (threadText.includes(needle)) return true;
+
+    return this.getMessagesForThread(row.id).some((message) => {
+      const messageText = [
+        message.subject,
+        message.snippet,
+        message.body,
+        message.from?.email,
+        message.from?.name,
+        ...message.to.map((participant) => participant.email),
+        ...message.to.map((participant) => participant.name || ""),
+        ...message.cc.map((participant) => participant.email),
+        ...message.cc.map((participant) => participant.name || ""),
+        ...message.bcc.map((participant) => participant.email),
+        ...message.bcc.map((participant) => participant.name || ""),
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return messageText.includes(needle);
+    });
   }
 
   private mapThreadRow(row: MailboxThreadRow, summary?: MailboxSummaryCard | null): MailboxThreadListItem {
@@ -5700,15 +6042,15 @@ export class MailboxService {
       bcc: parseJsonArray<MailboxParticipant>(row.bcc_json),
       subject: row.subject,
       snippet: row.snippet,
-      body: row.body_text,
-      bodyHtml: row.body_html || undefined,
+      body: decryptMailboxValue(row.body_text) || "",
+      bodyHtml: decryptMailboxValue(row.body_html) || undefined,
       receivedAt: row.received_at,
       unread: Boolean(row.is_unread),
     };
   }
 
   private mapSummaryRow(row: MailboxSummaryRow): MailboxSummaryCard {
-    const raw = row.summary_text;
+    const raw = decryptMailboxValue(row.summary_text) || "";
     const cleaned = stripMailboxSummaryHtmlArtifacts(raw);
     return {
       summary: cleaned.trim() ? cleaned : raw,
@@ -5724,7 +6066,7 @@ export class MailboxService {
       id: row.id,
       threadId: row.thread_id,
       subject: row.subject,
-      body: row.body_text,
+      body: decryptMailboxValue(row.body_text) || "",
       tone: row.tone,
       rationale: row.rationale,
       scheduleNotes: row.schedule_notes || undefined,
@@ -5757,7 +6099,7 @@ export class MailboxService {
       dueAt: row.due_at || undefined,
       state: row.state,
       ownerEmail: row.owner_email || undefined,
-      sourceExcerpt: row.source_excerpt || undefined,
+      sourceExcerpt: decryptMailboxValue(row.source_excerpt) || undefined,
       followUpTaskId: metadata.followUpTaskId,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
@@ -5793,7 +6135,7 @@ export class MailboxService {
       thread?.subject ? `Thread subject: ${thread.subject}` : null,
       row.due_at ? `Due date: ${new Date(row.due_at).toISOString()}` : null,
       recipient ? `Primary contact: ${recipient}` : null,
-      row.source_excerpt ? `Source excerpt: ${row.source_excerpt}` : null,
+      row.source_excerpt ? `Source excerpt: ${decryptMailboxValue(row.source_excerpt) || ""}` : null,
       "Track this as a real follow-up item and close it when the commitment is complete.",
     ].filter((part): part is string => Boolean(part));
 

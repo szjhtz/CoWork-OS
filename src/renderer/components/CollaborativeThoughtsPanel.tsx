@@ -131,6 +131,7 @@ export function CollaborativeThoughtsPanel({
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
+  const scrollParentRef = useRef<HTMLElement | null>(null);
 
   // Load team members and agent roles (skip for multi-LLM, derived from thoughts)
   useEffect(() => {
@@ -221,12 +222,18 @@ export function CollaborativeThoughtsPanel({
     const panel = scrollRef.current;
     if (!panel) return;
 
-    // Walk up to find the scrollable ancestor
+    // Walk up to find the scrollable ancestor by checking CSS overflow property
     let scrollParent: HTMLElement | null = panel.parentElement;
-    while (scrollParent && scrollParent.scrollHeight <= scrollParent.clientHeight) {
+    while (scrollParent) {
+      const style = getComputedStyle(scrollParent);
+      const overflowY = style.overflowY;
+      if (overflowY === "auto" || overflowY === "scroll" || overflowY === "overlay") {
+        break;
+      }
       scrollParent = scrollParent.parentElement;
     }
     if (!scrollParent) return;
+    scrollParentRef.current = scrollParent;
 
     const onScroll = () => {
       const remaining =
@@ -239,10 +246,10 @@ export function CollaborativeThoughtsPanel({
     return () => scrollParent!.removeEventListener("scroll", onScroll);
   }, []);
 
-  // Scroll the bottom sentinel into view when new thoughts or streaming updates arrive
+  // Scroll to bottom when new thoughts or streaming updates arrive
   useEffect(() => {
-    if (stickToBottomRef.current && bottomRef.current) {
-      bottomRef.current.scrollIntoView({ behavior: "smooth", block: "end" });
+    if (stickToBottomRef.current && scrollParentRef.current) {
+      scrollParentRef.current.scrollTop = scrollParentRef.current.scrollHeight;
     }
   }, [thoughts, streamingThoughts]);
 

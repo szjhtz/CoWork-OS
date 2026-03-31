@@ -144,6 +144,22 @@ describe("evaluateToolAvailability open_application", () => {
   });
 });
 
+describe("evaluateToolAvailability spawn_agent", () => {
+  const baseCtx = {
+    taskText:
+      "Use Claude Code for this task. Create a child task via acpx, have it inspect the repo and report back.",
+    taskDomain: "auto" as const,
+    taskIntent: "general" as const,
+    requiredTools: undefined as Iterable<string> | undefined,
+    recentlyUsedTools: undefined as Iterable<string> | undefined,
+  };
+
+  it("allows spawn_agent for child-task delegation prompts", () => {
+    const r = evaluateToolAvailability("spawn_agent", baseCtx);
+    expect(r.decision).toBe("allow");
+  });
+});
+
 describe("evaluateToolAvailability run_applescript", () => {
   const baseCtx = {
     taskText: "Open Calculator and click 7 + 5, then tell me the result.",

@@ -188,7 +188,7 @@ const NATIVE_APP_OPEN_PATTERN =
 const WEB_SURFACE_PATTERN =
   /\b(browser|website|web page|web app|dom|url|https?:\/\/|localhost|127\.0\.0\.1|chrome|safari|firefox|brave|edge|browser tab|webview)\b/i;
 const ORCHESTRATION_INTENT_PATTERN =
-  /\b(spawn agent|sub-?agent|delegate|parallel agent|orchestrate|multi-agent|handoff|coordinate agents|agent team)\b/i;
+  /\b(spawn agent|sub-?agent|child task|child agent|delegate|parallel agent|orchestrate|multi-agent|handoff|coordinate agents|agent team)\b/i;
 const ADMIN_INTENT_PATTERN =
   /\b(personality|persona|agent name|user name|response style|quirks|vibes|lore|heartbeat|integration setup)\b/i;
 

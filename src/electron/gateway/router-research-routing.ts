@@ -9,6 +9,8 @@ import type { ChannelType } from "./channels/types";
 export interface ResearchRoutingResult {
   text: string;
   agentRoleId?: string;
+  /** When true, task creation should merge `researchWorkflow: { enabled: true }` into agentConfig */
+  researchWorkflowPreset?: boolean;
 }
 
 /**
@@ -73,5 +75,9 @@ export function applyResearchChatRouting(params: {
       : DEFAULT_RESEARCH_TEMPLATE;
   const text = rawTemplate.replace("{message}", originalText);
 
-  return { text, agentRoleId };
+  return {
+    text,
+    agentRoleId,
+    researchWorkflowPreset: true,
+  };
 }

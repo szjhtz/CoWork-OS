@@ -148,7 +148,7 @@ export const AgentConfigSchema = z
     externalRuntime: z
       .object({
         kind: z.literal("acpx"),
-        agent: z.literal("codex"),
+        agent: z.enum(["codex", "claude"]),
         sessionMode: z.literal("persistent"),
         outputMode: z.literal("json"),
         permissionMode: z.enum(["approve-reads", "approve-all", "deny-all"]),

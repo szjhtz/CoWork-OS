@@ -1505,4 +1505,237 @@ describeWithSqlite("MailboxService", () => {
     });
     expect(afterUnlink.some((event) => event.source === "slack")).toBe(false);
   });
+
+  it("drops unknown thread ids when creating a saved view", async () => {
+    const workspaceId = "workspace-saved-view-ids";
+    db.prepare(
+      `INSERT INTO workspaces (id, name, path, created_at, last_used_at, permissions)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(
+      workspaceId,
+      "Main",
+      "/tmp/ws-saved-view-ids",
+      now,
+      now,
+      JSON.stringify({ read: true, write: true, delete: false, network: true, shell: false }),
+    );
+
+    const view = await service.createMailboxSavedView({
+      name: "Bucket",
+      instructions: "Test bucket",
+      seedThreadId: "gmail-thread:alpha",
+      threadIds: ["gmail-thread:alpha", "definitely-not-a-real-thread-id"],
+    });
+
+    const rows = db
+      .prepare(`SELECT thread_id FROM mailbox_saved_view_threads WHERE view_id = ? ORDER BY thread_id`)
+      .all(view.id) as { thread_id: string }[];
+    expect(rows.map((r) => r.thread_id)).toEqual(["gmail-thread:alpha"]);
+  });
+
+  it("keeps saved view thread membership scoped to the seed thread account", async () => {
+    const workspaceId = "workspace-saved-view-account-scope";
+    db.prepare(
+      `INSERT INTO workspaces (id, name, path, created_at, last_used_at, permissions)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(
+      workspaceId,
+      "Main",
+      "/tmp/ws-saved-view-account-scope",
+      now,
+      now,
+      JSON.stringify({ read: true, write: true, delete: false, network: true, shell: false }),
+    );
+
+    db.prepare(
+      `INSERT INTO mailbox_accounts
+        (id, provider, address, display_name, status, capabilities_json, sync_cursor, last_synced_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "gmail:other@example.com",
+      "gmail",
+      "other@example.com",
+      "Other User",
+      "connected",
+      JSON.stringify(["threads"]),
+      null,
+      now,
+      now,
+      now,
+    );
+    db.prepare(
+      `INSERT INTO mailbox_threads
+        (id, account_id, provider_thread_id, provider, subject, snippet, participants_json, labels_json, category, priority_score, urgency_score, needs_reply, stale_followup, cleanup_candidate, handled, unread_count, message_count, last_message_at, last_synced_at, metadata_json, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "gmail-thread:other",
+      "gmail:other@example.com",
+      "other",
+      "gmail",
+      "Other account thread",
+      "Thread from another mailbox account.",
+      JSON.stringify([{ email: "other@example.com", name: "Other" }]),
+      JSON.stringify([]),
+      "other",
+      10,
+      10,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      now - 1000,
+      now,
+      JSON.stringify({}),
+      now,
+      now,
+    );
+    db.prepare(
+      `INSERT INTO mailbox_messages
+        (id, thread_id, provider_message_id, direction, from_name, from_email, to_json, cc_json, bcc_json, subject, snippet, body_text, received_at, is_unread, metadata_json, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      randomUUID(),
+      "gmail-thread:other",
+      "m-other",
+      "incoming",
+      "Other",
+      "other@example.com",
+      JSON.stringify([{ email: "test@example.com", name: "Test User" }]),
+      JSON.stringify([]),
+      JSON.stringify([]),
+      "Other account thread",
+      "Thread from another mailbox account.",
+      "This message belongs to a different mailbox account.",
+      now - 1000,
+      0,
+      JSON.stringify({}),
+      now,
+      now,
+    );
+
+    const view = await service.createMailboxSavedView({
+      name: "Bucket",
+      instructions: "Test bucket",
+      seedThreadId: "gmail-thread:alpha",
+      threadIds: ["gmail-thread:alpha", "gmail-thread:other"],
+    });
+
+    const rows = db
+      .prepare(`SELECT thread_id FROM mailbox_saved_view_threads WHERE view_id = ? ORDER BY thread_id`)
+      .all(view.id) as { thread_id: string }[];
+    expect(rows.map((r) => r.thread_id)).toEqual(["gmail-thread:alpha"]);
+  });
+
+  it("rejects saved views when no valid threads remain after validation", async () => {
+    const workspaceId = "workspace-saved-view-empty";
+    db.prepare(
+      `INSERT INTO workspaces (id, name, path, created_at, last_used_at, permissions)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(
+      workspaceId,
+      "Main",
+      "/tmp/ws-saved-view-empty",
+      now,
+      now,
+      JSON.stringify({ read: true, write: true, delete: false, network: true, shell: false }),
+    );
+
+    await expect(service.createMailboxSavedView({
+      name: "Bucket",
+      instructions: "Test bucket",
+      threadIds: ["not-a-real-thread"],
+    })).rejects.toThrow("Saved views need at least one valid thread");
+  });
+
+  it("hides threads from the main inbox when a saved view opts out, unless also linked to a show-in-inbox view", async () => {
+    const workspaceId = "workspace-sv-inbox-filter";
+    db.prepare(
+      `INSERT INTO workspaces (id, name, path, created_at, last_used_at, permissions)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(
+      workspaceId,
+      "Main",
+      "/tmp/ws-sv-inbox-filter",
+      now,
+      now,
+      JSON.stringify({ read: true, write: true, delete: false, network: true, shell: false }),
+    );
+
+    const viewHide = randomUUID();
+    db.prepare(
+      `INSERT INTO mailbox_saved_views (id, workspace_id, name, instructions, seed_thread_id, show_in_inbox, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 0, ?, ?)`,
+    ).run(viewHide, workspaceId, "Hidden bucket", "x", "gmail-thread:alpha", now, now);
+    db.prepare(`INSERT INTO mailbox_saved_view_threads (view_id, thread_id, score) VALUES (?, ?, 1)`).run(
+      viewHide,
+      "gmail-thread:alpha",
+    );
+
+    const inboxHidden = await service.listThreads({ mailboxView: "inbox" });
+    expect(inboxHidden.map((t) => t.id)).not.toContain("gmail-thread:alpha");
+
+    const viewShow = randomUUID();
+    db.prepare(
+      `INSERT INTO mailbox_saved_views (id, workspace_id, name, instructions, seed_thread_id, show_in_inbox, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 1, ?, ?)`,
+    ).run(viewShow, workspaceId, "Visible bucket", "y", null, now, now);
+    db.prepare(`INSERT INTO mailbox_saved_view_threads (view_id, thread_id, score) VALUES (?, ?, 1)`).run(
+      viewShow,
+      "gmail-thread:alpha",
+    );
+
+    const inboxShown = await service.listThreads({ mailboxView: "inbox" });
+    expect(inboxShown.map((t) => t.id)).toContain("gmail-thread:alpha");
+  });
+
+  it("keeps inbox counts aligned with hide-only saved view filtering", async () => {
+    const workspaceId = "workspace-sv-counts";
+    db.prepare(
+      `INSERT INTO workspaces (id, name, path, created_at, last_used_at, permissions)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(
+      workspaceId,
+      "Main",
+      "/tmp/ws-sv-counts",
+      now,
+      now,
+      JSON.stringify({ read: true, write: true, delete: false, network: true, shell: false }),
+    );
+
+    const hiddenViewId = randomUUID();
+    db.prepare(
+      `INSERT INTO mailbox_saved_views (id, workspace_id, name, instructions, seed_thread_id, show_in_inbox, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 0, ?, ?)`,
+    ).run(hiddenViewId, workspaceId, "Hidden bucket", "x", "gmail-thread:alpha", now, now);
+    db.prepare(`INSERT INTO mailbox_saved_view_threads (view_id, thread_id, score) VALUES (?, ?, 1)`).run(
+      hiddenViewId,
+      "gmail-thread:alpha",
+    );
+
+    const syncHidden = await service.getSyncStatus();
+    const digestHidden = await service.getMailboxDigest(workspaceId);
+    expect(syncHidden.threadCount).toBe(0);
+    expect(syncHidden.unreadCount).toBe(0);
+    expect(digestHidden.threadCount).toBe(0);
+    expect(digestHidden.unreadCount).toBe(0);
+
+    const visibleViewId = randomUUID();
+    db.prepare(
+      `INSERT INTO mailbox_saved_views (id, workspace_id, name, instructions, seed_thread_id, show_in_inbox, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 1, ?, ?)`,
+    ).run(visibleViewId, workspaceId, "Visible bucket", "y", null, now, now);
+    db.prepare(`INSERT INTO mailbox_saved_view_threads (view_id, thread_id, score) VALUES (?, ?, 1)`).run(
+      visibleViewId,
+      "gmail-thread:alpha",
+    );
+
+    const syncShown = await service.getSyncStatus();
+    const digestShown = await service.getMailboxDigest(workspaceId);
+    expect(syncShown.threadCount).toBe(1);
+    expect(syncShown.unreadCount).toBe(1);
+    expect(digestShown.threadCount).toBe(1);
+    expect(digestShown.unreadCount).toBe(1);
+  });
 });

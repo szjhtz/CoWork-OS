@@ -16,13 +16,16 @@ import { AgentPerformanceReviewViewer } from "../AgentPerformanceReviewViewer";
 interface MissionControlPanelProps {
   onClose?: () => void;
   initialCompanyId?: string | null;
+  /** When opening from Inbox Agent (or elsewhere), focus this issue in Ops. */
+  initialIssueId?: string | null;
 }
 
 export function MissionControlPanel({
   onClose: _onClose,
   initialCompanyId = null,
+  initialIssueId = null,
 }: MissionControlPanelProps) {
-  const data = useMissionControlData(initialCompanyId);
+  const data = useMissionControlData(initialCompanyId, initialIssueId);
 
   const {
     loading, activeTab,

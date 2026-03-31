@@ -65,6 +65,38 @@ describe("cli-agent-detection", () => {
     expect(detectCliAgentFromEvents(events)).toBe("codex-acpx");
   });
 
+  it("classifies acpx Claude tasks from task metadata", () => {
+    const task = createTask({
+      agentConfig: {
+        externalRuntime: {
+          kind: "acpx",
+          agent: "claude",
+          sessionMode: "persistent",
+          outputMode: "json",
+          permissionMode: "approve-reads",
+        },
+      },
+    });
+
+    expect(isCliAgentChildTask(task)).toBe(true);
+    expect(resolveCliAgentType(task)).toBe("claude-acpx");
+  });
+
+  it("falls back to legacy Claude CLI command detection", () => {
+    const task = createTask({ title: "Generic child task" });
+    const events = [
+      createEvent({
+        payload: {
+          tool: "run_command",
+          command: "claude -p \"review this patch\"",
+        },
+      }),
+    ];
+
+    expect(isCliAgentChildTask(task, events)).toBe(true);
+    expect(resolveCliAgentType(task, events)).toBe("claude-cli");
+  });
+
   it("falls back to legacy Codex CLI command detection", () => {
     const task = createTask({ title: "Generic child task" });
     const events = [
@@ -86,6 +118,15 @@ describe("cli-agent-detection", () => {
       name: "Codex",
       badge: "Codex via ACP",
       color: "#0ea5e9",
+    });
+  });
+
+  it("returns Claude display metadata for acpx-backed tasks", () => {
+    expect(getCliAgentDisplayInfo("claude-acpx")).toEqual({
+      icon: "🧠",
+      name: "Claude",
+      badge: "Claude via ACP",
+      color: "#8b5cf6",
     });
   });
 });

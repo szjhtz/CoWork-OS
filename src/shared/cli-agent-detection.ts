@@ -1,14 +1,14 @@
 /**
  * CLI Agent Detection Utility
  *
- * Detects whether a child task is a CLI agent task (Codex CLI)
+ * Detects whether a child task is a CLI agent task (Codex CLI / Claude Code)
  * based on multi-signal analysis: task title, event content, and bash command patterns.
  * Used by the renderer to decide whether to render a CliAgentFrame instead of DispatchedAgentsPanel.
  */
 
 import type { Task, TaskEvent } from "./types";
 
-export type CliAgentType = "codex-cli" | "codex-acpx";
+export type CliAgentType = "codex-cli" | "codex-acpx" | "claude-cli" | "claude-acpx";
 
 // Title patterns (case-insensitive)
 const CODEX_TITLE_PATTERNS = [
@@ -17,9 +17,16 @@ const CODEX_TITLE_PATTERNS = [
   /\bcodex\s+(review|fix|exec|critiqu)/i,
   /\bcodex\s+(agent|task)\b/i,
 ];
+const CLAUDE_TITLE_PATTERNS = [
+  /\bclaude\b/i,
+  /\bclaude\s+code\b/i,
+  /\bclaude\s+(review|fix|exec|critiqu)/i,
+  /\bclaude\s+(agent|task)\b/i,
+];
 
 // Bash command patterns found in task events
 const CODEX_COMMAND_PATTERN = /\bcodex\s+(exec|review|--)/;
+const CLAUDE_COMMAND_PATTERN = /(?:^|[\s;&|])claude(?:\s|$)/;
 
 /**
  * Detect CLI agent type from a task's title.
@@ -28,13 +35,14 @@ const CODEX_COMMAND_PATTERN = /\bcodex\s+(exec|review|--)/;
 export function detectCliAgentFromTitle(title: string): CliAgentType | null {
   if (!title) return null;
   if (CODEX_TITLE_PATTERNS.some((p) => p.test(title))) return "codex-cli";
+  if (CLAUDE_TITLE_PATTERNS.some((p) => p.test(title))) return "claude-cli";
   return null;
 }
 
 export function detectCliAgentFromTask(task: Task): CliAgentType | null {
   const externalRuntime = task.agentConfig?.externalRuntime;
-  if (externalRuntime?.kind === "acpx" && externalRuntime.agent === "codex") {
-    return "codex-acpx";
+  if (externalRuntime?.kind === "acpx") {
+    return externalRuntime.agent === "claude" ? "claude-acpx" : "codex-acpx";
   }
   return detectCliAgentFromTitle(task.title);
 }
@@ -49,6 +57,7 @@ export function detectCliAgentFromEvents(events: TaskEvent[]): CliAgentType | nu
     const runtime = String(payload?.runtime || "");
     const runtimeAgent = String(payload?.runtimeAgent || "");
     if (runtime === "acpx" && runtimeAgent === "codex") return "codex-acpx";
+    if (runtime === "acpx" && runtimeAgent === "claude") return "claude-acpx";
 
     const eventType = event.type;
     // Check step_started events
@@ -56,6 +65,7 @@ export function detectCliAgentFromEvents(events: TaskEvent[]): CliAgentType | nu
       const step = payload?.step as Record<string, unknown> | undefined;
       const command = String(step?.command || step?.tool || "");
       if (CODEX_COMMAND_PATTERN.test(command)) return "codex-cli";
+      if (CLAUDE_COMMAND_PATTERN.test(command)) return "claude-cli";
     }
     // Check tool_call events (run_command with codex)
     if (eventType === "tool_call") {
@@ -63,6 +73,7 @@ export function detectCliAgentFromEvents(events: TaskEvent[]): CliAgentType | nu
       if (tool === "run_command" || tool === "bash") {
         const cmd = String(payload?.command || (payload?.input as Record<string, unknown>)?.command || "");
         if (CODEX_COMMAND_PATTERN.test(cmd)) return "codex-cli";
+        if (CLAUDE_COMMAND_PATTERN.test(cmd)) return "claude-cli";
       }
     }
     // Check command_output events (start type)
@@ -70,6 +81,7 @@ export function detectCliAgentFromEvents(events: TaskEvent[]): CliAgentType | nu
       const payload = event.payload as Record<string, unknown> | undefined;
       const cmd = String(payload?.command || "");
       if (CODEX_COMMAND_PATTERN.test(cmd)) return "codex-cli";
+      if (CLAUDE_COMMAND_PATTERN.test(cmd)) return "claude-cli";
     }
   }
   return null;
@@ -111,5 +123,9 @@ export function getCliAgentDisplayInfo(agentType: CliAgentType): {
       return { icon: "⚡", name: "Codex", badge: "Codex CLI", color: "#10b981" };
     case "codex-acpx":
       return { icon: "⚡", name: "Codex", badge: "Codex via ACP", color: "#0ea5e9" };
+    case "claude-cli":
+      return { icon: "🧠", name: "Claude", badge: "Claude CLI", color: "#f59e0b" };
+    case "claude-acpx":
+      return { icon: "🧠", name: "Claude", badge: "Claude via ACP", color: "#8b5cf6" };
   }
 }

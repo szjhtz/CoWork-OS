@@ -100,6 +100,10 @@ function getAcpxLaunchCandidates(): AcpxLauncherSpec[] {
   return preferred ? [preferred, ...remaining] : candidates;
 }
 
+export function resetAcpxLauncherPreferenceForTests(): void {
+  preferredAcpxLauncherLabel = null;
+}
+
 export function parseAcpxJsonLine(line: string): Record<string, unknown> | null {
   const trimmed = String(line || "").trim();
   if (!trimmed) return null;
@@ -314,13 +318,55 @@ export class AcpxRuntimeRunner {
       // Use minimal args for cancel — global flags like --format and --cwd are
       // prompt-specific and may not be accepted by the cancel subcommand.
       await new Promise<void>((resolve) => {
+        let finished = false;
+        let fallbackStarted = false;
+        const fallbackLauncher = getAcpxLaunchCandidates().find((candidate) => candidate.label !== "acpx");
+        const resolveOnce = () => {
+          if (finished) return;
+          finished = true;
+          resolve();
+        };
+        const startFallbackCancel = () => {
+          if (finished || fallbackStarted || !fallbackLauncher) {
+            return false;
+          }
+          fallbackStarted = true;
+          const fallbackProc = spawn(
+            fallbackLauncher.command,
+            [...fallbackLauncher.prefixArgs, this.input.runtimeConfig.agent, "cancel", "--session", this.sessionName],
+            { cwd: this.input.cwd, env: process.env, stdio: "ignore" },
+          );
+          fallbackProc.on("close", (code) => {
+            resolveOnce();
+          });
+          fallbackProc.on("error", (error: NodeJS.ErrnoException) => {
+            resolveOnce();
+          });
+          return true;
+        };
         const proc = spawn(
           "acpx",
           [this.input.runtimeConfig.agent, "cancel", "--session", this.sessionName],
           { cwd: this.input.cwd, env: process.env, stdio: "ignore" },
         );
-        proc.on("close", () => resolve());
-        proc.on("error", () => resolve());
+        proc.on("close", (code) => {
+          if (finished) return;
+          if (code === 0) {
+            resolveOnce();
+            return;
+          }
+          if (startFallbackCancel()) {
+            return;
+          }
+          resolveOnce();
+        });
+        proc.on("error", (error: NodeJS.ErrnoException) => {
+          if (finished) return;
+          if (error.code === "ENOENT" && startFallbackCancel()) {
+            return;
+          }
+          resolveOnce();
+        });
       });
     } finally {
       if (this.activePromptProcess && !this.activePromptProcess.killed) {

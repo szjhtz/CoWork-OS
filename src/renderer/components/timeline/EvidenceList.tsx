@@ -69,6 +69,16 @@ function UrlEvidenceRow({ item }: { item: Extract<TimelineEvidence, { type: "url
   );
 }
 
+function RuntimeLogEvidenceRow({ item }: { item: Extract<TimelineEvidence, { type: "runtime_log" }> }) {
+  return (
+    <div className="evidence-row evidence-command">
+      <span className="evidence-label">{item.label}</span>
+      {item.source ? <span className="evidence-lines">{item.source}</span> : null}
+      <pre className="evidence-output">{item.message.slice(0, 1200)}</pre>
+    </div>
+  );
+}
+
 export function EvidenceList({ evidence }: EvidenceListProps) {
   if (evidence.length === 0) return null;
   return (
@@ -89,6 +99,8 @@ export function EvidenceList({ evidence }: EvidenceListProps) {
             return <ApprovalEvidenceRow key={key} item={item} />;
           case "url":
             return <UrlEvidenceRow key={key} item={item} />;
+          case "runtime_log":
+            return <RuntimeLogEvidenceRow key={key} item={item} />;
           default:
             return null;
         }

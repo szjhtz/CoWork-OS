@@ -272,7 +272,7 @@ function getTaskBadge(task: Task) {
   return { className: "pending", label: task.status, icon: <Clock3 size={12} /> };
 }
 
-const EXECUTION_MODE_ORDER: ExecutionMode[] = ["chat", "execute", "plan", "analyze", "verified"];
+const EXECUTION_MODE_ORDER: ExecutionMode[] = ["chat", "execute", "plan", "analyze", "debug", "verified"];
 const TASK_DOMAIN_ORDER: TaskDomain[] = [
   "auto",
   "code",
@@ -286,6 +286,7 @@ const EXECUTION_MODE_LABEL: Record<ExecutionMode, string> = {
   execute: "Execute",
   plan: "Plan",
   analyze: "Analyze",
+  debug: "Debug",
   verified: "Verified",
 };
 const TASK_DOMAIN_LABEL: Record<TaskDomain, string> = {

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { TaskEvent } from "../../../shared/types";
 import {
   ALWAYS_VISIBLE_TECHNICAL_EVENT_TYPES,
+  filterVerboseTimelineNoise,
   IMPORTANT_EVENT_TYPES,
   isImportantTaskEvent,
   shouldShowTaskEventInSummaryMode,
@@ -90,10 +91,19 @@ describe("task event visibility helpers", () => {
     ).toBe(true);
   });
 
-  it("keeps stage progress visible in summary mode for non-completed tasks", () => {
+  it("hides generic stage progress in summary mode for non-completed tasks", () => {
     expect(
       shouldShowTaskEventInSummaryMode(
         makeEvent("timeline_group_started", { stage: "BUILD" }),
+        "executing",
+      ),
+    ).toBe(false);
+  });
+
+  it("keeps sub-stage progress visible in summary mode for non-completed tasks", () => {
+    expect(
+      shouldShowTaskEventInSummaryMode(
+        makeEvent("timeline_group_started", { stage: "FIX", groupLabel: "Preparing workspace" }),
         "executing",
       ),
     ).toBe(true);
@@ -151,6 +161,104 @@ describe("task event visibility helpers", () => {
         "executing",
       ),
     ).toBe(false);
+  });
+
+  it("hides all timeline_step_updated events in verbose mode regardless of legacyType", () => {
+    const t0 = 1_000_000;
+    const filtered = filterVerboseTimelineNoise([
+      makeEvent("timeline_step_updated", { message: "Progress update" }, { id: "a", timestamp: t0 }),
+      makeEvent("timeline_step_updated", { message: "Tackling: Do the real work" }, { id: "b", timestamp: t0 + 500 }),
+      makeEvent("timeline_step_updated", { legacyType: "log", message: "Execution strategy active" }, { id: "c", timestamp: t0 + 1000 }),
+      makeEvent("timeline_step_updated", { legacyType: "tool_call", tool: "web_search" }, { id: "d", timestamp: t0 + 2000 }),
+      makeEvent("timeline_step_updated", { legacyType: "tool_result", tool: "web_search" }, { id: "e", timestamp: t0 + 3000 }),
+      makeEvent("timeline_step_updated", { legacyType: "llm_routing_changed" }, { id: "f", timestamp: t0 + 4000 }),
+      makeEvent("timeline_step_updated", { legacyType: "llm_usage" }, { id: "g", timestamp: t0 + 5000 }),
+      makeEvent("timeline_step_updated", { legacyType: "plan_created" }, { id: "h", timestamp: t0 + 6000 }),
+      makeEvent("timeline_step_updated", { legacyType: "task_analysis" }, { id: "i", timestamp: t0 + 7000 }),
+      makeEvent("timeline_step_updated", { legacyType: "progress_update", message: "Starting execution" }, { id: "j", timestamp: t0 + 8000 }),
+    ]);
+    expect(filtered).toEqual([]);
+  });
+
+  it("hides timeline_step_finished events but keeps task cancellation", () => {
+    const t0 = 1_000_000;
+    const filtered = filterVerboseTimelineNoise([
+      makeEvent("timeline_step_finished", { legacyType: "step_completed", message: "glob completed" }, { id: "a", timestamp: t0 }),
+      makeEvent("timeline_step_finished", { legacyType: "step_completed", message: "list_directory completed" }, { id: "b", timestamp: t0 + 1000 }),
+      makeEvent("timeline_step_finished", { legacyType: "task_cancelled", message: "Task was stopped by user" }, { id: "c", timestamp: t0 + 2000 }),
+      makeEvent("timeline_step_finished", { message: "Step finished" }, { id: "d", timestamp: t0 + 3000 }),
+    ]);
+    expect(filtered.map((e) => e.id)).toEqual(["c"]);
+  });
+
+  it("hides low-value internal lifecycle chatter in verbose mode", () => {
+    const filtered = filterVerboseTimelineNoise([
+      makeEvent("log", { message: "[planning] Using strong model profile for execution plan creation" }, { id: "plan-log" }),
+      makeEvent("progress_update", { message: "Starting execution of 5 steps" }, { id: "start-exec" }),
+      makeEvent("progress_update", { message: "Completed step 2: Review repository activity" }, { id: "done-step" }),
+      makeEvent("timeline_group_finished", { stage: "BUILD", message: "Completed BUILD" }, { id: "build-finished" }),
+      makeEvent("progress_update", { message: "Tackling: Review repository activity" }, { id: "useful" }),
+    ]);
+    expect(filtered).toEqual([]);
+  });
+
+  it("hides pause and heartbeat progress updates in verbose mode", () => {
+    const filtered = filterVerboseTimelineNoise([
+      makeEvent(
+        "progress_update",
+        {
+          phase: "tool_execution",
+          message: "Still running http_request (12s elapsed)",
+          heartbeat: true,
+        },
+        { id: "heartbeat" },
+      ),
+      makeEvent(
+        "progress_update",
+        { phase: "execution", message: "Paused - awaiting user input" },
+        { id: "pause" },
+      ),
+    ]);
+    expect(filtered).toEqual([]);
+  });
+
+  it("deduplicates exact repeated event ids in verbose mode", () => {
+    const filtered = filterVerboseTimelineNoise([
+      makeEvent("timeline_group_started", { stage: "DISCOVER" }, { id: "dup", timestamp: 1000 }),
+      makeEvent("timeline_group_started", { stage: "DISCOVER" }, { id: "dup", timestamp: 1001 }),
+    ]);
+    expect(filtered.map((e) => e.id)).toEqual(["dup"]);
+  });
+
+  it("deduplicates mirrored semantic events in verbose mode", () => {
+    const filtered = filterVerboseTimelineNoise([
+      makeEvent(
+        "timeline_group_started",
+        { stage: "FIX", groupLabel: "Preparing workspace" },
+        { id: "a", timestamp: 1000, groupId: "stage:fix" },
+      ),
+      makeEvent(
+        "timeline_group_started",
+        { stage: "FIX", groupLabel: "Preparing workspace" },
+        { id: "b", timestamp: 1005, groupId: "stage:fix" },
+      ),
+      makeEvent(
+        "tool_result",
+        { tool: "http_request", toolUseId: "use-1", result: { url: "https://api.github.com/a" } },
+        { id: "c", timestamp: 1010 },
+      ),
+      makeEvent(
+        "tool_result",
+        { tool: "http_request", toolUseId: "use-1", result: { url: "https://api.github.com/a" } },
+        { id: "d", timestamp: 1011 },
+      ),
+      makeEvent(
+        "tool_result",
+        { tool: "http_request", toolUseId: "use-2", result: { url: "https://api.github.com/b" } },
+        { id: "e", timestamp: 1012 },
+      ),
+    ]);
+    expect(filtered.map((e) => e.id)).toEqual(["a", "c", "e"]);
   });
 
   it("does not hide custom non-stage group events for completed tasks", () => {

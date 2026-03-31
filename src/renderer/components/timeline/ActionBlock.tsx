@@ -15,6 +15,11 @@ export interface ActionBlockSummary {
   outputTokens: number;
 }
 
+export interface BuildActionBlockSummaryOptions {
+  /** When true, use in-progress phrasing (e.g. "Exploring files…") instead of past-tense totals */
+  isActive?: boolean;
+}
+
 /**
  * Build a human-readable summary for a block of tool/step events.
  * @param events - Events in this block (used for summary, step count, time range)
@@ -23,7 +28,9 @@ export interface ActionBlockSummary {
 export function buildActionBlockSummary(
   events: TaskEvent[],
   allEventsForLookup?: TaskEvent[],
+  options?: BuildActionBlockSummaryOptions,
 ): ActionBlockSummary {
+  const isActive = options?.isActive === true;
   const toolCounts = new Map<string, number>();
   let stepCount = 0;
 
@@ -83,16 +90,46 @@ export function buildActionBlockSummary(
   const readFiles = (toolCounts.get("read_file") || 0) + (toolCounts.get("list_directory") || 0);
   const searches = (toolCounts.get("grep") || 0) + (toolCounts.get("search_files") || 0);
   const writes = (toolCounts.get("write_file") || 0) + (toolCounts.get("edit_file") || 0);
+  const webLookups =
+    (toolCounts.get("web_fetch") || 0) +
+    (toolCounts.get("web_search") || 0) +
+    (toolCounts.get("http_request") || 0);
 
-  if (readFiles > 0 && searches > 0) {
-    parts.push(`Explored ${readFiles} file${readFiles === 1 ? "" : "s"}, ${searches} search${searches === 1 ? "" : "es"}`);
-  } else if (readFiles > 0) {
-    parts.push(`${readFiles} file${readFiles === 1 ? "" : "s"} read`);
-  } else if (searches > 0) {
-    parts.push(`${searches} search${searches === 1 ? "" : "es"}`);
+  if (isActive) {
+    if (readFiles > 0 && searches > 0) {
+      parts.push("Exploring files and searching the codebase…");
+    } else if (readFiles > 0) {
+      parts.push("Reading files…");
+    } else if (searches > 0) {
+      parts.push("Searching the codebase…");
+    }
+    if (webLookups > 0) {
+      parts.push("Gathering web sources…");
+    }
+    if (writes > 0) {
+      parts.push("Editing files…");
+    }
+    if (parts.length === 0 && stepCount > 0) {
+      parts.push("Working…");
+    } else if (parts.length === 0 && totalTools > 0) {
+      parts.push("Working…");
+    }
+  } else {
+    if (readFiles > 0 && searches > 0) {
+      parts.push(
+        `Explored ${readFiles} file${readFiles === 1 ? "" : "s"}, ${searches} search${searches === 1 ? "" : "es"}`,
+      );
+    } else if (readFiles > 0) {
+      parts.push(`${readFiles} file${readFiles === 1 ? "" : "s"} read`);
+    } else if (searches > 0) {
+      parts.push(`${searches} search${searches === 1 ? "" : "es"}`);
+    }
+    if (webLookups > 0) {
+      parts.push(`${webLookups} web lookup${webLookups === 1 ? "" : "s"}`);
+    }
+    if (writes > 0) parts.push(`${writes} file${writes === 1 ? "" : "s"} modified`);
+    if (stepCount > 0 && parts.length === 0) parts.push(`${stepCount} step${stepCount === 1 ? "" : "s"}`);
   }
-  if (writes > 0) parts.push(`${writes} file${writes === 1 ? "" : "s"} modified`);
-  if (stepCount > 0 && parts.length === 0) parts.push(`${stepCount} step${stepCount === 1 ? "" : "s"}`);
 
   const summary =
     parts.length > 0

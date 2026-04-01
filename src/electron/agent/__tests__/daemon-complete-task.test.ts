@@ -106,6 +106,36 @@ describe("AgentDaemon.completeTask", () => {
     );
   });
 
+  it("persists semanticSummary and verification metadata on completion when provided", () => {
+    const daemonLike = createDaemonLike();
+
+    AgentDaemon.prototype.completeTask.call(daemonLike, "task-1", "done", {
+      terminalStatus: "ok",
+      semanticSummary: "Read auth config",
+      verificationVerdict: "PASS",
+      verificationReport: "Verifier confirmed the result.",
+    });
+
+    expect(daemonLike.taskRepo.update).toHaveBeenCalledWith(
+      "task-1",
+      expect.objectContaining({
+        semanticSummary: "Read auth config",
+        verificationVerdict: "PASS",
+        verificationReport: "Verifier confirmed the result.",
+      }),
+    );
+
+    expect(daemonLike.logEvent).toHaveBeenCalledWith(
+      "task-1",
+      "task_completed",
+      expect.objectContaining({
+        semanticSummary: "Read auth config",
+        verificationVerdict: "PASS",
+        verificationReport: "Verifier confirmed the result.",
+      }),
+    );
+  });
+
   it("treats strategy-sourced chat as a normal completion path", () => {
     const daemonLike = createDaemonLike();
     daemonLike.taskRepo.findById.mockReturnValue({

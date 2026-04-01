@@ -88,6 +88,32 @@ function isCompactStreamEventType(type: StreamEventType): boolean {
   return COMPACT_STREAM_EVENT_TYPES.has(type);
 }
 
+function buildTaskCompletionStreamText(payload: TaskEvent["payload"]): string {
+  const p = payload as Record<string, unknown> | undefined;
+  const resultSummary =
+    typeof p?.resultSummary === "string" ? p.resultSummary.trim() : "";
+  const semanticSummary =
+    typeof p?.semanticSummary === "string" ? p.semanticSummary.trim() : "";
+  const verificationVerdict =
+    typeof p?.verificationVerdict === "string" ? p.verificationVerdict.trim() : "";
+  const verificationReport =
+    typeof p?.verificationReport === "string" ? p.verificationReport.trim() : "";
+
+  const summary = [resultSummary, semanticSummary].filter((value) => value.length > 0).join("\n\n");
+  if (!verificationVerdict && !verificationReport) {
+    return summary || "Task completed successfully";
+  }
+
+  const verification = [
+    verificationVerdict ? `Verification: ${verificationVerdict}` : "",
+    verificationReport || "",
+  ]
+    .filter((value) => value.length > 0)
+    .join("\n");
+
+  return [summary, verification].filter((value) => value.length > 0).join("\n\n");
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- event payloads are untyped
 function formatEventContent(
   type: StreamEventType,
@@ -114,7 +140,7 @@ function formatEventContent(
       return `Created plan with ${steps.length} step${steps.length !== 1 ? "s" : ""}`;
     }
     case "task_completed":
-      return "Task completed successfully";
+      return buildTaskCompletionStreamText(payload);
     case "task_cancelled":
       return "Task was cancelled";
     case "error":

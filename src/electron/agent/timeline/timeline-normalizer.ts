@@ -232,10 +232,71 @@ function inferPhase(event: NormalizerInputEvent, kind: CanonicalActionKind): Tim
 function extractEvidence(events: NormalizerInputEvent[]): TimelineEvidence[] {
   const evidence: TimelineEvidence[] = [];
   const seenPaths = new Set<string>();
+  const seenRuntimeEvidence = new Set<string>();
 
   for (const event of events) {
     const payload = asObject(event.payload);
     const kind = toCanonicalKind(event);
+    const envelope = asObject(payload.envelope);
+    const envelopeEvidence = Array.isArray(envelope.evidence) ? envelope.evidence : [];
+
+    for (const item of envelopeEvidence) {
+      const entry = asObject(item);
+      const type = safeStr(entry.type);
+      const label = safeStr(entry.label) || "Runtime evidence";
+      const value = safeStr(entry.value);
+      const extra = asObject(entry.extra);
+      const dedupeKey = `${type}:${label}:${value}`;
+      if (!type || !value || seenRuntimeEvidence.has(dedupeKey)) continue;
+      seenRuntimeEvidence.add(dedupeKey);
+
+      if (type === "file") {
+        if (!seenPaths.has(value)) {
+          seenPaths.add(value);
+          evidence.push({
+            type: "file",
+            path: value,
+            operation: safeStr(extra.operation) as "read" | "write" | "edit" | "delete" | undefined,
+            ...(safeStr(extra.lines) ? { lines: safeStr(extra.lines) } : {}),
+          });
+        }
+        continue;
+      }
+
+      if (type === "command") {
+        evidence.push({
+          type: "command",
+          label,
+          command: value,
+          ...(safeStr(extra.output) ? { output: safeStr(extra.output) } : {}),
+        });
+        continue;
+      }
+
+      if (type === "url") {
+        evidence.push({ type: "url", label, url: value });
+        continue;
+      }
+
+      if (type === "artifact") {
+        evidence.push({
+          type: "artifact",
+          label,
+          path: value,
+          ...(safeStr(extra.mimeType) ? { mimeType: safeStr(extra.mimeType) } : {}),
+        });
+        continue;
+      }
+
+      if (type === "runtime_log") {
+        evidence.push({
+          type: "runtime_log",
+          label,
+          message: value,
+          ...(safeStr(extra.source) ? { source: safeStr(extra.source) } : {}),
+        });
+      }
+    }
 
     if (kind === "file.read" || kind === "file.write" || kind === "file.edit" || kind === "file.delete") {
       const path =

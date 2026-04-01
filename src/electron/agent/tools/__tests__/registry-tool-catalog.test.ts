@@ -191,6 +191,36 @@ describe("ToolRegistry tool catalog versioning", () => {
     expect(invariantSpy).toHaveBeenCalled();
   });
 
+  it("attaches runtime metadata to tool definitions", () => {
+    const registry = new ToolRegistry(createWorkspace(), createDaemon(), "task-runtime");
+    const readFile = registry.getTools().find((tool) => tool.name === "read_file");
+
+    expect(readFile?.runtime).toBeDefined();
+    expect(readFile?.runtime?.concurrencyClass).toBe("read_parallel");
+    expect(readFile?.runtime?.readOnly).toBe(true);
+  });
+
+  it("resolves scheduler specs independently from runtime metadata", () => {
+    const registry = new ToolRegistry(createWorkspace(), createDaemon(), "task-scheduler");
+    const spec = registry.getSchedulerSpec("browser_get_content", { session_id: "browser-1" });
+
+    expect(spec.concurrencyClass).toBe("serial_only");
+    expect(spec.idempotent).toBe(false);
+  });
+
+  it("includes the tool_search meta tool and returns deferred matches", () => {
+    const registry = new ToolRegistry(createWorkspace(), createDaemon(), "task-tool-search");
+    const deferredTools = registry.getDeferredTools();
+    const target = deferredTools[0];
+
+    expect(registry.getTools().some((tool) => tool.name === "tool_search")).toBe(true);
+    expect(target).toBeDefined();
+
+    const result = registry.searchDeferredTools(`${target?.name} ${target?.description}`, 5);
+    expect(result.matches.length).toBeGreaterThan(0);
+    expect(result.matches.some((match) => match.name === target?.name)).toBe(true);
+  });
+
   it("fails loudly in test when duplicate artifact tool semantics drift is detected", () => {
     const registry = new ToolRegistry(createWorkspace(), createDaemon(), "task-4");
 

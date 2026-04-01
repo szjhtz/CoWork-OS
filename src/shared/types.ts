@@ -46,6 +46,18 @@ export interface MemoryFeaturesSettings {
   contextPackInjectionEnabled: boolean;
   /** Allow the heartbeat system to perform memory maintenance tasks. */
   heartbeatMaintenanceEnabled: boolean;
+  /** Rebuild execution prompts from explicit prompt-stack layers. */
+  promptStackV2Enabled?: boolean;
+  /** Serve memory via file-backed index/topic layers under `.cowork/memory/`. */
+  layeredMemoryEnabled?: boolean;
+  /** Persist append-only transcript spans and lightweight checkpoints. */
+  transcriptStoreEnabled?: boolean;
+  /** Run background memory consolidation after meaningful task activity. */
+  backgroundConsolidationEnabled?: boolean;
+  /** Route execution turns through the extracted query orchestrator. */
+  queryOrchestratorEnabled?: boolean;
+  /** Enable session lineage metadata and session forking flows. */
+  sessionLineageEnabled?: boolean;
 }
 
 export type AwarenessSource =
@@ -564,6 +576,14 @@ export type EventType =
   | "agent_completed" // Child agent completed successfully
   | "agent_failed" // Child agent failed
   | "sub_agent_result" // Result summary from child agent
+  // Unified orchestration graph events
+  | "orchestration_run_created"
+  | "orchestration_node_ready"
+  | "orchestration_node_dispatched"
+  | "orchestration_node_completed"
+  | "orchestration_node_failed"
+  | "orchestration_run_completed"
+  | "orchestration_run_failed"
   // Context management
   | "context_summarized" // Earlier messages were dropped and summarized
   // Conversation persistence
@@ -634,6 +654,137 @@ export type TimelineEventStatus =
 export type TimelineEventActor = "system" | "agent" | "user" | "tool" | "subagent";
 
 export type TimelineStage = "DISCOVER" | "BUILD" | "VERIFY" | "FIX" | "DELIVER";
+
+export type OrchestrationGraphRunStatus =
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export type OrchestrationGraphNodeStatus =
+  | "pending"
+  | "ready"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "blocked";
+
+export type OrchestrationGraphNodeKind =
+  | "child_task"
+  | "workflow_phase"
+  | "team_work_item"
+  | "synthesis"
+  | "verification"
+  | "acp_task";
+
+export type OrchestrationDispatchTarget =
+  | "native_child_task"
+  | "local_role"
+  | "remote_acp"
+  | "external_runtime";
+
+export interface OrchestrationGraphRun {
+  id: string;
+  rootTaskId: string;
+  workspaceId: string;
+  kind: "delegation" | "workflow" | "team" | "acp";
+  status: OrchestrationGraphRunStatus;
+  maxParallel: number;
+  metadata?: Record<string, unknown>;
+  createdAt: number;
+  updatedAt: number;
+  completedAt?: number;
+}
+
+export interface OrchestrationGraphNode {
+  id: string;
+  runId: string;
+  key: string;
+  title: string;
+  prompt: string;
+  kind: OrchestrationGraphNodeKind;
+  status: OrchestrationGraphNodeStatus;
+  dispatchTarget: OrchestrationDispatchTarget;
+  workerRole?: WorkerRoleKind;
+  parentTaskId?: string;
+  assignedAgentRoleId?: string;
+  capabilityHint?: ModelCapability;
+  acpAgentId?: string;
+  agentConfig?: AgentConfig;
+  taskId?: string;
+  remoteTaskId?: string;
+  publicHandle?: string;
+  summary?: string;
+  output?: string;
+  error?: string;
+  verificationVerdict?: VerificationVerdict;
+  verificationReport?: string;
+  semanticSummary?: string;
+  teamRunId?: string;
+  teamItemId?: string;
+  workflowPhaseId?: string;
+  acpTaskId?: string;
+  metadata?: Record<string, unknown>;
+  createdAt: number;
+  updatedAt: number;
+  startedAt?: number;
+  completedAt?: number;
+}
+
+export interface OrchestrationGraphEdge {
+  id: string;
+  runId: string;
+  fromNodeId: string;
+  toNodeId: string;
+}
+
+export interface OrchestrationNodeNotification {
+  runId: string;
+  nodeId: string;
+  taskId?: string;
+  remoteTaskId?: string;
+  publicHandle?: string;
+  status: "running" | "completed" | "failed" | "cancelled";
+  summary: string;
+  result?: string;
+  usage?: Record<string, unknown>;
+  error?: string;
+  target: OrchestrationDispatchTarget;
+  workerRole?: WorkerRoleKind;
+  semanticSummary?: string;
+  verificationVerdict?: VerificationVerdict;
+  verificationReport?: string;
+}
+
+export type WorkerRoleKind = "researcher" | "implementer" | "verifier" | "synthesizer";
+
+export type VerificationVerdict = "PASS" | "FAIL" | "PARTIAL";
+
+export interface WorkerRoleSpec {
+  kind: WorkerRoleKind;
+  displayName: string;
+  description: string;
+  systemPrompt: string;
+  conversationMode: ConversationMode;
+  allowUserInput: boolean;
+  retainMemory: boolean;
+  llmProfile: LlmProfile;
+  executionMode: ExecutionMode;
+  toolRestrictions: string[];
+  allowedTools?: string[];
+  mutationAllowed: boolean;
+  completionContract: string;
+}
+
+export interface WorkerPromptContext {
+  taskTitle: string;
+  taskPrompt: string;
+  workspacePath?: string;
+  parentSummary?: string;
+  evidenceBundle?: string;
+  outputSummary?: string;
+}
 
 export type RuntimeToolConcurrencyClass =
   | "exclusive"
@@ -1495,6 +1646,7 @@ export interface Task {
   resultSummary?: string; // Summary of results for parent agent to consume
   // Agent Squad fields
   assignedAgentRoleId?: string; // ID of the agent role assigned to this task
+  workerRole?: WorkerRoleKind; // Internal execution role for delegation and verification
   boardColumn?: BoardColumn; // Kanban column for task organization
   priority?: number; // Task priority (higher = more important)
   // Task Board fields
@@ -1509,6 +1661,12 @@ export interface Task {
   worktreeStatus?: WorktreeStatus; // Current worktree lifecycle state
   // Comparison mode fields
   comparisonSessionId?: string; // If this task is part of a comparison session
+  // Session lineage fields
+  sessionId?: string; // Stable lineage/session identifier shared across continued tasks
+  branchFromTaskId?: string; // Parent task used as the branch origin
+  branchFromEventId?: string; // Specific event to branch from when forking a session
+  branchLabel?: string; // Human label for the branch shown in UI/debug surfaces
+  resumeStrategy?: "snapshot" | "checkpoint" | "transcript"; // Preferred resume source
   // Origin source for distinguishing how the task was created
   source?: "manual" | "cron" | "hook" | "api" | "improvement";
   // Strategy/routing controls
@@ -1517,6 +1675,9 @@ export interface Task {
   // Execution result metadata (for partial success + diagnostics)
   terminalStatus?: TaskTerminalStatus;
   failureClass?: StepFailureClass;
+  verificationVerdict?: VerificationVerdict;
+  verificationReport?: string;
+  semanticSummary?: string;
   bestKnownOutcome?: TaskBestKnownOutcome;
   coreOutcome?: "ok" | "partial" | "failed";
   dependencyOutcome?: "healthy" | "degraded" | "down";
@@ -2402,6 +2563,9 @@ export interface TaskExportItem {
   workspaceName?: string;
   parentTaskId?: string;
   agentType?: AgentType;
+  sessionId?: string;
+  branchFromTaskId?: string;
+  branchLabel?: string;
   depth?: number;
   createdAt: number;
   updatedAt: number;
@@ -4321,6 +4485,7 @@ export const IPC_CHANNELS = {
   TASK_PAUSE: "task:pause",
   TASK_RESUME: "task:resume",
   TASK_CONTINUE: "task:continue",
+  TASK_FORK_SESSION: "task:forkSession",
   TASK_RENAME: "task:rename",
   TASK_DELETE: "task:delete",
   DOCUMENT_OPEN_EDITOR_SESSION: "document:openEditorSession",

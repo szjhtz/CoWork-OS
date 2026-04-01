@@ -22,7 +22,7 @@
 <p align="center">
   <a href="docs/getting-started.md">Getting Started</a> &middot;
   <a href="docs/showcase.md">Use Cases</a> &middot;
-  <a href="docs/release-notes-0.5.19.md">Release Notes 0.5.19</a> &middot;
+  <a href="docs/release-notes-0.5.21.md">Release Notes 0.5.21</a> &middot;
   <a href="docs/integration-skill-bootstrap-lifecycle.md">Platform Updates</a> &middot;
   <a href="docs/">Documentation</a> &middot;
   <a href="CHANGELOG.md">Changelog</a> &middot;
@@ -78,7 +78,7 @@ See [Features](docs/features.md), [Heartbeat v3](docs/heartbeat-v3.md), [Provide
 
 ### Latest Release
 
-**`0.5.19`** ships profiles (export/import), Feishu/Lark and WeCom, gateway upgrades (multi-Slack, Telegram/Discord/Signal/email policies), Exa search, ordered LLM fallbacks, external skill directories, ACP persistence and remote-invocation hardening, computer-use and Usage Insights improvements, and expanded docs. Start with [Release Notes 0.5.19](docs/release-notes-0.5.19.md), then [Features](docs/features.md), [Getting Started](docs/getting-started.md), [Channels](docs/channels.md), and the [Changelog](CHANGELOG.md).
+**`0.5.21`** repackages the shared turn kernel, metadata-driven tool scheduling, graph-backed delegation, typed worker roles, stricter verification, semantic batch summaries, debug/runtime tooling, inbox/mailbox improvements, and refreshed completion/UI surfaces from `0.5.20` into a publishable release. Start with [Release Notes 0.5.21](docs/release-notes-0.5.21.md), then [Features](docs/features.md), [Getting Started](docs/getting-started.md), [Channels](docs/channels.md), and the [Changelog](CHANGELOG.md).
 
 ## Quick Start
 

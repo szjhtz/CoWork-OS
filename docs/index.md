@@ -18,8 +18,8 @@ hero:
       text: Runtime Visibility
       link: /operator-runtime-visibility
     - theme: alt
-      text: Release Notes 0.5.19
-      link: /release-notes-0.5.19
+      text: Release Notes 0.5.21
+      link: /release-notes-0.5.21
     - theme: alt
       text: Heartbeat v3
       link: /heartbeat-v3
@@ -49,8 +49,8 @@ features:
     details: Visible learning progression after each task, unified recall across tasks/messages/files, persistent shell sessions, and live provider routing/fallback status.
   - title: Runtime Orchestration
     details: Shared turn kernel, metadata-driven tool scheduler, graph-backed delegation, typed worker roles, and semantic batch summaries keep execution, verification, and follow-up work coherent.
-  - title: Latest Release 0.5.19
-    details: App profiles, Feishu/Lark and WeCom, gateway upgrades, Exa search, LLM/search fallbacks, external skill dirs, ACP persistence and remote trust, computer use and Usage Insights updates, and 4,500+ automated tests.
+  - title: Latest Release 0.5.21
+    details: Repackages the shared turn kernel, metadata-driven tool scheduling, graph-backed delegation, typed worker roles, verification/runtime summaries, debug tooling, inbox/mailbox updates, and a much richer completion surface.
   - title: Inbox Agent
     details: Local-first email triage with AI classification, action-needed and commitment queues, draft review, and resync-safe background sync.
   - title: Managed Devices

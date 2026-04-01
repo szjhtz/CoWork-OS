@@ -85,6 +85,25 @@ describe("preflightValidateAndRepairToolInput", () => {
     expect(result.error).toBeNull();
     expect(result.input.path).toBe("README.md");
   });
+
+  it("blocks nested src/package.json writes for website scaffold tasks", () => {
+    const result = preflightValidateAndRepairToolInput({
+      toolName: "write_file",
+      input: { path: "src/package.json", content: "{}" },
+      contextText: "Create a fully working website simulating the Windows 95 UI.",
+    });
+    expect(result.error).toContain("nested src/package.json");
+    expect(result.repairable).toBe(false);
+  });
+
+  it("allows nested package manifests when the task explicitly targets a monorepo", () => {
+    const result = preflightValidateAndRepairToolInput({
+      toolName: "write_file",
+      input: { path: "src/package.json", content: "{}" },
+      contextText: "Create a monorepo with a nested package setup for a subpackage.",
+    });
+    expect(result.error).toBeNull();
+  });
 });
 
 describe("tool failure normalization", () => {

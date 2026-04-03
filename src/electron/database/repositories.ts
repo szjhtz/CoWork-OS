@@ -7,6 +7,7 @@ import {
   Artifact,
   Workspace,
   ApprovalRequest,
+  PersistedPermissionRule,
   InputRequest,
   Skill,
   WorkspacePermissions,
@@ -173,9 +174,24 @@ export class WorkspaceRepository {
 export class TaskRepository {
   constructor(private db: Database.Database) {}
 
-  create(task: Omit<Task, "id" | "createdAt" | "updatedAt">): Task {
-    const newTask: Task = {
+  private static normalizePromptFields(
+    task: Omit<Task, "id" | "createdAt" | "updatedAt">,
+  ): Omit<Task, "id" | "createdAt" | "updatedAt"> {
+    const prompt = String(task.prompt || "");
+    const rawPrompt = String(task.rawPrompt || "").trim() || prompt;
+    const userPrompt = String(task.userPrompt || "").trim() || rawPrompt;
+    return {
       ...task,
+      prompt,
+      rawPrompt,
+      userPrompt,
+    };
+  }
+
+  create(task: Omit<Task, "id" | "createdAt" | "updatedAt">): Task {
+    const normalizedTask = TaskRepository.normalizePromptFields(task);
+    const newTask: Task = {
+      ...normalizedTask,
       id: uuidv4(),
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -1398,6 +1414,140 @@ export class ApprovalRepository {
       status: row.status,
       requestedAt: row.requested_at,
       resolvedAt: row.resolved_at || undefined,
+    };
+  }
+}
+
+export class WorkspacePermissionRuleRepository {
+  constructor(private db: Database.Database) {}
+
+  listByWorkspaceId(workspaceId: string): PersistedPermissionRule[] {
+    const stmt = this.db.prepare(`
+      SELECT *
+      FROM workspace_permission_rules
+      WHERE workspace_id = ?
+      ORDER BY updated_at DESC, created_at DESC
+    `);
+    const rows = stmt.all(workspaceId) as Any[];
+    return rows.map((row) => this.mapRowToRule(row));
+  }
+
+  findById(id: string): PersistedPermissionRule | null {
+    const row = this.db
+      .prepare(`SELECT * FROM workspace_permission_rules WHERE id = ?`)
+      .get(id) as Any | undefined;
+    return row ? this.mapRowToRule(row) : null;
+  }
+
+  create(rule: {
+    workspaceId: string;
+    effect: PersistedPermissionRule["effect"];
+    scope: PersistedPermissionRule["scope"];
+    metadata?: Record<string, unknown>;
+  }): PersistedPermissionRule {
+    const now = Date.now();
+    const id = uuidv4();
+    const stmt = this.db.prepare(`
+      INSERT INTO workspace_permission_rules (
+        id,
+        workspace_id,
+        effect,
+        scope_kind,
+        scope_tool_name,
+        scope_path,
+        scope_prefix,
+        scope_server_name,
+        metadata_json,
+        created_at,
+        updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    stmt.run(
+      id,
+      rule.workspaceId,
+      rule.effect,
+      rule.scope.kind,
+      "toolName" in rule.scope ? rule.scope.toolName || null : null,
+      "path" in rule.scope ? rule.scope.path || null : null,
+      "prefix" in rule.scope ? rule.scope.prefix || null : null,
+      "serverName" in rule.scope ? rule.scope.serverName || null : null,
+      JSON.stringify(rule.metadata ?? {}),
+      now,
+      now,
+    );
+
+    return {
+      id,
+      workspaceId: rule.workspaceId,
+      source: "workspace_db",
+      effect: rule.effect,
+      scope: rule.scope,
+      metadata: rule.metadata,
+      createdAt: now,
+    };
+  }
+
+  deleteById(id: string): PersistedPermissionRule | null {
+    const existing = this.findById(id);
+    if (!existing) {
+      return null;
+    }
+    this.db.prepare(`DELETE FROM workspace_permission_rules WHERE id = ?`).run(id);
+    return existing;
+  }
+
+  deleteByWorkspaceAndId(workspaceId: string, id: string): PersistedPermissionRule | null {
+    const existing = this.findById(id);
+    if (!existing || existing.workspaceId !== workspaceId) {
+      return null;
+    }
+    this.db.prepare(`DELETE FROM workspace_permission_rules WHERE id = ?`).run(id);
+    return existing;
+  }
+
+  private mapRowToRule(row: Any): PersistedPermissionRule {
+    const scopeKind = String(row.scope_kind || "");
+    let scope: PersistedPermissionRule["scope"];
+    switch (scopeKind) {
+      case "path":
+        scope = {
+          kind: "path",
+          path: String(row.scope_path || ""),
+          ...(typeof row.scope_tool_name === "string" && row.scope_tool_name
+            ? { toolName: row.scope_tool_name }
+            : {}),
+        };
+        break;
+      case "command_prefix":
+        scope = {
+          kind: "command_prefix",
+          prefix: String(row.scope_prefix || ""),
+        };
+        break;
+      case "mcp_server":
+        scope = {
+          kind: "mcp_server",
+          serverName: String(row.scope_server_name || ""),
+        };
+        break;
+      case "tool":
+      default:
+        scope = {
+          kind: "tool",
+          toolName: String(row.scope_tool_name || ""),
+        };
+        break;
+    }
+
+    return {
+      id: row.id,
+      workspaceId: row.workspace_id,
+      source: "workspace_db",
+      effect: row.effect,
+      scope,
+      metadata: safeJsonParse(row.metadata_json, {}, "workspacePermissionRule.metadata"),
+      createdAt: row.created_at,
     };
   }
 }

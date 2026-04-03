@@ -43,3 +43,7 @@ This note records the implementation work completed in this session so the curre
 - [Live Canvas](../live-canvas.md)
 - [Operator Runtime Visibility](../operator-runtime-visibility.md)
 - [Mission Control](../mission-control.md)
+
+## Follow-up
+
+The later SessionRuntime owner extraction and snapshot restore algorithm are documented in [Session Runtime Owner Extraction](2026-04-02-session-runtime-owner.md) and [Session Runtime](../session-runtime.md).

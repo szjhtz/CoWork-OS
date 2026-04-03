@@ -151,6 +151,15 @@ describe("DocumentEditorSessionService", () => {
           resultSummary: summary,
         });
       }),
+      failTask: vi.fn((id: string, message: string, metadata?: { failureClass?: string }) => {
+        taskRepo.update(id, {
+          status: "failed",
+          completedAt: Date.now(),
+          error: message,
+          terminalStatus: "failed",
+          failureClass: metadata?.failureClass,
+        });
+      }),
     };
     const pdfRegionEditor = {
       isAvailable: vi.fn().mockResolvedValue(true),
@@ -183,6 +192,78 @@ describe("DocumentEditorSessionService", () => {
     expect(daemon.registerArtifact).toHaveBeenCalledOnce();
     expect(daemon.completeTask).toHaveBeenCalledOnce();
     expect(tasks.get(task.id)?.status).toBe("completed");
+  });
+
+  it("fails direct PDF edit tasks through the daemon terminal helper", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cowork-doc-editor-"));
+    tempDirs.push(dir);
+    const original = path.join(dir, "sample.pdf");
+    fs.writeFileSync(original, Buffer.from("original"));
+
+    const tasks = new Map<string, Any>();
+    const taskRepo = {
+      create: vi.fn((task: Any) => {
+        const created = {
+          ...task,
+          id: "task-direct-fail-1",
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        };
+        tasks.set(created.id, created);
+        return created;
+      }),
+      findById: vi.fn((id: string) => tasks.get(id)),
+      update: vi.fn((id: string, patch: Any) => {
+        const next = { ...tasks.get(id), ...patch, updatedAt: Date.now() };
+        tasks.set(id, next);
+        return next;
+      }),
+    };
+    const daemon = {
+      createChildTask: vi.fn(),
+      createTask: vi.fn(),
+      logEvent: vi.fn(),
+      registerArtifact: vi.fn(),
+      completeTask: vi.fn(),
+      failTask: vi.fn((id: string, message: string, metadata?: { failureClass?: string }) => {
+        taskRepo.update(id, {
+          status: "failed",
+          completedAt: Date.now(),
+          error: message,
+          terminalStatus: "failed",
+          failureClass: metadata?.failureClass,
+        });
+      }),
+    };
+    const pdfRegionEditor = {
+      edit: vi.fn().mockRejectedValue(new Error("Ghostscript not installed")),
+    };
+    const service = new DocumentEditorSessionService(
+      { findAll: () => [makeWorkspace(dir)] } as Any,
+      taskRepo as Any,
+      { findLatestByPath: vi.fn().mockReturnValue(undefined) } as Any,
+      daemon as Any,
+      pdfRegionEditor,
+    );
+
+    const session = await service.openSession(original, dir);
+    const task = await service.startEditTask({
+      sessionId: session.sessionId,
+      instruction: "Make it italic",
+      selection: { kind: "pdf", pageIndex: 0, x: 0.1, y: 0.1, w: 0.3, h: 0.2 },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 120));
+
+    expect(daemon.failTask).toHaveBeenCalledWith(
+      task.id,
+      "Ghostscript not installed",
+      expect.objectContaining({
+        terminalStatus: "failed",
+        failureClass: "dependency_unavailable",
+      }),
+    );
+    expect(tasks.get(task.id)?.status).toBe("failed");
   });
 
   it("applies a local PDF edit without external tooling", async () => {

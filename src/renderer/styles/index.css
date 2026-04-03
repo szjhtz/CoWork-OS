@@ -9523,8 +9523,8 @@ button {
 
 .session-approval-card {
   width: 90%;
-  max-width: 440px;
-  padding: 28px 28px 22px;
+  max-width: 400px;
+  padding: 24px 22px 20px;
   border-radius: 20px;
   background: var(--color-bg-elevated);
   border: 1px solid var(--color-border-subtle);
@@ -9539,6 +9539,32 @@ button {
 
 .session-approval-card--computer-use {
   max-width: 440px;
+}
+
+.session-approval-icon-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 12px;
+}
+
+.session-approval-icon-wrap .session-approval-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  font-size: 22px;
+  line-height: 1;
+  background: rgba(0, 0, 0, 0.05);
+  border: 1px solid rgba(0, 0, 0, 0.07);
+  margin-bottom: 0;
+}
+
+.theme-dark .session-approval-icon-wrap .session-approval-icon {
+  background: var(--color-bg-tertiary);
+  border-color: var(--color-border-subtle);
 }
 
 .session-approval-icon {
@@ -9588,10 +9614,19 @@ button {
 .session-approval-details {
   display: grid;
   grid-template-columns: max-content 1fr;
-  gap: 8px 14px;
-  margin: 4px 0 16px;
+  gap: 7px 14px;
+  margin: 4px 0 18px;
+  padding: 12px 14px;
   font-size: 12px;
   text-align: left;
+  background: rgba(0, 0, 0, 0.03);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 12px;
+}
+
+.theme-dark .session-approval-details {
+  background: var(--color-bg-secondary);
+  border-color: var(--color-border-subtle);
 }
 
 .session-approval-details dt {
@@ -9647,6 +9682,82 @@ button {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   word-break: break-word;
+}
+
+.session-approval-scope-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.session-approval-scope-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.session-approval-scope-tabs {
+  display: flex;
+  gap: 4px;
+  background: rgba(0, 0, 0, 0.05);
+  border-radius: 10px;
+  padding: 3px;
+  flex: 1;
+}
+
+.theme-dark .session-approval-scope-tabs {
+  background: var(--color-bg-secondary);
+}
+
+.session-approval-scope-tab {
+  flex: 1;
+  padding: 5px 8px;
+  border: none;
+  border-radius: 7px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  background: transparent;
+  color: var(--color-text-secondary);
+  transition:
+    background 0.12s ease,
+    color 0.12s ease,
+    box-shadow 0.12s ease;
+}
+
+.session-approval-scope-tab:hover:not(.session-approval-scope-tab--active) {
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--color-text-primary);
+}
+
+.theme-dark .session-approval-scope-tab:hover:not(.session-approval-scope-tab--active) {
+  background: var(--color-bg-tertiary);
+}
+
+.session-approval-scope-tab--active {
+  background: #ffffff;
+  color: #1a1a1a;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+
+.theme-dark .session-approval-scope-tab--active {
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.session-approval-actions--scoped {
+  display: flex;
+  gap: 10px;
+}
+
+.session-approval-actions--scoped .session-approval-btn-deny,
+.session-approval-actions--scoped .session-approval-btn-allow {
+  flex: 1;
+  min-width: 0;
 }
 
 .session-approval-footer-hint {

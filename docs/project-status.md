@@ -10,7 +10,7 @@ CoWork OS is a **security-first personal AI assistant platform** with multi-chan
 - **Managed Devices**: Operate local and remote CoWork machines from a dedicated Devices tab
 - **Automations Surface**: One settings group for queueing, scheduling, triggers, briefing, and self-improvement
 - **Renderer Performance**: Sidebar and timeline virtualization in the `CoWork-OS/CoWork-OS` repo use `@chenglou/pretext` for text measurement and keep long task feeds responsive
-- **Security-First Design**: 4,500+ automated tests, configurable guardrails, approval workflows
+- **Security-First Design**: 4,500+ automated tests, configurable guardrails, layered permission rules, workspace-local policy files, and approval workflows
 - **Multi-Provider Support**: 30+ LLM providers including free local models via Ollama
 - **Local-First Architecture**: Your data stays on your machine, BYOK model
 
@@ -40,13 +40,15 @@ CoWork OS is a **security-first personal AI assistant platform** with multi-chan
 
 #### Agent System
 - [x] AgentDaemon - Main orchestrator with worktree isolation and collaborative mode
-- [x] TaskExecutor - Shared turn kernel, metadata-driven tool scheduler, and delegated-work orchestration
+- [x] TaskExecutor - Shared turn kernel, metadata-driven tool scheduler, delegated-work orchestration, and terminal-state-safe completion/resume handoff
+- [x] SessionRuntime - Canonical owner for task-session state, session checklists, snapshots, recovery, and task projection
 - [x] ExecutorEventEmitter - Typed event system for executor lifecycle
 - [x] LifecycleMutex - Concurrency control for executor operations
 - [x] Tool Registry - Manages all available tools and scheduler metadata
+- [x] Session checklist runtime tools - `task_list_create`, `task_list_update`, and `task_list_list` for execution-style tasks
 - [x] Orchestration graph engine - Normalized delegation runs for spawn_agent, workflow phases, teams, and ACP tasks
 - [x] Worker roles - researcher, implementer, verifier, and synthesizer with hard tool scopes
-- [x] Permission system with approval flow
+- [x] Permission system with layered rules, workspace policy files, and approval flow
 - [x] Context Manager - Conversation context handling
 - [x] Capability Matcher - Auto-select agents based on task requirements
 - [x] Located: `src/electron/agent/`
@@ -176,6 +178,7 @@ CoWork OS is a **security-first personal AI assistant platform** with multi-chan
 - [x] Workspace selector with folder picker
 - [x] Task list with status indicators and task pinning
 - [x] Task detail view with timeline and scroll-to-bottom button
+- [x] Right-panel checklist section showing the latest read-only session checklist and verification nudge state
 - [x] Task learning progression surface with memory, playbook, and skill proposal visibility
 - [x] Approval dialog system
 - [x] Real-time event streaming
@@ -310,22 +313,24 @@ cowork-os/
    |
 3. AgentDaemon starts TaskExecutor
    |
-4. TaskExecutor enters the shared TurnKernel and requests the next model turn
+4. TaskExecutor builds or refreshes SessionRuntime and delegates the next turn request to it
    |
-5. For each plan step:
+5. SessionRuntime prepares the message set, owns the turn-loop mirror state, and constructs the active TurnKernel for the step, follow-up, or text turn
+   |
+6. For each plan step:
    - LLM decides which tools to use
    - TaskExecutor routes the batch through ToolScheduler and ToolRegistry
    - Tools perform operations (with permission checks)
    - Results sent back to LLM
    - Events logged and streamed to UI
    |
-6. If approval needed:
+7. If approval needed:
    - TaskExecutor pauses
    - ApprovalDialog shown to user
    - User approves/denies
    - Execution continues or fails
    |
-7. Task completes
+8. Task completes
    - Status updated to "completed"
    - All events and semantic completion summaries logged in database
    - Artifacts tracked
@@ -470,7 +475,7 @@ Expected behavior:
 **CoWork OS is a production-ready, security-first personal AI assistant platform:**
 
 ### Core Strengths
-- **Security**: 4,500+ automated tests, configurable guardrails, approval workflows, brute-force protection
+- **Security**: 4,500+ automated tests, configurable guardrails, layered permission rules, approval workflows, and brute-force protection
 - **Multi-Channel**: WhatsApp, Telegram, Discord, Slack, iMessage integration
 - **Multi-Provider**: 30+ LLM providers and compatible gateways, including Claude, GPT, Gemini, Bedrock, OpenRouter, and Ollama
 - **Local-First**: Your data stays on your machine, BYOK model

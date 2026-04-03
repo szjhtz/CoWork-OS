@@ -138,6 +138,8 @@ See the [Development Guide](docs/development.md) for prerequisites and details.
 
 Task-based execution with dynamic re-planning, five runtime modes (Chat, Execute, Plan, Analyze, Verified) plus orchestration toggles (Autonomous, Collaborative, Multi-LLM, Think With Me), a shared turn kernel, metadata-driven tool scheduling, graph-backed delegation, typed worker roles, optional workflow-pipeline execution with per-phase model routing, agent teams with persistence, agent comparison, git worktree isolation, AI playbook, and performance reviews. [Learn more](docs/features.md#agent-capabilities)
 
+Skills now follow an additive runtime model: CoWork can proactively shortlist or apply a relevant skill, but the original task remains canonical. Skills add context and scoped execution modifiers instead of replacing the task prompt. [Learn more](docs/skills-runtime-model.md)
+
 Operator Runtime Visibility makes the runtime's learning and routing visible: task detail surfaces now show the learning progression, unified recall spans tasks/messages/files/workspace notes/memory/KG, shell sessions preserve operator state, and live routing/fallback events are surfaced in Mission Control and the task UI. [Learn more](docs/operator-runtime-visibility.md)
 
 Autonomous self-improvement runs now use the same runtime with stricter safeguards: they start only after memory services are initialized, require isolated git worktrees by default, skip non-git workspaces when worktree isolation is required, and can notify you when runs start, fail, or open a PR. See [Self-Improving Agent Architecture](docs/self-improving-agent.md) and [Troubleshooting](docs/troubleshooting.md#self-improvement-startup-warnings-in-development).
@@ -414,6 +416,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the full history of completed features.
 | [Migration Guide](docs/migration.md) | Migration checklist and compatibility notes |
 | [Development](docs/development.md) | Build from source, project structure |
 | [Architecture](docs/architecture.md) | Technical architecture deep-dive |
+| [Skills Runtime Model](docs/skills-runtime-model.md) | Canonical prompt invariant, additive skill application, routing shortlist model, and `use_skill` contract |
 | [Heartbeat v3](docs/heartbeat-v3.md) | Default two-lane heartbeat architecture, signals, Pulse, Dispatch, and operator semantics |
 | [Security Guide](docs/security-guide.md) | Security model and best practices |
 | [Enterprise Connectors](docs/enterprise-connectors.md) | MCP connector development |

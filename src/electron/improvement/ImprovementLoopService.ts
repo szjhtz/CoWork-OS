@@ -441,6 +441,43 @@ export class ImprovementLoopService {
     return this.getCampaign(campaign.id) || null;
   }
 
+  private markRootTaskCompleted(taskId: string, summary: string): void {
+    if (this.agentDaemon) {
+      this.agentDaemon.completeTask(taskId, summary, {
+        terminalStatus: "ok",
+      });
+      return;
+    }
+    this.taskRepo.update(taskId, {
+      status: "completed",
+      terminalStatus: "ok",
+      completedAt: Date.now(),
+      resultSummary: summary,
+    });
+  }
+
+  private markRootTaskFailed(
+    taskId: string,
+    message: string,
+    failureClass?: Task["failureClass"],
+  ): void {
+    if (this.agentDaemon) {
+      this.agentDaemon.failTask(taskId, message, {
+        terminalStatus: "failed",
+        resultSummary: message,
+        ...(failureClass ? { failureClass } : {}),
+      });
+      return;
+    }
+    this.taskRepo.update(taskId, {
+      status: "failed",
+      terminalStatus: "failed",
+      completedAt: Date.now(),
+      resultSummary: message,
+      ...(failureClass ? { failureClass } : {}),
+    });
+  }
+
   private async finalizeVariant(variantId: string, taskId: string): Promise<void> {
     const variant = this.variantRepo.findById(variantId);
     if (!variant) return;
@@ -658,12 +695,7 @@ export class ImprovementLoopService {
       });
       this.candidateService.markCandidateResolved(campaign.candidateId);
       if (campaign.rootTaskId) {
-        this.taskRepo.update(campaign.rootTaskId, {
-          status: "completed",
-          terminalStatus: "ok",
-          completedAt: Date.now(),
-          resultSummary: `Draft PR opened from ${winner.lane}.`,
-        });
+        this.markRootTaskCompleted(campaign.rootTaskId, `Draft PR opened from ${winner.lane}.`);
       }
       void this.notify({
         type: "task_completed",
@@ -1138,12 +1170,7 @@ export class ImprovementLoopService {
       ),
     });
     if (campaign.rootTaskId) {
-      this.taskRepo.update(campaign.rootTaskId, {
-        status: "failed",
-        terminalStatus: "failed",
-        completedAt: Date.now(),
-        resultSummary: params.message,
-      });
+      this.markRootTaskFailed(campaign.rootTaskId, params.message);
     }
     this.candidateService.recordCampaignFailure(candidate.id, {
       failureClass: params.failureClass,
@@ -1192,12 +1219,7 @@ export class ImprovementLoopService {
       },
     });
     if (campaign.rootTaskId) {
-      this.taskRepo.update(campaign.rootTaskId, {
-        status: "failed",
-        terminalStatus: "failed",
-        completedAt: Date.now(),
-        resultSummary: message,
-      });
+      this.markRootTaskFailed(campaign.rootTaskId, message);
     }
     if (candidate) {
       this.candidateService.recordCampaignFailure(candidate.id, {

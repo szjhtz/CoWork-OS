@@ -51,9 +51,22 @@ The task UI now exposes live provider/model state so users can see:
 - routing reason
 - fallback chain
 - whether a retry or fallback occurred
+- which skills were shortlisted for this task
+- which skills were actually applied
 - follow-up trigger messages and summary-mode completion relays for delegated or orphaned follow-up work
 
 Automatic routing remains automatic, but it is now observable by default. Manual overrides and multi-LLM judge flows are still supported.
+
+### 5. Applied skills stay separate from the task request
+
+Skill execution is now visible without obscuring the original task:
+
+- the task header and initial user bubble continue to show the canonical prompt
+- applied skills render in a separate **Applied skills** surface
+- runtime events explain whether a skill was shortlisted, applied, reused, or blocked
+- skill guidance is additive context, not a hidden rewritten task prompt
+
+This is important for trust. Operators can tell what they asked for, what skills CoWork layered on top, and why.
 
 ## What stays core to CoWork OS
 
@@ -73,6 +86,7 @@ The new surfaces make the runtime easier to trust and understand without changin
 
 - [Computer use (macOS)](computer-use.md)
 - [Features](features.md)
+- [Skills Runtime Model](skills-runtime-model.md)
 - [Mission Control](mission-control.md)
 - [Evolving Agent Intelligence](evolving-agent-intelligence.md)
 - [OpenClaw / CoWork comparison](openclaw-comparison.md)

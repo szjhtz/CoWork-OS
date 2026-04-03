@@ -83,6 +83,7 @@ import { XSettings } from "./XSettings";
 import { SearchSettings } from "./SearchSettings";
 import { UpdateSettings } from "./UpdateSettings";
 import { GuardrailSettings } from "./GuardrailSettings";
+import { PermissionSettingsPanel } from "./PermissionSettingsPanel";
 import { AppearanceSettings } from "./AppearanceSettings";
 import { QueueSettings } from "./QueueSettings";
 import { SkillsSettings } from "./SkillsSettings";
@@ -5167,6 +5168,10 @@ export function Settings({
                 <section className="settings-combined-section">
                   <h2 className="settings-combined-heading">Safety Limits</h2>
                   <GuardrailSettings />
+                </section>
+                <section className="settings-combined-section">
+                  <h2 className="settings-combined-heading">Permissions</h2>
+                  <PermissionSettingsPanel workspaceId={workspaceId} />
                 </section>
                 <section className="settings-combined-section">
                   <h2 className="settings-combined-heading">Admin Policies</h2>

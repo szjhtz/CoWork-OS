@@ -1,9 +1,14 @@
 import type { Task, TaskStatus } from "./types";
 
 const ACTIVE_TASK_STATUSES = new Set<TaskStatus>(["pending", "queued", "planning", "executing"]);
+const TERMINAL_TASK_STATUSES = new Set<TaskStatus>(["completed", "failed", "cancelled"]);
 
 export function isActiveTaskStatus(status: TaskStatus | undefined): boolean {
   return typeof status === "string" && ACTIVE_TASK_STATUSES.has(status);
+}
+
+export function isTerminalTaskStatus(status: TaskStatus | undefined): boolean {
+  return typeof status === "string" && TERMINAL_TASK_STATUSES.has(status);
 }
 
 export function deriveCanonicalTaskStatus(task: Pick<Task, "status" | "completedAt" | "terminalStatus">): TaskStatus {
@@ -46,4 +51,17 @@ export function normalizeTaskLifecycleState<T extends Pick<Task, "status" | "com
     return task;
   }
   return { ...task, status: canonicalStatus };
+}
+
+export function resolveTaskStatusUpdateFromEvent<
+  T extends Pick<Task, "status" | "completedAt" | "terminalStatus">,
+>(task: T, nextStatus: TaskStatus | undefined): TaskStatus | undefined {
+  if (!nextStatus) return undefined;
+
+  const currentStatus = deriveCanonicalTaskStatus(task);
+  if (isTerminalTaskStatus(currentStatus) && !isTerminalTaskStatus(nextStatus)) {
+    return currentStatus;
+  }
+
+  return nextStatus;
 }

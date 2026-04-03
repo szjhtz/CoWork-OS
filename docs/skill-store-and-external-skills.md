@@ -171,6 +171,17 @@ They can then be:
 
 ClawHub-originated skills are also labeled as **ClawHub** in the relevant UI surfaces.
 
+## Runtime Behavior After Install
+
+Installed external skills follow the same execution contract as bundled skills.
+
+- they can be shortlisted proactively when their routing metadata matches the canonical task intent
+- they can be invoked deterministically through slash/manual flows
+- `use_skill` applies them as additive context and scoped runtime directives
+- they do not replace the original task prompt
+
+See [Skills Runtime Model](skills-runtime-model.md) for the runtime semantics after a skill is loaded.
+
 ## Security and Trust Model
 
 External skill support is powerful, but it is also a trust boundary.

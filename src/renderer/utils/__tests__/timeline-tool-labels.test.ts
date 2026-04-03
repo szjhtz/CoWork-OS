@@ -37,6 +37,16 @@ describe("timeline-tool-labels", () => {
         url: "https://github.com/openclaw/openclaw/releases",
       }),
     ).toBe("Fetching github.com/openclaw/openclaw/releases");
+    expect(
+      friendlyToolCallTitle("search_files", {
+        query: "SessionRuntime",
+      }),
+    ).toBe("Search files: SessionRuntime");
+    expect(
+      friendlyToolCallTitle("read_files", {
+        patterns: ["src/renderer/**/*.tsx", "!src/**/*.test.ts"],
+      }),
+    ).toBe("Read files: src/renderer/**/*.tsx, !src/**/*.test.ts");
   });
 
   it("formats tool_result titles with detail", () => {
@@ -61,6 +71,22 @@ describe("timeline-tool-labels", () => {
         true,
       ),
     ).toBe("Searched via Brave: trending news");
+    expect(
+      friendlyToolResultTitle(
+        "read_files",
+        {
+          files: [{ path: "src/a.ts" }, { path: "src/b.ts" }],
+        },
+        true,
+      ),
+    ).toBe("Read files: a.ts, b.ts");
+    expect(
+      friendlyToolResultTitle(
+        "grep",
+        { pattern: "SessionRuntime", totalMatches: 2 },
+        true,
+      ),
+    ).toBe("Searched in files: SessionRuntime");
     expect(friendlyToolResultTitle("grep", { success: true, matches: [{}, {}] }, true)).toContain(
       "match",
     );

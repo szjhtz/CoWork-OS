@@ -400,6 +400,40 @@ describe("ImprovementLoopService", () => {
     });
   }
 
+  function attachCanonicalTaskLifecycle(daemon: Any): Any {
+    daemon.completeTask = vi.fn((taskId: string, summary: string, metadata?: { terminalStatus?: Task["terminalStatus"] }) => {
+      const task = tasks.get(taskId);
+      if (!task) return;
+      tasks.set(taskId, {
+        ...task,
+        status: "completed",
+        completedAt: Date.now(),
+        terminalStatus: metadata?.terminalStatus ?? "ok",
+        resultSummary: summary,
+      });
+    });
+    daemon.failTask = vi.fn(
+      (
+        taskId: string,
+        message: string,
+        metadata?: { terminalStatus?: Task["terminalStatus"]; resultSummary?: string; failureClass?: Task["failureClass"] },
+      ) => {
+        const task = tasks.get(taskId);
+        if (!task) return;
+        tasks.set(taskId, {
+          ...task,
+          status: "failed",
+          completedAt: Date.now(),
+          terminalStatus: metadata?.terminalStatus ?? "failed",
+          resultSummary: metadata?.resultSummary ?? message,
+          error: message,
+          failureClass: metadata?.failureClass,
+        });
+      },
+    );
+    return daemon;
+  }
+
   it("runs scout then implementation sequentially and opens a draft PR", async () => {
     const workspace = makeWorkspace();
     const candidate = makeCandidate();
@@ -420,7 +454,7 @@ describe("ImprovementLoopService", () => {
     } as Any;
 
     const openPullRequest = vi.fn().mockResolvedValue({ success: true, number: 42, url: "https://example.test/pr/42" });
-    const daemon = new EventEmitter() as Any;
+    const daemon = attachCanonicalTaskLifecycle(new EventEmitter() as Any);
     daemon.createChildTask = vi.fn().mockImplementation(async (params: Any) => {
       const taskId = `task-${tasks.size + 1}`;
       const task: Task = {
@@ -496,6 +530,8 @@ describe("ImprovementLoopService", () => {
       }),
     );
     expect(candidateService.markCandidateResolved).toHaveBeenCalledWith(candidate.id);
+    expect(tasks.get(campaign!.rootTaskId!)?.status).toBe("completed");
+    expect(tasks.get(campaign!.rootTaskId!)?.terminalStatus).toBe("ok");
   });
 
   it("fans out multiple implementation variants and chooses a winner via judge flow", async () => {
@@ -519,7 +555,7 @@ describe("ImprovementLoopService", () => {
     } as Any;
 
     const openPullRequest = vi.fn().mockResolvedValue({ success: true, number: 7, url: "https://example.test/pr/7" });
-    const daemon = new EventEmitter() as Any;
+    const daemon = attachCanonicalTaskLifecycle(new EventEmitter() as Any);
     daemon.createChildTask = vi.fn().mockImplementation(async (params: Any) => {
       const taskId = `task-${tasks.size + 1}`;
       const task: Task = {
@@ -593,7 +629,7 @@ describe("ImprovementLoopService", () => {
       getTopCandidateForWorkspace: vi.fn().mockReturnValue(candidate),
     } as Any;
 
-    const daemon = new EventEmitter() as Any;
+    const daemon = attachCanonicalTaskLifecycle(new EventEmitter() as Any);
     daemon.createChildTask = vi.fn().mockImplementation(async (params: Any) => {
       const taskId = `task-${tasks.size + 1}`;
       const task: Task = {
@@ -641,6 +677,8 @@ describe("ImprovementLoopService", () => {
     });
     expect(candidateService.recordCampaignFailure).toHaveBeenCalled();
     expect(campaigns.get(campaign!.id)?.promotionStatus).toBe("promotion_failed");
+    expect(tasks.get(campaign!.rootTaskId!)?.status).toBe("failed");
+    expect(tasks.get(campaign!.rootTaskId!)?.terminalStatus).toBe("failed");
   });
 
   it("parks the candidate when PR opening fails", async () => {
@@ -663,7 +701,7 @@ describe("ImprovementLoopService", () => {
     } as Any;
 
     const openPullRequest = vi.fn().mockResolvedValue({ success: false, error: "429 Too Many Requests" });
-    const daemon = new EventEmitter() as Any;
+    const daemon = attachCanonicalTaskLifecycle(new EventEmitter() as Any);
     daemon.createChildTask = vi.fn().mockImplementation(async (params: Any) => {
       const taskId = `task-${tasks.size + 1}`;
       const task: Task = {
@@ -715,6 +753,8 @@ describe("ImprovementLoopService", () => {
       expect(campaigns.get(campaign!.id)?.promotionStatus).toBe("promotion_failed");
     });
     expect(candidateService.recordCampaignFailure).toHaveBeenCalled();
+    expect(tasks.get(campaign!.rootTaskId!)?.status).toBe("failed");
+    expect(tasks.get(campaign!.rootTaskId!)?.terminalStatus).toBe("failed");
   });
 
   it("reroutes temporary-workspace candidates to the strongest promotable code workspace", async () => {
@@ -746,7 +786,7 @@ describe("ImprovementLoopService", () => {
       }),
     } as Any;
 
-    const daemon = new EventEmitter() as Any;
+    const daemon = attachCanonicalTaskLifecycle(new EventEmitter() as Any);
     daemon.createChildTask = vi.fn().mockImplementation(async (params: Any) => {
       const taskId = `task-${tasks.size + 1}`;
       const task: Task = {
@@ -815,7 +855,7 @@ describe("ImprovementLoopService", () => {
       }),
     } as Any;
 
-    const daemon = new EventEmitter() as Any;
+    const daemon = attachCanonicalTaskLifecycle(new EventEmitter() as Any);
     daemon.createChildTask = vi.fn().mockImplementation(async (params: Any) => {
       const taskId = `task-${tasks.size + 1}`;
       const task: Task = {
@@ -877,7 +917,7 @@ describe("ImprovementLoopService", () => {
       getTopCandidateForWorkspace: vi.fn().mockReturnValue(candidate),
     } as Any;
 
-    const daemon = new EventEmitter() as Any;
+    const daemon = attachCanonicalTaskLifecycle(new EventEmitter() as Any);
     daemon.createChildTask = vi.fn();
     daemon.getWorktreeManager = vi.fn(() => ({
       shouldUseWorktree: vi.fn().mockResolvedValue(false),
@@ -1020,7 +1060,7 @@ describe("ImprovementLoopService", () => {
     runs.set(legacyRun.id, legacyRun);
 
     const cancelTask = vi.fn().mockResolvedValue(undefined);
-    const daemon = new EventEmitter() as Any;
+    const daemon = attachCanonicalTaskLifecycle(new EventEmitter() as Any);
     daemon.cancelTask = cancelTask;
 
     const candidateService = {

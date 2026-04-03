@@ -113,6 +113,28 @@ Every compaction summary is flushed to the MemoryService and (if available) the 
 
 The compaction summary is stored as a **pinned message** with the `<cowork_compaction_summary>` tag. Pinned messages survive future compaction rounds — they are never removed by the message-removal strategy.
 
+## Task Runtime Snapshots
+
+Context compaction is separate from task-session persistence. Task execution writes a durable runtime snapshot into the task event stream so a task can resume with the same loop state, tool state, recovery state, and verification state after restart.
+
+### Snapshot format
+
+- `conversation_snapshot` remains the persisted event name for compatibility
+- the payload schema is `session_runtime_v2`
+- the payload includes transcript, tooling, files, loop, recovery, queues, worker, verification, and usage state
+
+### Restore precedence
+
+When a task resumes, SessionRuntime restores state in this order:
+
+1. Latest V2 checkpoint payload
+2. Latest V2 `conversation_snapshot` payload
+3. Legacy checkpoint payload with `conversationHistory`
+4. Legacy `conversation_snapshot` payload with `conversationHistory`
+5. Event-derived fallback conversation
+
+If a legacy payload is restored, the next checkpoint rewrites it into V2 so the stored state is upgraded automatically.
+
 ## Configuration
 
 Compaction behavior is controlled by constants in `src/electron/agent/executor-helpers.ts`:
@@ -146,6 +168,7 @@ Compaction behavior is controlled by constants in `src/electron/agent/executor-h
 |---|---|
 | `src/electron/agent/context-manager.ts` | Token estimation, compaction strategies, proactive compaction |
 | `src/electron/agent/executor.ts` | Summary generation, proactive trigger, overflow guard, memory flush |
+| `src/electron/agent/runtime/SessionRuntime.ts` | Task-session snapshot ownership, resume precedence, and runtime projection |
 | `src/electron/agent/executor-helpers.ts` | Tunable constants |
 | `src/renderer/components/TaskTimeline.tsx` | Compaction event rendering with collapsible sections |
 | `src/renderer/styles/index.css` | Summary section styling |

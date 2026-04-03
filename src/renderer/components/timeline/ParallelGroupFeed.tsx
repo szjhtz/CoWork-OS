@@ -11,6 +11,7 @@ interface ParallelGroupFeedProps {
   formatTime: (timestamp: number) => string;
   showConnectorAbove?: boolean;
   showConnectorBelow?: boolean;
+  defaultExpanded?: boolean;
 }
 
 function buildIndicatorForStatus(status: TimelineEventStatus): TimelineIndicatorSpec {
@@ -52,6 +53,15 @@ function laneTone(status: TimelineEventStatus): "neutral" | "active" | "success"
 
 function buildParallelGroupTitle(group: ParallelGroupProjection, isActive: boolean): string {
   const count = group.lanes.length;
+  const label = typeof group.label === "string" ? group.label.trim() : "";
+  if (
+    label &&
+    !/^tool batch(?: \(\d+\))?$/i.test(label) &&
+    !/^follow-up tool batch(?: \(\d+\))?$/i.test(label) &&
+    !/^tools:/i.test(label)
+  ) {
+    return label;
+  }
   const toolNames = Array.from(
     new Set(
       group.lanes
@@ -84,16 +94,17 @@ export function ParallelGroupFeed({
   formatTime,
   showConnectorAbove = false,
   showConnectorBelow = false,
+  defaultExpanded = false,
 }: ParallelGroupFeedProps) {
   const isActive =
     group.status === "in_progress" || group.lanes.some((lane) => lane.status === "in_progress");
-  const [expanded, setExpanded] = useState(isActive);
+  const [expanded, setExpanded] = useState(isActive || defaultExpanded);
 
   useEffect(() => {
-    if (isActive) {
+    if (isActive || defaultExpanded) {
       setExpanded(true);
     }
-  }, [isActive]);
+  }, [defaultExpanded, isActive]);
 
   const indicator = useMemo(() => buildIndicatorForStatus(group.status), [group.status]);
   const groupTitle = useMemo(() => buildParallelGroupTitle(group, isActive), [group, isActive]);

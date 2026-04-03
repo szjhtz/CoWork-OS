@@ -67,6 +67,14 @@ describe("task event visibility helpers", () => {
     expect(ALWAYS_VISIBLE_TECHNICAL_EVENT_TYPES.has("task_completed")).toBe(true);
   });
 
+  it("keeps checklist events visible in summary and technical views", () => {
+    expect(IMPORTANT_EVENT_TYPES).toContain("task_list_created");
+    expect(ALWAYS_VISIBLE_TECHNICAL_EVENT_TYPES.has("task_list_verification_nudged")).toBe(true);
+    expect(isImportantTaskEvent(makeEvent("task_list_updated", { checklist: { items: [] } }))).toBe(
+      true,
+    );
+  });
+
   it("hides completed task stage-boundary group start events in summary mode", () => {
     expect(
       shouldShowTaskEventInSummaryMode(
@@ -175,6 +183,11 @@ describe("task event visibility helpers", () => {
   it("keeps non-internal assistant timeline_step_updated events in verbose mode", () => {
     const t0 = 1_000_000;
     const filtered = filterVerboseTimelineNoise([
+      makeEvent(
+        "timeline_step_updated",
+        { legacyType: "user_message", message: "Follow-up: please keep going." },
+        { id: "user-visible", timestamp: t0 },
+      ),
       makeEvent("timeline_step_updated", { message: "Progress update" }, { id: "a", timestamp: t0 }),
       makeEvent("timeline_step_updated", { message: "Tackling: Do the real work" }, { id: "b", timestamp: t0 + 500 }),
       makeEvent("timeline_step_updated", { legacyType: "log", message: "Execution strategy active" }, { id: "c", timestamp: t0 + 1000 }),
@@ -196,7 +209,7 @@ describe("task event visibility helpers", () => {
         { id: "assistant-internal", timestamp: t0 + 10000 },
       ),
     ]);
-    expect(filtered.map((e) => e.id)).toEqual(["assistant-visible"]);
+    expect(filtered.map((e) => e.id)).toEqual(["user-visible", "assistant-visible"]);
   });
 
   it("hides timeline_step_finished events but keeps task cancellation", () => {

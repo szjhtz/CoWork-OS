@@ -297,4 +297,86 @@ describe("TaskExecutor entrypoint guards", () => {
       }),
     );
   });
+
+  it("finalizeFollowUpFailure syncs task row and emits a terminal failed status", () => {
+    const executor = Object.create(TaskExecutor.prototype) as Any;
+    executor.task = {
+      id: "task-follow-up-failed",
+      status: "executing",
+      error: undefined,
+      semanticSummary: "Verified markdown targets",
+    };
+    executor.bestKnownOutcome = {
+      summary: "Verification failed after follow-up",
+      terminalStatus: "failed",
+      failureClass: "contract_error",
+      outputSummary: { outputCount: 1, fileCount: 1, files: [] },
+    };
+    executor.applyRuntimeTaskProjectionToTask = vi.fn(() => ({
+      continuationCount: 1,
+      continuationWindow: 1,
+      lifetimeTurnsUsed: 24,
+      compactionCount: 0,
+      noProgressStreak: 0,
+    }));
+    executor.getCompletionProjectionFields = vi.fn(() => ({
+      semanticSummary: "Verified markdown targets",
+    }));
+    executor.daemon = {
+      failTask: vi.fn(),
+    };
+    executor.emitEvent = vi.fn();
+
+    (TaskExecutor as Any).prototype.finalizeFollowUpFailure.call(
+      executor,
+      new Error("Task failed: verification mismatch"),
+    );
+
+    expect(executor.task.status).toBe("failed");
+    expect(typeof executor.task.completedAt).toBe("number");
+    expect(executor.task.error).toBe("Task failed: verification mismatch");
+    expect(executor.daemon.failTask).toHaveBeenCalledWith(
+      "task-follow-up-failed",
+      "Task failed: verification mismatch",
+      expect.objectContaining({
+        completedAt: expect.any(Number),
+        semanticSummary: "Verified markdown targets",
+        bestKnownOutcome: executor.bestKnownOutcome,
+        continuationCount: 1,
+        continuationWindow: 1,
+        lifetimeTurnsUsed: 24,
+      }),
+    );
+    expect(executor.emitEvent).toHaveBeenCalledWith(
+      "task_status",
+      expect.objectContaining({
+        status: "failed",
+        message: "Task failed: verification mismatch",
+        terminalStatus: "failed",
+        semanticSummary: "Verified markdown targets",
+      }),
+    );
+  });
+
+  it("prefers explicit step artifact extensions over broader task-level artifact hints", () => {
+    const executor = Object.create(TaskExecutor.prototype) as Any;
+    executor.task = {
+      title: "KB verification",
+      prompt:
+        'Reference text may mention markdown files, slide decks, and ".pptx" outputs, but this step verifies explicit Markdown targets only.',
+      rawPrompt:
+        'Reference text may mention markdown files, slide decks, and ".pptx" outputs, but this step verifies explicit Markdown targets only.',
+    };
+    executor.inferRequiredArtifactExtensions = vi.fn(() => [".md", ".pptx"]);
+
+    const required = (TaskExecutor as Any).prototype.getRequiredArtifactExtensionsForStep.call(
+      executor,
+      {
+        requiredExtensions: [".md"],
+      },
+    );
+
+    expect(required).toEqual([".md"]);
+    expect(executor.inferRequiredArtifactExtensions).not.toHaveBeenCalled();
+  });
 });

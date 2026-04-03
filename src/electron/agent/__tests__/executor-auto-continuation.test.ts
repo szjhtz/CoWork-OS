@@ -7,6 +7,8 @@ function makeExecutor(overrides: Record<string, unknown> = {}): Any {
   const executor = Object.create(TaskExecutor.prototype) as Any;
   executor.task = {
     id: "task-1",
+    title: "Task",
+    prompt: "Prompt",
     agentConfig: {},
   };
   executor.plan = {
@@ -36,6 +38,11 @@ function makeExecutor(overrides: Record<string, unknown> = {}): Any {
   executor.continueAfterBudgetExhaustedUnlocked = vi.fn(async () => undefined);
   executor.daemon = {
     updateTask: vi.fn(),
+    updateTaskStatus: vi.fn(),
+    getTaskEvents: vi.fn(() => []),
+  };
+  executor.toolRegistry = {
+    cleanup: vi.fn(async () => undefined),
   };
   executor.emitEvent = vi.fn();
   Object.assign(executor, overrides);
@@ -45,6 +52,9 @@ function makeExecutor(overrides: Record<string, unknown> = {}): Any {
 describe("TaskExecutor auto continuation decisions", () => {
   it("auto-continues to the next window when progress is sufficient", async () => {
     const executor = makeExecutor();
+    const continueAfterBudgetExhausted = vi
+      .spyOn(executor.runtime, "continueAfterBudgetExhausted")
+      .mockResolvedValue(undefined);
 
     const continued = await executor.maybeAutoContinueAfterTurnLimit(
       new Error("Global turn limit exceeded: 60/60 turns."),
@@ -53,14 +63,12 @@ describe("TaskExecutor auto continuation decisions", () => {
     expect(continued).toBe(true);
     expect(executor.continuationCount).toBe(1);
     expect(executor.continuationWindow).toBe(2);
-    expect(executor.continueAfterBudgetExhaustedUnlocked).toHaveBeenCalledWith(
+    expect(continueAfterBudgetExhausted).toHaveBeenCalledWith(
+      "auto",
       expect.objectContaining({
-        mode: "auto",
-        rethrowOnError: true,
-        continuationAssessment: expect.objectContaining({
-          progressScore: 0.5,
-        }),
+        progressScore: 0.5,
       }),
+      true,
     );
     expect(executor.emitEvent).toHaveBeenCalledWith(
       "auto_continuation_started",

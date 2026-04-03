@@ -35,6 +35,9 @@ export const IMPORTANT_EVENT_TYPES: EventType[] = [
   "input_request_created",
   "input_request_resolved",
   "input_request_dismissed",
+  "task_list_created",
+  "task_list_updated",
+  "task_list_verification_nudged",
 ];
 
 export const ALWAYS_VISIBLE_TECHNICAL_EVENT_TYPES: ReadonlySet<EventType> = new Set([
@@ -58,6 +61,9 @@ export const ALWAYS_VISIBLE_TECHNICAL_EVENT_TYPES: ReadonlySet<EventType> = new 
   "task_completed",
   "artifact_created",
   "diagram_created",
+  "task_list_created",
+  "task_list_updated",
+  "task_list_verification_nudged",
   "timeline_group_started",
   "timeline_group_finished",
   "timeline_evidence_attached",
@@ -284,9 +290,12 @@ function isLowValueVerboseLifecycleEvent(event: TaskEvent): boolean {
   const effectiveType = getEffectiveTaskEventType(event);
 
   // timeline_step_updated events are internal executor status beacons.
-  // Preserve non-internal assistant messages, which are persisted as
-  // timeline_step_updated + legacyType=assistant_message in timeline v2.
+  // Preserve user-visible chat messages, which are persisted as
+  // timeline_step_updated + legacyType=user_message/assistant_message in timeline v2.
   if (event.type === "timeline_step_updated") {
+    if (effectiveType === "user_message") {
+      return false;
+    }
     if (effectiveType === "assistant_message") {
       const payload = asObject(event.payload);
       return payload.internal === true;

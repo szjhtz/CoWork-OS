@@ -110,6 +110,83 @@ const ACTIVE_WORK_EVENT_TYPES: EventType[] = [
   "retry_started",
   "llm_streaming",
 ];
+const TERMINAL_WORK_EVENT_TYPES = new Set<EventType | "task_paused" | "task_cancelled">([
+  "task_paused",
+  "approval_requested",
+  "task_completed",
+  "task_cancelled",
+  "follow_up_completed",
+]);
+
+function isActiveWorkSignal(event: TaskEvent, effectiveType: string): boolean {
+  const isActiveProgressSignal =
+    effectiveType === "progress_update" &&
+    (event.payload?.phase === "tool_execution" ||
+      event.payload?.state === "active" ||
+      event.payload?.heartbeat === true);
+  const isTimelineActiveLifecycle =
+    event.type === "timeline_group_started" ||
+    event.type === "timeline_step_started" ||
+    event.type === "timeline_step_updated";
+  return (
+    isTimelineActiveLifecycle ||
+    ACTIVE_WORK_EVENT_TYPES.includes(effectiveType as EventType) ||
+    isActiveProgressSignal
+  );
+}
+
+export function isTaskActivelyWorking(
+  task: Task | null | undefined,
+  events: TaskEvent[],
+  hasActiveChildren: boolean,
+  now = Date.now(),
+): boolean {
+  if (!task) return false;
+
+  if (task.status === "executing" || task.status === "planning") {
+    for (let i = events.length - 1; i >= 0; i--) {
+      const event = events[i];
+      if (event.taskId !== task.id) continue;
+      const effectiveType = getEffectiveTaskEventType(event);
+      if (TERMINAL_WORK_EVENT_TYPES.has(effectiveType as EventType | "task_paused" | "task_cancelled")) {
+        return false;
+      }
+      if (isActiveWorkSignal(event, effectiveType)) {
+        return true;
+      }
+    }
+    return true;
+  }
+
+  if (task.status === "completed" && hasActiveChildren) {
+    return true;
+  }
+  if (task.status === "interrupted") return true;
+  if (
+    task.status === "completed" ||
+    task.status === "paused" ||
+    task.status === "blocked" ||
+    task.status === "failed" ||
+    task.status === "cancelled"
+  ) {
+    return false;
+  }
+
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event = events[i];
+    if (event.taskId !== task.id) continue;
+    const effectiveType = getEffectiveTaskEventType(event);
+
+    if (TERMINAL_WORK_EVENT_TYPES.has(effectiveType as EventType | "task_paused" | "task_cancelled")) {
+      return false;
+    }
+    if (isActiveWorkSignal(event, effectiveType)) {
+      return now - event.timestamp <= ACTIVE_WORK_SIGNAL_WINDOW_MS;
+    }
+  }
+
+  return false;
+}
 
 // In non-verbose mode, hide verification noise (verification steps are still executed by the agent).
 const isVerificationNoiseEvent = (event: TaskEvent): boolean => {
@@ -2856,7 +2933,7 @@ const TaskConversationFlow = memo(function TaskConversationFlow(props: any) {
                           collaborativeRun={collaborativeRun}
                           childTasks={panelTasks}
                           childEvents={panelEvents}
-                          userPrompt={task?.prompt || task?.userPrompt}
+                          userPrompt={task?.rawPrompt || task?.userPrompt || task?.prompt}
                           onSelectChildTask={onSelectChildTask}
                           mainTaskCompleted={
                             !!task &&
@@ -3077,6 +3154,7 @@ const TaskConversationFlow = memo(function TaskConversationFlow(props: any) {
                                   formatTime={formatTime}
                                   showConnectorAbove={showChildConnectorAbove}
                                   showConnectorBelow={showChildConnectorBelow}
+                                  defaultExpanded={isActive}
                                 />
                                 {renderCommandOutputs(perEventCmdSessions)}
                               </Fragment>
@@ -3126,7 +3204,8 @@ const TaskConversationFlow = memo(function TaskConversationFlow(props: any) {
                             );
                           }
                           const isExpandable = hasEventDetails(event);
-                          const isExpanded = isEventExpanded(event);
+                          const isExpanded =
+                            isExpandable && isActive ? !toggledEvents.has(event.id) : isEventExpanded(event);
                           const toolCallResultEvent = toolCallPairing.completions.get(event.id);
                           const renderEvent = toolCallResultEvent ?? event;
                           const eventTitle = renderEventTitle(
@@ -4306,76 +4385,20 @@ export function MainContent({
     return null;
   }, [events]);
 
-  const isTaskWorking = useMemo(() => {
-    if (!task) return false;
-    // `onTaskEvent` may apply `task_completed` to the event list before `setTasks` flips status
-    // away from `executing`. Without this scan, the header spinner stays up until a later reconcile.
-    if (task.status === "executing") {
-      for (let i = events.length - 1; i >= 0; i--) {
-        const event = events[i];
-        if (event.taskId !== task.id) continue;
-        const effectiveType = getEffectiveTaskEventType(event);
-        if (
-          effectiveType === "task_paused" ||
-          effectiveType === "approval_requested" ||
-          effectiveType === "task_completed" ||
-          effectiveType === "task_cancelled" ||
-          effectiveType === "follow_up_completed" ||
-          effectiveType === "error"
-        ) {
-          return false;
-        }
-      }
-      return true;
-    }
-    if (task.status === "interrupted") return true;
-    if (
-      task.status === "completed" ||
-      task.status === "paused" ||
-      task.status === "blocked" ||
-      task.status === "failed" ||
-      task.status === "cancelled"
-    ) {
-      return false;
-    }
+  const hasActiveChildren = useMemo(
+    () =>
+      childTasks.some((childTask) =>
+        childTask.status === "executing" ||
+        childTask.status === "planning" ||
+        childTask.status === "interrupted",
+      ),
+    [childTasks],
+  );
 
-    const now = Date.now();
-    for (let i = events.length - 1; i >= 0; i--) {
-      const event = events[i];
-      if (event.taskId !== task.id) continue;
-      const effectiveType = getEffectiveTaskEventType(event);
-
-      if (
-        effectiveType === "task_paused" ||
-        effectiveType === "approval_requested" ||
-        effectiveType === "task_completed" ||
-        effectiveType === "task_cancelled" ||
-        effectiveType === "follow_up_completed" ||
-        effectiveType === "error"
-      ) {
-        return false;
-      }
-
-      const isActiveProgressSignal =
-        effectiveType === "progress_update" &&
-        (event.payload?.phase === "tool_execution" ||
-          event.payload?.state === "active" ||
-          event.payload?.heartbeat === true);
-      const isTimelineActiveLifecycle =
-        event.type === "timeline_group_started" ||
-        event.type === "timeline_step_started" ||
-        event.type === "timeline_step_updated";
-      if (
-        isTimelineActiveLifecycle ||
-        ACTIVE_WORK_EVENT_TYPES.includes(effectiveType as EventType) ||
-        isActiveProgressSignal
-      ) {
-        return now - event.timestamp <= ACTIVE_WORK_SIGNAL_WINDOW_MS;
-      }
-    }
-
-    return false;
-  }, [task, events]);
+  const isTaskWorking = useMemo(
+    () => isTaskActivelyWorking(task, events, hasActiveChildren),
+    [task, events, hasActiveChildren],
+  );
 
   // Reset wrappingUp state when task stops working or task changes
   useEffect(() => {
@@ -6689,11 +6712,13 @@ export function MainContent({
     headerTooltip,
   } = useMemo(() => {
     const displayPromptValue =
-      typeof task?.userPrompt === "string" && task.userPrompt.trim().length > 0
-        ? task.userPrompt
-        : typeof task?.prompt === "string"
-          ? task.prompt
-          : "";
+      typeof task?.rawPrompt === "string" && task.rawPrompt.trim().length > 0
+        ? task.rawPrompt
+        : typeof task?.userPrompt === "string" && task.userPrompt.trim().length > 0
+          ? task.userPrompt
+          : typeof task?.prompt === "string"
+            ? task.prompt
+            : "";
     const cleanedDisplayPromptValue = displayPromptValue
       ? stripStrategyContextBlock(stripPptxBubbleContent(displayPromptValue))
       : "";
@@ -6719,7 +6744,37 @@ export function MainContent({
       headerTitle: headerTitleValue,
       headerTooltip: trimmedPromptValue || baseTitleValue,
     };
-  }, [task?.prompt, task?.title, task?.userPrompt]);
+  }, [task?.prompt, task?.rawPrompt, task?.title, task?.userPrompt]);
+
+  const appliedSkills = useMemo(() => {
+    const seen = new Map<string, { skillId: string; skillName: string; trigger?: string; reason?: string }>();
+    for (const event of events) {
+      const effectiveType = getEffectiveTaskEventType(event);
+      if (effectiveType !== "skill_applied" && effectiveType !== "skill_application_reused") {
+        continue;
+      }
+      const skillId =
+        typeof event.payload?.skillId === "string"
+          ? event.payload.skillId
+          : typeof event.payload?.skill_id === "string"
+            ? event.payload.skill_id
+            : "";
+      if (!skillId) continue;
+      if (seen.has(skillId)) continue;
+      seen.set(skillId, {
+        skillId,
+        skillName:
+          typeof event.payload?.skillName === "string"
+            ? event.payload.skillName
+            : typeof event.payload?.skill_name === "string"
+              ? event.payload.skill_name
+              : skillId,
+        trigger: typeof event.payload?.trigger === "string" ? event.payload.trigger : undefined,
+        reason: typeof event.payload?.reason === "string" ? event.payload.reason : undefined,
+      });
+    }
+    return Array.from(seen.values());
+  }, [events]);
   const initialPromptEventId = useMemo(() => {
     if (!trimmedPrompt) return null;
     for (const event of events) {
@@ -8158,6 +8213,24 @@ export function MainContent({
           {headerTitle}
         </div>
       </div>
+      {appliedSkills.length > 0 && (
+        <div className="main-header-skills">
+          <span className="main-header-skills-label">Applied skills</span>
+          {appliedSkills.map((skill) => (
+            <span
+              key={skill.skillId}
+              className="main-header-skill-chip"
+              title={
+                skill.reason
+                  ? `${skill.skillName}${skill.trigger ? ` · ${skill.trigger}` : ""} · ${skill.reason}`
+                  : `${skill.skillName}${skill.trigger ? ` · ${skill.trigger}` : ""}`
+              }
+            >
+              {skill.skillName}
+            </span>
+          ))}
+        </div>
+      )}
       {!isChatTask && isTaskWorking && (
         <div className="main-header-status">
           <span className="chat-status executing">

@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Configurable primary retry cooldown**: `Settings > LLM > Provider Failover` now includes `Retry primary after (seconds)` so ordered LLM fallback chains can temporarily stay on a working fallback before probing the primary route again. Leaving it blank uses the default 60-second cooldown; `0` retries the primary on the next route refresh.
+- **Imported capability security reports**: skills and plugin packs now share persisted import security reports, quarantine records, retry/remove actions, and aligned IPC contracts for install-time security outcomes.
+- **Provider-aware prompt caching**: CoWork now persists stable prompt-cache metadata in `SessionRuntime`, keeps stable system sections cacheable, prefers Anthropic automatic caching when available, uses explicit OpenRouter Claude breakpoints, and derives stable OpenAI-family cache keys for GPT routes including Azure OpenAI profile-based routing.
+
+### Changed
+- **Imported skills and packs**: managed imports now stage into a temp location, run structural/content/package scanning before activation, persist sidecar reports, and move to quarantine instead of activating when the scan blocks the bundle.
+- **OpenRouter app attribution**: default OpenRouter headers now include `X-OpenRouter-Categories: personal-agent,programming-app` so CoWork OS is categorized in OpenRouter app analytics and marketplace surfaces.
+- **Prompt-cache defaults**: prompt caching now defaults to `auto` for supported providers, uses a 5-minute TTL unless overridden, and records cache reads/writes in usage telemetry and cost accounting when upstream APIs report them.
+
+### Fixed
+- **LLM fallback settings persistence**: saving LLM settings now reliably preserves the configured fallback provider/model list and the primary-retry cooldown in the encrypted settings store.
+- **LLM failover retry routing**: retryable provider errors such as OpenRouter `429` responses now advance to the next configured fallback route without immediately snapping back to the primary provider on the next retry loop.
+- **Return-to-primary thrash**: after failover, the executor now preserves the active fallback route for the configured cooldown window before attempting the primary route again.
+- **Approval timeout completion race**: stale approval timers no longer overwrite terminal task state after a task has already completed, failed, or been cancelled.
+- **Post-install tampering on managed imports**: previously installed imported skills and packs are now rechecked by digest on discovery/load so modified managed bundles can be quarantined before activation.
+
 ## [0.5.22] - 2026-04-03
 
 ### Added

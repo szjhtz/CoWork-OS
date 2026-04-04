@@ -2,6 +2,35 @@ import { describe, expect, it } from "vitest";
 import { sanitizeToolCallHistory, toOpenAICompatibleMessages } from "../openai-compatible";
 
 describe("toOpenAICompatibleMessages", () => {
+  it("splits stable and turn-scoped system blocks into separate leading system messages", () => {
+    const result = toOpenAICompatibleMessages(
+      [{ role: "user" as const, content: "hello" }],
+      "Stable instructions\n\nCurrent time: 2026-04-04T10:00:00Z",
+      {
+        systemBlocks: [
+          {
+            text: "Stable instructions",
+            scope: "session",
+            cacheable: true,
+            stableKey: "identity:1",
+          },
+          {
+            text: "Current time: 2026-04-04T10:00:00Z",
+            scope: "turn",
+            cacheable: false,
+            stableKey: "time:1",
+          },
+        ],
+      },
+    );
+
+    expect(result).toEqual([
+      { role: "system", content: "Stable instructions" },
+      { role: "system", content: "Current time: 2026-04-04T10:00:00Z" },
+      { role: "user", content: "hello" },
+    ]);
+  });
+
   it("keeps assistant text and tool calls in one ordered message block", () => {
     const input = [
       {

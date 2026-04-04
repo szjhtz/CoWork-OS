@@ -20,7 +20,7 @@ The zero-human-company workflow is a composition of existing CoWork OS subsystem
 - `Heartbeat v3` gives those roles cheap Pulse review plus selective Dispatch escalation
 - `Strategic Planner` turns goals and stalled work into managed issues
 - `Mission Control` lets you monitor agents, issues, runs, and tasks
-- `Self-Improve` can optionally run autonomous improvement experiments on git-backed workspaces
+- `Subconscious` can continuously reflect across company workflows, then dispatch winning recommendations into tasks, briefings, mailbox automations, triggers, or code-change work
 - `Devices` can route execution to dedicated remote machines while the company graph and planner stay on the primary control surface
 
 Together, these create an operating loop where company goals become planner-managed issues, issues become tasks, and tasks are executed by role-specific agents with configurable autonomy.
@@ -160,13 +160,21 @@ If your operator tasks need to run on another machine, use the Devices tab along
 - inspect remote task history without losing company context
 - attach files from remote workspaces when dispatching company tasks
 
-### Self-Improve
+### Subconscious
 
-The self-improvement loop is optional but complementary. It focuses on autonomous experiments and repo-level improvement, not company planning. It works best when:
+`Subconscious` is optional but complementary to the planner/operator stack. It can reflect on company workflow evidence across:
 
-- the workspace is git-backed
-- worktrees are available
-- you want autonomous code or workflow hardening
+- planner-created work
+- inbox and mailbox signals
+- scheduled tasks and briefings
+- event triggers
+- git-backed code workspaces
+
+It works especially well when:
+
+- the company loop already has stable briefs, schedules, or operator cadence
+- you want explicit hypotheses, critique, a winner, and a next-step backlog instead of ad hoc background suggestions
+- code-change dispatch can run in git-backed workspaces with worktrees available
 
 ### Channels and External Systems
 
@@ -563,4 +571,4 @@ That produces the clearest "company operating system" demo.
 - [Features](features.md)
 - [Getting Started](getting-started.md)
 - [Use Cases](use-cases.md)
-- [Self-Improving Agent Architecture](self-improving-agent.md)
+- [Subconscious Reflective Loop](subconscious-loop.md)

@@ -47,7 +47,7 @@ How ClawHub installs work:
 - It resolves a downloadable version.
 - It downloads the skill ZIP bundle from ClawHub.
 - It extracts `SKILL.md` and bundled support files such as `references/` and `scripts/`.
-- It installs the result into CoWork’s managed skills directory.
+- It stages the bundle, scans it, and either installs it into CoWork’s managed skills directory or quarantines it with a stored report.
 
 ClawHub installs are treated as managed skills after import, not as a separate runtime type.
 
@@ -119,6 +119,17 @@ From there, users can:
 
 Imported and installed external skills are stored in CoWork’s managed skills directory.
 
+The managed install flow is now:
+- stage the manifest and any bundled support files in a temp location
+- run structural checks, content heuristics, and package-intelligence lookups where applicable
+- install the skill as managed content if the result is clean or warning-only
+- quarantine the import instead of activating it when the scan returns a blocking finding
+
+Each managed import keeps a sidecar security report so CoWork can:
+- show warning badges in the Skills UI
+- keep a review trail for imported bundles
+- detect if a managed import changes after install and re-quarantine it on the next load
+
 ## Optional External Skill Directories
 
 CoWork OS can also load additional skill folders without importing them into the managed directory.
@@ -168,8 +179,14 @@ They can then be:
 - checked for requirements and readiness
 - uninstalled from the GUI
 - surfaced to the runtime the same way as other managed skills
+- shown with a **Security Warning** badge when the scan allowed install but flagged higher-risk capabilities or scan-service unavailability
 
 ClawHub-originated skills are also labeled as **ClawHub** in the relevant UI surfaces.
+
+If CoWork blocks an imported skill, it now appears in a **Quarantined Imports** section instead of the active installed list. From there, users can:
+- view the stored scan findings
+- retry the scan later
+- remove the quarantined import entirely
 
 ## Runtime Behavior After Install
 
@@ -190,10 +207,15 @@ CoWork treats external skills as imported content, not as implicitly trusted bui
 
 Important safeguards and behaviors:
 - skill IDs are sanitized before installation
-- imported bundles are copied into a managed directory rather than executed in place from remote sources
+- imported bundles are staged and scanned before activation rather than executed in place from remote sources
 - ClawHub ZIP extraction skips unsafe path traversal content
 - Git imports require a valid repository and supported bundle shape
 - imported skills are surfaced through the existing skill eligibility and managed-skill flows
+- imported bundles with high-confidence malicious behavior are quarantined instead of being activated
+- package references discovered in imported content can be checked against live package-malware intelligence
+- temporary intelligence outages fail open with a visible warning rather than silently downgrading trust
+- managed imports are rechecked by digest on load so post-install tampering can be quarantined automatically
+- optional external skill directories remain loadable, but warning-only findings are surfaced in the status UI because CoWork does not take ownership of those files
 
 This does **not** mean every third-party skill is safe by default.
 Users should still treat external skills as untrusted until reviewed.

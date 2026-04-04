@@ -666,9 +666,27 @@ export class DatabaseManager {
       -- Indexes for performance
       CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
       CREATE INDEX IF NOT EXISTS idx_tasks_workspace ON tasks(workspace_id);
+      CREATE INDEX IF NOT EXISTS idx_tasks_workspace_created_at
+        ON tasks(workspace_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_tasks_created_at
+        ON tasks(created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_tasks_workspace_completed_at
+        ON tasks(workspace_id, completed_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_tasks_completed_at
+        ON tasks(completed_at DESC);
       CREATE INDEX IF NOT EXISTS idx_hook_sessions_task ON hook_sessions(task_id);
       CREATE INDEX IF NOT EXISTS idx_hook_session_locks_expires ON hook_session_locks(expires_at);
       CREATE INDEX IF NOT EXISTS idx_task_events_task ON task_events(task_id);
+      CREATE INDEX IF NOT EXISTS idx_task_events_timestamp
+        ON task_events(timestamp DESC);
+      CREATE INDEX IF NOT EXISTS idx_task_events_type_timestamp_task
+        ON task_events(type, timestamp DESC, task_id);
+      CREATE INDEX IF NOT EXISTS idx_task_events_legacy_type_timestamp_task
+        ON task_events(legacy_type, timestamp DESC, task_id);
+      CREATE INDEX IF NOT EXISTS idx_task_events_task_type_timestamp
+        ON task_events(task_id, type, timestamp DESC);
+      CREATE INDEX IF NOT EXISTS idx_task_events_task_legacy_type_timestamp
+        ON task_events(task_id, legacy_type, timestamp DESC);
       CREATE INDEX IF NOT EXISTS idx_artifacts_task ON artifacts(task_id);
       CREATE INDEX IF NOT EXISTS idx_approvals_task ON approvals(task_id);
       CREATE INDEX IF NOT EXISTS idx_approvals_status ON approvals(status);
@@ -3066,6 +3084,147 @@ export class DatabaseManager {
           compared_at INTEGER NOT NULL,
           FOREIGN KEY (campaign_id) REFERENCES improvement_campaigns(id) ON DELETE CASCADE
         );
+
+        CREATE TABLE IF NOT EXISTS subconscious_targets (
+          target_key TEXT PRIMARY KEY,
+          kind TEXT NOT NULL,
+          workspace_id TEXT,
+          ref_json TEXT NOT NULL,
+          health TEXT NOT NULL,
+          state TEXT NOT NULL,
+          last_winner TEXT,
+          last_run_at INTEGER,
+          last_evidence_at INTEGER,
+          backlog_count INTEGER NOT NULL DEFAULT 0,
+          evidence_fingerprint TEXT,
+          last_dispatch_kind TEXT,
+          last_dispatch_status TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_subconscious_targets_workspace
+          ON subconscious_targets(workspace_id, updated_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_subconscious_targets_kind
+          ON subconscious_targets(kind, updated_at DESC);
+
+        CREATE TABLE IF NOT EXISTS subconscious_runs (
+          id TEXT PRIMARY KEY,
+          target_key TEXT NOT NULL,
+          workspace_id TEXT,
+          stage TEXT NOT NULL,
+          outcome TEXT,
+          evidence_fingerprint TEXT NOT NULL,
+          evidence_summary TEXT NOT NULL,
+          artifact_root TEXT NOT NULL,
+          dispatch_kind TEXT,
+          dispatch_status TEXT,
+          blocked_reason TEXT,
+          error TEXT,
+          rejected_hypothesis_ids_json TEXT NOT NULL,
+          started_at INTEGER NOT NULL,
+          completed_at INTEGER,
+          created_at INTEGER NOT NULL,
+          FOREIGN KEY (target_key) REFERENCES subconscious_targets(target_key) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_subconscious_runs_target
+          ON subconscious_runs(target_key, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_subconscious_runs_stage
+          ON subconscious_runs(stage, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS subconscious_hypotheses (
+          id TEXT PRIMARY KEY,
+          run_id TEXT NOT NULL,
+          target_key TEXT NOT NULL,
+          title TEXT NOT NULL,
+          summary TEXT NOT NULL,
+          rationale TEXT NOT NULL,
+          confidence REAL NOT NULL DEFAULT 0,
+          evidence_refs_json TEXT NOT NULL,
+          status TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          FOREIGN KEY (run_id) REFERENCES subconscious_runs(id) ON DELETE CASCADE,
+          FOREIGN KEY (target_key) REFERENCES subconscious_targets(target_key) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_subconscious_hypotheses_run
+          ON subconscious_hypotheses(run_id, created_at ASC);
+
+        CREATE TABLE IF NOT EXISTS subconscious_critiques (
+          id TEXT PRIMARY KEY,
+          run_id TEXT NOT NULL,
+          target_key TEXT NOT NULL,
+          hypothesis_id TEXT NOT NULL,
+          verdict TEXT NOT NULL,
+          objection TEXT NOT NULL,
+          response TEXT,
+          evidence_refs_json TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          FOREIGN KEY (run_id) REFERENCES subconscious_runs(id) ON DELETE CASCADE,
+          FOREIGN KEY (target_key) REFERENCES subconscious_targets(target_key) ON DELETE CASCADE,
+          FOREIGN KEY (hypothesis_id) REFERENCES subconscious_hypotheses(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_subconscious_critiques_run
+          ON subconscious_critiques(run_id, created_at ASC);
+
+        CREATE TABLE IF NOT EXISTS subconscious_decisions (
+          id TEXT PRIMARY KEY,
+          run_id TEXT NOT NULL UNIQUE,
+          target_key TEXT NOT NULL,
+          winning_hypothesis_id TEXT NOT NULL,
+          winner_summary TEXT NOT NULL,
+          recommendation TEXT NOT NULL,
+          rejected_hypothesis_ids_json TEXT NOT NULL,
+          rationale TEXT NOT NULL,
+          next_backlog_json TEXT NOT NULL,
+          outcome TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          FOREIGN KEY (run_id) REFERENCES subconscious_runs(id) ON DELETE CASCADE,
+          FOREIGN KEY (target_key) REFERENCES subconscious_targets(target_key) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_subconscious_decisions_target
+          ON subconscious_decisions(target_key, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS subconscious_backlog_items (
+          id TEXT PRIMARY KEY,
+          target_key TEXT NOT NULL,
+          title TEXT NOT NULL,
+          summary TEXT NOT NULL,
+          status TEXT NOT NULL,
+          priority REAL NOT NULL DEFAULT 0,
+          executor_kind TEXT,
+          source_run_id TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          FOREIGN KEY (target_key) REFERENCES subconscious_targets(target_key) ON DELETE CASCADE,
+          FOREIGN KEY (source_run_id) REFERENCES subconscious_runs(id) ON DELETE SET NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_subconscious_backlog_target
+          ON subconscious_backlog_items(target_key, status, priority DESC, updated_at DESC);
+
+        CREATE TABLE IF NOT EXISTS subconscious_dispatch_records (
+          id TEXT PRIMARY KEY,
+          run_id TEXT NOT NULL,
+          target_key TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          status TEXT NOT NULL,
+          task_id TEXT,
+          external_ref_id TEXT,
+          summary TEXT NOT NULL,
+          error TEXT,
+          metadata_json TEXT,
+          created_at INTEGER NOT NULL,
+          completed_at INTEGER,
+          FOREIGN KEY (run_id) REFERENCES subconscious_runs(id) ON DELETE CASCADE,
+          FOREIGN KEY (target_key) REFERENCES subconscious_targets(target_key) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_subconscious_dispatch_target
+          ON subconscious_dispatch_records(target_key, created_at DESC);
       `);
     } catch {
       // Table already exists
@@ -3583,9 +3742,114 @@ export class DatabaseManager {
           ON llm_call_events(workspace_id, timestamp DESC);
         CREATE INDEX IF NOT EXISTS idx_llm_call_events_source
           ON llm_call_events(source_kind, timestamp DESC);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_llm_call_events_source_id
+          ON llm_call_events(source_kind, source_id);
       `);
     } catch {
       // Table or indexes already exist, ignore
+    }
+    try {
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS usage_insights_state (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS usage_insights_day (
+          workspace_id TEXT NOT NULL,
+          date_key TEXT NOT NULL,
+          task_created_total INTEGER NOT NULL DEFAULT 0,
+          task_completed_created INTEGER NOT NULL DEFAULT 0,
+          task_failed_created INTEGER NOT NULL DEFAULT 0,
+          task_cancelled_created INTEGER NOT NULL DEFAULT 0,
+          completed_duration_total_ms_created INTEGER NOT NULL DEFAULT 0,
+          completed_duration_count_created INTEGER NOT NULL DEFAULT 0,
+          attempt_sum_created REAL NOT NULL DEFAULT 0,
+          attempt_count_created INTEGER NOT NULL DEFAULT 0,
+          retried_tasks_created INTEGER NOT NULL DEFAULT 0,
+          max_attempt_created INTEGER NOT NULL DEFAULT 0,
+          feedback_total INTEGER NOT NULL DEFAULT 0,
+          feedback_accepted INTEGER NOT NULL DEFAULT 0,
+          feedback_rejected INTEGER NOT NULL DEFAULT 0,
+          awu_completed_ok INTEGER NOT NULL DEFAULT 0,
+          PRIMARY KEY (workspace_id, date_key),
+          FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_usage_insights_day_date
+          ON usage_insights_day(date_key);
+
+        CREATE TABLE IF NOT EXISTS usage_insights_hour (
+          workspace_id TEXT NOT NULL,
+          date_key TEXT NOT NULL,
+          day_of_week INTEGER NOT NULL,
+          hour_of_day INTEGER NOT NULL,
+          task_created_count INTEGER NOT NULL DEFAULT 0,
+          PRIMARY KEY (workspace_id, date_key, day_of_week, hour_of_day),
+          FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_usage_insights_hour_date
+          ON usage_insights_hour(date_key);
+
+        CREATE TABLE IF NOT EXISTS usage_insights_skill_day (
+          workspace_id TEXT NOT NULL,
+          date_key TEXT NOT NULL,
+          skill TEXT NOT NULL,
+          count INTEGER NOT NULL DEFAULT 0,
+          PRIMARY KEY (workspace_id, date_key, skill),
+          FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_usage_insights_skill_day_date
+          ON usage_insights_skill_day(date_key);
+
+        CREATE TABLE IF NOT EXISTS usage_insights_tool_day (
+          workspace_id TEXT NOT NULL,
+          date_key TEXT NOT NULL,
+          tool TEXT NOT NULL,
+          calls INTEGER NOT NULL DEFAULT 0,
+          results INTEGER NOT NULL DEFAULT 0,
+          errors INTEGER NOT NULL DEFAULT 0,
+          blocked INTEGER NOT NULL DEFAULT 0,
+          warnings INTEGER NOT NULL DEFAULT 0,
+          PRIMARY KEY (workspace_id, date_key, tool),
+          FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_usage_insights_tool_day_date
+          ON usage_insights_tool_day(date_key);
+
+        CREATE TABLE IF NOT EXISTS usage_insights_persona_day (
+          workspace_id TEXT NOT NULL,
+          date_key TEXT NOT NULL,
+          persona_id TEXT NOT NULL,
+          persona_name TEXT NOT NULL,
+          total INTEGER NOT NULL DEFAULT 0,
+          completed INTEGER NOT NULL DEFAULT 0,
+          failed INTEGER NOT NULL DEFAULT 0,
+          cancelled INTEGER NOT NULL DEFAULT 0,
+          completion_duration_total_ms INTEGER NOT NULL DEFAULT 0,
+          completion_duration_count INTEGER NOT NULL DEFAULT 0,
+          attempt_sum REAL NOT NULL DEFAULT 0,
+          attempt_count INTEGER NOT NULL DEFAULT 0,
+          total_cost REAL NOT NULL DEFAULT 0,
+          PRIMARY KEY (workspace_id, date_key, persona_id),
+          FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_usage_insights_persona_day_date
+          ON usage_insights_persona_day(date_key);
+
+        CREATE TABLE IF NOT EXISTS usage_insights_feedback_reason_day (
+          workspace_id TEXT NOT NULL,
+          date_key TEXT NOT NULL,
+          reason TEXT NOT NULL,
+          rejected_count INTEGER NOT NULL DEFAULT 0,
+          PRIMARY KEY (workspace_id, date_key, reason),
+          FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_usage_insights_feedback_reason_day_date
+          ON usage_insights_feedback_reason_day(date_key);
+      `);
+    } catch {
+      // Usage insights rollup tables already exist, ignore.
     }
     try {
       this.db.exec(`
@@ -3926,8 +4190,8 @@ export class DatabaseManager {
           key: "opus-4-5",
           displayName: "Opus 4.5",
           description: "Most capable for complex work",
-          anthropicModelId: "claude-opus-4-5-20250514",
-          bedrockModelId: "anthropic.claude-opus-4-5-20250514",
+          anthropicModelId: "claude-opus-4-5-20251101",
+          bedrockModelId: "anthropic.claude-opus-4-5-20251101",
           sortOrder: 1,
         },
         {
@@ -3935,7 +4199,7 @@ export class DatabaseManager {
           key: "sonnet-4-5",
           displayName: "Sonnet 4.5",
           description: "Best for everyday tasks",
-          anthropicModelId: "claude-sonnet-4-5-20250514",
+          anthropicModelId: "claude-sonnet-4-5",
           bedrockModelId: "anthropic.claude-sonnet-4-5-20250514",
           sortOrder: 2,
         },
@@ -3944,7 +4208,7 @@ export class DatabaseManager {
           key: "haiku-4-5",
           displayName: "Haiku 4.5",
           description: "Fastest for quick answers",
-          anthropicModelId: "claude-haiku-4-5-20250514",
+          anthropicModelId: "claude-haiku-4-5",
           bedrockModelId: "anthropic.claude-haiku-4-5-20250514",
           sortOrder: 3,
         },

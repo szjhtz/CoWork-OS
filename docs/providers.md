@@ -8,7 +8,7 @@ CoWork OS is **free and open source**. To run tasks, configure your own model cr
 
 | Provider | Configuration | Billing |
 |----------|---------------|---------|
-| Anthropic API | API key in Settings | Pay-per-token |
+| Claude | Claude API key or Claude subscription token in Settings | API: pay-per-token; subscription: uses your Claude account |
 | Azure Anthropic | API key + endpoint + deployment in Settings | Pay-per-token via Azure |
 | Google Gemini | API key in Settings | Pay-per-token (free tier available) |
 | OpenRouter | API key in Settings (default provider) | Free tier available, pay-per-token for premium models |
@@ -64,6 +64,124 @@ Configure this in **Settings > LLM**:
 - optionally choose capability-based routing for workflow phases or specialized tasks
 
 Fallback chains are used when a provider is unavailable, rate-limited, rejected by policy, or lacks the required capability for the task. Runtime surfaces in the app and Mission Control show the active provider, routing reason, and whether a fallback occurred.
+
+For LLM chains, retryable provider failures such as `429` rate limits and transient upstream errors move execution to the next configured provider/model in the ordered list. Once a fallback route is active, CoWork OS preserves that working route briefly so retries do not immediately bounce back to the primary provider.
+
+You can control when the primary route is tried again in **Settings > LLM > Provider Failover > Retry primary after (seconds)**:
+
+- leave it blank to use the default 60-second cooldown
+- set it to `0` to retry the primary on the next route refresh
+- set a value up to `3600` seconds to keep the active fallback route longer before probing the primary again
+
+---
+
+## Prompt Caching
+
+CoWork OS enables prompt caching by default in `auto` mode for supported model routes. The cacheable prefix is built from session-scoped prompt sections, while volatile turn context stays outside the stable prefix so follow-ups and routed turns can keep reusing the same provider-side foundation.
+
+### Strategy by provider family
+
+- **Claude API / Azure Anthropic / Anthropic-compatible**: CoWork sends structured `systemBlocks` and prefers Anthropic automatic caching. If a route rejects automatic cache control, the session downgrades to explicit Anthropic breakpoints.
+- **OpenRouter Claude**: CoWork uses explicit cache breakpoints over the stable system prefix plus the last 3 non-system messages, with a maximum of 4 total breakpoints.
+- **OpenAI / Azure OpenAI**: CoWork derives a deterministic stable-prefix cache key and sends it through OpenAI-style prompt-cache fields. This keeps GPT routes such as `gpt-5.4` and `gpt-5.4-mini` aligned under the same stable-prefix strategy.
+- **OpenRouter GPT-style routes**: CoWork participates in the same stable-prefix partitioning and cache-epoch tracking, but without Anthropic-specific markers.
+
+### What stays cacheable
+
+Cacheable prefix material comes from stable session-scoped sections such as:
+
+- identity and safety core
+- workspace / worktree context
+- mode and task-domain contracts
+- role, personality, and guidelines
+- tool policy and rendered tool schema
+
+Dynamic turn-scoped material such as current time, transcript recall, memory recall, and turn guidance is intentionally kept outside the stable prefix.
+
+### Defaults and overrides
+
+- Default mode: `auto`
+- Default TTL: `5m`
+- Optional long TTL: `1h`
+- Advanced disable: set `promptCaching.mode` to `off` in saved LLM settings or launch with `COWORK_PROMPT_CACHE_MODE=off`
+- Advanced TTL override: `COWORK_PROMPT_CACHE_TTL=5m|1h`
+
+### Telemetry
+
+When an upstream provider reports prompt-cache usage, CoWork records:
+
+- `cachedTokens`: tokens served from the provider cache
+- `cacheWriteTokens`: tokens spent creating or extending the cache entry, when available
+
+These values flow into Usage Insights and cost accounting.
+
+---
+
+## Adaptive Output Budgeting
+
+When `COWORK_LLM_OUTPUT_POLICY=adaptive` is enabled, CoWork OS applies a shared output-budget policy for agentic execution turns across the main provider families instead of relying on provider defaults.
+
+### What it covers
+
+The current rollout resolves explicit output limits for:
+
+- Anthropic-family routes
+- Bedrock Claude routes
+- OpenAI routes
+- Azure OpenAI routes
+- Gemini routes
+- OpenRouter routes
+- a conservative generic fallback for the remaining providers
+
+This policy currently targets execution and follow-up turns first. Explicit chat keeps its separate behavior for now, and `legacy` mode preserves the older executor path.
+
+### Default request budgets
+
+Internal defaults are:
+
+- first execution turn: `8000`
+- tool-follow-up turn: `16000`
+- one-shot escalated retry after truncation: `48000`
+- one-shot escalated retry for Anthropic-family routes: `64000`
+- generic fallback escalation: `16000`
+
+Budget selection is resolved in this order:
+
+1. task-level `agentConfig.maxTokens`, when present
+2. `COWORK_LLM_MAX_OUTPUT_TOKENS`
+3. adaptive family defaults
+4. final clamping by known hard caps and context headroom
+
+### Transport fields by provider shape
+
+CoWork maps the chosen budget into the provider-appropriate request field:
+
+- `max_tokens` for Anthropic-style, OpenRouter-style, and most compatible chat-completions routes
+- `max_completion_tokens` for newer OpenAI-style reasoning/chat-completions routes
+- `max_output_tokens` for Gemini and OpenAI-style responses routes
+
+This mapping is resolved centrally so execution behavior stays consistent even when providers differ in field names.
+
+### Truncation recovery behavior
+
+If an execution turn hits the output limit:
+
+1. CoWork retries the same request once with a larger budget
+2. if the retried response still truncates but contains visible partial output, CoWork falls back to a continuation prompt
+3. if the retried response contains only reasoning or no usable answer text, CoWork stops retrying continuations and surfaces targeted guidance instead
+
+This avoids wasting turns on repeated truncation loops that produce no visible answer.
+
+### Internal controls
+
+This rollout is currently controlled by environment flags rather than UI settings:
+
+- `COWORK_LLM_OUTPUT_POLICY=legacy|adaptive`
+- `COWORK_LLM_MAX_OUTPUT_TOKENS`
+- `COWORK_LLM_AGENTIC_INITIAL_MAX_TOKENS`
+- `COWORK_LLM_AGENTIC_ESCALATED_MAX_TOKENS`
+
+`COWORK_LLM_OUTPUT_POLICY` defaults to `legacy` unless explicitly set. `COWORK_LLM_TOOL_RESPONSE_MAX_TOKENS` remains available for legacy compatibility but is no longer the primary behavior in adaptive mode.
 
 ---
 
@@ -145,6 +263,17 @@ Access multiple AI providers through one API.
 2. Configure in **Settings** > **OpenRouter**
 
 Available: Claude, GPT-4, Gemini, Llama, Mistral, and more — see [openrouter.ai/models](https://openrouter.ai/models)
+
+CoWork OS also sends OpenRouter app attribution headers by default so usage is associated with the app in OpenRouter analytics and rankings. The current defaults are:
+
+- `HTTP-Referer: https://github.com/CoWork-OS/CoWork-OS`
+- `X-OpenRouter-Title: CoWork OS`
+- `X-Title: CoWork OS`
+- `X-OpenRouter-Categories: personal-agent,programming-app`
+
+The category pairing is intentional: CoWork OS is positioned primarily as a personal AI agent, with programming workflows as a secondary fit.
+
+For prompt caching, OpenRouter Claude routes use explicit Anthropic-style cache breakpoints, while GPT-style OpenRouter routes participate in the shared stable-prefix prompt-cache pipeline.
 
 ---
 

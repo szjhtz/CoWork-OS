@@ -1,5 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
+import Anthropic from "@anthropic-ai/sdk";
 import {
   LLMProvider,
   LLMProviderConfig,
@@ -16,6 +17,7 @@ import {
   ModelKey,
   DEFAULT_MODEL,
   DEFAULT_PI_MODEL,
+  normalizeAnthropicModelId,
 } from "./types";
 import { AnthropicProvider } from "./anthropic-provider";
 import { BedrockProvider } from "./bedrock-provider";
@@ -45,18 +47,24 @@ import type {
   CustomProviderConfig,
   LlmProfile,
   LLMProviderFallbackConfig,
+  PromptCachingSettings,
 } from "../../../shared/types";
 import { getUserDataDir } from "../../utils/user-data-dir";
 import { getSafeStorage } from "../../utils/safe-storage";
+import { createLogger } from "../../utils/logger";
 import { loadPiAiModule } from "./pi-ai-loader";
 import { ModelCapabilityRegistry } from "./ModelCapabilityRegistry";
+import { normalizePromptCachingSettings } from "./prompt-cache";
 
 const LEGACY_SETTINGS_FILE = "llm-settings.json";
 const MASKED_VALUE = "***configured***";
 const ENCRYPTED_PREFIX = "encrypted:";
 let llmCallLogCounter = 0;
 const observedModelMaxTokens = new Map<string, number>();
-const CUSTOM_PROVIDER_ALIASES: Partial<Record<LLMProviderType, LLMProviderType>> = {
+const logger = createLogger("LLMProviderFactory");
+const CUSTOM_PROVIDER_ALIASES: Partial<
+  Record<LLMProviderType, LLMProviderType>
+> = {
   "kimi-coding": "kimi-code",
 };
 
@@ -116,6 +124,8 @@ function summarizeLLMRequest(request: LLMRequest): Record<string, unknown> {
     model: request.model,
     maxTokens: request.maxTokens,
     toolsOffered: request.tools?.length || 0,
+    toolChoice:
+      request.toolChoice || (request.tools?.length ? "auto" : undefined),
     messages: messages.length,
     userMessages,
     assistantMessages,
@@ -149,7 +159,9 @@ function summarizeLLMResponse(response: LLMResponse): Record<string, unknown> {
   const inputTokens = response?.usage?.inputTokens ?? null;
   const outputTokens = response?.usage?.outputTokens ?? null;
   const totalTokens =
-    inputTokens != null && outputTokens != null ? inputTokens + outputTokens : null;
+    inputTokens != null && outputTokens != null
+      ? inputTokens + outputTokens
+      : null;
 
   return {
     stopReason: response?.stopReason,
@@ -199,7 +211,11 @@ function clampRequestToObservedModelLimit(request: LLMRequest): {
   if (!model) return { request, adjusted: false, observedLimit: null };
 
   const observedLimit = observedModelMaxTokens.get(model) ?? null;
-  if (!observedLimit || !Number.isFinite(request.maxTokens) || request.maxTokens <= 0) {
+  if (
+    !observedLimit ||
+    !Number.isFinite(request.maxTokens) ||
+    request.maxTokens <= 0
+  ) {
     return { request, adjusted: false, observedLimit };
   }
 
@@ -231,19 +247,24 @@ function wrapProviderWithDetailedLogging(provider: LLMProvider): LLMProvider {
       const isSideCall =
         !effectiveRequest.tools?.length &&
         effectiveRequest.maxTokens <= 200 &&
-        (typeof effectiveRequest.system === "string" ? effectiveRequest.system.length : 0) < 120;
+        (typeof effectiveRequest.system === "string"
+          ? effectiveRequest.system.length
+          : 0) < 120;
       const tag = isSideCall ? " [side]" : "";
       console.log(
         `[LLM:${provider.type}] #${callId}${tag} start`,
         summarizeLLMRequest(effectiveRequest),
       );
       if (preflight.adjusted) {
-        console.log(`[LLM:${provider.type}] #${callId} using observed model token limit`, {
-          model: effectiveRequest.model,
-          observedLimit: preflight.observedLimit,
-          requestedMaxTokens: request.maxTokens,
-          adjustedMaxTokens: effectiveRequest.maxTokens,
-        });
+        console.log(
+          `[LLM:${provider.type}] #${callId} using observed model token limit`,
+          {
+            model: effectiveRequest.model,
+            observedLimit: preflight.observedLimit,
+            requestedMaxTokens: request.maxTokens,
+            adjustedMaxTokens: effectiveRequest.maxTokens,
+          },
+        );
       }
 
       // Tag requests so downstream provider logs can correlate with this call ID.
@@ -264,20 +285,29 @@ function wrapProviderWithDetailedLogging(provider: LLMProvider): LLMProvider {
           Number.isFinite(effectiveRequest.maxTokens) &&
           effectiveRequest.maxTokens >= parsedLimit
         ) {
-          const model = typeof effectiveRequest.model === "string" ? effectiveRequest.model : "";
+          const model =
+            typeof effectiveRequest.model === "string"
+              ? effectiveRequest.model
+              : "";
           if (model) {
             observedModelMaxTokens.set(model, parsedLimit);
           }
           const retryMaxTokens = Math.max(1, parsedLimit - 1);
           const shouldRetry = retryMaxTokens !== effectiveRequest.maxTokens;
           if (shouldRetry) {
-            console.warn(`[LLM:${provider.type}] #${callId} retrying with provider token cap`, {
-              model: effectiveRequest.model,
-              parsedLimit,
-              previousMaxTokens: effectiveRequest.maxTokens,
-              retryMaxTokens,
-            });
-            const retriedRequest: LLMRequest = { ...effectiveRequest, maxTokens: retryMaxTokens };
+            console.warn(
+              `[LLM:${provider.type}] #${callId} retrying with provider token cap`,
+              {
+                model: effectiveRequest.model,
+                parsedLimit,
+                previousMaxTokens: effectiveRequest.maxTokens,
+                retryMaxTokens,
+              },
+            );
+            const retriedRequest: LLMRequest = {
+              ...effectiveRequest,
+              maxTokens: retryMaxTokens,
+            };
             try {
               const response = await provider.createMessage(retriedRequest);
               console.log(
@@ -306,7 +336,9 @@ function wrapProviderWithDetailedLogging(provider: LLMProvider): LLMProvider {
           {
             name: effectiveError?.name,
             message,
-            status: effectiveError?.status || effectiveError?.$metadata?.httpStatusCode,
+            status:
+              effectiveError?.status ||
+              effectiveError?.$metadata?.httpStatusCode,
             requestId: effectiveError?.$metadata?.requestId,
           },
         );
@@ -322,15 +354,21 @@ function wrapProviderWithDetailedLogging(provider: LLMProvider): LLMProvider {
   return wrapped;
 }
 
-function resolveCustomProviderId(providerType: LLMProviderType): LLMProviderType {
+function resolveCustomProviderId(
+  providerType: LLMProviderType,
+): LLMProviderType {
   return CUSTOM_PROVIDER_ALIASES[providerType] || providerType;
 }
 
-function getCustomProviderEntry(providerType: LLMProviderType): ProviderCatalogEntry | undefined {
+function getCustomProviderEntry(
+  providerType: LLMProviderType,
+): ProviderCatalogEntry | undefined {
   return CUSTOM_PROVIDER_MAP.get(resolveCustomProviderId(providerType));
 }
 
-function getKnownCustomProviderModels(entry: ProviderCatalogEntry): CachedModelInfo[] {
+function getKnownCustomProviderModels(
+  entry: ProviderCatalogEntry,
+): CachedModelInfo[] {
   return (entry.knownModels || []).map((modelId) => ({
     key: modelId,
     displayName: modelId,
@@ -370,7 +408,8 @@ function isCustomProviderConfigured(
   if (!config) return false;
   const hasApiKey = !!config.apiKey?.trim();
   const hasBaseUrl = !!config.baseUrl?.trim() || !!entry.baseUrl;
-  const hasUserConfig = hasApiKey || !!config.baseUrl?.trim() || !!config.model?.trim();
+  const hasUserConfig =
+    hasApiKey || !!config.baseUrl?.trim() || !!config.model?.trim();
 
   if (!hasUserConfig) return false;
 
@@ -394,16 +433,22 @@ function createCustomProvider(
   const baseUrl = config.providerBaseUrl || entry.baseUrl || "";
 
   if (entry.requiresBaseUrl && !baseUrl) {
-    throw new Error(`${entry.name} base URL is required. Configure it in Settings.`);
+    throw new Error(
+      `${entry.name} base URL is required. Configure it in Settings.`,
+    );
   }
 
   if (!apiKey && !entry.apiKeyOptional) {
-    throw new Error(`${entry.name} API key is required. Configure it in Settings.`);
+    throw new Error(
+      `${entry.name} API key is required. Configure it in Settings.`,
+    );
   }
 
   const model = config.model || entry.defaultModel;
   if (!model) {
-    throw new Error(`${entry.name} model is required. Configure it in Settings.`);
+    throw new Error(
+      `${entry.name} model is required. Configure it in Settings.`,
+    );
   }
 
   if (entry.compatibility === "openai") {
@@ -446,7 +491,7 @@ function _encryptSecret(value?: string): string | undefined {
       return ENCRYPTED_PREFIX + encrypted.toString("base64");
     }
   } catch (error) {
-    console.warn("Failed to encrypt secret, storing masked:", error);
+    logger.warn("Failed to encrypt secret, storing masked:", error);
   }
   // Fallback to masked value if encryption fails
   return MASKED_VALUE;
@@ -465,26 +510,38 @@ function decryptSecret(value?: string): string | undefined {
       const safeStorage = getSafeStorage();
       const isAvailable = safeStorage?.isEncryptionAvailable?.() ?? false;
       if (isAvailable) {
-        const encrypted = Buffer.from(value.slice(ENCRYPTED_PREFIX.length), "base64");
+        const encrypted = Buffer.from(
+          value.slice(ENCRYPTED_PREFIX.length),
+          "base64",
+        );
         const decrypted = safeStorage!.decryptString(encrypted);
         return decrypted;
       } else {
-        console.error(
+        logger.error(
           "[LLM Settings] safeStorage encryption not available - cannot decrypt secrets",
         );
-        console.error("[LLM Settings] You may need to re-enter your API credentials in Settings");
+        logger.error(
+          "[LLM Settings] You may need to re-enter your API credentials in Settings",
+        );
       }
     } catch (error: Any) {
       // This can happen after app updates when the code signature changes
       // The macOS Keychain ties encryption to the app's signature
-      console.error("[LLM Settings] Failed to decrypt secret - this can happen after app updates");
-      console.error("[LLM Settings] Error:", error.message || error);
-      console.error("[LLM Settings] Please re-enter your API credentials in Settings");
+      logger.error(
+        "[LLM Settings] Failed to decrypt secret - this can happen after app updates",
+      );
+      logger.error("[LLM Settings] Error:", error.message || error);
+      logger.error(
+        "[LLM Settings] Please re-enter your API credentials in Settings",
+      );
     }
   }
 
   // If not encrypted and not masked, return as-is (for backwards compatibility)
   if (value !== MASKED_VALUE && !value.startsWith(ENCRYPTED_PREFIX)) {
+    logger.warn(
+      "[LLM Settings] Loaded plaintext legacy secret. Re-save provider settings to migrate it.",
+    );
     return value.trim() || undefined;
   }
 
@@ -497,9 +554,33 @@ function decryptSecret(value?: string): string | undefined {
 function normalizeSecret(value?: string): string | undefined {
   if (!value) return undefined;
   const trimmed = value.trim();
-  if (!trimmed || trimmed === MASKED_VALUE || trimmed.startsWith(ENCRYPTED_PREFIX))
+  if (
+    !trimmed ||
+    trimmed === MASKED_VALUE ||
+    trimmed.startsWith(ENCRYPTED_PREFIX)
+  )
     return undefined;
   return trimmed;
+}
+
+function resolveAnthropicCredential(
+  anthropic?:
+    | LLMSettings["anthropic"]
+    | { apiKey?: string; subscriptionToken?: string; authMethod?: string },
+): string | undefined {
+  if (!anthropic) return undefined;
+
+  const apiKey = normalizeSecret(anthropic.apiKey);
+  const subscriptionToken = normalizeSecret(anthropic.subscriptionToken);
+
+  switch (anthropic.authMethod) {
+    case "subscription":
+      return subscriptionToken || apiKey;
+    case "api_key":
+      return apiKey || subscriptionToken;
+    default:
+      return subscriptionToken || apiKey;
+  }
 }
 
 /**
@@ -514,6 +595,7 @@ function sanitizeSettings(settings: LLMSettings): LLMSettings {
     sanitized.anthropic = {
       ...sanitized.anthropic,
       apiKey: decryptSecret(sanitized.anthropic.apiKey),
+      subscriptionToken: decryptSecret(sanitized.anthropic.subscriptionToken),
     };
   }
 
@@ -551,12 +633,24 @@ function sanitizeSettings(settings: LLMSettings): LLMSettings {
 
     // Log OAuth token status for debugging
     if (sanitized.openai.authMethod === "oauth") {
-      console.log("[LLM Settings] Loading OpenAI OAuth settings:");
-      console.log("[LLM Settings]   authMethod:", sanitized.openai.authMethod);
-      console.log("[LLM Settings]   hasAccessToken:", !!sanitized.openai.accessToken);
-      console.log("[LLM Settings]   decryptedAccessToken:", !!decryptedAccessToken);
-      console.log("[LLM Settings]   hasRefreshToken:", !!sanitized.openai.refreshToken);
-      console.log("[LLM Settings]   decryptedRefreshToken:", !!decryptedRefreshToken);
+      logger.debug("[LLM Settings] Loading OpenAI OAuth settings:");
+      logger.debug("[LLM Settings]   authMethod:", sanitized.openai.authMethod);
+      logger.debug(
+        "[LLM Settings]   hasAccessToken:",
+        !!sanitized.openai.accessToken,
+      );
+      logger.debug(
+        "[LLM Settings]   decryptedAccessToken:",
+        !!decryptedAccessToken,
+      );
+      logger.debug(
+        "[LLM Settings]   hasRefreshToken:",
+        !!sanitized.openai.refreshToken,
+      );
+      logger.debug(
+        "[LLM Settings]   decryptedRefreshToken:",
+        !!decryptedRefreshToken,
+      );
     }
 
     sanitized.openai = {
@@ -650,8 +744,12 @@ export interface LLMSettings {
   providerType: LLMProviderType;
   modelKey: ModelKey | string; // String for custom Ollama model names
   fallbackProviders?: LLMProviderFallbackConfig[];
+  failoverPrimaryRetryCooldownSeconds?: number;
+  promptCaching?: PromptCachingSettings;
   anthropic?: {
     apiKey?: string;
+    subscriptionToken?: string;
+    authMethod?: "api_key" | "subscription";
   } & ProviderRoutingSettings;
   bedrock?: {
     region?: string;
@@ -775,6 +873,7 @@ export interface LLMSettings {
     };
   };
   // Cached models from API (populated when user refreshes)
+  cachedAnthropicModels?: CachedModelInfo[];
   cachedGeminiModels?: CachedModelInfo[];
   cachedOpenRouterModels?: CachedModelInfo[];
   cachedOllamaModels?: CachedModelInfo[];
@@ -832,7 +931,9 @@ export class LLMProviderFactory {
       }
     }
 
-    const rawProviderType = String((settings as { providerType?: string }).providerType || "");
+    const rawProviderType = String(
+      (settings as { providerType?: string }).providerType || "",
+    );
     if (rawProviderType === "kimi-coding") {
       settings.providerType = "kimi-code";
     } else if (rawProviderType === "amazon-bedrock") {
@@ -845,31 +946,45 @@ export class LLMProviderFactory {
   private static normalizeFallbackProviders(settings: LLMSettings): void {
     if (!Array.isArray(settings.fallbackProviders)) {
       delete settings.fallbackProviders;
-      return;
+    } else {
+      const normalized: LLMProviderFallbackConfig[] = [];
+      const seen = new Set<string>();
+      for (const entry of settings.fallbackProviders) {
+        const providerType = resolveCustomProviderId(
+          entry?.providerType as LLMProviderType,
+        );
+        if (!providerType) continue;
+        const modelKey = normalizeModelKey(entry?.modelKey);
+        const dedupeKey = `${providerType}:${modelKey || ""}`;
+        if (seen.has(dedupeKey)) continue;
+        seen.add(dedupeKey);
+        normalized.push({
+          providerType,
+          ...(modelKey ? { modelKey } : {}),
+        });
+      }
+
+      settings.fallbackProviders = normalized.slice(0, 5);
+      if (settings.fallbackProviders.length === 0) {
+        delete settings.fallbackProviders;
+      }
     }
 
-    const normalized: LLMProviderFallbackConfig[] = [];
-    const seen = new Set<string>();
-    for (const entry of settings.fallbackProviders) {
-      const providerType = resolveCustomProviderId(entry?.providerType as LLMProviderType);
-      if (!providerType) continue;
-      const modelKey = normalizeModelKey(entry?.modelKey);
-      const dedupeKey = `${providerType}:${modelKey || ""}`;
-      if (seen.has(dedupeKey)) continue;
-      seen.add(dedupeKey);
-      normalized.push({
-        providerType,
-        ...(modelKey ? { modelKey } : {}),
-      });
-    }
-
-    settings.fallbackProviders = normalized.slice(0, 5);
-    if (settings.fallbackProviders.length === 0) {
-      delete settings.fallbackProviders;
+    const parsedCooldown = Number(settings.failoverPrimaryRetryCooldownSeconds);
+    if (Number.isFinite(parsedCooldown)) {
+      settings.failoverPrimaryRetryCooldownSeconds = Math.max(
+        0,
+        Math.min(3600, Math.floor(parsedCooldown)),
+      );
+    } else {
+      delete settings.failoverPrimaryRetryCooldownSeconds;
     }
   }
 
-  private static isProviderConfigured(settings: LLMSettings, providerType: LLMProviderType): boolean {
+  private static isProviderConfigured(
+    settings: LLMSettings,
+    providerType: LLMProviderType,
+  ): boolean {
     const resolvedProviderType = resolveCustomProviderId(providerType);
     const customEntry = getCustomProviderEntry(resolvedProviderType);
     if (customEntry) {
@@ -881,13 +996,13 @@ export class LLMProviderFactory {
 
     switch (resolvedProviderType) {
       case "anthropic":
-        return Boolean(settings.anthropic?.apiKey);
+        return Boolean(resolveAnthropicCredential(settings.anthropic));
       case "bedrock":
         return Boolean(
           settings.bedrock?.accessKeyId ||
-            settings.bedrock?.profile ||
-            settings.bedrock?.useDefaultCredentials ||
-            settings.bedrock?.region,
+          settings.bedrock?.profile ||
+          settings.bedrock?.useDefaultCredentials ||
+          settings.bedrock?.region,
         );
       case "ollama":
         return Boolean(settings.ollama?.baseUrl || settings.ollama?.model);
@@ -900,14 +1015,15 @@ export class LLMProviderFactory {
       case "azure":
         return Boolean(
           settings.azure?.apiKey &&
-            settings.azure?.endpoint &&
-            (settings.azure?.deployment || settings.azure?.deployments?.length),
+          settings.azure?.endpoint &&
+          (settings.azure?.deployment || settings.azure?.deployments?.length),
         );
       case "azure-anthropic":
         return Boolean(
           settings.azureAnthropic?.apiKey &&
-            settings.azureAnthropic?.endpoint &&
-            (settings.azureAnthropic?.deployment || settings.azureAnthropic?.deployments?.length),
+          settings.azureAnthropic?.endpoint &&
+          (settings.azureAnthropic?.deployment ||
+            settings.azureAnthropic?.deployments?.length),
         );
       case "groq":
         return Boolean(settings.groq?.apiKey);
@@ -918,7 +1034,10 @@ export class LLMProviderFactory {
       case "pi":
         return Boolean(settings.pi?.apiKey && settings.pi?.provider);
       case "openai-compatible":
-        return Boolean(settings.openaiCompatible?.baseUrl && settings.openaiCompatible?.model);
+        return Boolean(
+          settings.openaiCompatible?.baseUrl &&
+          settings.openaiCompatible?.model,
+        );
       default:
         return false;
     }
@@ -937,9 +1056,13 @@ export class LLMProviderFactory {
       }
 
       const existing =
-        settings.customProviders[resolvedProviderType] || settings.customProviders[providerType];
+        settings.customProviders[resolvedProviderType] ||
+        settings.customProviders[providerType];
       if (existing) {
-        if (settings.customProviders[providerType] && resolvedProviderType !== providerType) {
+        if (
+          settings.customProviders[providerType] &&
+          resolvedProviderType !== providerType
+        ) {
           delete settings.customProviders[providerType];
         }
         settings.customProviders[resolvedProviderType] = existing;
@@ -974,7 +1097,8 @@ export class LLMProviderFactory {
         if (!settings.azure && createIfMissing) settings.azure = {};
         return settings.azure;
       case "azure-anthropic":
-        if (!settings.azureAnthropic && createIfMissing) settings.azureAnthropic = {};
+        if (!settings.azureAnthropic && createIfMissing)
+          settings.azureAnthropic = {};
         return settings.azureAnthropic;
       case "groq":
         if (!settings.groq && createIfMissing) settings.groq = {};
@@ -989,7 +1113,8 @@ export class LLMProviderFactory {
         if (!settings.pi && createIfMissing) settings.pi = {};
         return settings.pi;
       case "openai-compatible":
-        if (!settings.openaiCompatible && createIfMissing) settings.openaiCompatible = {};
+        if (!settings.openaiCompatible && createIfMissing)
+          settings.openaiCompatible = {};
         return settings.openaiCompatible;
       default:
         return undefined;
@@ -1009,14 +1134,27 @@ export class LLMProviderFactory {
     }
   }
 
-  private static applyProfileRoutingDefaults(settings: LLMSettings): LLMSettings {
+  private static applyProfileRoutingDefaults(
+    settings: LLMSettings,
+  ): LLMSettings {
     const next: LLMSettings = { ...settings };
+    next.promptCaching = normalizePromptCachingSettings(next.promptCaching);
 
-    const applyDefaults = (providerType: LLMProviderType, createIfMissing = false): void => {
-      const target = this.getProviderRoutingSettingsNode(next, providerType, createIfMissing);
+    const applyDefaults = (
+      providerType: LLMProviderType,
+      createIfMissing = false,
+    ): void => {
+      const target = this.getProviderRoutingSettingsNode(
+        next,
+        providerType,
+        createIfMissing,
+      );
       if (!target) return;
 
-      const providerDefaultModel = this.getProviderDefaultModelKey(next, providerType);
+      const providerDefaultModel = this.getProviderDefaultModelKey(
+        next,
+        providerType,
+      );
       if (!normalizeModelKey(target.strongModelKey) && providerDefaultModel) {
         target.strongModelKey = providerDefaultModel;
       }
@@ -1055,16 +1193,39 @@ export class LLMProviderFactory {
   static getProviderRoutingSettings(
     settings: LLMSettings,
     providerType: LLMProviderType,
-  ): Required<Pick<ProviderRoutingSettings, "profileRoutingEnabled" | "preferStrongForVerification">> &
-    Pick<ProviderRoutingSettings, "strongModelKey" | "cheapModelKey" | "automatedTaskModelKey"> {
-    const configured = this.getProviderRoutingSettingsNode(settings, providerType, false);
-    const defaultModel = this.getProviderDefaultModelKey(settings, providerType);
+  ): Required<
+    Pick<
+      ProviderRoutingSettings,
+      "profileRoutingEnabled" | "preferStrongForVerification"
+    >
+  > &
+    Pick<
+      ProviderRoutingSettings,
+      "strongModelKey" | "cheapModelKey" | "automatedTaskModelKey"
+    > {
+    const configured = this.getProviderRoutingSettingsNode(
+      settings,
+      providerType,
+      false,
+    );
+    const defaultModel = this.getProviderDefaultModelKey(
+      settings,
+      providerType,
+    );
     return {
       profileRoutingEnabled: configured?.profileRoutingEnabled === true,
-      strongModelKey: normalizeModelKey(configured?.strongModelKey) || defaultModel || undefined,
-      cheapModelKey: normalizeModelKey(configured?.cheapModelKey) || defaultModel || undefined,
-      automatedTaskModelKey: normalizeModelKey(configured?.automatedTaskModelKey) || undefined,
-      preferStrongForVerification: configured?.preferStrongForVerification !== false,
+      strongModelKey:
+        normalizeModelKey(configured?.strongModelKey) ||
+        defaultModel ||
+        undefined,
+      cheapModelKey:
+        normalizeModelKey(configured?.cheapModelKey) ||
+        defaultModel ||
+        undefined,
+      automatedTaskModelKey:
+        normalizeModelKey(configured?.automatedTaskModelKey) || undefined,
+      preferStrongForVerification:
+        configured?.preferStrongForVerification !== false,
     };
   }
 
@@ -1074,10 +1235,13 @@ export class LLMProviderFactory {
     modelKey: string,
     source: ResolvedTaskModelSelection["modelSource"],
   ): string {
-    const azureDeployment = settings.azure?.deployment || settings.azure?.deployments?.[0];
+    const azureDeployment =
+      settings.azure?.deployment || settings.azure?.deployments?.[0];
 
     if (providerType === "anthropic") {
-      if (modelKey.startsWith("claude-")) return modelKey;
+      if (modelKey.startsWith("claude-")) {
+        return normalizeAnthropicModelId(modelKey);
+      }
       return this.getModelId(
         modelKey,
         providerType,
@@ -1086,7 +1250,8 @@ export class LLMProviderFactory {
         settings.openrouter?.model,
         settings.openai?.model,
         azureDeployment,
-        settings.azureAnthropic?.deployment || settings.azureAnthropic?.deployments?.[0],
+        settings.azureAnthropic?.deployment ||
+          settings.azureAnthropic?.deployments?.[0],
         settings.groq?.model,
         settings.xai?.model,
         settings.kimi?.model,
@@ -1107,7 +1272,8 @@ export class LLMProviderFactory {
         settings.openrouter?.model,
         settings.openai?.model,
         azureDeployment,
-        settings.azureAnthropic?.deployment || settings.azureAnthropic?.deployments?.[0],
+        settings.azureAnthropic?.deployment ||
+          settings.azureAnthropic?.deployments?.[0],
         settings.groq?.model,
         settings.xai?.model,
         settings.kimi?.model,
@@ -1136,7 +1302,8 @@ export class LLMProviderFactory {
     },
   ): ResolvedTaskModelSelection {
     const settings = this.loadSettings();
-    const providerType = (taskAgentConfig?.providerType || settings.providerType) as LLMProviderType;
+    const providerType = (taskAgentConfig?.providerType ||
+      settings.providerType) as LLMProviderType;
     const routing = this.getProviderRoutingSettings(settings, providerType);
     const warnings: string[] = [];
 
@@ -1161,9 +1328,11 @@ export class LLMProviderFactory {
     const profileForced =
       taskAgentConfig?.llmProfileForced === true &&
       Boolean(taskAgentConfig?.llmProfile || options?.forceProfile);
-    const allowExplicitModelOverride = Boolean(explicitModelOverride) && !profileForced;
+    const allowExplicitModelOverride =
+      Boolean(explicitModelOverride) && !profileForced;
 
-    let modelSource: ResolvedTaskModelSelection["modelSource"] = "provider_default";
+    let modelSource: ResolvedTaskModelSelection["modelSource"] =
+      "provider_default";
     let resolvedModelKey = "";
 
     if (allowExplicitModelOverride && explicitModelOverride) {
@@ -1171,7 +1340,9 @@ export class LLMProviderFactory {
       resolvedModelKey = explicitModelOverride;
     } else if (taskAgentConfig?.capabilityHint) {
       const capabilityModelKey = resolveModelPreferenceToModelKey(
-        ModelCapabilityRegistry.selectForCapability(taskAgentConfig.capabilityHint),
+        ModelCapabilityRegistry.selectForCapability(
+          taskAgentConfig.capabilityHint,
+        ),
       );
       if (capabilityModelKey) {
         modelSource = "profile_model";
@@ -1179,7 +1350,9 @@ export class LLMProviderFactory {
       }
     } else if (routing.profileRoutingEnabled) {
       const profileModelKey =
-        llmProfileUsed === "strong" ? routing.strongModelKey : routing.cheapModelKey;
+        llmProfileUsed === "strong"
+          ? routing.strongModelKey
+          : routing.cheapModelKey;
       const normalizedProfileModelKey = normalizeModelKey(profileModelKey);
       if (normalizedProfileModelKey) {
         modelSource = "profile_model";
@@ -1192,21 +1365,37 @@ export class LLMProviderFactory {
     }
 
     if (!resolvedModelKey) {
-      resolvedModelKey = this.getProviderDefaultModelKey(settings, providerType);
+      resolvedModelKey = this.getProviderDefaultModelKey(
+        settings,
+        providerType,
+      );
       modelSource = "provider_default";
     }
 
     let modelId: string;
     try {
-      modelId = this.resolveModelIdForProvider(settings, providerType, resolvedModelKey, modelSource);
+      modelId = this.resolveModelIdForProvider(
+        settings,
+        providerType,
+        resolvedModelKey,
+        modelSource,
+      );
     } catch (error: Any) {
       if (modelSource === "profile_model") {
         warnings.push(
           `[LLMProviderFactory] Invalid profile model "${resolvedModelKey}" for provider "${providerType}". Falling back to provider default model.`,
         );
-        resolvedModelKey = this.getProviderDefaultModelKey(settings, providerType);
+        resolvedModelKey = this.getProviderDefaultModelKey(
+          settings,
+          providerType,
+        );
         modelSource = "provider_default";
-        modelId = this.resolveModelIdForProvider(settings, providerType, resolvedModelKey, modelSource);
+        modelId = this.resolveModelIdForProvider(
+          settings,
+          providerType,
+          resolvedModelKey,
+          modelSource,
+        );
       } else {
         throw error;
       }
@@ -1332,16 +1521,23 @@ export class LLMProviderFactory {
 
         // Save to encrypted database
         repository.save("llm", decryptedSettings);
-        console.log("[LLMProviderFactory] Settings migrated to encrypted database");
+        console.log(
+          "[LLMProviderFactory] Settings migrated to encrypted database",
+        );
 
         // Migration successful - delete backup and original
         fs.unlinkSync(backupPath);
         fs.unlinkSync(this.legacySettingsPath);
-        console.log("[LLMProviderFactory] Migration complete, cleaned up legacy files");
+        console.log(
+          "[LLMProviderFactory] Migration complete, cleaned up legacy files",
+        );
 
         this.migrationCompleted = true;
       } catch (migrationError) {
-        console.error("[LLMProviderFactory] Migration failed, backup preserved at:", backupPath);
+        console.error(
+          "[LLMProviderFactory] Migration failed, backup preserved at:",
+          backupPath,
+        );
         throw migrationError;
       }
     } catch (error) {
@@ -1379,7 +1575,10 @@ export class LLMProviderFactory {
         }
       }
     } catch (error) {
-      console.error("[LLMProviderFactory] Failed to load settings from database:", error);
+      console.error(
+        "[LLMProviderFactory] Failed to load settings from database:",
+        error,
+      );
     }
 
     // Auto-detect provider if no settings exist
@@ -1387,7 +1586,9 @@ export class LLMProviderFactory {
       const detectedProvider = this.detectProviderFromSettings(settings);
       if (detectedProvider) {
         settings.providerType = detectedProvider;
-        console.log(`[LLMProviderFactory] Auto-detected LLM provider: ${detectedProvider}`);
+        console.log(
+          `[LLMProviderFactory] Auto-detected LLM provider: ${detectedProvider}`,
+        );
       }
     }
 
@@ -1401,9 +1602,11 @@ export class LLMProviderFactory {
    * Note: Environment variables are no longer used for security reasons.
    * All configuration should be done through the Settings UI.
    */
-  private static detectProviderFromSettings(settings: LLMSettings): LLMProviderType | null {
+  private static detectProviderFromSettings(
+    settings: LLMSettings,
+  ): LLMProviderType | null {
     // Check if any provider has credentials configured in settings
-    if (settings.anthropic?.apiKey) {
+    if (resolveAnthropicCredential(settings.anthropic)) {
       return "anthropic";
     }
     if (settings.gemini?.apiKey) {
@@ -1415,12 +1618,14 @@ export class LLMProviderFactory {
     if (settings.openai?.apiKey || settings.openai?.accessToken) {
       return "openai";
     }
-    const azureDeployment = settings.azure?.deployment || settings.azure?.deployments?.[0];
+    const azureDeployment =
+      settings.azure?.deployment || settings.azure?.deployments?.[0];
     if (settings.azure?.apiKey && settings.azure?.endpoint && azureDeployment) {
       return "azure";
     }
     const azureAnthropicDeployment =
-      settings.azureAnthropic?.deployment || settings.azureAnthropic?.deployments?.[0];
+      settings.azureAnthropic?.deployment ||
+      settings.azureAnthropic?.deployments?.[0];
     if (
       settings.azureAnthropic?.apiKey &&
       settings.azureAnthropic?.endpoint &&
@@ -1449,7 +1654,10 @@ export class LLMProviderFactory {
 
     if (settings.customProviders) {
       for (const entry of CUSTOM_PROVIDER_CATALOG) {
-        const config = getCustomProviderConfig(settings.customProviders, entry.id);
+        const config = getCustomProviderConfig(
+          settings.customProviders,
+          entry.id,
+        );
         if (isCustomProviderConfigured(entry, config)) {
           return entry.id;
         }
@@ -1496,10 +1704,15 @@ export class LLMProviderFactory {
    * Note: All credentials must be configured via the Settings UI.
    * Environment variables are no longer used for security reasons.
    */
-  static createProvider(overrideConfig?: Partial<LLMProviderConfig>): LLMProvider {
+  static createProvider(
+    overrideConfig?: Partial<LLMProviderConfig>,
+  ): LLMProvider {
     const settings = this.loadSettings();
     const providerType = overrideConfig?.type || settings.providerType;
-    const customConfig = getCustomProviderConfig(settings.customProviders, providerType);
+    const customConfig = getCustomProviderConfig(
+      settings.customProviders,
+      providerType,
+    );
     const azureDeployment =
       overrideConfig?.azureDeployment ||
       settings.azure?.deployment ||
@@ -1530,64 +1743,92 @@ export class LLMProviderFactory {
         ),
       // Anthropic config - from settings only
       anthropicApiKey:
-        normalizeSecret(overrideConfig?.anthropicApiKey) || settings.anthropic?.apiKey,
+        normalizeSecret(overrideConfig?.anthropicApiKey) ||
+        resolveAnthropicCredential(settings.anthropic),
       // Bedrock config - from settings only
-      awsRegion: overrideConfig?.awsRegion || settings.bedrock?.region || "us-east-1",
-      awsAccessKeyId: overrideConfig?.awsAccessKeyId || settings.bedrock?.accessKeyId,
+      awsRegion:
+        overrideConfig?.awsRegion || settings.bedrock?.region || "us-east-1",
+      awsAccessKeyId:
+        overrideConfig?.awsAccessKeyId || settings.bedrock?.accessKeyId,
       awsSecretAccessKey:
-        normalizeSecret(overrideConfig?.awsSecretAccessKey) || settings.bedrock?.secretAccessKey,
-      awsSessionToken: overrideConfig?.awsSessionToken || settings.bedrock?.sessionToken,
+        normalizeSecret(overrideConfig?.awsSecretAccessKey) ||
+        settings.bedrock?.secretAccessKey,
+      awsSessionToken:
+        overrideConfig?.awsSessionToken || settings.bedrock?.sessionToken,
       awsProfile: overrideConfig?.awsProfile || settings.bedrock?.profile,
       // Ollama config - from settings only
       ollamaBaseUrl:
-        overrideConfig?.ollamaBaseUrl || settings.ollama?.baseUrl || "http://localhost:11434",
-      ollamaApiKey: normalizeSecret(overrideConfig?.ollamaApiKey) || settings.ollama?.apiKey,
+        overrideConfig?.ollamaBaseUrl ||
+        settings.ollama?.baseUrl ||
+        "http://localhost:11434",
+      ollamaApiKey:
+        normalizeSecret(overrideConfig?.ollamaApiKey) ||
+        settings.ollama?.apiKey,
       // Gemini config - from settings only
-      geminiApiKey: normalizeSecret(overrideConfig?.geminiApiKey) || settings.gemini?.apiKey,
+      geminiApiKey:
+        normalizeSecret(overrideConfig?.geminiApiKey) ||
+        settings.gemini?.apiKey,
       // OpenRouter config - from settings only
       openrouterApiKey:
-        normalizeSecret(overrideConfig?.openrouterApiKey) || settings.openrouter?.apiKey,
-      openrouterBaseUrl: overrideConfig?.openrouterBaseUrl || settings.openrouter?.baseUrl,
+        normalizeSecret(overrideConfig?.openrouterApiKey) ||
+        settings.openrouter?.apiKey,
+      openrouterBaseUrl:
+        overrideConfig?.openrouterBaseUrl || settings.openrouter?.baseUrl,
       // OpenAI config - from settings only
-      openaiApiKey: normalizeSecret(overrideConfig?.openaiApiKey) || settings.openai?.apiKey,
+      openaiApiKey:
+        normalizeSecret(overrideConfig?.openaiApiKey) ||
+        settings.openai?.apiKey,
       openaiAccessToken:
-        normalizeSecret(overrideConfig?.openaiAccessToken) || settings.openai?.accessToken,
+        normalizeSecret(overrideConfig?.openaiAccessToken) ||
+        settings.openai?.accessToken,
       openaiRefreshToken: settings.openai?.refreshToken,
       openaiTokenExpiresAt: settings.openai?.tokenExpiresAt,
       // Azure OpenAI config - from settings only
-      azureApiKey: normalizeSecret(overrideConfig?.azureApiKey) || settings.azure?.apiKey,
+      azureApiKey:
+        normalizeSecret(overrideConfig?.azureApiKey) || settings.azure?.apiKey,
       azureEndpoint: overrideConfig?.azureEndpoint || settings.azure?.endpoint,
       azureDeployment,
-      azureApiVersion: overrideConfig?.azureApiVersion || settings.azure?.apiVersion,
-      azureReasoningEffort: overrideConfig?.azureReasoningEffort || settings.azure?.reasoningEffort,
+      azureApiVersion:
+        overrideConfig?.azureApiVersion || settings.azure?.apiVersion,
+      azureReasoningEffort:
+        overrideConfig?.azureReasoningEffort || settings.azure?.reasoningEffort,
       // Azure Anthropic config - from settings only
       azureAnthropicApiKey:
-        normalizeSecret(overrideConfig?.azureAnthropicApiKey) || settings.azureAnthropic?.apiKey,
+        normalizeSecret(overrideConfig?.azureAnthropicApiKey) ||
+        settings.azureAnthropic?.apiKey,
       azureAnthropicEndpoint:
-        overrideConfig?.azureAnthropicEndpoint || settings.azureAnthropic?.endpoint,
+        overrideConfig?.azureAnthropicEndpoint ||
+        settings.azureAnthropic?.endpoint,
       azureAnthropicDeployment,
       azureAnthropicApiVersion:
-        overrideConfig?.azureAnthropicApiVersion || settings.azureAnthropic?.apiVersion,
+        overrideConfig?.azureAnthropicApiVersion ||
+        settings.azureAnthropic?.apiVersion,
       // Groq config - from settings only
-      groqApiKey: normalizeSecret(overrideConfig?.groqApiKey) || settings.groq?.apiKey,
+      groqApiKey:
+        normalizeSecret(overrideConfig?.groqApiKey) || settings.groq?.apiKey,
       groqBaseUrl: overrideConfig?.groqBaseUrl || settings.groq?.baseUrl,
       // xAI config - from settings only
-      xaiApiKey: normalizeSecret(overrideConfig?.xaiApiKey) || settings.xai?.apiKey,
+      xaiApiKey:
+        normalizeSecret(overrideConfig?.xaiApiKey) || settings.xai?.apiKey,
       xaiBaseUrl: overrideConfig?.xaiBaseUrl || settings.xai?.baseUrl,
       // Kimi config - from settings only
-      kimiApiKey: normalizeSecret(overrideConfig?.kimiApiKey) || settings.kimi?.apiKey,
+      kimiApiKey:
+        normalizeSecret(overrideConfig?.kimiApiKey) || settings.kimi?.apiKey,
       kimiBaseUrl: overrideConfig?.kimiBaseUrl || settings.kimi?.baseUrl,
       // Pi config - from settings only
       piProvider: overrideConfig?.piProvider || settings.pi?.provider,
-      piApiKey: normalizeSecret(overrideConfig?.piApiKey) || settings.pi?.apiKey,
+      piApiKey:
+        normalizeSecret(overrideConfig?.piApiKey) || settings.pi?.apiKey,
       // OpenAI-compatible config - from settings only
       openaiCompatibleApiKey:
         normalizeSecret(overrideConfig?.openaiCompatibleApiKey) ||
         settings.openaiCompatible?.apiKey,
       openaiCompatibleBaseUrl:
-        overrideConfig?.openaiCompatibleBaseUrl || settings.openaiCompatible?.baseUrl,
+        overrideConfig?.openaiCompatibleBaseUrl ||
+        settings.openaiCompatible?.baseUrl,
       // Custom provider config
-      providerApiKey: normalizeSecret(overrideConfig?.providerApiKey) || customConfig?.apiKey,
+      providerApiKey:
+        normalizeSecret(overrideConfig?.providerApiKey) || customConfig?.apiKey,
       providerBaseUrl: overrideConfig?.providerBaseUrl || customConfig?.baseUrl,
     };
 
@@ -1680,7 +1921,10 @@ export class LLMProviderFactory {
   ): string {
     const customEntry = getCustomProviderEntry(providerType);
     if (customEntry) {
-      const customConfig = getCustomProviderConfig(customProviders, providerType);
+      const customConfig = getCustomProviderConfig(
+        customProviders,
+        providerType,
+      );
       return customConfig?.model || customEntry.defaultModel;
     }
 
@@ -1750,7 +1994,10 @@ export class LLMProviderFactory {
 
       if (typeof modelKey === "string") {
         const trimmedModelKey = modelKey.trim();
-        if (trimmedModelKey.startsWith("anthropic.") || trimmedModelKey.startsWith("us.")) {
+        if (
+          trimmedModelKey.startsWith("anthropic.") ||
+          trimmedModelKey.startsWith("us.")
+        ) {
           return trimmedModelKey;
         }
       }
@@ -1765,12 +2012,22 @@ export class LLMProviderFactory {
       }
     }
 
+    if (providerType === "anthropic" && typeof modelKey === "string") {
+      const trimmedModelKey = modelKey.trim();
+      if (trimmedModelKey.startsWith("claude-")) {
+        return normalizeAnthropicModelId(trimmedModelKey);
+      }
+    }
+
     // For other providers, look up in MODELS
     const model = MODELS[modelKey as ModelKey];
     if (!model) {
       throw new Error(`Unknown model: ${modelKey}`);
     }
-    return model[providerType as "anthropic" | "bedrock"];
+    const resolvedModel = model[providerType as "anthropic" | "bedrock"];
+    return providerType === "anthropic"
+      ? normalizeAnthropicModelId(resolvedModel)
+      : resolvedModel;
   }
 
   /**
@@ -1809,8 +2066,8 @@ export class LLMProviderFactory {
       },
       {
         type: "anthropic" as LLMProviderType,
-        name: "Anthropic API",
-        configured: !!settings.anthropic?.apiKey,
+        name: "Claude",
+        configured: !!resolveAnthropicCredential(settings.anthropic),
       },
       {
         type: "gemini" as LLMProviderType,
@@ -1837,7 +2094,8 @@ export class LLMProviderFactory {
         configured: !!(
           settings.azureAnthropic?.apiKey &&
           settings.azureAnthropic?.endpoint &&
-          (settings.azureAnthropic?.deployment || settings.azureAnthropic?.deployments?.length)
+          (settings.azureAnthropic?.deployment ||
+            settings.azureAnthropic?.deployments?.length)
         ),
       },
       {
@@ -1878,18 +2136,25 @@ export class LLMProviderFactory {
       {
         type: "openai-compatible" as LLMProviderType,
         name: "OpenAI-Compatible",
-        configured: !!(settings.openaiCompatible?.baseUrl && settings.openaiCompatible?.model),
+        configured: !!(
+          settings.openaiCompatible?.baseUrl && settings.openaiCompatible?.model
+        ),
       },
     ];
 
-    const customProviders = CUSTOM_PROVIDER_CATALOG.map((entry: ProviderCatalogEntry) => {
-      const config = getCustomProviderConfig(settings.customProviders, entry.id);
-      return {
-        type: entry.id,
-        name: entry.name,
-        configured: isCustomProviderConfigured(entry, config),
-      };
-    });
+    const customProviders = CUSTOM_PROVIDER_CATALOG.map(
+      (entry: ProviderCatalogEntry) => {
+        const config = getCustomProviderConfig(
+          settings.customProviders,
+          entry.id,
+        );
+        return {
+          type: entry.id,
+          name: entry.name,
+          configured: isCustomProviderConfigured(entry, config),
+        };
+      },
+    );
 
     return [...builtIns, ...customProviders];
   }
@@ -1900,14 +2165,27 @@ export class LLMProviderFactory {
   static getConfigStatus(): {
     currentProvider: LLMProviderType;
     currentModel: string;
-    providers: Array<{ type: LLMProviderType; name: string; configured: boolean }>;
+    providers: Array<{
+      type: LLMProviderType;
+      name: string;
+      configured: boolean;
+    }>;
     models: Array<{ key: string; displayName: string; description: string }>;
     routing?: {
       currentProvider: LLMProviderType;
       currentModel: string;
       activeProvider: LLMProviderType;
       activeModel: string;
-      routeReason: "manual_override" | "profile_routing" | "automatic_execution" | "verification" | "fallback" | "provider_outage" | "quota" | "model_capability" | "unknown";
+      routeReason:
+        | "manual_override"
+        | "profile_routing"
+        | "automatic_execution"
+        | "verification"
+        | "fallback"
+        | "provider_outage"
+        | "quota"
+        | "model_capability"
+        | "unknown";
       fallbackChain: Array<{
         providerType: LLMProviderType;
         modelKey: string;
@@ -1924,7 +2202,10 @@ export class LLMProviderFactory {
   } {
     const settings = this.loadSettings();
     const modelStatus = this.getProviderModelStatus(settings);
-    const routingSettings = this.getProviderRoutingSettings(settings, settings.providerType);
+    const routingSettings = this.getProviderRoutingSettings(
+      settings,
+      settings.providerType,
+    );
     const currentModel = modelStatus.currentModel;
     return {
       currentProvider: settings.providerType,
@@ -1936,7 +2217,9 @@ export class LLMProviderFactory {
         currentModel,
         activeProvider: settings.providerType,
         activeModel: currentModel,
-        routeReason: routingSettings.profileRoutingEnabled ? "profile_routing" : "manual_override",
+        routeReason: routingSettings.profileRoutingEnabled
+          ? "profile_routing"
+          : "manual_override",
         fallbackChain: [],
         fallbackOccurred: false,
         manualOverride: false,
@@ -1982,7 +2265,9 @@ export class LLMProviderFactory {
       }
       // For Bedrock, try to format the raw model ID into a readable display name
       const displayName =
-        settings.providerType === "bedrock" ? this.formatBedrockProfileName(modelKey) : modelKey;
+        settings.providerType === "bedrock"
+          ? this.formatBedrockProfileName(modelKey)
+          : modelKey;
       return [
         {
           key: modelKey,
@@ -2016,7 +2301,9 @@ export class LLMProviderFactory {
           settings.kimi?.model === storedModel ||
           settings.openaiCompatible?.model === storedModel);
       const currentModel =
-        (!isFromAnotherProvider && storedModel) || customEntry.defaultModel || "";
+        (!isFromAnotherProvider && storedModel) ||
+        customEntry.defaultModel ||
+        "";
       const cachedModels =
         customConfig?.cachedModels && customConfig.cachedModels.length > 0
           ? customConfig.cachedModels
@@ -2025,7 +2312,8 @@ export class LLMProviderFactory {
                 {
                   key: currentModel,
                   displayName: currentModel,
-                  description: customEntry.description || `${customEntry.name} model`,
+                  description:
+                    customEntry.description || `${customEntry.name} model`,
                 },
               ]
             : [];
@@ -2040,28 +2328,13 @@ export class LLMProviderFactory {
     }
 
     switch (settings.providerType) {
-      case "anthropic": {
-        const currentModel = settings.modelKey;
-        const modelList = Object.entries(MODELS).map(([key, value]) => ({
-          key,
-          displayName: value.displayName,
-          description: key.includes("opus")
-            ? "Most capable for complex work"
-            : key.includes("sonnet")
-              ? "Balanced performance and speed"
-              : "Fast and efficient",
-        }));
-        return {
-          currentModel,
-          models: ensureCurrentModel(modelList, currentModel),
-        };
-      }
-
       case "bedrock": {
         const fallbackModel = MODELS[settings.modelKey as ModelKey]?.bedrock;
-        const currentModel = settings.bedrock?.model || fallbackModel || settings.modelKey;
+        const currentModel =
+          settings.bedrock?.model || fallbackModel || settings.modelKey;
         const modelList =
-          settings.cachedBedrockModels && settings.cachedBedrockModels.length > 0
+          settings.cachedBedrockModels &&
+          settings.cachedBedrockModels.length > 0
             ? settings.cachedBedrockModels
             : Object.values(MODELS).map((value) => ({
                 key: value.bedrock,
@@ -2095,9 +2368,11 @@ export class LLMProviderFactory {
       }
 
       case "openrouter": {
-        const currentModel = settings.openrouter?.model || "anthropic/claude-3.5-sonnet";
+        const currentModel =
+          settings.openrouter?.model || "anthropic/claude-3.5-sonnet";
         const modelList =
-          settings.cachedOpenRouterModels && settings.cachedOpenRouterModels.length > 0
+          settings.cachedOpenRouterModels &&
+          settings.cachedOpenRouterModels.length > 0
             ? settings.cachedOpenRouterModels
             : Object.values(OPENROUTER_MODELS).map((value) => ({
                 key: value.id,
@@ -2136,8 +2411,16 @@ export class LLMProviderFactory {
                   displayName: "GPT-3.5 Turbo",
                   description: "Fast and cost-effective",
                 },
-                { key: "o1", displayName: "o1", description: "Advanced reasoning model" },
-                { key: "o1-mini", displayName: "o1 Mini", description: "Fast reasoning model" },
+                {
+                  key: "o1",
+                  displayName: "o1",
+                  description: "Advanced reasoning model",
+                },
+                {
+                  key: "o1-mini",
+                  displayName: "o1 Mini",
+                  description: "Fast reasoning model",
+                },
               ];
         return {
           currentModel,
@@ -2147,7 +2430,8 @@ export class LLMProviderFactory {
 
       case "azure": {
         const deployments = (settings.azure?.deployments || []).filter(Boolean);
-        const currentModel = settings.azure?.deployment || deployments[0] || "deployment-name";
+        const currentModel =
+          settings.azure?.deployment || deployments[0] || "deployment-name";
         const modelList = deployments.map((deployment) => ({
           key: deployment,
           displayName: deployment,
@@ -2160,9 +2444,13 @@ export class LLMProviderFactory {
       }
 
       case "azure-anthropic": {
-        const deployments = (settings.azureAnthropic?.deployments || []).filter(Boolean);
+        const deployments = (settings.azureAnthropic?.deployments || []).filter(
+          Boolean,
+        );
         const currentModel =
-          settings.azureAnthropic?.deployment || deployments[0] || "claude-opus-4-6";
+          settings.azureAnthropic?.deployment ||
+          deployments[0] ||
+          "claude-opus-4-6";
         const modelList = deployments.length
           ? deployments.map((d) => ({
               key: d,
@@ -2170,9 +2458,21 @@ export class LLMProviderFactory {
               description: "Azure Anthropic deployment",
             }))
           : [
-              { key: "claude-opus-4-6", displayName: "Claude Opus 4.6", description: "Azure Anthropic" },
-              { key: "claude-sonnet-4-6", displayName: "Claude Sonnet 4.6", description: "Azure Anthropic" },
-              { key: "claude-haiku-4-6", displayName: "Claude Haiku 4.6", description: "Azure Anthropic" },
+              {
+                key: "claude-opus-4-6",
+                displayName: "Claude Opus 4.6",
+                description: "Azure Anthropic",
+              },
+              {
+                key: "claude-sonnet-4-6",
+                displayName: "Claude Sonnet 4.6",
+                description: "Azure Anthropic",
+              },
+              {
+                key: "claude-haiku-4-6",
+                displayName: "Claude Haiku 4.6",
+                description: "Azure Anthropic",
+              },
             ];
         return {
           currentModel,
@@ -2190,6 +2490,60 @@ export class LLMProviderFactory {
                 displayName: value.displayName,
                 description: `${value.size} parameter model`,
               }));
+        return {
+          currentModel,
+          models: ensureCurrentModel(modelList, currentModel),
+        };
+      }
+
+      case "anthropic": {
+        const currentModel = settings.modelKey;
+        const modelList =
+          settings.cachedAnthropicModels &&
+          settings.cachedAnthropicModels.length > 0
+            ? settings.cachedAnthropicModels
+            : [
+                {
+                  key: "opus-4-6",
+                  displayName: "Opus 4.6",
+                  description: "Most capable model for complex tasks",
+                },
+                {
+                  key: "opus-4-5",
+                  displayName: "Opus 4.5",
+                  description: "Previous flagship Claude model",
+                },
+                {
+                  key: "sonnet-4-6",
+                  displayName: "Sonnet 4.6",
+                  description: "Best model for everyday coding tasks",
+                },
+                {
+                  key: "sonnet-4-5",
+                  displayName: "Sonnet 4.5",
+                  description: "Previous generation balanced model",
+                },
+                {
+                  key: "haiku-4-5",
+                  displayName: "Haiku 4.5",
+                  description: "Fastest Claude model",
+                },
+                {
+                  key: "sonnet-4",
+                  displayName: "Sonnet 4",
+                  description: "Older Claude 4 model",
+                },
+                {
+                  key: "sonnet-3-5",
+                  displayName: "Sonnet 3.5",
+                  description: "Legacy balanced model",
+                },
+                {
+                  key: "haiku-3-5",
+                  displayName: "Haiku 3.5",
+                  description: "Legacy fast model",
+                },
+              ];
         return {
           currentModel,
           models: ensureCurrentModel(modelList, currentModel),
@@ -2258,14 +2612,19 @@ export class LLMProviderFactory {
               ];
         return {
           currentModel,
-          models: ensureCurrentModel(modelList, currentModel, "Selected Pi model"),
+          models: ensureCurrentModel(
+            modelList,
+            currentModel,
+            "Selected Pi model",
+          ),
         };
       }
 
       case "openai-compatible": {
         const currentModel = settings.openaiCompatible?.model || "";
         const modelList =
-          settings.cachedOpenAICompatibleModels && settings.cachedOpenAICompatibleModels.length > 0
+          settings.cachedOpenAICompatibleModels &&
+          settings.cachedOpenAICompatibleModels.length > 0
             ? settings.cachedOpenAICompatibleModels
             : currentModel
               ? [
@@ -2300,7 +2659,10 @@ export class LLMProviderFactory {
   /**
    * Apply a model selection to provider-specific settings.
    */
-  static applyModelSelection(settings: LLMSettings, modelKey: string): LLMSettings {
+  static applyModelSelection(
+    settings: LLMSettings,
+    modelKey: string,
+  ): LLMSettings {
     const updated: LLMSettings = { ...settings };
     const resolvedProviderType = resolveCustomProviderId(settings.providerType);
 
@@ -2330,7 +2692,9 @@ export class LLMProviderFactory {
         updated.openai = { ...settings.openai, model: modelKey };
         break;
       case "azure": {
-        const existingDeployments = (settings.azure?.deployments || []).filter(Boolean);
+        const existingDeployments = (settings.azure?.deployments || []).filter(
+          Boolean,
+        );
         const nextDeployments = existingDeployments.includes(modelKey)
           ? existingDeployments
           : [modelKey, ...existingDeployments];
@@ -2342,7 +2706,9 @@ export class LLMProviderFactory {
         break;
       }
       case "azure-anthropic": {
-        const existingDeployments = (settings.azureAnthropic?.deployments || []).filter(Boolean);
+        const existingDeployments = (
+          settings.azureAnthropic?.deployments || []
+        ).filter(Boolean);
         const nextDeployments = existingDeployments.includes(modelKey)
           ? existingDeployments
           : [modelKey, ...existingDeployments];
@@ -2366,7 +2732,10 @@ export class LLMProviderFactory {
         updated.pi = { ...settings.pi, model: modelKey };
         break;
       case "openai-compatible":
-        updated.openaiCompatible = { ...settings.openaiCompatible, model: modelKey };
+        updated.openaiCompatible = {
+          ...settings.openaiCompatible,
+          model: modelKey,
+        };
         break;
       case "anthropic":
         updated.modelKey = modelKey as ModelKey;
@@ -2485,7 +2854,9 @@ export class LLMProviderFactory {
     }
 
     if (family && version) {
-      return regionTag ? `${family} ${version} ${regionTag}` : `${family} ${version}`;
+      return regionTag
+        ? `${family} ${version} ${regionTag}`
+        : `${family} ${version}`;
     }
 
     // Couldn't parse — return cleaned-up name with region suffix if available
@@ -2538,7 +2909,9 @@ export class LLMProviderFactory {
 
     if (!family || !version) return null;
 
-    return regionPrefix ? `${family} ${version} ${regionPrefix}` : `${family} ${version}`;
+    return regionPrefix
+      ? `${family} ${version} ${regionPrefix}`
+      : `${family} ${version}`;
   }
 
   /**
@@ -2549,11 +2922,14 @@ export class LLMProviderFactory {
     accessKeyId?: string;
     secretAccessKey?: string;
     profile?: string;
-  }): Promise<Array<{ id: string; name: string; provider: string; description: string }>> {
+  }): Promise<
+    Array<{ id: string; name: string; provider: string; description: string }>
+  > {
     const settings = this.loadSettings();
     const region = config?.region || settings.bedrock?.region || "us-east-1";
     const accessKeyId = config?.accessKeyId || settings.bedrock?.accessKeyId;
-    const secretAccessKey = config?.secretAccessKey || settings.bedrock?.secretAccessKey;
+    const secretAccessKey =
+      config?.secretAccessKey || settings.bedrock?.secretAccessKey;
     const profile = config?.profile || settings.bedrock?.profile;
 
     // Default Claude models available on Bedrock (these are inference profile IDs).
@@ -2609,9 +2985,12 @@ export class LLMProviderFactory {
 
         const profiles = response.inferenceProfileSummaries || [];
         for (const profileSummary of profiles as Any[]) {
-          if (profileSummary?.status && profileSummary.status !== "ACTIVE") continue;
+          if (profileSummary?.status && profileSummary.status !== "ACTIVE")
+            continue;
 
-          const models = (profileSummary?.models || []) as Array<{ modelArn?: string }>;
+          const models = (profileSummary?.models || []) as Array<{
+            modelArn?: string;
+          }>;
           const hasClaudeModel = models.some((m) => {
             const arn = (m?.modelArn || "").toLowerCase();
             return arn.includes("anthropic") && arn.includes("claude");
@@ -2628,7 +3007,9 @@ export class LLMProviderFactory {
           const name = this.formatBedrockProfileName(
             (profileSummary?.inferenceProfileName || id).trim(),
           );
-          const type = profileSummary?.type ? String(profileSummary.type) : "INFERENCE_PROFILE";
+          const type = profileSummary?.type
+            ? String(profileSummary.type)
+            : "INFERENCE_PROFILE";
           const description = profileSummary?.description
             ? String(profileSummary.description)
             : `Inference profile (${type})`;
@@ -2651,10 +3032,16 @@ export class LLMProviderFactory {
       // Deduplicate so users see only the formatted API profiles with region tags.
       if (inferenceProfiles.length > 0) {
         // Build a set of model family+version keys from API profiles for dedup
-        const apiNameKeys = new Set(inferenceProfiles.map((p) => p.name.toLowerCase()));
+        const apiNameKeys = new Set(
+          inferenceProfiles.map((p) => p.name.toLowerCase()),
+        );
         const seen = new Set<string>();
-        const merged: Array<{ id: string; name: string; provider: string; description: string }> =
-          [];
+        const merged: Array<{
+          id: string;
+          name: string;
+          provider: string;
+          description: string;
+        }> = [];
 
         // Add inference profiles first (they have region info)
         for (const entry of inferenceProfiles) {
@@ -2670,7 +3057,8 @@ export class LLMProviderFactory {
           // (e.g. "Opus 4.5 US"), since the API version is more informative
           const baseName = entry.name.toLowerCase();
           const hasApiEquivalent =
-            apiNameKeys.has(baseName) || [...apiNameKeys].some((k) => k.startsWith(baseName + " "));
+            apiNameKeys.has(baseName) ||
+            [...apiNameKeys].some((k) => k.startsWith(baseName + " "));
           if (hasApiEquivalent) continue;
           seen.add(entry.id);
           merged.push(entry);
@@ -2705,7 +3093,9 @@ export class LLMProviderFactory {
         ollamaApiKey: settings.ollama?.apiKey,
       });
       const models = await provider.getAvailableModels();
-      console.log(`[ProviderFactory] Fetched ${models.length} models from Ollama`);
+      console.log(
+        `[ProviderFactory] Fetched ${models.length} models from Ollama`,
+      );
       return models;
     } catch (error: Any) {
       console.error("Failed to fetch Ollama models:", error);
@@ -2718,7 +3108,9 @@ export class LLMProviderFactory {
    */
   static async getGeminiModels(
     apiKey?: string,
-  ): Promise<Array<{ name: string; displayName: string; description: string }>> {
+  ): Promise<
+    Array<{ name: string; displayName: string; description: string }>
+  > {
     const settings = this.loadSettings();
     // Normalize empty strings to undefined
     const normalizedApiKey = apiKey?.trim() || undefined;
@@ -2778,6 +3170,117 @@ export class LLMProviderFactory {
   }
 
   /**
+   * Fetch available Claude models from Anthropic's Models API
+   */
+  static async getAnthropicModels(credentials?: {
+    apiKey?: string;
+    subscriptionToken?: string;
+    authMethod?: "api_key" | "subscription";
+  }): Promise<Array<{ id: string; displayName: string; description: string }>> {
+    const settings = this.loadSettings();
+    const credential = resolveAnthropicCredential(
+      credentials || settings.anthropic,
+    );
+
+    const defaultModels = [
+      {
+        id: "opus-4-6",
+        displayName: "Opus 4.6",
+        description: "Most capable model for complex tasks",
+      },
+      {
+        id: "opus-4-5",
+        displayName: "Opus 4.5",
+        description: "Previous flagship Claude model",
+      },
+      {
+        id: "sonnet-4-6",
+        displayName: "Sonnet 4.6",
+        description: "Best model for everyday coding tasks",
+      },
+      {
+        id: "sonnet-4-5",
+        displayName: "Sonnet 4.5",
+        description: "Previous generation balanced model",
+      },
+      {
+        id: "haiku-4-5",
+        displayName: "Haiku 4.5",
+        description: "Fastest Claude model",
+      },
+      {
+        id: "sonnet-4",
+        displayName: "Sonnet 4",
+        description: "Older Claude 4 model",
+      },
+      {
+        id: "sonnet-3-5",
+        displayName: "Sonnet 3.5",
+        description: "Legacy balanced model",
+      },
+      {
+        id: "haiku-3-5",
+        displayName: "Haiku 3.5",
+        description: "Legacy fast model",
+      },
+    ];
+
+    const cachedModels = settings.cachedAnthropicModels?.map((model) => ({
+      id: model.key,
+      displayName: model.displayName,
+      description: model.description,
+    }));
+
+    if (!credential) {
+      return cachedModels && cachedModels.length > 0
+        ? cachedModels
+        : defaultModels;
+    }
+
+    try {
+      const isSubscriptionToken = credential.includes("sk-ant-oat");
+      const client = isSubscriptionToken
+        ? new Anthropic({
+            apiKey: null,
+            authToken: credential,
+            defaultHeaders: {
+              "anthropic-beta": "claude-code-20250219,oauth-2025-04-20",
+              "x-app": "cli",
+            },
+          })
+        : new Anthropic({ apiKey: credential });
+
+      const page = await client.models.list({ limit: 100 });
+      const knownIds = new Map<string, { key: string; displayName: string }>();
+      for (const [key, value] of Object.entries(MODELS)) {
+        knownIds.set(normalizeAnthropicModelId(value.anthropic), {
+          key,
+          displayName: value.displayName,
+        });
+      }
+
+      const models = page.data
+        .filter((model) => model.id.startsWith("claude-"))
+        .map((model) => {
+          const normalizedId = normalizeAnthropicModelId(model.id);
+          const known = knownIds.get(normalizedId);
+          return {
+            id: known?.key || normalizedId,
+            displayName: known?.displayName || model.display_name || normalizedId,
+            description: normalizedId,
+          };
+        });
+
+      return models.length > 0 ? models : defaultModels;
+    } catch (error: Any) {
+      console.error("Failed to fetch Claude models:", error);
+      return cachedModels && cachedModels.length > 0
+        ? cachedModels
+        : defaultModels;
+    }
+  }
+
+  /**
    * Fetch available OpenRouter models from the API
    */
   static async getOpenRouterModels(
@@ -2792,12 +3295,28 @@ export class LLMProviderFactory {
     const resolvedBaseUrl = normalizedBaseUrl || settings.openrouter?.baseUrl;
 
     const defaultModels = [
-      { id: "anthropic/claude-3.5-sonnet", name: "Claude 3.5 Sonnet", context_length: 200000 },
-      { id: "anthropic/claude-3-opus", name: "Claude 3 Opus", context_length: 200000 },
+      {
+        id: "anthropic/claude-3.5-sonnet",
+        name: "Claude 3.5 Sonnet",
+        context_length: 200000,
+      },
+      {
+        id: "anthropic/claude-3-opus",
+        name: "Claude 3 Opus",
+        context_length: 200000,
+      },
       { id: "openai/gpt-4o", name: "GPT-4o", context_length: 128000 },
       { id: "openai/gpt-4o-mini", name: "GPT-4o Mini", context_length: 128000 },
-      { id: "google/gemini-pro-1.5", name: "Gemini Pro 1.5", context_length: 1000000 },
-      { id: "meta-llama/llama-3.1-405b-instruct", name: "Llama 3.1 405B", context_length: 131072 },
+      {
+        id: "google/gemini-pro-1.5",
+        name: "Gemini Pro 1.5",
+        context_length: 1000000,
+      },
+      {
+        id: "meta-llama/llama-3.1-405b-instruct",
+        name: "Llama 3.1 405B",
+        context_length: 131072,
+      },
     ];
 
     if (!key) {
@@ -2837,10 +3356,26 @@ export class LLMProviderFactory {
     const refreshToken = settings.openai?.refreshToken;
 
     const defaultModels = [
-      { id: "gpt-4o", name: "GPT-4o", description: "Most capable model for complex tasks" },
-      { id: "gpt-4o-mini", name: "GPT-4o Mini", description: "Fast and affordable for most tasks" },
-      { id: "gpt-4-turbo", name: "GPT-4 Turbo", description: "Previous generation flagship" },
-      { id: "gpt-3.5-turbo", name: "GPT-3.5 Turbo", description: "Fast and cost-effective" },
+      {
+        id: "gpt-4o",
+        name: "GPT-4o",
+        description: "Most capable model for complex tasks",
+      },
+      {
+        id: "gpt-4o-mini",
+        name: "GPT-4o Mini",
+        description: "Fast and affordable for most tasks",
+      },
+      {
+        id: "gpt-4-turbo",
+        name: "GPT-4 Turbo",
+        description: "Previous generation flagship",
+      },
+      {
+        id: "gpt-3.5-turbo",
+        name: "GPT-3.5 Turbo",
+        description: "Fast and cost-effective",
+      },
       { id: "o1", name: "o1", description: "Advanced reasoning model" },
       { id: "o1-mini", name: "o1 Mini", description: "Fast reasoning model" },
     ];
@@ -2887,10 +3422,26 @@ export class LLMProviderFactory {
             name: "GPT-5.1 Codex Max",
             description: "Maximum capability for complex tasks",
           },
-          { id: "gpt-5.1", name: "GPT-5.1", description: "Balanced performance and capability" },
-          { id: "gpt-5.2-codex", name: "GPT-5.2 Codex", description: "Advanced reasoning model" },
-          { id: "gpt-5.3-codex", name: "GPT-5.3 Codex", description: "Advanced reasoning model" },
-          { id: "gpt-5.2", name: "GPT-5.2", description: "Most advanced reasoning" },
+          {
+            id: "gpt-5.1",
+            name: "GPT-5.1",
+            description: "Balanced performance and capability",
+          },
+          {
+            id: "gpt-5.2-codex",
+            name: "GPT-5.2 Codex",
+            description: "Advanced reasoning model",
+          },
+          {
+            id: "gpt-5.3-codex",
+            name: "GPT-5.3 Codex",
+            description: "Advanced reasoning model",
+          },
+          {
+            id: "gpt-5.2",
+            name: "GPT-5.2",
+            description: "Most advanced reasoning",
+          },
         ];
       }
     }
@@ -3050,7 +3601,8 @@ export class LLMProviderFactory {
     // Public API models
     if (modelId === "gpt-4o") return "GPT-4o";
     if (modelId === "gpt-4o-mini") return "GPT-4o Mini";
-    if (modelId.includes("gpt-4o-")) return `GPT-4o (${modelId.replace("gpt-4o-", "")})`;
+    if (modelId.includes("gpt-4o-"))
+      return `GPT-4o (${modelId.replace("gpt-4o-", "")})`;
     if (modelId === "gpt-4-turbo") return "GPT-4 Turbo";
     if (modelId === "gpt-4") return "GPT-4";
     if (modelId === "gpt-3.5-turbo") return "GPT-3.5 Turbo";
@@ -3075,17 +3627,21 @@ export class LLMProviderFactory {
     // Public API models
     if (modelId.includes("gpt-4o") && !modelId.includes("mini"))
       return "Most capable model for complex tasks";
-    if (modelId.includes("gpt-4o-mini")) return "Fast and affordable for most tasks";
+    if (modelId.includes("gpt-4o-mini"))
+      return "Fast and affordable for most tasks";
     if (modelId.includes("gpt-4-turbo")) return "Previous generation flagship";
     if (modelId.includes("gpt-4")) return "High capability model";
     if (modelId.includes("gpt-3.5")) return "Fast and cost-effective";
-    if (modelId === "o1" || modelId === "o1-preview") return "Advanced reasoning model";
+    if (modelId === "o1" || modelId === "o1-preview")
+      return "Advanced reasoning model";
     if (modelId === "o1-mini") return "Fast reasoning model";
     if (modelId.includes("o3")) return "Next generation reasoning";
     // ChatGPT internal models
     if (modelId === "gpt-5.1") return "Balanced performance and capability";
-    if (modelId === "gpt-5.1-codex-mini") return "Fast and efficient for most tasks";
-    if (modelId === "gpt-5.1-codex-max") return "Maximum capability for complex tasks";
+    if (modelId === "gpt-5.1-codex-mini")
+      return "Fast and efficient for most tasks";
+    if (modelId === "gpt-5.1-codex-max")
+      return "Maximum capability for complex tasks";
     if (modelId === "gpt-5.2") return "Most advanced reasoning";
     if (modelId === "gpt-5.2-codex") return "Advanced reasoning model";
     if (modelId === "gpt-5.3-codex") return "Advanced reasoning model";
@@ -3097,6 +3653,7 @@ export class LLMProviderFactory {
    */
   static saveCachedModels(
     providerType:
+      | "anthropic"
       | "gemini"
       | "openrouter"
       | "ollama"
@@ -3112,6 +3669,9 @@ export class LLMProviderFactory {
     const settings = this.loadSettings();
 
     switch (providerType) {
+      case "anthropic":
+        settings.cachedAnthropicModels = models;
+        break;
       case "gemini":
         settings.cachedGeminiModels = models;
         break;
@@ -3152,6 +3712,7 @@ export class LLMProviderFactory {
    */
   static getCachedModels(
     providerType:
+      | "anthropic"
       | "gemini"
       | "openrouter"
       | "ollama"
@@ -3166,6 +3727,8 @@ export class LLMProviderFactory {
     const settings = this.loadSettings();
 
     switch (providerType) {
+      case "anthropic":
+        return settings.cachedAnthropicModels;
       case "gemini":
         return settings.cachedGeminiModels;
       case "openrouter":
@@ -3231,16 +3794,24 @@ export class LLMProviderFactory {
     }
 
     const settings = this.loadSettings();
-    const existingConfig = getCustomProviderConfig(settings.customProviders, resolvedProviderType) || {};
+    const existingConfig =
+      getCustomProviderConfig(settings.customProviders, resolvedProviderType) ||
+      {};
     const apiKey = overrides?.apiKey?.trim() || existingConfig.apiKey || "";
-    const baseUrl = overrides?.baseUrl?.trim() || existingConfig.baseUrl || entry.baseUrl || "";
+    const baseUrl =
+      overrides?.baseUrl?.trim() ||
+      existingConfig.baseUrl ||
+      entry.baseUrl ||
+      "";
     const documentedModels = getKnownCustomProviderModels(entry);
     const fallbackCachedModels = Array.from(
-      new Set([
-        existingConfig.model?.trim(),
-        entry.defaultModel?.trim(),
-        ...documentedModels.map((model) => model.key),
-      ].filter(Boolean)),
+      new Set(
+        [
+          existingConfig.model?.trim(),
+          entry.defaultModel?.trim(),
+          ...documentedModels.map((model) => model.key),
+        ].filter(Boolean),
+      ),
     ).map((modelId) => ({
       key: modelId!,
       displayName: modelId!,
@@ -3249,7 +3820,11 @@ export class LLMProviderFactory {
 
     // MiniMax documents its supported model IDs, but the Anthropic-compatible
     // endpoint does not expose a usable public /models listing endpoint.
-    if (documentedModels.length > 0 && (resolvedProviderType === "minimax" || resolvedProviderType === "minimax-portal")) {
+    if (
+      documentedModels.length > 0 &&
+      (resolvedProviderType === "minimax" ||
+        resolvedProviderType === "minimax-portal")
+    ) {
       const updatedSettings = this.loadSettings();
       updatedSettings.customProviders = {
         ...updatedSettings.customProviders,

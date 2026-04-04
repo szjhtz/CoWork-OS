@@ -4,12 +4,15 @@ import { AgentDaemon } from "../daemon";
 
 describe("AgentDaemon terminal lifecycle helpers", () => {
   it("cancelTaskRecord persists cancelled status and emits canonical terminal events", () => {
-    const daemonLike = {
+    const daemonLike = Object.assign(Object.create(AgentDaemon.prototype), {
       taskRepo: {
         findById: vi.fn().mockReturnValue({
           id: "task-cancelled",
           status: "executing",
         }),
+        update: vi.fn(),
+      },
+      approvalRepo: {
         update: vi.fn(),
       },
       clearRetryState: vi.fn(),
@@ -23,9 +26,10 @@ describe("AgentDaemon terminal lifecycle helpers", () => {
           },
         ],
       ]),
+      pendingApprovals: new Map(),
       logEvent: vi.fn(),
       teamOrchestrator: null,
-    } as Any;
+    }) as Any;
 
     AgentDaemon.prototype.cancelTaskRecord.call(
       daemonLike,

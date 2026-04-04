@@ -18,13 +18,16 @@ export interface ModelPricing {
  */
 export const MODEL_PRICING: Record<string, ModelPricing> = {
   // Anthropic Claude models — cache reads billed at 10% of input price (90% discount)
+  "claude-opus-4-6": { inputPer1M: 15.0, outputPer1M: 75.0, cachedInputPer1M: 1.5 },
   "claude-opus-4-5-20251101": { inputPer1M: 15.0, outputPer1M: 75.0, cachedInputPer1M: 1.5 },
   "claude-opus-4-5-20250101": { inputPer1M: 15.0, outputPer1M: 75.0, cachedInputPer1M: 1.5 },
   "claude-sonnet-4-6": { inputPer1M: 3.0, outputPer1M: 15.0, cachedInputPer1M: 0.3 },
+  "claude-sonnet-4-5": { inputPer1M: 3.0, outputPer1M: 15.0, cachedInputPer1M: 0.3 },
   "claude-sonnet-4-5-20250514": { inputPer1M: 3.0, outputPer1M: 15.0, cachedInputPer1M: 0.3 },
   "claude-sonnet-4-20250514": { inputPer1M: 3.0, outputPer1M: 15.0, cachedInputPer1M: 0.3 },
   "claude-3-5-sonnet-20241022": { inputPer1M: 3.0, outputPer1M: 15.0, cachedInputPer1M: 0.3 },
   "claude-3-5-sonnet-latest": { inputPer1M: 3.0, outputPer1M: 15.0, cachedInputPer1M: 0.3 },
+  "claude-haiku-4-5": { inputPer1M: 0.8, outputPer1M: 4.0, cachedInputPer1M: 0.08 },
   "claude-3-5-haiku-20241022": { inputPer1M: 0.8, outputPer1M: 4.0, cachedInputPer1M: 0.08 },
   "claude-3-5-haiku-latest": { inputPer1M: 0.8, outputPer1M: 4.0, cachedInputPer1M: 0.08 },
   "claude-3-opus-20240229": { inputPer1M: 15.0, outputPer1M: 75.0, cachedInputPer1M: 1.5 },
@@ -37,6 +40,7 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
   "anthropic.claude-3-opus-20240229-v1:0": { inputPer1M: 15.0, outputPer1M: 75.0, cachedInputPer1M: 1.5 },
   "anthropic.claude-3-sonnet-20240229-v1:0": { inputPer1M: 3.0, outputPer1M: 15.0, cachedInputPer1M: 0.3 },
   "anthropic.claude-3-haiku-20240307-v1:0": { inputPer1M: 0.25, outputPer1M: 1.25, cachedInputPer1M: 0.025 },
+  "anthropic.claude-opus-4-6": { inputPer1M: 15.0, outputPer1M: 75.0, cachedInputPer1M: 1.5 },
   "us.anthropic.claude-opus-4-5-20251101-v1:0": { inputPer1M: 15.0, outputPer1M: 75.0, cachedInputPer1M: 1.5 },
   "anthropic.claude-opus-4-5-20251101": { inputPer1M: 15.0, outputPer1M: 75.0, cachedInputPer1M: 1.5 },
   "anthropic.claude-opus-4-5-20250514": { inputPer1M: 15.0, outputPer1M: 75.0, cachedInputPer1M: 1.5 },

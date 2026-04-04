@@ -7,44 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.23] - 2026-04-05
+
 ### Added
-- **Session checklist primitive**: execution-style tasks can create a session-local ordered checklist via `task_list_create`, maintain it with `task_list_update`, inspect it with `task_list_list`, and surface it read-only in the task UI with verification nudge state.
-- **SessionRuntime owner**: task-session state, retry/recovery mirrors, worker state, verification state, and resume snapshots now live in one canonical runtime owner instead of being mirrored across executor paths.
-- **Prompt-aware tool descriptions**: built-in tool definitions can now carry internal prompt metadata so visible tools render concise execution descriptions and compact planning text from one shared source.
-- **Structured delegation briefs**: delegated child work now receives a normalized brief with role, parent-step context, scope, evidence requirements, deliverable shape, and completion contract.
-- **Session snapshot resume algorithm**: persisted task state now prefers `session_runtime_v2` checkpoint/event payloads, falls back to legacy `conversationHistory` payloads or event reconstruction, and rewrites legacy resumes to V2 on the next checkpoint.
-- **Permission engine**: layered tool approvals now evaluate explicit modes, per-tool/path/command-prefix/MCP-server rules, workspace-local policy files, profile rules, and denial fallback instead of relying on a single risk gate.
-- **Workspace rule manager**: Settings now lets users browse and remove workspace-local permission rules directly, and approval prompts can persist workspace or profile rules with explicit scope and reason.
-- **Shared turn/runtime kernel**: task steps, follow-ups, subagents, and verification still run through a canonical `TurnKernel` for individual turn execution instead of duplicated loop bodies.
-- **Metadata-driven tool scheduling**: concurrency-safe reads batch together automatically, scoped writes serialize, and post-batch result ordering stays stable through a single `ToolScheduler`.
-- **Graph-backed delegation**: spawned agents, collaborative runs, workflow phases, and ACP task delegation now resolve through a normalized orchestration graph engine.
-- **Typed worker roles**: built-in `researcher`, `implementer`, `verifier`, and `synthesizer` worker roles drive delegation, prompts, and hard tool scopes.
-- **Semantic tool summaries**: completed tool batches now carry concise semantic labels for timeline rows and completion relays.
-- **Configurable primary retry cooldown**: `Settings > LLM > Provider Failover` now includes `Retry primary after (seconds)` so ordered LLM fallback chains can temporarily stay on a working fallback before probing the primary route again. Leaving it blank uses the default 60-second cooldown; `0` retries the primary on the next route refresh.
-- **Imported capability security reports**: skills and plugin packs now share persisted import security reports, quarantine records, retry/remove actions, and aligned IPC contracts for install-time security outcomes.
-- **Provider-aware prompt caching**: CoWork now persists stable prompt-cache metadata in `SessionRuntime`, keeps stable system sections cacheable, prefers Anthropic automatic caching when available, uses explicit OpenRouter Claude breakpoints, and derives stable OpenAI-family cache keys for GPT routes including Azure OpenAI profile-based routing.
+- **Release notes for 0.5.23**: see [Release Notes 0.5.23](release-notes-0.5.23.md).
+- **Subconscious reflective loop**: CoWork now includes a new reflective automation subsystem with persisted targets, backlog items, hypotheses, critiques, dispatch records, artifact storage, migration support, and a dedicated settings surface under Automations.
+- **Provider-aware prompt caching**: stable prompt sections can now be cached across Anthropic, OpenRouter Claude, Azure OpenAI, and OpenAI-family routes, with shared cache metadata persisted in `SessionRuntime`.
+- **Adaptive output token policy**: request-kind-aware output budgeting now classifies truncation modes, adjusts output-token limits by provider family, and guides retry or continuation behavior when a response hits output ceilings.
+- **Prompt-aware tool descriptions**: built-in tools now carry prompt metadata so the runtime can render concise execution-facing descriptions and compact planning text from one shared definition.
+- **Imported capability security**: managed skills and plugin packs now stage through a shared security gate with persisted reports, quarantine handling, retry/remove actions, and explicit file-import approval tracking.
+- **Usage Insights projector**: usage metrics now support incremental backfill/projection, richer provider breakdowns, retry metrics, normalized provider names, and new renderer helpers for periods and formatting.
+- **Task feedback controls**: completed tasks can now collect user feedback directly from the right panel.
 
 ### Changed
-- **SessionRuntime boundary**: runtime state now includes the session checklist bucket, replayable checklist events, and the non-blocking verification nudge algorithm for implementation-first tasks.
-- **Prompt stack composition**: execution and follow-up prompts now assemble from named session- and turn-scoped sections with cache-aware reuse of stable sections and per-section budgeting.
-- **Verification guidance timing**: checklist reminders and pre-finalization reminders now surface missing verification evidence before the final post-hoc verification gate runs.
-- **Completion projection**: task completion relays now compose from `resultSummary`, semantic batch labels, and verifier verdict/report fields.
-- **Runtime boundary**: TaskExecutor now owns bootstrap, plan construction, finalization, and daemon/UI projection while SessionRuntime owns mutable turn-loop state, persistence, and recovery.
-- **Security surfaces**: the approval dialog, Settings permission panel, workspace manifest mirror, and workspace DB now all participate in the same permission workflow.
-- **Follow-up visibility**: follow-up completion events now preserve the triggering user text so the timeline can surface orphaned follow-ups explicitly.
-- **Canvas / visual refinement UX**: screenshot-heavy refinement loops render more compactly in summary mode to keep the feed readable.
-- **Imported skills and packs**: managed imports now stage into a temp location, run structural/content/package scanning before activation, persist sidecar reports, and move to quarantine instead of activating when the scan blocks the bundle.
-- **Prompt-cache defaults**: prompt caching now defaults to `auto` for supported providers, uses a 5-minute TTL unless overridden, and records cache reads/writes in usage telemetry and cost accounting when upstream APIs report them.
+- **Execution runtime**: prompt assembly now uses cache-aware session- and turn-scoped sections, shared prompt-section hashing, adaptive output-budget state, prompt-aware tool text, and normalized delegation-role inference.
+- **Provider routing and failover**: fallback settings now preserve cached model metadata, respect a configurable retry-to-primary cooldown, keep active failover routes stable, and expose the new behavior in settings and provider docs.
+- **Anthropic, OpenAI, Azure, and OpenRouter integrations**: provider implementations now handle scoped system blocks, prompt-cache metadata, richer usage accounting, safer credential handling, and normalized display names more consistently.
+- **Import and extension loading**: imported skills and plugin packs now carry persisted security reports through loader, installer, registry, IPC, and renderer surfaces instead of surfacing ad hoc warnings.
+- **Automations terminology and docs**: product copy, settings labels, comparisons, and troubleshooting guides now consistently use `Subconscious` or `subconscious loop` in place of the older self-improvement language where appropriate.
+- **Usage Insights UI**: the LLM section and charts now use normalized provider names, richer charting, one-day and shared period presets, and extracted formatting helpers.
+- **Approval and task-detail UX**: approval dialogs now render safer command previews, and task detail feedback moved into the right panel.
+- **Gateway, daemon, and worktree plumbing**: workspace bootstrap, channel gateway startup, secure worktree persistence, and health snapshots now carry richer routing and provider state.
 
 ### Fixed
-- **Resume race on terminal tasks**: approval- or follow-up-driven resume handling no longer overwrites a freshly completed task row back to `executing`; resume now re-checks canonical persisted task state before applying active status.
-- **Stale completion state**: follow-up completion now persists terminal task state together with the completion payload, preventing sidebar/task-detail divergence after a task finishes.
-- **Hidden follow-up triggers**: session follow-up messages now remain visible in the timeline rather than collapsing behind later action blocks.
-- **LLM fallback settings persistence**: saving LLM settings now reliably preserves the configured fallback provider/model list and the primary-retry cooldown in the encrypted settings store.
-- **LLM failover retry routing**: retryable provider errors such as OpenRouter `429` responses now advance to the next configured fallback route without immediately snapping back to the primary provider on the next retry loop.
-- **Return-to-primary thrash**: after failover, the executor now preserves the active fallback route for the configured cooldown window before attempting the primary route again.
-- **Approval timeout completion race**: stale approval timers no longer overwrite terminal task state after a task has already completed, failed, or been cancelled.
-- **Post-install tampering on managed imports**: previously installed imported skills and packs are now rechecked by digest on discovery/load so modified managed bundles can be quarantined before activation.
+- **OpenRouter attribution**: request headers now use a single normalized attribution category set across OpenRouter calls.
+- **Fallback routing stability**: retryable provider failures now move through fallback routes more reliably without immediately snapping back to the primary route.
+- **LLM settings persistence**: saving provider settings now preserves fallback chains, retry cooldowns, and cached model metadata more reliably.
+- **Tool-result reminder payloads**: JSON envelopes remain valid when model reminders are attached to tool results.
+- **Approval command previews**: long or multiline commands now render as truncated previews instead of overflowing approval dialogs.
+- **Managed import integrity**: imported skills and packs are rechecked and can be quarantined consistently when their stored bundle no longer matches the expected digest or security outcome.
+- **Task cleanup bookkeeping**: deleting task rows now clears subconscious task references so reflective automation state does not retain stale task pointers.
+- **Empty follow-up end turns**: follow-up loops now retry empty `end_turn` responses instead of silently finalizing with no text, and repeated empty follow-up responses are surfaced as provider errors.
 
 ## [0.5.19] - 2026-03-30
 
@@ -889,7 +882,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | 0.1.0 | 2025-01-24 | First public release with core features |
 | 0.0.1 | 2025-01-20 | Initial development setup |
 
-[Unreleased]: https://github.com/CoWork-OS/CoWork-OS/compare/v0.5.19...HEAD
+[Unreleased]: https://github.com/CoWork-OS/CoWork-OS/compare/v0.5.23...HEAD
+[0.5.23]: https://github.com/CoWork-OS/CoWork-OS/releases/tag/v0.5.23
 [0.5.19]: https://github.com/CoWork-OS/CoWork-OS/releases/tag/v0.5.19
 [0.5.18]: https://github.com/CoWork-OS/CoWork-OS/releases/tag/v0.5.18
 [0.5.17]: https://github.com/CoWork-OS/CoWork-OS/releases/tag/v0.5.17

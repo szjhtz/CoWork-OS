@@ -31,4 +31,25 @@ describe("buildToolResultEnvelope", () => {
       ]),
     );
   });
+
+  it("keeps the model payload valid JSON when a model reminder is present", () => {
+    const envelope = buildToolResultEnvelope({
+      toolUseId: "tool-2",
+      toolName: "task_list_update",
+      status: "success",
+      result: {
+        items: [],
+        updatedAt: 1,
+        verificationNudgeNeeded: true,
+        nudgeReason: "Add a verification item before finishing.",
+      },
+      modelReminder: "CHECKLIST REMINDER:\n- Add a verification item before finishing.",
+    });
+
+    expect(JSON.parse(envelope.modelPayload)).toMatchObject({
+      verificationNudgeNeeded: true,
+      _modelReminder:
+        "CHECKLIST REMINDER:\n- Add a verification item before finishing.",
+    });
+  });
 });

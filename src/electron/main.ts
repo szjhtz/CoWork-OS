@@ -33,6 +33,7 @@ import { setupWorktreeHandlers } from "./ipc/worktree-handlers";
 import { ComparisonService } from "./git/ComparisonService";
 import { TaskSubscriptionRepository } from "./agents/TaskSubscriptionRepository";
 import { StandupReportService } from "./reports/StandupReportService";
+import { UsageInsightsProjector } from "./reports/UsageInsightsProjector";
 import {
   HeartbeatService,
   HeartbeatServiceDeps,
@@ -60,7 +61,10 @@ import { SearchProviderFactory } from "./agent/search";
 import { ChannelGateway } from "./gateway";
 import { formatChatTranscriptForPrompt } from "./gateway/chat-transcript";
 import { updateManager } from "./updater";
-import { importProcessEnvToSettings, migrateEnvToSettings } from "./utils/env-migration";
+import {
+  importProcessEnvToSettings,
+  migrateEnvToSettings,
+} from "./utils/env-migration";
 import {
   TEMP_WORKSPACE_ID,
   TEMP_WORKSPACE_ROOT_DIR_NAME,
@@ -108,10 +112,21 @@ import {
   shouldImportEnvSettingsFromArgsOrEnv,
   shouldPrintControlPlaneTokenFromArgsOrEnv,
 } from "./utils/runtime-mode";
-import { getActiveProfileId, getUserDataDir, hasNonDefaultProfile } from "./utils/user-data-dir";
+import {
+  getActiveProfileId,
+  getUserDataDir,
+  hasNonDefaultProfile,
+} from "./utils/user-data-dir";
 // Live Canvas feature
-import { registerCanvasScheme, registerCanvasProtocol, CanvasManager } from "./canvas";
-import { setupCanvasHandlers, cleanupCanvasHandlers } from "./ipc/canvas-handlers";
+import {
+  registerCanvasScheme,
+  registerCanvasProtocol,
+  CanvasManager,
+} from "./canvas";
+import {
+  setupCanvasHandlers,
+  cleanupCanvasHandlers,
+} from "./ipc/canvas-handlers";
 import { setupQAHandlers } from "./ipc/qa-handlers";
 import { pruneTempWorkspaces } from "./utils/temp-workspace";
 import { getActiveTempWorkspaceLeases } from "./utils/temp-workspace-lease";
@@ -122,7 +137,10 @@ import { pruneTempSandboxProfiles } from "./utils/temp-sandbox-profiles";
 import { EventTriggerService } from "./triggers/EventTriggerService";
 import { setupTriggerHandlers } from "./ipc/trigger-handlers";
 import { DailyBriefingService } from "./briefing/DailyBriefingService";
-import { syncDailyBriefingCronJob, DAILY_BRIEFING_MARKER } from "./briefing/briefing-scheduler";
+import {
+  syncDailyBriefingCronJob,
+  DAILY_BRIEFING_MARKER,
+} from "./briefing/briefing-scheduler";
 import { CouncilService } from "./council/CouncilService";
 import { setCouncilService } from "./council";
 import {
@@ -130,21 +148,33 @@ import {
   readWorkspacePriorities,
 } from "./briefing/workspace-briefing-context";
 import { setupBriefingHandlers } from "./ipc/briefing-handlers";
-import { setupImprovementHandlers } from "./ipc/improvement-handlers";
+import {
+  setupImprovementHandlers,
+  setupSubconsciousHandlers,
+} from "./ipc/subconscious-handlers";
 import { FileHubService } from "./file-hub/FileHubService";
 import { setupFileHubHandlers } from "./ipc/file-hub-handlers";
 import { WebAccessServer } from "./web-server/WebAccessServer";
-import { DEFAULT_WEB_ACCESS_CONFIG, type WebAccessConfig } from "./web-server/types";
+import {
+  DEFAULT_WEB_ACCESS_CONFIG,
+  type WebAccessConfig,
+} from "./web-server/types";
 import { setupWebAccessHandlers } from "./ipc/web-access-handlers";
-import { ManagedAccountManager, type ManagedAccountStatus } from "./accounts/managed-account-manager";
-import { initializeXMentionBridgeService, XMentionBridgeService } from "./x-mentions";
+import {
+  ManagedAccountManager,
+  type ManagedAccountStatus,
+} from "./accounts/managed-account-manager";
+import {
+  initializeXMentionBridgeService,
+  XMentionBridgeService,
+} from "./x-mentions";
 import { AmbientMonitoringService } from "./monitoring/AmbientMonitoringService";
 import { AwarenessService } from "./awareness/AwarenessService";
 import { AutonomyEngine } from "./awareness/AutonomyEngine";
-import { ImprovementCandidateService } from "./improvement/ImprovementCandidateService";
-import { ImprovementLoopService } from "./improvement/ImprovementLoopService";
+import { SubconsciousLoopService } from "./subconscious/SubconsciousLoopService";
 import { createLogger } from "./utils/logger";
 import { registerMediaProtocol, registerMediaScheme } from "./media";
+import { rememberApprovedImportFiles } from "./security/file-import-approvals";
 
 let mainWindow: BrowserWindow | null = null;
 let dbManager: DatabaseManager;
@@ -157,12 +187,13 @@ let ambientMonitoringService: AmbientMonitoringService | null = null;
 let heartbeatService: HeartbeatService | null = null;
 let awarenessService: AwarenessService | null = null;
 let autonomyEngine: AutonomyEngine | null = null;
-let improvementLoopService: ImprovementLoopService | null = null;
+let subconsciousLoopService: SubconsciousLoopService | null = null;
 let crossSignalService: CrossSignalService | null = null;
 let feedbackService: FeedbackService | null = null;
 let loreService: LoreService | null = null;
 let xMentionBridgeService: XMentionBridgeService | null = null;
 let strategicPlannerService: StrategicPlannerService | null = null;
+let eventTriggerService: EventTriggerService | null = null;
 let detachTaskLifecycleSync: (() => void) | null = null;
 let tempWorkspacePruneTimer: NodeJS.Timeout | null = null;
 let tempSandboxProfilePruneTimer: NodeJS.Timeout | null = null;
@@ -187,6 +218,55 @@ const TRANSIENT_MAIN_PROCESS_ERROR_RE =
   /(ECONNRESET|ETIMEDOUT|EPIPE|ENOTFOUND|ENETUNREACH|EHOSTUNREACH|socket hang up|Timed Out|Connection Closed)/i;
 let processErrorGuardsInstalled = false;
 
+function isAllowedWebviewUrl(value: string): boolean {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return false;
+  }
+  if (raw === "about:blank") {
+    return true;
+  }
+
+  try {
+    const parsed = new URL(raw);
+    return (
+      parsed.protocol === "https:" ||
+      parsed.protocol === "http:" ||
+      parsed.protocol === "canvas:"
+    );
+  } catch {
+    return false;
+  }
+}
+
+app.on("web-contents-created", (_event, contents) => {
+  contents.on("will-attach-webview", (event, webPreferences, params) => {
+    delete (webPreferences as Record<string, unknown>).preload;
+    delete (webPreferences as Record<string, unknown>).preloadURL;
+    delete (webPreferences as Record<string, unknown>).additionalArguments;
+    webPreferences.nodeIntegration = false;
+    webPreferences.contextIsolation = true;
+    webPreferences.sandbox = true;
+    webPreferences.webSecurity = true;
+
+    if (params) {
+      delete (params as Record<string, unknown>).preload;
+      delete (params as Record<string, unknown>).preloadURL;
+      delete (params as Record<string, unknown>).allowpopups;
+    }
+
+    const targetUrl = typeof params?.src === "string" ? params.src : "";
+    if (!isAllowedWebviewUrl(targetUrl)) {
+      logger.warn(
+        `Blocked webview attachment for disallowed URL: ${
+          targetUrl || "<empty>"
+        }`,
+      );
+      event.preventDefault();
+    }
+  });
+});
+
 const submitHeartbeatSignalForAll = (input: {
   text?: string;
   mode?: "now" | "next-heartbeat";
@@ -201,7 +281,8 @@ function getDevServerUrl(): string {
     return configured;
   }
 
-  const port = String(process.env.COWORK_DEV_SERVER_PORT || "5173").trim() || "5173";
+  const port =
+    String(process.env.COWORK_DEV_SERVER_PORT || "5173").trim() || "5173";
   return `http://127.0.0.1:${port}`;
 }
 
@@ -238,7 +319,9 @@ function installProcessErrorGuards(): void {
 
   process.on("unhandledRejection", (reason) => {
     if (isTransientMainProcessError(reason)) {
-      logger.warn(`Suppressed transient unhandledRejection: ${toErrorMessage(reason)}`);
+      logger.warn(
+        `Suppressed transient unhandledRejection: ${toErrorMessage(reason)}`,
+      );
       return;
     }
     logger.error("unhandledRejection:", reason);
@@ -246,7 +329,9 @@ function installProcessErrorGuards(): void {
 
   process.on("uncaughtException", (error) => {
     if (isTransientMainProcessError(error)) {
-      logger.warn(`Suppressed transient uncaughtException: ${toErrorMessage(error)}`);
+      logger.warn(
+        `Suppressed transient uncaughtException: ${toErrorMessage(error)}`,
+      );
       return;
     }
     logger.error("uncaughtException:", error);
@@ -317,7 +402,8 @@ if (!gotTheLock) {
       }
       const mode = saved.themeMode || "dark";
       const isLight =
-        mode === "light" || (mode === "system" && nativeTheme.shouldUseDarkColors === false);
+        mode === "light" ||
+        (mode === "system" && nativeTheme.shouldUseDarkColors === false);
       if (isLight) windowBgColor = "#f0f0f2";
     } catch {
       // Fallback to dark if settings aren't available yet
@@ -361,7 +447,7 @@ if (!gotTheLock) {
       if (!fsSync.existsSync(rendererIndex)) {
         console.error(
           `[Main] Renderer entry not found: ${rendererIndex}. ` +
-            "The installed package is missing UI assets."
+            "The installed package is missing UI assets.",
         );
         const html = `<!doctype html>
 <html lang="en">
@@ -386,7 +472,9 @@ if (!gotTheLock) {
   </div>
 </body>
 </html>`;
-        mainWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+        mainWindow.loadURL(
+          `data:text/html;charset=utf-8,${encodeURIComponent(html)}`,
+        );
       } else {
         mainWindow.loadFile(rendererIndex);
       }
@@ -396,11 +484,9 @@ if (!gotTheLock) {
       mainWindow = null;
     });
 
-    mainWindow.webContents.on("did-finish-load", () => {
-    });
+    mainWindow.webContents.on("did-finish-load", () => {});
 
-    mainWindow.webContents.on("render-process-gone", (_event, details) => {
-    });
+    mainWindow.webContents.on("render-process-gone", (_event, details) => {});
 
     // Open external links in the system browser instead of inside the app
     mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -426,15 +512,24 @@ if (!gotTheLock) {
   app.whenReady().then(async () => {
     const startupStartedAt = Date.now();
     const logPhase = (name: string, phaseStartedAt: number): void => {
-      logger.debug(`Startup phase "${name}" completed in ${Date.now() - phaseStartedAt} ms`);
+      logger.debug(
+        `Startup phase "${name}" completed in ${Date.now() - phaseStartedAt} ms`,
+      );
     };
-    let mcpStartupSummary = { enabled: 0, attempted: 0, connected: 0, failed: 0 };
+    let mcpStartupSummary = {
+      enabled: 0,
+      attempted: 0,
+      connected: 0,
+      failed: 0,
+    };
     let pluginStartupSummary = { loaded: 0, enabled: 0 };
 
     const resolvedUserDataDir = getUserDataDir();
     const activeProfileId = getActiveProfileId();
     const defaultUserDataDir = app.getPath("userData");
-    if (path.resolve(defaultUserDataDir) !== path.resolve(resolvedUserDataDir)) {
+    if (
+      path.resolve(defaultUserDataDir) !== path.resolve(resolvedUserDataDir)
+    ) {
       try {
         await fs.mkdir(resolvedUserDataDir, { recursive: true });
         app.setPath("userData", resolvedUserDataDir);
@@ -449,36 +544,44 @@ if (!gotTheLock) {
 
     // Set up Content Security Policy for production builds
     if (process.env.NODE_ENV !== "development") {
-      const appRoot = pathToFileURL(path.join(__dirname, "../../renderer")).toString();
-      session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
-        if (!details.url.startsWith(appRoot)) {
-          callback({ responseHeaders: details.responseHeaders });
-          return;
-        }
-        callback({
-          responseHeaders: {
-            ...details.responseHeaders,
-            "Content-Security-Policy": [
-              "default-src 'self'; " +
-                "script-src 'self'; " +
-                "style-src 'self' 'unsafe-inline'; " + // Allow inline styles for React
-                "img-src 'self' data: https:; " + // Allow images from self, data URIs, and HTTPS
-                "font-src 'self' data:; " + // Allow fonts from self and data URIs
-                "connect-src 'self' https:; " + // Allow API calls to HTTPS endpoints
-                "media-src 'self' data: blob: media: https:; " + // Allow inline video previews via blob/data URLs and the media:// protocol
-                "worker-src 'self' blob:; " + // Allow web workers from blob URLs
-                "frame-ancestors 'none'; " + // Prevent embedding in iframes
-                "form-action 'self';", // Restrict form submissions
-            ],
-          },
-        });
-      });
+      const appRoot = pathToFileURL(
+        path.join(__dirname, "../../renderer"),
+      ).toString();
+      session.defaultSession.webRequest.onHeadersReceived(
+        (details, callback) => {
+          if (!details.url.startsWith(appRoot)) {
+            callback({ responseHeaders: details.responseHeaders });
+            return;
+          }
+          callback({
+            responseHeaders: {
+              ...details.responseHeaders,
+              "Content-Security-Policy": [
+                "default-src 'self'; " +
+                  "script-src 'self'; " +
+                  "style-src 'self' 'unsafe-inline'; " + // Allow inline styles for React
+                  "img-src 'self' data: https:; " + // Allow images from self, data URIs, and HTTPS
+                  "font-src 'self' data:; " + // Allow fonts from self and data URIs
+                  "connect-src 'self' https:; " + // Allow API calls to HTTPS endpoints
+                  "media-src 'self' data: blob: media: https:; " + // Allow inline video previews via blob/data URLs and the media:// protocol
+                  "worker-src 'self' blob:; " + // Allow web workers from blob URLs
+                  "frame-ancestors 'none'; " + // Prevent embedding in iframes
+                  "form-action 'self';", // Restrict form submissions
+              ],
+            },
+          });
+        },
+      );
     }
 
     // Initialize database first - required for SecureSettingsRepository
     const coreInitStartedAt = Date.now();
     dbManager = new DatabaseManager();
-    const tempWorkspaceRoot = path.join(os.tmpdir(), TEMP_WORKSPACE_ROOT_DIR_NAME);
+    UsageInsightsProjector.initialize(dbManager.getDatabase()).warm();
+    const tempWorkspaceRoot = path.join(
+      os.tmpdir(),
+      TEMP_WORKSPACE_ROOT_DIR_NAME,
+    );
     const runTempWorkspacePrune = () => {
       try {
         pruneTempWorkspaces({
@@ -491,7 +594,10 @@ if (!gotTheLock) {
       }
     };
     runTempWorkspacePrune();
-    tempWorkspacePruneTimer = setInterval(runTempWorkspacePrune, TEMP_WORKSPACE_PRUNE_INTERVAL_MS);
+    tempWorkspacePruneTimer = setInterval(
+      runTempWorkspacePrune,
+      TEMP_WORKSPACE_PRUNE_INTERVAL_MS,
+    );
     tempWorkspacePruneTimer.unref();
     const runTempSandboxProfilePrune = () => {
       try {
@@ -526,14 +632,19 @@ if (!gotTheLock) {
 
     // Optional: import process.env keys into Settings (explicit opt-in; useful for headless/server deployments).
     if (IMPORT_ENV_SETTINGS) {
-      const importResult = await importProcessEnvToSettings({ mode: IMPORT_ENV_SETTINGS_MODE });
+      const importResult = await importProcessEnvToSettings({
+        mode: IMPORT_ENV_SETTINGS_MODE,
+      });
       if (importResult.migrated && importResult.migratedKeys.length > 0) {
         logger.info(
           `Imported credentials from process.env (${IMPORT_ENV_SETTINGS_MODE}): ${importResult.migratedKeys.join(", ")}`,
         );
       }
       if (importResult.error) {
-        logger.warn("Failed to import credentials from process.env:", importResult.error);
+        logger.warn(
+          "Failed to import credentials from process.env:",
+          importResult.error,
+        );
       }
     }
 
@@ -543,6 +654,7 @@ if (!gotTheLock) {
         const llmSettings = LLMProviderFactory.loadSettings();
         const hasAnyLlmCreds = !!(
           llmSettings?.anthropic?.apiKey ||
+          llmSettings?.anthropic?.subscriptionToken ||
           llmSettings?.openai?.apiKey ||
           llmSettings?.openai?.accessToken ||
           llmSettings?.gemini?.apiKey ||
@@ -564,6 +676,16 @@ if (!gotTheLock) {
       }
     }
 
+    // Initialize Memory Service before queue recovery starts. AgentDaemon.initialize()
+    // can immediately resume queued tasks, and their early timeline events capture to memory.
+    try {
+      MemoryService.initialize(dbManager);
+      logger.info("Memory Service initialized");
+    } catch (error) {
+      logger.error("Failed to initialize Memory Service:", error);
+      // Don't fail app startup if memory init fails
+    }
+
     // Initialize agent daemon
     agentDaemon = new AgentDaemon(dbManager);
     await agentDaemon.initialize();
@@ -577,7 +699,8 @@ if (!gotTheLock) {
     // This makes a fresh VPS instance usable without first opening the desktop UI.
     try {
       const bootstrapPathRaw =
-        process.env.COWORK_BOOTSTRAP_WORKSPACE_PATH || getArgValue("--bootstrap-workspace");
+        process.env.COWORK_BOOTSTRAP_WORKSPACE_PATH ||
+        getArgValue("--bootstrap-workspace");
       if (
         bootstrapPathRaw &&
         typeof bootstrapPathRaw === "string" &&
@@ -603,7 +726,9 @@ if (!gotTheLock) {
               : path.basename(workspacePath) || "Workspace";
 
           const ws = agentDaemon.createWorkspace(workspaceName, workspacePath);
-          logger.info(`Bootstrapped workspace: ${ws.id} (${ws.name}) at ${ws.path}`);
+          logger.info(
+            `Bootstrapped workspace: ${ws.id} (${ws.name}) at ${ws.path}`,
+          );
         } else {
           logger.info(
             `Bootstrap workspace exists: ${existing.id} (${existing.name}) at ${existing.path}`,
@@ -641,45 +766,45 @@ if (!gotTheLock) {
       logger.error("Failed to initialize LoreService:", error);
     }
 
-    // Initialize Memory Service for cross-session context
     try {
-      MemoryService.initialize(dbManager);
-      logger.info("Memory Service initialized");
-    } catch (error) {
-      logger.error("Failed to initialize Memory Service:", error);
-      // Don't fail app startup if memory init fails
-    }
-
-    try {
-      const candidateService = new ImprovementCandidateService(dbManager.getDatabase());
-      await candidateService.start(agentDaemon);
-      improvementLoopService = new ImprovementLoopService(dbManager.getDatabase(), candidateService, {
-        notify: async ({ type, title, message, taskId, workspaceId }) => {
-          const notificationService = getNotificationService();
-          if (notificationService) {
-            try {
-              await notificationService.add({
-                type,
-                title,
-                message,
-                taskId,
-                workspaceId,
-              });
-            } catch (error) {
-              console.error("[Main] Failed to add improvement notification:", error);
+      subconsciousLoopService = new SubconsciousLoopService(
+        dbManager.getDatabase(),
+        {
+          notify: async ({ type, title, message, taskId, workspaceId }) => {
+            const notificationService = getNotificationService();
+            if (notificationService) {
+              try {
+                await notificationService.add({
+                  type,
+                  title,
+                  message,
+                  taskId,
+                  workspaceId,
+                });
+              } catch (error) {
+                console.error(
+                  "[Main] Failed to add subconscious notification:",
+                  error,
+                );
+              }
             }
-          }
-          try {
-            trayManager.showNotification(title, message, taskId);
-          } catch (error) {
-            console.error("[Main] Failed to show improvement desktop notification:", error);
-          }
+            try {
+              trayManager.showNotification(title, message, taskId);
+            } catch (error) {
+              console.error(
+                "[Main] Failed to show subconscious desktop notification:",
+                error,
+              );
+            }
+          },
+          getTriggerService: () => eventTriggerService,
+          getGlobalRoot: () => process.cwd(),
         },
-      });
-      await improvementLoopService.start(agentDaemon);
-      logger.info("ImprovementLoopService initialized");
+      );
+      await subconsciousLoopService.start(agentDaemon);
+      logger.info("SubconsciousLoopService initialized");
     } catch (error) {
-      logger.error("Failed to initialize ImprovementLoopService:", error);
+      logger.error("Failed to initialize SubconsciousLoopService:", error);
     }
 
     // Initialize Knowledge Graph Service for structured entity/relationship memory
@@ -723,17 +848,24 @@ if (!gotTheLock) {
         getNotificationService: () => getNotificationService(),
         deliverToChannel: async (params) => {
           if (!channelGateway) {
-            throw new Error("Cannot deliver council memo - gateway not initialized");
+            throw new Error(
+              "Cannot deliver council memo - gateway not initialized",
+            );
           }
           let resolvedType = params.channelType as string;
           if (params.channelDbId) {
             const ch = channelGateway.getChannel(params.channelDbId);
             if (ch) resolvedType = ch.type;
           }
-          await channelGateway.sendMessage(resolvedType as Any, params.channelId, params.message, {
-            parseMode: "markdown",
-            idempotencyKey: params.idempotencyKey,
-          });
+          await channelGateway.sendMessage(
+            resolvedType as Any,
+            params.channelId,
+            params.message,
+            {
+              parseMode: "markdown",
+              idempotencyKey: params.idempotencyKey,
+            },
+          );
         },
       });
       setCouncilService(councilService);
@@ -756,12 +888,19 @@ if (!gotTheLock) {
         job: { id: string; name: string },
         nowMs: number,
       ) => {
-        const managedPath = buildManagedScheduledWorkspacePath(userDataDir, job.name, job.id);
+        const managedPath = buildManagedScheduledWorkspacePath(
+          userDataDir,
+          job.name,
+          job.id,
+        );
         await fs.mkdir(managedPath, { recursive: true });
 
         let workspace = workspaceRepo.findByPath(managedPath);
         if (!workspace) {
-          workspace = agentDaemon.createWorkspace(`Scheduled: ${job.name}`.trim(), managedPath);
+          workspace = agentDaemon.createWorkspace(
+            `Scheduled: ${job.name}`.trim(),
+            managedPath,
+          );
         } else {
           workspaceRepo.updateLastUsedAt(workspace.id, nowMs);
         }
@@ -798,11 +937,18 @@ if (!gotTheLock) {
             workspaceRepo.updateLastUsedAt(workspace.id, nowMs);
           }
 
-          const managedWorkspace = isManagedScheduledWorkspacePath(workspace.path, userDataDir);
+          const managedWorkspace = isManagedScheduledWorkspacePath(
+            workspace.path,
+            userDataDir,
+          );
           if (phase === "run" && managedWorkspace) {
-            let runDirectory: ReturnType<typeof createScheduledRunDirectory> | null = null;
+            let runDirectory: ReturnType<
+              typeof createScheduledRunDirectory
+            > | null = null;
             try {
-              runDirectory = createScheduledRunDirectory(workspace.path, { nowMs });
+              runDirectory = createScheduledRunDirectory(workspace.path, {
+                nowMs,
+              });
             } catch (error) {
               console.warn(
                 `[Cron] Failed to prepare run directory for job "${job.name}" (${job.id})`,
@@ -829,7 +975,9 @@ if (!gotTheLock) {
             params.title.startsWith("Daily Briefing:") ||
             params.prompt.includes(DAILY_BRIEFING_MARKER);
           if (isManagedBriefing && dailyBriefingService) {
-            const briefing = await dailyBriefingService.generateBriefing(params.workspaceId);
+            const briefing = await dailyBriefingService.generateBriefing(
+              params.workspaceId,
+            );
             const text = dailyBriefingService.renderBriefingAsText(briefing);
             const syntheticTaskId = `briefing:${randomUUID()}`;
             managedBriefingRuns.set(syntheticTaskId, {
@@ -847,7 +995,10 @@ if (!gotTheLock) {
                 params.workspaceId,
               );
             } catch (err) {
-              console.error("[Council] Failed to prepare council task trigger:", err);
+              console.error(
+                "[Council] Failed to prepare council task trigger:",
+                err,
+              );
             }
           }
           if (preparedCouncilTask) {
@@ -881,7 +1032,8 @@ if (!gotTheLock) {
           runAtMs,
           prevRunAtMs,
         }): Promise<Record<string, string>> => {
-          const template = typeof job?.taskPrompt === "string" ? job.taskPrompt : "";
+          const template =
+            typeof job?.taskPrompt === "string" ? job.taskPrompt : "";
           const wantsChatVars =
             template.includes("{{chat_messages}}") ||
             template.includes("{{chat_since}}") ||
@@ -893,7 +1045,10 @@ if (!gotTheLock) {
           const chatContext =
             job.chatContext ||
             (job.delivery?.channelType && job.delivery?.channelId
-              ? { channelType: job.delivery.channelType, channelId: job.delivery.channelId }
+              ? {
+                  channelType: job.delivery.channelType,
+                  channelId: job.delivery.channelId,
+                }
               : null);
           const channelType = chatContext?.channelType;
           const chatId = chatContext?.channelId;
@@ -931,7 +1086,10 @@ if (!gotTheLock) {
           });
 
           return {
-            chat_messages: rendered.usedCount > 0 ? rendered.transcript : "[no messages found]",
+            chat_messages:
+              rendered.usedCount > 0
+                ? rendered.transcript
+                : "[no messages found]",
             chat_since: new Date(sinceMs).toISOString(),
             chat_until: new Date(runAtMs).toISOString(),
             chat_message_count: String(rendered.usedCount),
@@ -979,11 +1137,14 @@ if (!gotTheLock) {
         // Channel delivery handler - sends job results to messaging platforms
         deliverToChannel: async (params) => {
           if (!channelGateway) {
-            throw new Error("Cannot deliver to channel - gateway not initialized");
+            throw new Error(
+              "Cannot deliver to channel - gateway not initialized",
+            );
           }
 
           const resultAvailable =
-            typeof params.resultText === "string" && params.resultText.trim().length > 0;
+            typeof params.resultText === "string" &&
+            params.resultText.trim().length > 0;
           const hasFullResult =
             (params.status === "ok" ||
               params.status === "partial_success" ||
@@ -1000,7 +1161,8 @@ if (!gotTheLock) {
           const statusEmoji =
             params.status === "ok"
               ? "✅"
-              : params.status === "partial_success" || params.status === "needs_user_action"
+              : params.status === "partial_success" ||
+                  params.status === "needs_user_action"
                 ? "⚠️"
                 : params.status === "error"
                   ? "❌"
@@ -1013,7 +1175,8 @@ if (!gotTheLock) {
           } else if (params.summaryOnly && resultAvailable) {
             // Summary-only mode but result exists — include a truncated preview
             const preview = params.resultText!.trim();
-            const truncated = preview.length > 500 ? `${preview.slice(0, 500)}…` : preview;
+            const truncated =
+              preview.length > 500 ? `${preview.slice(0, 500)}…` : preview;
             message = `${statusEmoji} **${params.jobName}**\n\n${truncated}`;
           } else {
             // No result text or error/timeout — generic status message
@@ -1053,11 +1216,18 @@ if (!gotTheLock) {
             }
 
             // Send the message via the gateway
-            await channelGateway.sendMessage(resolvedType as Any, params.channelId, message, {
-              parseMode: "markdown",
-              idempotencyKey: params.idempotencyKey,
-            });
-            console.log(`[Cron] Delivered to ${resolvedType}:${params.channelId}`);
+            await channelGateway.sendMessage(
+              resolvedType as Any,
+              params.channelId,
+              message,
+              {
+                parseMode: "markdown",
+                idempotencyKey: params.idempotencyKey,
+              },
+            );
+            console.log(
+              `[Cron] Delivered to ${resolvedType}:${params.channelId}`,
+            );
           } catch (err) {
             console.error(
               `[Cron] Failed to deliver to ${params.channelType}:${params.channelId}:`,
@@ -1075,13 +1245,25 @@ if (!gotTheLock) {
           try {
             await MailboxAutomationRegistry.recordCronEvent(evt);
           } catch (error) {
-            logger.debug("[MailboxAutomationRegistry] Failed to record cron event:", error);
+            logger.debug(
+              "[MailboxAutomationRegistry] Failed to record cron event:",
+              error,
+            );
           }
 
-          if (evt.action === "finished" && evt.taskId && councilService?.isCouncilJob(evt.jobId)) {
-            await councilService.finalizeRunForTask(evt.taskId).catch((error) => {
-              console.error("[Council] Failed to finalize council run:", error);
-            });
+          if (
+            evt.action === "finished" &&
+            evt.taskId &&
+            councilService?.isCouncilJob(evt.jobId)
+          ) {
+            await councilService
+              .finalizeRunForTask(evt.taskId)
+              .catch((error) => {
+                console.error(
+                  "[Council] Failed to finalize council run:",
+                  error,
+                );
+              });
             return;
           }
 
@@ -1090,7 +1272,8 @@ if (!gotTheLock) {
             const statusEmoji =
               evt.status === "ok"
                 ? "✅"
-                : evt.status === "partial_success" || evt.status === "needs_user_action"
+                : evt.status === "partial_success" ||
+                    evt.status === "needs_user_action"
                   ? "⚠️"
                   : evt.status === "error"
                     ? "❌"
@@ -1102,16 +1285,18 @@ if (!gotTheLock) {
                   ? "completed with partial results"
                   : evt.status === "needs_user_action"
                     ? "completed, action required"
-                  : evt.status === "error"
-                    ? "failed"
-                    : "timed out";
+                    : evt.status === "error"
+                      ? "failed"
+                      : "timed out";
 
             // Add in-app notification
             const notificationService = getNotificationService();
             if (notificationService) {
               try {
                 // Get job name for the notification
-                const job = cronService ? await cronService.get(evt.jobId) : null;
+                const job = cronService
+                  ? await cronService.get(evt.jobId)
+                  : null;
                 const jobName = job?.name || "Scheduled Task";
                 const task = evt.taskId ? taskRepo.findById(evt.taskId) : null;
                 const taskResult = resolveTaskResultText({
@@ -1124,7 +1309,8 @@ if (!gotTheLock) {
                   type:
                     evt.status === "ok"
                       ? "task_completed"
-                      : evt.status === "partial_success" || evt.status === "needs_user_action"
+                      : evt.status === "partial_success" ||
+                          evt.status === "needs_user_action"
                         ? "warning"
                         : "task_failed",
                   title: `${statusEmoji} ${jobName} ${statusText}`,
@@ -1135,7 +1321,7 @@ if (!gotTheLock) {
                       ? "Task completed successfully."
                       : evt.status === "needs_user_action"
                         ? "Task completed but is waiting on user action."
-                      : "Task did not complete."),
+                        : "Task did not complete."),
                   taskId: evt.taskId,
                   cronJobId: evt.jobId,
                   workspaceId: job?.workspaceId,
@@ -1160,10 +1346,15 @@ if (!gotTheLock) {
       await cronService.start();
       if (councilService) {
         const db = dbManager.getDatabase();
-        const rows = db.prepare("SELECT id FROM council_configs").all() as Array<{ id: string }>;
+        const rows = db
+          .prepare("SELECT id FROM council_configs")
+          .all() as Array<{ id: string }>;
         for (const row of rows) {
           await councilService.syncManagedJob(row.id).catch((error) => {
-            console.error(`[Council] Failed to sync managed cron job for council ${row.id}:`, error);
+            console.error(
+              `[Council] Failed to sync managed cron job for council ${row.id}:`,
+              error,
+            );
           });
         }
       }
@@ -1181,7 +1372,8 @@ if (!gotTheLock) {
       const plugins = pluginRegistry.getPlugins();
       pluginStartupSummary = {
         loaded: plugins.length,
-        enabled: plugins.filter((plugin: Any) => plugin.state === "enabled").length,
+        enabled: plugins.filter((plugin: Any) => plugin.state === "enabled")
+          .length,
       };
       logger.info(
         `Plugins summary: loaded=${pluginStartupSummary.loaded}, enabled=${pluginStartupSummary.enabled}`,
@@ -1203,8 +1395,9 @@ if (!gotTheLock) {
     await setupIpcHandlers(dbManager, agentDaemon, channelGateway, {
       getMainWindow: () => mainWindow,
     });
-    if (improvementLoopService) {
-      setupImprovementHandlers(improvementLoopService);
+    if (subconsciousLoopService) {
+      setupSubconsciousHandlers(subconsciousLoopService);
+      setupImprovementHandlers(subconsciousLoopService);
     }
     void getCustomSkillLoader()
       .initialize()
@@ -1249,16 +1442,22 @@ if (!gotTheLock) {
       const taskRepo = new TaskRepository(db);
       const workspaceRepo = new WorkspaceRepository(db);
 
-      const resolveDefaultWorkspace = (): ReturnType<typeof workspaceRepo.findById> | undefined => {
+      const resolveDefaultWorkspace = ():
+        | ReturnType<typeof workspaceRepo.findById>
+        | undefined => {
         const workspaces = workspaceRepo.findAll();
         return (
-          workspaces.find((workspace) => !workspace.isTemp && !isTempWorkspaceId(workspace.id)) ??
-          workspaces[0]
+          workspaces.find(
+            (workspace) =>
+              !workspace.isTemp && !isTempWorkspaceId(workspace.id),
+          ) ?? workspaces[0]
         );
       };
 
       const hasActiveForegroundTask = (workspaceId?: string): boolean => {
-        const activeTasks = taskRepo.findByStatus(Array.from(ACTIVE_FOREGROUND_TASK_STATUSES));
+        const activeTasks = taskRepo.findByStatus(
+          Array.from(ACTIVE_FOREGROUND_TASK_STATUSES),
+        );
         return activeTasks.some((task) => {
           if (workspaceId && task.workspaceId !== workspaceId) return false;
           return isForegroundUserTask(task);
@@ -1272,7 +1471,13 @@ if (!gotTheLock) {
         mentionRepo,
         activityRepo,
         workingStateRepo,
-        createTask: async (workspaceId, prompt, title, _agentRoleId, options) => {
+        createTask: async (
+          workspaceId,
+          prompt,
+          title,
+          _agentRoleId,
+          options,
+        ) => {
           const task = await agentDaemon.createTask({
             title,
             prompt,
@@ -1282,7 +1487,9 @@ if (!gotTheLock) {
               ...(options?.agentConfig ?? {}),
             },
             ...(options?.source ? { source: options.source } : {}),
-            ...(options?.taskOverrides ? { taskOverrides: options.taskOverrides } : {}),
+            ...(options?.taskOverrides
+              ? { taskOverrides: options.taskOverrides }
+              : {}),
           });
           if (_agentRoleId) {
             taskRepo.update(task.id, {
@@ -1299,19 +1506,30 @@ if (!gotTheLock) {
             ? taskRepo.findByWorkspace(workspaceId)
             : taskRepo.findByStatus(["pending", "running"]);
           return tasks.filter(
-            (t: { assignedAgentRoleId?: string }) => t.assignedAgentRoleId === agentRoleId,
+            (t: { assignedAgentRoleId?: string }) =>
+              t.assignedAgentRoleId === agentRoleId,
           );
         },
         getDefaultWorkspaceId: () => {
           const fallbackTemp = workspaceRepo
             .findAll()
-            .find((workspace) => workspace.isTemp || isTempWorkspaceId(workspace.id));
-          return resolveDefaultWorkspace()?.id ?? fallbackTemp?.id ?? TEMP_WORKSPACE_ID;
+            .find(
+              (workspace) =>
+                workspace.isTemp || isTempWorkspaceId(workspace.id),
+            );
+          return (
+            resolveDefaultWorkspace()?.id ??
+            fallbackTemp?.id ??
+            TEMP_WORKSPACE_ID
+          );
         },
         getDefaultWorkspacePath: () => {
           const fallbackTempPath = workspaceRepo
             .findAll()
-            .find((workspace) => workspace.isTemp || isTempWorkspaceId(workspace.id))?.path;
+            .find(
+              (workspace) =>
+                workspace.isTemp || isTempWorkspaceId(workspace.id),
+            )?.path;
           return resolveDefaultWorkspace()?.path || fallbackTempPath;
         },
         getWorkspacePath: (workspaceId: string) => {
@@ -1319,7 +1537,13 @@ if (!gotTheLock) {
           return workspace?.path;
         },
         hasActiveForegroundTask,
-        recordActivity: ({ workspaceId, agentRoleId, title, description, metadata }) => {
+        recordActivity: ({
+          workspaceId,
+          agentRoleId,
+          title,
+          description,
+          metadata,
+        }) => {
           activityRepo.create({
             workspaceId,
             agentRoleId,
@@ -1333,28 +1557,53 @@ if (!gotTheLock) {
         listWorkspaceContexts: () =>
           workspaceRepo
             .findAll()
-            .filter((workspace) => workspace.path && !workspace.isTemp && !isTempWorkspaceId(workspace.id))
+            .filter(
+              (workspace) =>
+                workspace.path &&
+                !workspace.isTemp &&
+                !isTempWorkspaceId(workspace.id),
+            )
             .map((workspace) => ({
               workspaceId: workspace.id,
               workspacePath: workspace.path,
             })),
         getMemoryFeaturesSettings: () => MemoryFeaturesManager.loadSettings(),
-        getAwarenessSummary: (workspaceId?: string) => awarenessService?.getSummary(workspaceId) || null,
-        getAutonomyState: (workspaceId?: string) => autonomyEngine?.getWorldModel(workspaceId) || null,
-        getAutonomyDecisions: (workspaceId?: string) => autonomyEngine?.listDecisions(workspaceId) || [],
+        getAwarenessSummary: (workspaceId?: string) =>
+          awarenessService?.getSummary(workspaceId) || null,
+        getAutonomyState: (workspaceId?: string) =>
+          autonomyEngine?.getWorldModel(workspaceId) || null,
+        getAutonomyDecisions: (workspaceId?: string) =>
+          autonomyEngine?.listDecisions(workspaceId) || [],
         listActiveSuggestions: (workspaceId: string) =>
           ProactiveSuggestionsService.listActive(workspaceId, {
             includeDeferred: true,
             recordSurface: false,
           }),
         createCompanionSuggestion: (workspaceId, suggestion) =>
-          ProactiveSuggestionsService.createCompanionSuggestion(workspaceId, suggestion),
+          ProactiveSuggestionsService.createCompanionSuggestion(
+            workspaceId,
+            suggestion,
+          ),
         addNotification: async (params) => {
           const notificationService = getNotificationService();
           await notificationService?.add(params);
         },
-        captureMemory: (workspaceId, taskId, type, content, isPrivate, options) =>
-          MemoryService.capture(workspaceId, taskId, type, content, isPrivate, options),
+        captureMemory: (
+          workspaceId,
+          taskId,
+          type,
+          content,
+          isPrivate,
+          options,
+        ) =>
+          MemoryService.capture(
+            workspaceId,
+            taskId,
+            type,
+            content,
+            isPrivate,
+            options,
+          ),
       };
 
       heartbeatService = new HeartbeatService(heartbeatDeps);
@@ -1369,13 +1618,23 @@ if (!gotTheLock) {
         getDefaultWorkspaceId: () => {
           const fallbackTemp = workspaceRepo
             .findAll()
-            .find((workspace) => workspace.isTemp || isTempWorkspaceId(workspace.id));
-          return resolveDefaultWorkspace()?.id ?? fallbackTemp?.id ?? TEMP_WORKSPACE_ID;
+            .find(
+              (workspace) =>
+                workspace.isTemp || isTempWorkspaceId(workspace.id),
+            );
+          return (
+            resolveDefaultWorkspace()?.id ??
+            fallbackTemp?.id ??
+            TEMP_WORKSPACE_ID
+          );
         },
         listWorkspaceIds: () =>
           workspaceRepo
             .findAll()
-            .filter((workspace) => !workspace.isTemp && !isTempWorkspaceId(workspace.id))
+            .filter(
+              (workspace) =>
+                !workspace.isTemp && !isTempWorkspaceId(workspace.id),
+            )
             .map((workspace) => workspace.id),
         createTask: async (workspaceId, title, prompt) =>
           agentDaemon.createTask({
@@ -1387,7 +1646,8 @@ if (!gotTheLock) {
               allowUserInput: false,
             },
           }),
-        hasActiveManualTask: (workspaceId) => hasActiveForegroundTask(workspaceId) || hasActiveForegroundTask(),
+        hasActiveManualTask: (workspaceId) =>
+          hasActiveForegroundTask(workspaceId) || hasActiveForegroundTask(),
         recordActivity: ({ workspaceId, title, description, metadata }) => {
           activityRepo.create({
             workspaceId,
@@ -1411,11 +1671,15 @@ if (!gotTheLock) {
         awarenessService = AwarenessService.initialize({
           getDefaultWorkspaceId: () => {
             try {
-              const workspaceRepo = new WorkspaceRepository(dbManager.getDatabase());
+              const workspaceRepo = new WorkspaceRepository(
+                dbManager.getDatabase(),
+              );
               const workspaces = workspaceRepo.findAll();
               return (
-                workspaces.find((workspace) => !workspace.isTemp && !isTempWorkspaceId(workspace.id))
-                  ?.id || workspaces[0]?.id
+                workspaces.find(
+                  (workspace) =>
+                    !workspace.isTemp && !isTempWorkspaceId(workspace.id),
+                )?.id || workspaces[0]?.id
               );
             } catch {
               return undefined;
@@ -1442,7 +1706,9 @@ if (!gotTheLock) {
     // Setup Mission Control IPC handlers
     try {
       if (!heartbeatService) {
-        logger.error("Mission Control handlers skipped: Heartbeat service unavailable");
+        logger.error(
+          "Mission Control handlers skipped: Heartbeat service unavailable",
+        );
       } else {
         const db = dbManager.getDatabase();
         const agentRoleRepo = new AgentRoleRepository(db);
@@ -1532,9 +1798,12 @@ if (!gotTheLock) {
       }
 
       // Apply Control Plane overrides (optional)
-      const cpHost = process.env.COWORK_CONTROL_PLANE_HOST || getArgValue("--control-plane-host");
+      const cpHost =
+        process.env.COWORK_CONTROL_PLANE_HOST ||
+        getArgValue("--control-plane-host");
       const cpPortRaw =
-        process.env.COWORK_CONTROL_PLANE_PORT || getArgValue("--control-plane-port");
+        process.env.COWORK_CONTROL_PLANE_PORT ||
+        getArgValue("--control-plane-port");
       const cpPort = cpPortRaw ? Number.parseInt(cpPortRaw, 10) : undefined;
       if (
         (typeof cpHost === "string" && cpHost.trim()) ||
@@ -1542,8 +1811,12 @@ if (!gotTheLock) {
       ) {
         try {
           ControlPlaneSettingsManager.updateSettings({
-            ...(typeof cpHost === "string" && cpHost.trim() ? { host: cpHost.trim() } : {}),
-            ...(typeof cpPort === "number" && Number.isFinite(cpPort) ? { port: cpPort } : {}),
+            ...(typeof cpHost === "string" && cpHost.trim()
+              ? { host: cpHost.trim() }
+              : {}),
+            ...(typeof cpPort === "number" && Number.isFinite(cpPort)
+              ? { port: cpPort }
+              : {}),
           });
         } catch (error) {
           logger.warn("Failed to apply Control Plane overrides:", error);
@@ -1571,7 +1844,8 @@ if (!gotTheLock) {
         forceEnable: FORCE_ENABLE_CONTROL_PLANE,
         onEvent: (event) => {
           try {
-            const action = typeof event?.action === "string" ? event.action : "event";
+            const action =
+              typeof event?.action === "string" ? event.action : "event";
             console.log(`[ControlPlane] ${action}`);
           } catch {
             // ignore
@@ -1620,7 +1894,10 @@ if (!gotTheLock) {
       CanvasManager.getInstance().setMainWindow(mainWindow);
 
       // Initialize Git Worktree & Comparison handlers
-      const comparisonService = new ComparisonService(dbManager.getDatabase(), agentDaemon);
+      const comparisonService = new ComparisonService(
+        dbManager.getDatabase(),
+        agentDaemon,
+      );
       agentDaemon.setComparisonService(comparisonService);
       setupWorktreeHandlers(agentDaemon);
 
@@ -1639,31 +1916,47 @@ if (!gotTheLock) {
       await CanvasManager.getInstance().restoreSessions();
 
       // Initialize control plane (WebSocket gateway)
-      setupControlPlaneHandlers(mainWindow, { agentDaemon, dbManager, channelGateway });
+      setupControlPlaneHandlers(mainWindow, {
+        agentDaemon,
+        dbManager,
+        channelGateway,
+      });
       // Auto-start control plane if enabled (and register methods/bridge)
-      await startControlPlaneFromSettings({ deps: { agentDaemon, dbManager, channelGateway } });
+      await startControlPlaneFromSettings({
+        deps: { agentDaemon, dbManager, channelGateway },
+      });
 
       // ── Gap features: triggers, briefing, file hub, web access ───────
       const db = dbManager.getDatabase();
       const workspaceRepo = new WorkspaceRepository(db);
       const activityRepo = new ActivityRepository(db);
-      const resolveDefaultWorkspace = (): ReturnType<typeof workspaceRepo.findById> | undefined => {
+      const resolveDefaultWorkspace = ():
+        | ReturnType<typeof workspaceRepo.findById>
+        | undefined => {
         const workspaces = workspaceRepo.findAll();
         return (
-          workspaces.find((workspace) => !workspace.isTemp && !isTempWorkspaceId(workspace.id)) ??
-          workspaces[0]
+          workspaces.find(
+            (workspace) =>
+              !workspace.isTemp && !isTempWorkspaceId(workspace.id),
+          ) ?? workspaces[0]
         );
       };
       const extractConnectorTriggerSubscription = (trigger: {
         source: string;
         conditions: Array<{ field: string; value: string }>;
-      }): { serverId?: string; connectorId?: string; resourceUri?: string } | null => {
+      }): {
+        serverId?: string;
+        connectorId?: string;
+        resourceUri?: string;
+      } | null => {
         if (trigger.source !== "connector_event") {
           return null;
         }
         const getConditionValue = (...fields: string[]): string | undefined => {
           for (const field of fields) {
-            const match = trigger.conditions.find((condition) => condition.field === field);
+            const match = trigger.conditions.find(
+              (condition) => condition.field === field,
+            );
             if (match?.value) {
               return match.value;
             }
@@ -1678,9 +1971,13 @@ if (!gotTheLock) {
       };
 
       // Event Triggers
-      const triggerService = new EventTriggerService(
+      eventTriggerService = new EventTriggerService(
         {
-          createTask: async (params: { title: string; prompt: string; workspaceId: string }) => {
+          createTask: async (params: {
+            title: string;
+            prompt: string;
+            workspaceId: string;
+          }) => {
             const task = await agentDaemon.createTask({
               title: params.title,
               prompt: params.prompt,
@@ -1702,9 +1999,11 @@ if (!gotTheLock) {
           },
           wakeAgent: (agentRoleId: string) => {
             if (!heartbeatService) return;
-            void heartbeatService.triggerHeartbeat(agentRoleId).catch((error) => {
-              logger.debug("[EventTriggers] wakeAgent failed:", error);
-            });
+            void heartbeatService
+              .triggerHeartbeat(agentRoleId)
+              .catch((error) => {
+                logger.debug("[EventTriggers] wakeAgent failed:", error);
+              });
           },
           getDefaultWorkspaceId: () => "",
           log: (...args: unknown[]) => console.log("[EventTriggers]", ...args),
@@ -1714,26 +2013,30 @@ if (!gotTheLock) {
         },
         db,
       );
+      const currentTriggerService = eventTriggerService;
       const mcpClientManager = MCPClientManager.getInstance();
       const syncMcpTriggerSubscriptions = async (): Promise<void> => {
-        const subscriptions = triggerService
+        const subscriptions = currentTriggerService
           .listTriggers()
           .map(extractConnectorTriggerSubscription)
-          .filter((value): value is NonNullable<typeof value> => Boolean(value));
+          .filter((value): value is NonNullable<typeof value> =>
+            Boolean(value),
+          );
         await mcpClientManager.syncTriggerResourceSubscriptions(subscriptions);
       };
       MailboxAutomationRegistry.configure({
         db,
-        triggerService,
+        triggerService: currentTriggerService,
         resolveDefaultWorkspaceId: () => resolveDefaultWorkspace()?.id,
-        log: (...args: unknown[]) => logger.debug("[MailboxAutomationRegistry]", ...args),
+        log: (...args: unknown[]) =>
+          logger.debug("[MailboxAutomationRegistry]", ...args),
       });
-      triggerService.start();
+      currentTriggerService.start();
       setHookTriggerEmitter((event) => {
-        void triggerService.evaluateEvent(event);
+        void currentTriggerService.evaluateEvent(event);
       });
       mcpClientManager.on("connector_event", (event) => {
-        void triggerService.evaluateEvent({
+        void currentTriggerService.evaluateEvent({
           source: "connector_event",
           timestamp: event.timestamp,
           fields: {
@@ -1750,15 +2053,16 @@ if (!gotTheLock) {
         });
       });
       void syncMcpTriggerSubscriptions();
-      setupTriggerHandlers(triggerService, syncMcpTriggerSubscriptions);
+      setupTriggerHandlers(currentTriggerService, syncMcpTriggerSubscriptions);
       MailboxAutomationHub.configure({
-        triggerService,
+        triggerService: eventTriggerService,
         heartbeatService,
         resolveDefaultWorkspaceId: () => resolveDefaultWorkspace()?.id,
         emitMailboxEvent: (event) => {
           mainWindow?.webContents.send(IPC_CHANNELS.MAILBOX_EVENT, event);
         },
-        log: (...args: unknown[]) => logger.debug("[MailboxAutomationHub]", ...args),
+        log: (...args: unknown[]) =>
+          logger.debug("[MailboxAutomationHub]", ...args),
       });
       ambientMonitoringService = new AmbientMonitoringService({
         listWorkspaces: () =>
@@ -1769,15 +2073,25 @@ if (!gotTheLock) {
                 workspace.path &&
                 !workspace.isTemp &&
                 !isTempWorkspaceId(workspace.id) &&
-                !isManagedScheduledWorkspacePath(workspace.path, getUserDataDir()),
+                !isManagedScheduledWorkspacePath(
+                  workspace.path,
+                  getUserDataDir(),
+                ),
             )
             .map((workspace) => ({
               workspaceId: workspace.id,
               workspacePath: workspace.path,
               name: workspace.name,
             })),
-        getDefaultWorkspaceId: () => resolveDefaultWorkspace()?.id ?? TEMP_WORKSPACE_ID,
-        recordActivity: ({ workspaceId, activityType, title, description, metadata }) => {
+        getDefaultWorkspaceId: () =>
+          resolveDefaultWorkspace()?.id ?? TEMP_WORKSPACE_ID,
+        recordActivity: ({
+          workspaceId,
+          activityType,
+          title,
+          description,
+          metadata,
+        }) => {
           activityRepo.create({
             workspaceId,
             actorType: "system",
@@ -1788,12 +2102,20 @@ if (!gotTheLock) {
           });
         },
         emitTrigger: (event) => {
-          void triggerService.evaluateEvent(event);
+          void currentTriggerService.evaluateEvent(event);
         },
         wakeHeartbeats: ({ text, mode }) => {
           submitHeartbeatSignalForAll({ text, mode, source: "hook" });
         },
-        captureAwarenessEvent: ({ source, workspaceId, title, summary, sensitivity, payload, tags }) => {
+        captureAwarenessEvent: ({
+          source,
+          workspaceId,
+          title,
+          summary,
+          sensitivity,
+          payload,
+          tags,
+        }) => {
           awarenessService?.captureEvent({
             source,
             workspaceId,
@@ -1804,7 +2126,8 @@ if (!gotTheLock) {
             tags,
           });
         },
-        log: (...args: unknown[]) => console.log("[AmbientMonitoring]", ...args),
+        log: (...args: unknown[]) =>
+          console.log("[AmbientMonitoring]", ...args),
       });
       await ambientMonitoringService.start();
 
@@ -1815,7 +2138,9 @@ if (!gotTheLock) {
             try {
               const taskRepo = new TaskRepository(db);
               return (taskRepo.findByWorkspace(_workspaceId, 200) || []).filter(
-                (task) => typeof task.createdAt === "number" && task.createdAt >= _sinceMs,
+                (task) =>
+                  typeof task.createdAt === "number" &&
+                  task.createdAt >= _sinceMs,
               );
             } catch {
               return [];
@@ -1823,12 +2148,14 @@ if (!gotTheLock) {
           },
           searchMemory: (workspaceId, query, limit) => {
             try {
-              return MemoryService.search(workspaceId, query, limit).map((memory) => ({
-                summary: memory.snippet,
-                content: memory.snippet,
-                snippet: memory.snippet,
-                type: memory.type,
-              }));
+              return MemoryService.search(workspaceId, query, limit).map(
+                (memory) => ({
+                  summary: memory.snippet,
+                  content: memory.snippet,
+                  snippet: memory.snippet,
+                  type: memory.type,
+                }),
+              );
             } catch {
               return [];
             }
@@ -1864,9 +2191,12 @@ if (!gotTheLock) {
           },
           getMailboxDigest: async (workspaceId) =>
             getMailboxServiceInstance()?.getMailboxDigest(workspaceId) || null,
-          getAwarenessSummary: async (workspaceId) => awarenessService?.getSummary(workspaceId) || null,
-          getAutonomyState: async (workspaceId) => autonomyEngine?.getWorldModel(workspaceId) || null,
-          getAutonomyDecisions: async (workspaceId) => autonomyEngine?.listDecisions(workspaceId) || [],
+          getAwarenessSummary: async (workspaceId) =>
+            awarenessService?.getSummary(workspaceId) || null,
+          getAutonomyState: async (workspaceId) =>
+            autonomyEngine?.getWorldModel(workspaceId) || null,
+          getAutonomyDecisions: async (workspaceId) =>
+            autonomyEngine?.listDecisions(workspaceId) || [],
           deliverToChannel: async (params) => {
             await channelGateway.sendMessage?.(
               params.channelType as Any,
@@ -1883,12 +2213,14 @@ if (!gotTheLock) {
           await syncDailyBriefingCronJob(cronService, workspaceId, config);
         },
       });
-      for (const workspace of workspaceRepo.findAll().filter(
-        (entry) =>
-          !entry.isTemp &&
-          !isTempWorkspaceId(entry.id) &&
-          !isManagedScheduledWorkspacePath(entry.path, getUserDataDir()),
-      )) {
+      for (const workspace of workspaceRepo
+        .findAll()
+        .filter(
+          (entry) =>
+            !entry.isTemp &&
+            !isTempWorkspaceId(entry.id) &&
+            !isManagedScheduledWorkspacePath(entry.path, getUserDataDir()),
+        )) {
         await syncDailyBriefingCronJob(
           cronService,
           workspace.id,
@@ -1906,7 +2238,10 @@ if (!gotTheLock) {
                 (wsId ? wsRepo.findById(wsId) : null) ||
                 wsRepo
                   .findAll()
-                  .find((workspace) => !workspace.isTemp && !isTempWorkspaceId(workspace.id)) ||
+                  .find(
+                    (workspace) =>
+                      !workspace.isTemp && !isTempWorkspaceId(workspace.id),
+                  ) ||
                 wsRepo.findAll()[0];
               return ws?.path || "";
             } catch {
@@ -1933,7 +2268,9 @@ if (!gotTheLock) {
           }
           const allowedOrigins = Array.isArray(stored.allowedOrigins)
             ? stored.allowedOrigins
-                .filter((origin): origin is string => typeof origin === "string")
+                .filter(
+                  (origin): origin is string => typeof origin === "string",
+                )
                 .map((origin) => origin.trim())
                 .filter(Boolean)
             : DEFAULT_WEB_ACCESS_CONFIG.allowedOrigins;
@@ -1952,7 +2289,10 @@ if (!gotTheLock) {
             allowedOrigins,
           };
         } catch (error) {
-          console.warn("[WebAccess] Failed to load settings; using defaults:", error);
+          console.warn(
+            "[WebAccess] Failed to load settings; using defaults:",
+            error,
+          );
           return { ...DEFAULT_WEB_ACCESS_CONFIG };
         }
       };
@@ -1973,7 +2313,10 @@ if (!gotTheLock) {
       const getDefaultWebWorkspaceId = (): string => {
         const firstWorkspace = webAccessWorkspaceRepo
           .findAll()
-          .find((workspace) => !workspace.isTemp && !isTempWorkspaceId(workspace.id));
+          .find(
+            (workspace) =>
+              !workspace.isTemp && !isTempWorkspaceId(workspace.id),
+          );
         return firstWorkspace?.id || "";
       };
 
@@ -1984,20 +2327,24 @@ if (!gotTheLock) {
             case "task:list":
               return webAccessTaskRepo.findAll();
             case "task:create": {
-              const payload = args[0] && typeof args[0] === "object" ? args[0] : {};
-              const prompt = typeof payload.prompt === "string" ? payload.prompt.trim() : "";
+              const payload =
+                args[0] && typeof args[0] === "object" ? args[0] : {};
+              const prompt =
+                typeof payload.prompt === "string" ? payload.prompt.trim() : "";
               if (!prompt) {
                 throw new Error("Task prompt is required.");
               }
               const workspaceId =
-                typeof payload.workspaceId === "string" && payload.workspaceId.trim().length > 0
+                typeof payload.workspaceId === "string" &&
+                payload.workspaceId.trim().length > 0
                   ? payload.workspaceId.trim()
                   : getDefaultWebWorkspaceId();
               if (!workspaceId) {
                 throw new Error("No workspace available for task creation.");
               }
               const title =
-                typeof payload.title === "string" && payload.title.trim().length > 0
+                typeof payload.title === "string" &&
+                payload.title.trim().length > 0
                   ? payload.title.trim()
                   : "Web Access Task";
               return agentDaemon.createTask({
@@ -2015,10 +2362,13 @@ if (!gotTheLock) {
               return webAccessTaskRepo.findById(taskId) ?? null;
             }
             case "task:sendMessage": {
-              const payload = args[0] && typeof args[0] === "object" ? args[0] : {};
+              const payload =
+                args[0] && typeof args[0] === "object" ? args[0] : {};
               let taskId: string;
               let message: string;
-              let images: import("../shared/types").ImageAttachment[] | undefined;
+              let images:
+                | import("../shared/types").ImageAttachment[]
+                | undefined;
               try {
                 const sanitized = sanitizeTaskMessageParams(payload);
                 taskId = sanitized.taskId;
@@ -2026,7 +2376,9 @@ if (!gotTheLock) {
                 images = sanitized.images;
               } catch (err) {
                 throw new Error(
-                  err instanceof Error ? err.message : "taskId and message are required.",
+                  err instanceof Error
+                    ? err.message
+                    : "taskId and message are required.",
                 );
               }
               return agentDaemon.sendMessage(taskId, message, images);
@@ -2038,18 +2390,29 @@ if (!gotTheLock) {
               }
               const events = agentDaemon.getTaskEvents(taskId);
               const maxEvents = 600;
-              return events.length > maxEvents ? events.slice(-maxEvents) : events;
+              return events.length > maxEvents
+                ? events.slice(-maxEvents)
+                : events;
             }
             case "workspace:list":
               return webAccessWorkspaceRepo
                 .findAll()
-                .filter((workspace) => !workspace.isTemp && !isTempWorkspaceId(workspace.id));
+                .filter(
+                  (workspace) =>
+                    !workspace.isTemp && !isTempWorkspaceId(workspace.id),
+                );
             case "account:list": {
-              const payload = args[0] && typeof args[0] === "object" ? args[0] : {};
+              const payload =
+                args[0] && typeof args[0] === "object" ? args[0] : {};
               const status =
-                typeof payload.status === "string" ? payload.status.trim() : undefined;
+                typeof payload.status === "string"
+                  ? payload.status.trim()
+                  : undefined;
               const accounts = ManagedAccountManager.list({
-                provider: typeof payload.provider === "string" ? payload.provider : undefined,
+                provider:
+                  typeof payload.provider === "string"
+                    ? payload.provider
+                    : undefined,
                 status: status as ManagedAccountStatus | undefined,
               });
               const includeSecrets = payload.includeSecrets === true;
@@ -2060,8 +2423,12 @@ if (!gotTheLock) {
               };
             }
             case "account:get": {
-              const payload = args[0] && typeof args[0] === "object" ? args[0] : {};
-              const accountId = typeof payload.accountId === "string" ? payload.accountId.trim() : "";
+              const payload =
+                args[0] && typeof args[0] === "object" ? args[0] : {};
+              const accountId =
+                typeof payload.accountId === "string"
+                  ? payload.accountId.trim()
+                  : "";
               if (!accountId) {
                 throw new Error("accountId is required.");
               }
@@ -2070,17 +2437,27 @@ if (!gotTheLock) {
                 return { account: null };
               }
               return {
-                account: ManagedAccountManager.toPublicView(account, payload.includeSecrets === true),
+                account: ManagedAccountManager.toPublicView(
+                  account,
+                  payload.includeSecrets === true,
+                ),
               };
             }
             case "account:upsert": {
-              const payload = args[0] && typeof args[0] === "object" ? args[0] : {};
+              const payload =
+                args[0] && typeof args[0] === "object" ? args[0] : {};
               const account = ManagedAccountManager.upsert(payload);
-              return { account: ManagedAccountManager.toPublicView(account, false) };
+              return {
+                account: ManagedAccountManager.toPublicView(account, false),
+              };
             }
             case "account:remove": {
-              const payload = args[0] && typeof args[0] === "object" ? args[0] : {};
-              const accountId = typeof payload.accountId === "string" ? payload.accountId.trim() : "";
+              const payload =
+                args[0] && typeof args[0] === "object" ? args[0] : {};
+              const accountId =
+                typeof payload.accountId === "string"
+                  ? payload.accountId.trim()
+                  : "";
               if (!accountId) {
                 throw new Error("accountId is required.");
               }
@@ -2100,7 +2477,8 @@ if (!gotTheLock) {
               return dailyBriefingService.generateBriefing(workspaceId);
             }
             case "suggestions:list": {
-              const workspaceId = typeof args[0] === "string" ? args[0].trim() : "";
+              const workspaceId =
+                typeof args[0] === "string" ? args[0].trim() : "";
               if (!workspaceId) return [];
               const { ProactiveSuggestionsService } =
                 await import("./agent/ProactiveSuggestionsService");
@@ -2119,7 +2497,8 @@ if (!gotTheLock) {
       });
       const normalizedWebAccessSettings = webAccessServer.getConfig();
       if (
-        JSON.stringify(initialWebAccessSettings) !== JSON.stringify(normalizedWebAccessSettings)
+        JSON.stringify(initialWebAccessSettings) !==
+        JSON.stringify(normalizedWebAccessSettings)
       ) {
         saveWebAccessSettings(normalizedWebAccessSettings);
       }
@@ -2130,12 +2509,14 @@ if (!gotTheLock) {
           console.error("[WebAccess] Failed to start enabled server:", error);
         }
       }
-      setupWebAccessHandlers(webAccessServer, { saveSettings: saveWebAccessSettings });
+      setupWebAccessHandlers(webAccessServer, {
+        saveSettings: saveWebAccessSettings,
+      });
 
       // Hook triggers into gateway message events
       channelGateway.onEvent((event) => {
         if (event.type === "message:received" && event.data) {
-          triggerService.evaluateEvent({
+          eventTriggerService?.evaluateEvent({
             source: "channel_message",
             fields: {
               channelType: event.channel || "",
@@ -2150,7 +2531,12 @@ if (!gotTheLock) {
 
       // Initialize system tray (macOS menu bar / Windows system tray)
       if (process.platform === "darwin" || process.platform === "win32") {
-        await trayManager.initialize(mainWindow, channelGateway, dbManager, agentDaemon);
+        await trayManager.initialize(
+          mainWindow,
+          channelGateway,
+          dbManager,
+          agentDaemon,
+        );
       }
 
       // Show migration notification after window is ready
@@ -2247,13 +2633,13 @@ if (!gotTheLock) {
       xMentionBridgeService = null;
     }
 
-    if (improvementLoopService) {
+    if (subconsciousLoopService) {
       try {
-        improvementLoopService.stop();
+        subconsciousLoopService.stop();
       } catch (error) {
-        console.error("[Main] Failed to stop ImprovementLoopService:", error);
+        console.error("[Main] Failed to stop SubconsciousLoopService:", error);
       }
-      improvementLoopService = null;
+      subconsciousLoopService = null;
     }
 
     // Cleanup canvas manager (close all windows and watchers)
@@ -2307,10 +2693,10 @@ if (!gotTheLock) {
   });
 
   // Window control handlers (used by custom title bar buttons on Windows)
-  ipcMain.handle("window:minimize", () => {
+  ipcMain.handle(IPC_CHANNELS.WINDOW_MINIMIZE, () => {
     BrowserWindow.getFocusedWindow()?.minimize();
   });
-  ipcMain.handle("window:maximize", () => {
+  ipcMain.handle(IPC_CHANNELS.WINDOW_MAXIMIZE, () => {
     const win = BrowserWindow.getFocusedWindow();
     if (win?.isMaximized()) {
       win.unmaximize();
@@ -2318,15 +2704,15 @@ if (!gotTheLock) {
       win?.maximize();
     }
   });
-  ipcMain.handle("window:close", () => {
+  ipcMain.handle(IPC_CHANNELS.WINDOW_CLOSE, () => {
     BrowserWindow.getFocusedWindow()?.close();
   });
-  ipcMain.handle("window:isMaximized", () => {
+  ipcMain.handle(IPC_CHANNELS.WINDOW_IS_MAXIMIZED, () => {
     return BrowserWindow.getFocusedWindow()?.isMaximized() ?? false;
   });
 
   // Handle folder selection
-  ipcMain.handle("dialog:selectFolder", async () => {
+  ipcMain.handle(IPC_CHANNELS.DIALOG_SELECT_FOLDER, async () => {
     const result = await dialog.showOpenDialog({
       // Allow creating folders directly from the native picker when supported.
       properties: ["openDirectory", "createDirectory"],
@@ -2340,7 +2726,7 @@ if (!gotTheLock) {
   });
 
   // Handle file selection (attachments)
-  ipcMain.handle("dialog:selectFiles", async () => {
+  ipcMain.handle(IPC_CHANNELS.DIALOG_SELECT_FILES, async () => {
     const result = await dialog.showOpenDialog({
       properties: ["openFile", "multiSelections"],
       title: "Select Files to Upload",
@@ -2361,7 +2747,9 @@ if (!gotTheLock) {
             path: filePath,
             name: path.basename(filePath),
             size: stats.size,
-            mimeType: (mime.lookup(filePath) || undefined) as string | undefined,
+            mimeType: (mime.lookup(filePath) || undefined) as
+              | string
+              | undefined,
           };
         } catch {
           return null;
@@ -2369,11 +2757,17 @@ if (!gotTheLock) {
       }),
     );
 
-    return entries.filter(
+    const validEntries = entries.filter(
       (
         entry,
-      ): entry is { path: string; name: string; size: number; mimeType: string | undefined } =>
-        Boolean(entry),
+      ): entry is {
+        path: string;
+        name: string;
+        size: number;
+        mimeType: string | undefined;
+      } => Boolean(entry),
     );
+    rememberApprovedImportFiles(validEntries.map((entry) => entry.path));
+    return validEntries;
   });
 } // single-instance guard

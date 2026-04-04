@@ -40,8 +40,8 @@
 - **Digital Twin Personas** — Pre-built AI twins for every role (engineer, manager, PM, director). Heartbeat v3 keeps them cheap by default: deterministic Pulse checks run quietly, and Dispatch escalates only when signals, cadence, or manual intervention justify visible work.
 - **Zero-Human Company Ops** — Configure CoWork OS as a founder-directed autonomous company shell with venture workspace kits, a dedicated Companies tab, persistent operator twins, strategic planner loops, and Mission Control ops monitoring.
 - **Managed Devices** — Run and inspect tasks across saved remote machines from a dedicated Devices tab with connection controls, summaries, remote task feeds, and remote file attachment picking.
-- **Automations Control Center** — A single Automations section now groups task queueing, scheduled tasks, connector-backed event triggers, webhooks, daily briefings, and the self-improvement loop.
-- **34 LLM provider options** — 13 built-in providers plus 21 compatible/gateway options, including Anthropic, OpenAI, Google, Ollama, AWS Bedrock, and OpenRouter. Bring your own keys or run local models.
+- **Automations Control Center** — A single Automations section now groups task queueing, `Subconscious`, scheduled tasks, connector-backed event triggers, webhooks, and daily briefings.
+- **34 LLM provider options** — 13 built-in providers plus 21 compatible/gateway options, including Claude, OpenAI, Google, Ollama, AWS Bedrock, and OpenRouter. Bring your own keys or run local models.
 - **17 messaging channels** — WhatsApp, Telegram, Discord, Slack, Teams, Google Chat, Feishu/Lark, WeCom, iMessage, Signal, X, and more. Chat with your AI from anywhere.
 - **44 MCP connectors** — Pre-built enterprise integrations across CRM, support, productivity, analytics, and payments, with native connector support for the most common internal surfaces.
 - **18 bundled role-specific packs** — including Mobile Development, Game Development, and 5 Financial packs, with 55+ skills, in-app Plugin Store for installing community packs, remote registry, and enterprise admin policies for organization-wide control.
@@ -56,7 +56,8 @@
 - **AI Playbook** — Auto-captures what worked from successful tasks and injects relevant patterns into future prompts. Repeated patterns auto-promote to governed, one-click-approvable skills via the Playbook-to-Skill pipeline.
 - **Evolving Intelligence** — Unified Memory Synthesizer merges all 6 memory subsystems into a single coherent context block. Adaptive Style Engine learns your communication preferences from message patterns and feedback. Evolution Metrics dashboard quantifies improvement over time (correction rate, knowledge growth, style alignment).
 - **Operator Runtime Visibility** — Task completion now shows what Cowork learned, semantic batch labels and follow-up completions stay visible, unified recall spans tasks/messages/files, persistent shell sessions preserve operator state, and model routing/fallback is visible in the UI and Mission Control.
-- **Configurable fallback chains** — LLM and web-search providers can run in an explicit ordered fallback chain, including Exa for search and provider/model-level failover visibility in the UI.
+- **Configurable fallback chains** — LLM and web-search providers can run in an explicit ordered fallback chain, including Exa for search, immediate failover on retryable provider errors, provider/model-level failover visibility in the UI, and a configurable cooldown before retrying the primary LLM route.
+- **Provider-aware prompt caching** — Prompt caching is on by default for supported routes. CoWork keeps stable system sections cacheable, keeps volatile turn context out of the cached prefix, uses Anthropic automatic caching when available, falls back to explicit Claude breakpoints on OpenRouter, and derives stable OpenAI-family cache keys for GPT routes such as Azure `gpt-5.4` / `gpt-5.4-mini`.
 - **Usage Insights** — Dashboard showing task stats, cost/token tracking by model, activity heatmaps, top skills, per-pack analytics, per-persona success/retry metrics, and task-result satisfaction signals.
 - **ChatGPT History Import** — Import your full ChatGPT conversation history. CoWork OS instantly knows your preferences, past projects, and context — no cold start. All data stays encrypted on your machine and never leaves it.
 - **Computer use (macOS)** — Native desktop control via `computer_*` tools with a single active session, safety overlay, **Esc** to abort, per-app session consent (not per click), and a Settings onboarding panel for Accessibility + Screen Recording. Prefer browser and shell tools for web and repo work; computer use is routed as a last-resort lane in policy and planning guidance. **Documentation:** [docs/computer-use.md](docs/computer-use.md).
@@ -142,7 +143,7 @@ Skills now follow an additive runtime model: CoWork can proactively shortlist or
 
 Operator Runtime Visibility makes the runtime's learning and routing visible: task detail surfaces now show the learning progression, unified recall spans tasks/messages/files/workspace notes/memory/KG, shell sessions preserve operator state, and live routing/fallback events are surfaced in Mission Control and the task UI. [Learn more](docs/operator-runtime-visibility.md)
 
-Autonomous self-improvement runs now use the same runtime with stricter safeguards: they start only after memory services are initialized, require isolated git worktrees by default, skip non-git workspaces when worktree isolation is required, and can notify you when runs start, fail, or open a PR. See [Self-Improving Agent Architecture](docs/self-improving-agent.md) and [Troubleshooting](docs/troubleshooting.md#self-improvement-startup-warnings-in-development).
+`Subconscious` runs now use the same runtime with stricter safeguards: they start only after memory services are initialized, write durable target-scoped artifacts under `.cowork/subconscious/`, auto-dispatch across mapped workflows, require isolated git worktrees for code-change dispatch by default, and skip non-git workspaces when isolation is required. See [Subconscious Reflective Loop](docs/subconscious-loop.md) and [Troubleshooting](docs/troubleshooting.md#subconscious-startup-warnings-in-development).
 
 ### Output Completion UX
 
@@ -175,7 +176,7 @@ The Devices tab turns CoWork OS into a multi-machine control surface. Save and r
 
 ### Automations
 
-Automations are now organized as a first-class operating surface instead of a scattered set of settings pages. The Automations section in Settings groups Task Queue, Self-Improve, Scheduled Tasks, Webhooks, Event Triggers, and Daily Briefing, and Event Triggers can now subscribe to MCP connector/resource changes in addition to channel and webhook events. The home dashboard surfaces recent automation runs so you can monitor background systems without hunting through tabs. [Learn more](docs/features.md#automations-control-center)
+Automations are now organized as a first-class operating surface instead of a scattered set of settings pages. The Automations section in Settings groups Task Queue, Subconscious, Scheduled Tasks, Webhooks, Event Triggers, and Daily Briefing, and Event Triggers can now subscribe to MCP connector/resource changes in addition to channel and webhook events. The home dashboard surfaces recent automation runs so you can monitor background systems without hunting through tabs. [Learn more](docs/features.md#automations-control-center)
 
 ### Zero-Human Company Ops
 
@@ -233,11 +234,11 @@ Real-time overview of your active integrations, always visible in the right pane
 
 ### Usage Insights
 
-Dashboard with task metrics, cost/token tracking by model, activity heatmaps (day-of-week and hourly), top skills usage, per-pack analytics, persona-level success/retry/cost breakdowns, and task-result thumbs up/down quality signals with 7/14/30-day period selection. Access from **Settings** > **Usage Insights**. [Learn more](docs/features.md#usage-insights)
+Dashboard with task metrics, cost/token tracking by model, prompt-cache read telemetry (`cachedTokens` and cache-read rate where available), activity heatmaps (day-of-week and hourly), top skills usage, per-pack analytics, persona-level success/retry/cost breakdowns, and task-result thumbs up/down quality signals with 7/14/30-day period selection. Access from **Settings** > **Usage Insights**. [Learn more](docs/features.md#usage-insights)
 
 ### LLM Providers
 
-34 provider options, with 13 built-in providers and 21 compatible/gateway providers. Use cloud APIs or run fully offline with Ollama, then configure an ordered fallback chain for runtime failover. [Learn more](docs/providers.md)
+34 provider options, with 13 built-in providers and 21 compatible/gateway providers. Use cloud APIs or run fully offline with Ollama, configure an ordered fallback chain for runtime failover, and get default-on prompt caching on supported Claude and GPT-style routes. Claude supports both direct API keys and Claude subscription tokens from `claude setup-token`, with live **Refresh Models** support in Settings. [Learn more](docs/providers.md)
 
 ### Plugin Platform & Customize
 
@@ -248,8 +249,8 @@ Unified plugin platform with 18 bundled role-specific packs (Engineering, DevOps
 - **Persistent toggles**: Pack and skill states survive app restarts
 - **Update detection**: Background version checks against the registry with visual indicators
 - **"Try asking" in chat**: Empty chat shows randomized prompt suggestions from active packs
-- **Plugin Store**: In-app marketplace for browsing, installing (Git/URL), and scaffolding custom packs
-- **Skill Store & external skills**: Desktop GUI support for CoWork Registry skills, direct ClawHub installs, and generic external skill imports from Git repos, raw manifests, and `SKILL.md` bundles
+- **Plugin Store**: In-app marketplace for browsing, installing (Git/URL), and scaffolding custom packs, now with install-time security scanning and quarantine handling for imported packs
+- **Skill Store & external skills**: Desktop GUI support for CoWork Registry skills, direct ClawHub installs, and generic external skill imports from Git repos, raw manifests, and `SKILL.md` bundles, with managed scan reports and quarantine for unsafe imports
 - **External skill directories**: Add shared read-only skill folders without importing or copying those skills into CoWork's managed directory
 - **Remote Registry**: Community pack catalog with search and category filtering
 - **Admin Policies**: Organization-level controls — allow/block/require packs, restrict installations, set agent limits, distribute org-managed packs from a shared directory
@@ -274,8 +275,8 @@ These are the workflows where approval gates, local data control, and measurable
 - **137 built-in skills** across developer, productivity, communication, documents, game development, mobile development, financial analysis, infrastructure-as-code, and more
 - **Custom skills** in `~/Library/Application Support/cowork-os/skills/` (macOS) or `%APPDATA%\cowork-os\skills\` (Windows)
 - **18 bundled plugin packs** with 55+ role-specific skills and Digital Twin integration
-- **Plugin Store** — browse, install from Git/URL, or scaffold custom packs
-- **Skill Store** — browse CoWork Registry skills, search ClawHub, and import external skills from Git, raw JSON, or raw `SKILL.md`
+- **Plugin Store** — browse, install from Git/URL, scaffold custom packs, and review quarantine/report state for imported packs
+- **Skill Store** — browse CoWork Registry skills, search ClawHub, import external skills from Git, raw JSON, or raw `SKILL.md`, and review quarantine/report state for imported skills
 - **MCP support** — client, host, and registry
 
 ### Voice Mode
@@ -426,7 +427,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the full history of completed features.
 | [Knowledge Graph](docs/knowledge-graph.md) | Structured entity/relationship memory |
 | [Context Compaction](docs/context-compaction.md) | Proactive session compaction with structured summaries and chat-history summarization |
 | [Mission Control](docs/mission-control.md) | Agent orchestration dashboard |
-| [Self-Improving Agent](docs/self-improving-agent.md) | Architecture and operating model for bounded autonomous improvement campaigns |
+| [Subconscious Loop](docs/subconscious-loop.md) | Architecture and operating model for the reflective evidence -> hypotheses -> critique -> winner -> backlog -> dispatch loop |
 | [Zero-Human Company Ops](docs/zero-human-company.md) | Founder-directed company planning, operators, and Mission Control ops workflows |
 | [Plugin Packs](docs/plugin-packs.md) | Plugin platform, Customize panel, and Plugin Store |
 | [Skill Store & External Skills](docs/skill-store-and-external-skills.md) | ClawHub support, external skill imports, and managed-skill install flows |

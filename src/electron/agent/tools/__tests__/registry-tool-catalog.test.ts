@@ -194,10 +194,67 @@ describe("ToolRegistry tool catalog versioning", () => {
   it("attaches runtime metadata to tool definitions", () => {
     const registry = new ToolRegistry(createWorkspace(), createDaemon(), "task-runtime");
     const readFile = registry.getTools().find((tool) => tool.name === "read_file");
+    const skill = registry.getTools().find((tool) => tool.name === "Skill");
 
     expect(readFile?.runtime).toBeDefined();
     expect(readFile?.runtime?.concurrencyClass).toBe("read_parallel");
     expect(readFile?.runtime?.readOnly).toBe(true);
+    expect(skill?.runtime?.approvalKind).toBe("none");
+  });
+
+  it("does not classify Skill as an external-service approval type", () => {
+    const registry = new ToolRegistry(createWorkspace(), createDaemon(), "task-skill-approval");
+    expect((registry as Any).getApprovalTypeForTool("Skill")).toBeNull();
+  });
+
+  it("does not pre-classify local reads and network-capable tools as external services", () => {
+    const registry = new ToolRegistry(createWorkspace(), createDaemon(), "task-safe-read-approval");
+
+    expect((registry as Any).getApprovalTypeForTool("read_file")).toBeNull();
+    expect((registry as Any).getApprovalTypeForTool("glob")).toBeNull();
+    expect((registry as Any).getApprovalTypeForTool("web_search")).toBeNull();
+    expect((registry as Any).getApprovalTypeForTool("web_fetch")).toBeNull();
+    expect((registry as Any).getApprovalTypeForTool("http_request")).toBeNull();
+  });
+
+  it("keeps explicit approval classes for destructive, integration, and computer-use tools", () => {
+    const registry = new ToolRegistry(createWorkspace(), createDaemon(), "task-explicit-approval");
+
+    expect((registry as Any).getApprovalTypeForTool("run_command")).toBe("run_command");
+    expect((registry as Any).getApprovalTypeForTool("delete_file")).toBe("delete_file");
+    expect((registry as Any).getApprovalTypeForTool("mcp_fetch_issue")).toBe("external_service");
+    expect((registry as Any).getApprovalTypeForTool("notion_action")).toBe("external_service");
+    expect((registry as Any).getApprovalTypeForTool("computer_click")).toBe("computer_use");
+  });
+
+  it("renders rollout tool descriptions from the shared tool-prompt metadata", () => {
+    const registry = new ToolRegistry(createWorkspace(), createDaemon(), "task-prompting");
+    const runCommand = registry.getTools().find((tool) => tool.name === "run_command");
+    const rendered = registry.renderToolsForContext([runCommand!], {
+      executionMode: "execute",
+      taskDomain: "code",
+      webSearchMode: "live",
+      shellEnabled: true,
+      agentType: "main",
+      workerRole: null,
+      allowUserInput: true,
+    })[0];
+    const compact = registry.getToolDescriptions(["web_search", "web_fetch"], {
+      renderContext: {
+        executionMode: "execute",
+        taskDomain: "research",
+        webSearchMode: "cached",
+        shellEnabled: true,
+        agentType: "main",
+        workerRole: null,
+        allowUserInput: true,
+      },
+    });
+
+    expect(rendered.description).toContain("shell");
+    expect(rendered.description).toContain("test");
+    expect(compact).toContain("cached mode");
+    expect(compact).toContain("web_fetch");
   });
 
   it("resolves scheduler specs independently from runtime metadata", () => {

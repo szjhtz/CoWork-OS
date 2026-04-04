@@ -72,6 +72,7 @@ import {
 } from "./utils/attachment-content";
 import { sanitizeToolCallTextFromAssistant } from "../../shared/tool-call-text-sanitizer";
 import { formatProviderErrorForDisplay } from "../../shared/provider-error-format";
+import { buildApprovalCommandPreview } from "../../shared/approval-command-preview";
 import {
   Check as CheckIcon,
   MessageCircle,
@@ -4452,10 +4453,6 @@ export function MainContent({
   const [messageFeedbackMap, setMessageFeedbackMap] = useState<
     Map<string, "accepted" | "rejected">
   >(new Map());
-  const [taskFeedbackDecision, setTaskFeedbackDecision] = useState<"accepted" | "rejected" | null>(
-    null,
-  );
-  const [taskFeedbackBannerDismissed, setTaskFeedbackBannerDismissed] = useState(false);
   const [rejectMenuOpenFor, setRejectMenuOpenFor] = useState<string | null>(null);
   const rejectMenuRef = useRef<HTMLDivElement | null>(null);
 
@@ -4492,34 +4489,12 @@ export function MainContent({
     [task?.id],
   );
 
-  const handleTaskFeedback = useCallback(
-    async (decision: "accepted" | "rejected") => {
-      if (!task?.id) return;
-      setTaskFeedbackDecision(decision);
-      try {
-        await window.electronAPI.submitMessageFeedback({
-          taskId: task.id,
-          decision,
-          kind: "task",
-        });
-      } catch (err) {
-        console.error("[Feedback] Failed to submit task feedback:", err);
-      }
-    },
-    [task?.id],
-  );
-
   // Close feedback panel when step changes
   useEffect(() => {
     setStepFeedbackOpen(false);
     setStepFeedbackText("");
     setStepFeedbackSending(false);
   }, [currentStep?.id]);
-
-  useEffect(() => {
-    setTaskFeedbackDecision(null);
-    setTaskFeedbackBannerDismissed(false);
-  }, [task?.id]);
 
   const handleStepFeedback = useCallback(
     async (action: StepFeedbackAction, message?: string) => {
@@ -6746,35 +6721,6 @@ export function MainContent({
     };
   }, [task?.prompt, task?.rawPrompt, task?.title, task?.userPrompt]);
 
-  const appliedSkills = useMemo(() => {
-    const seen = new Map<string, { skillId: string; skillName: string; trigger?: string; reason?: string }>();
-    for (const event of events) {
-      const effectiveType = getEffectiveTaskEventType(event);
-      if (effectiveType !== "skill_applied" && effectiveType !== "skill_application_reused") {
-        continue;
-      }
-      const skillId =
-        typeof event.payload?.skillId === "string"
-          ? event.payload.skillId
-          : typeof event.payload?.skill_id === "string"
-            ? event.payload.skill_id
-            : "";
-      if (!skillId) continue;
-      if (seen.has(skillId)) continue;
-      seen.set(skillId, {
-        skillId,
-        skillName:
-          typeof event.payload?.skillName === "string"
-            ? event.payload.skillName
-            : typeof event.payload?.skill_name === "string"
-              ? event.payload.skill_name
-              : skillId,
-        trigger: typeof event.payload?.trigger === "string" ? event.payload.trigger : undefined,
-        reason: typeof event.payload?.reason === "string" ? event.payload.reason : undefined,
-      });
-    }
-    return Array.from(seen.values());
-  }, [events]);
   const initialPromptEventId = useMemo(() => {
     if (!trimmedPrompt) return null;
     for (const event of events) {
@@ -8213,24 +8159,6 @@ export function MainContent({
           {headerTitle}
         </div>
       </div>
-      {appliedSkills.length > 0 && (
-        <div className="main-header-skills">
-          <span className="main-header-skills-label">Applied skills</span>
-          {appliedSkills.map((skill) => (
-            <span
-              key={skill.skillId}
-              className="main-header-skill-chip"
-              title={
-                skill.reason
-                  ? `${skill.skillName}${skill.trigger ? ` · ${skill.trigger}` : ""} · ${skill.reason}`
-                  : `${skill.skillName}${skill.trigger ? ` · ${skill.trigger}` : ""}`
-              }
-            >
-              {skill.skillName}
-            </span>
-          ))}
-        </div>
-      )}
       {!isChatTask && isTaskWorking && (
         <div className="main-header-status">
           <span className="chat-status executing">
@@ -8564,46 +8492,6 @@ export function MainContent({
                 <span className="task-status-banner-detail">
                   Verification is pending user evidence before this can be fully marked done.
                 </span>
-              </div>
-            </div>
-          )}
-          {task.status === "completed" &&
-            !taskFeedbackBannerDismissed &&
-            !childTasks.some((t) =>
-              ["executing", "planning", "queued", "pending"].includes(t.status),
-            ) && (
-            <div className="task-status-banner">
-              <div className="task-status-banner-content">
-                <strong>Rate this result</strong>
-                <span className="task-status-banner-detail">
-                  Feedback improves quality reporting for this agent and persona.
-                </span>
-              </div>
-              <div className="task-status-banner-actions">
-                <button
-                  type="button"
-                  className={`message-feedback-btn${taskFeedbackDecision === "accepted" ? " active" : ""}`}
-                  onClick={() => void handleTaskFeedback("accepted")}
-                  title="This task result was helpful"
-                >
-                  Up
-                </button>
-                <button
-                  type="button"
-                  className={`message-feedback-btn${taskFeedbackDecision === "rejected" ? " active" : ""}`}
-                  onClick={() => void handleTaskFeedback("rejected")}
-                  title="This task result needs improvement"
-                >
-                  Down
-                </button>
-                <button
-                  type="button"
-                  className="message-feedback-btn task-feedback-banner-dismiss"
-                  onClick={() => setTaskFeedbackBannerDismissed(true)}
-                  title="Close without rating"
-                >
-                  Dismiss
-                </button>
               </div>
             </div>
           )}
@@ -10195,12 +10083,18 @@ function renderEventDetails(
         typeof timeoutMs === "number" ? `${Math.max(1, Math.round(timeoutMs / 1000))}s` : null;
 
       if (command) {
+        const commandPreview = buildApprovalCommandPreview(command);
         return (
           <div className="event-details">
             <div style={{ marginBottom: 6, fontWeight: 600 }}>Running command:</div>
             <div className="session-approval-code-scroll" role="region" aria-label="Command">
-              <code className="session-approval-code session-approval-code--multiline">{command}</code>
+              <code className="session-approval-code session-approval-code--multiline">{commandPreview.text}</code>
             </div>
+            {commandPreview.truncated ? (
+              <div className="session-approval-preview-note">
+                Preview condensed for readability. Approval still applies to the full command.
+              </div>
+            ) : null}
             {(cwd || timeoutLabel) && (
               <div style={{ marginTop: 8 }}>
                 {cwd && <div>CWD: {cwd}</div>}

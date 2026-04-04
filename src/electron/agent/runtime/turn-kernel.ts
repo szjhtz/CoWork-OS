@@ -20,6 +20,7 @@ export interface TurnKernelIterationState {
 export interface TurnKernelPreparedResponse {
   response: Any;
   availableTools: Any[];
+  outputBudget?: Any;
 }
 
 export interface TurnKernelRecoveredResponse {

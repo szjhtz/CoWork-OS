@@ -1,4 +1,10 @@
-import { ipcMain, shell, BrowserWindow, app as _app, nativeTheme } from "electron";
+import {
+  ipcMain,
+  shell,
+  BrowserWindow,
+  app as _app,
+  nativeTheme,
+} from "electron";
 import { normalizeTaskEvents } from "../agent/timeline/timeline-normalizer";
 import * as path from "path";
 import * as fs from "fs/promises";
@@ -11,7 +17,11 @@ import mammoth from "mammoth";
 import mime from "mime-types";
 import { z } from "zod";
 import { getUserDataDir } from "../utils/user-data-dir";
-import { resolveImageOcrChars, runOcrFromImagePath, shouldRunImageOcr } from "./image-viewer-ocr";
+import {
+  resolveImageOcrChars,
+  runOcrFromImagePath,
+  shouldRunImageOcr,
+} from "./image-viewer-ocr";
 import { extractPptxContentFromFile } from "../utils/pptx-extractor";
 import { extractPdfReviewData } from "../utils/pdf-review";
 import ExcelJS from "exceljs";
@@ -86,8 +96,17 @@ import type { MailboxCommitmentState } from "../../shared/mailbox";
 import * as os from "os";
 import { AgentDaemon } from "../agent/daemon";
 import { RuntimeVisibilityService } from "../agent/RuntimeVisibilityService";
-import { LLMProviderFactory, LLMProviderConfig, ModelKey, OpenAIOAuth } from "../agent/llm";
-import { SearchProviderFactory, SearchSettings, SearchProviderType } from "../agent/search";
+import {
+  LLMProviderFactory,
+  LLMProviderConfig,
+  ModelKey,
+  OpenAIOAuth,
+} from "../agent/llm";
+import {
+  SearchProviderFactory,
+  SearchSettings,
+  SearchProviderType,
+} from "../agent/search";
 import { ShellSessionManager } from "../agent/tools/shell-session-manager";
 import { HealthManager } from "../health/HealthManager";
 import { ChannelGateway } from "../gateway";
@@ -95,6 +114,7 @@ import { CHANNEL_TYPES } from "../gateway/channels/types";
 import { updateManager } from "../updater";
 import { rateLimiter, RATE_LIMIT_CONFIGS } from "../utils/rate-limiter";
 import { toPublicChannel } from "./channel-config-sanitizer";
+import { buildSavedLLMSettings } from "./llm-settings-save";
 import { buildTaskExportJson } from "../reports/task-export";
 import { ProfileManager } from "../profiles/ProfileManager";
 import { PermissionSettingsManager } from "../security/permission-settings-manager";
@@ -155,6 +175,8 @@ import {
   AwarenessUpdateBeliefSchema,
   AutonomyConfigSchema,
   AutonomyUpdateDecisionSchema,
+  ProviderApiKeySchema,
+  ProviderBaseUrlSchema,
 } from "../utils/validation";
 import { GuardrailManager } from "../guardrails/guardrail-manager";
 import { AppearanceManager } from "../settings/appearance-manager";
@@ -185,9 +207,7 @@ import { getAwarenessService } from "../awareness/AwarenessService";
 import { getAutonomyEngine } from "../awareness/AutonomyEngine";
 import { CustomSkill, SkillsConfig } from "../../shared/types";
 import { SecureSettingsRepository } from "../database/SecureSettingsRepository";
-import {
-  parseSpawnAgentCount,
-} from "../../shared/spawn-intent-detection";
+import { parseSpawnAgentCount } from "../../shared/spawn-intent-detection";
 import { MCPSettingsManager } from "../mcp/settings";
 import { MCPClientManager } from "../mcp/client/MCPClientManager";
 import { MCPRegistryManager } from "../mcp/registry/MCPRegistryManager";
@@ -208,7 +228,10 @@ import {
   MCPRegistrySearchSchema,
   HookMappingSchema,
 } from "../utils/validation";
-import { NotificationService, NotificationOverlayManager } from "../notifications";
+import {
+  NotificationService,
+  NotificationOverlayManager,
+} from "../notifications";
 import type {
   NotificationType,
   HooksSettingsData,
@@ -249,7 +272,10 @@ import { AgentPerformanceReviewService } from "../reports/AgentPerformanceReview
 import { EvalService } from "../eval/EvalService";
 import { getCronService } from "../cron";
 import type { CronJobCreate } from "../cron/types";
-import { getXMentionBridgeService, getXMentionTriggerStatus } from "../x-mentions";
+import {
+  getXMentionBridgeService,
+  getXMentionTriggerStatus,
+} from "../x-mentions";
 import { getCouncilService } from "../council";
 import { pruneTempWorkspaces } from "../utils/temp-workspace";
 import type { TriggerEvent } from "../triggers/types";
@@ -263,6 +289,7 @@ import {
   touchTempWorkspaceLease,
 } from "../utils/temp-workspace-lease";
 import { createLogger } from "../utils/logger";
+import { isApprovedImportFile } from "../security/file-import-approvals";
 
 type FileViewerRequestOptions = {
   workspacePath?: string;
@@ -276,7 +303,10 @@ type MacSystemSettingsTarget = "microphone" | "dictation";
 const execFileAsync = promisify(execFile);
 const logger = createLogger("IPC");
 const ProfileNameSchema = z.string().trim().min(1).max(80);
-const VIDEO_PREVIEW_CACHE_DIR = path.join(os.tmpdir(), "cowork-video-preview-cache");
+const VIDEO_PREVIEW_CACHE_DIR = path.join(
+  os.tmpdir(),
+  "cowork-video-preview-cache",
+);
 const VIDEO_PREVIEW_FFMPEG_TIMEOUT_MS = 60_000;
 const MAX_TRANSCODED_VIDEO_PREVIEW_SIZE = 64 * 1024 * 1024;
 
@@ -302,11 +332,16 @@ const isFfmpegInstalled = async (): Promise<boolean> => {
 
 const sanitizeVideoPreviewBaseName = (resolvedPath: string): string => {
   const baseName = path.basename(resolvedPath, path.extname(resolvedPath));
-  const normalized = baseName.replace(/[^a-zA-Z0-9._-]+/g, "_").replace(/^_+|_+$/g, "");
+  const normalized = baseName
+    .replace(/[^a-zA-Z0-9._-]+/g, "_")
+    .replace(/^_+|_+$/g, "");
   return normalized.length > 0 ? normalized.slice(0, 80) : "video-preview";
 };
 
-const getCachedVideoPreviewPath = (resolvedPath: string, stats: fsSync.Stats): string => {
+const getCachedVideoPreviewPath = (
+  resolvedPath: string,
+  stats: fsSync.Stats,
+): string => {
   const safeBase = sanitizeVideoPreviewBaseName(resolvedPath);
   return path.join(
     VIDEO_PREVIEW_CACHE_DIR,
@@ -366,7 +401,11 @@ const generateTranscodedVideoPreviewDataUrl = async (
         await fs.rename(tempOutputPath, previewPath);
       } catch (ffmpegError) {
         // Clean up partial output before re-throwing so the outer catch can log and return null.
-        try { await fs.unlink(tempOutputPath); } catch { /* ignore if never created */ }
+        try {
+          await fs.unlink(tempOutputPath);
+        } catch {
+          /* ignore if never created */
+        }
         throw ffmpegError;
       }
     }
@@ -381,10 +420,14 @@ const generateTranscodedVideoPreviewDataUrl = async (
   }
 };
 
-const isMacSystemSettingsTarget = (value: unknown): value is MacSystemSettingsTarget =>
+const isMacSystemSettingsTarget = (
+  value: unknown,
+): value is MacSystemSettingsTarget =>
   value === "microphone" || value === "dictation";
 
-const openMacSystemSettings = async (target: MacSystemSettingsTarget): Promise<void> => {
+const openMacSystemSettings = async (
+  target: MacSystemSettingsTarget,
+): Promise<void> => {
   const urlCandidates =
     target === "microphone"
       ? [
@@ -460,7 +503,9 @@ const pendingHeartbeatWakes: HooksWakeAction[] = [];
 const resolveCustomProviderId = (providerType: string) =>
   providerType === "kimi-coding" ? "kimi-code" : providerType;
 
-export function setHeartbeatWakeSubmitter(submitter: HooksWakeSubmitter | null): void {
+export function setHeartbeatWakeSubmitter(
+  submitter: HooksWakeSubmitter | null,
+): void {
   heartbeatWakeSubmitter = submitter;
 
   if (!submitter) {
@@ -490,7 +535,10 @@ export function getNotificationService(): NotificationService | null {
 // Helper to check rate limit and throw if exceeded
 function checkRateLimit(
   channel: string,
-  _config: { maxRequests: number; windowMs: number } = RATE_LIMIT_CONFIGS.standard,
+  _config: {
+    maxRequests: number;
+    windowMs: number;
+  } = RATE_LIMIT_CONFIGS.standard,
 ): void {
   if (!rateLimiter.check(channel)) {
     const resetMs = rateLimiter.getResetTime(channel);
@@ -500,7 +548,11 @@ function checkRateLimit(
 }
 
 const OpenAICompatibleBaseUrlSchema = z.string().url().max(500);
-const BLOCKED_OPENAI_COMPATIBLE_HOSTNAMES = new Set(["0.0.0.0", "::", "metadata.google.internal"]);
+const BLOCKED_OPENAI_COMPATIBLE_HOSTNAMES = new Set([
+  "0.0.0.0",
+  "::",
+  "metadata.google.internal",
+]);
 const BLOCKED_OPENAI_COMPATIBLE_IPS = new Set([
   "169.254.169.254", // AWS/GCP/Azure instance metadata pattern
 ]);
@@ -510,13 +562,18 @@ function normalizeHostname(hostname: string): string {
     .trim()
     .toLowerCase();
   const unwrapped =
-    trimmed.startsWith("[") && trimmed.endsWith("]") ? trimmed.slice(1, -1) : trimmed;
+    trimmed.startsWith("[") && trimmed.endsWith("]")
+      ? trimmed.slice(1, -1)
+      : trimmed;
   return unwrapped.endsWith(".") ? unwrapped.slice(0, -1) : unwrapped;
 }
 
 function isPrivateIpv4Address(address: string): boolean {
   const parts = address.split(".").map((p) => Number(p));
-  if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) {
+  if (
+    parts.length !== 4 ||
+    parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)
+  ) {
     return false;
   }
 
@@ -582,13 +639,21 @@ async function validateOpenAICompatibleBaseUrl(
 
   const hostname = normalizeHostname(parsed.hostname);
   if (!hostname) {
-    throw new Error("OpenAI-compatible base URL must include a valid hostname.");
+    throw new Error(
+      "OpenAI-compatible base URL must include a valid hostname.",
+    );
   }
   const allowLoopback = options.allowLoopback === true;
-  if (BLOCKED_OPENAI_COMPATIBLE_HOSTNAMES.has(hostname) || hostname.endsWith(".local")) {
+  if (
+    BLOCKED_OPENAI_COMPATIBLE_HOSTNAMES.has(hostname) ||
+    hostname.endsWith(".local")
+  ) {
     throw new Error("OpenAI-compatible base URL cannot target blocked hosts.");
   }
-  if (isPrivateOrLoopbackAddress(hostname) && !(allowLoopback && isLoopbackAddress(hostname))) {
+  if (
+    isPrivateOrLoopbackAddress(hostname) &&
+    !(allowLoopback && isLoopbackAddress(hostname))
+  ) {
     throw new Error(
       "OpenAI-compatible base URL cannot target private network hosts (except loopback).",
     );
@@ -604,7 +669,9 @@ async function validateOpenAICompatibleBaseUrl(
         return !(allowLoopback && isLoopbackAddress(normalizedAddress));
       })
     ) {
-      throw new Error("OpenAI-compatible base URL resolved to a blocked private/metadata address.");
+      throw new Error(
+        "OpenAI-compatible base URL resolved to a blocked private/metadata address.",
+      );
     }
   } catch (error) {
     const code = (error as NodeJS.ErrnoException)?.code;
@@ -618,70 +685,228 @@ async function validateOpenAICompatibleBaseUrl(
   return validatedBaseUrl;
 }
 
+function validateOptionalProviderApiKey(
+  apiKey: string | undefined,
+  providerLabel: string,
+): string | undefined {
+  return validateInput(ProviderApiKeySchema, apiKey, `${providerLabel} API key`);
+}
+
+async function validateOptionalProviderBaseUrl(
+  baseUrl: string | undefined,
+  options: {
+    providerLabel: string;
+    allowLoopback?: boolean;
+  },
+): Promise<string | undefined> {
+  if (baseUrl == null || baseUrl === "") {
+    return undefined;
+  }
+
+  const validatedBaseUrl = validateInput(
+    ProviderBaseUrlSchema,
+    baseUrl,
+    `${options.providerLabel} base URL`,
+  );
+  if (!validatedBaseUrl) {
+    return undefined;
+  }
+  return await validateOpenAICompatibleBaseUrl(validatedBaseUrl, {
+    allowLoopback: options.allowLoopback,
+  });
+}
+
 // Configure rate limits for sensitive channels
 rateLimiter.configure(IPC_CHANNELS.TASK_CREATE, RATE_LIMIT_CONFIGS.expensive);
-rateLimiter.configure(IPC_CHANNELS.TASK_SEND_MESSAGE, RATE_LIMIT_CONFIGS.expensive);
-rateLimiter.configure(IPC_CHANNELS.TASK_STEP_FEEDBACK, RATE_LIMIT_CONFIGS.limited);
+rateLimiter.configure(
+  IPC_CHANNELS.TASK_SEND_MESSAGE,
+  RATE_LIMIT_CONFIGS.expensive,
+);
+rateLimiter.configure(
+  IPC_CHANNELS.TASK_STEP_FEEDBACK,
+  RATE_LIMIT_CONFIGS.limited,
+);
 rateLimiter.configure(IPC_CHANNELS.TASK_WRAP_UP, RATE_LIMIT_CONFIGS.limited);
 rateLimiter.configure(IPC_CHANNELS.TASK_CONTINUE, RATE_LIMIT_CONFIGS.limited);
-rateLimiter.configure(IPC_CHANNELS.TASK_FORK_SESSION, RATE_LIMIT_CONFIGS.limited);
+rateLimiter.configure(
+  IPC_CHANNELS.TASK_FORK_SESSION,
+  RATE_LIMIT_CONFIGS.limited,
+);
 rateLimiter.configure(IPC_CHANNELS.TASK_PIN, RATE_LIMIT_CONFIGS.limited);
-rateLimiter.configure(IPC_CHANNELS.TASK_EXPORT_JSON, RATE_LIMIT_CONFIGS.standard);
-rateLimiter.configure(IPC_CHANNELS.LLM_SAVE_SETTINGS, RATE_LIMIT_CONFIGS.limited);
-rateLimiter.configure(IPC_CHANNELS.LLM_RESET_PROVIDER_CREDENTIALS, RATE_LIMIT_CONFIGS.limited);
-rateLimiter.configure(IPC_CHANNELS.LLM_TEST_PROVIDER, RATE_LIMIT_CONFIGS.expensive);
-rateLimiter.configure(IPC_CHANNELS.LLM_GET_OLLAMA_MODELS, RATE_LIMIT_CONFIGS.standard);
-rateLimiter.configure(IPC_CHANNELS.LLM_GET_GEMINI_MODELS, RATE_LIMIT_CONFIGS.standard);
-rateLimiter.configure(IPC_CHANNELS.LLM_GET_OPENROUTER_MODELS, RATE_LIMIT_CONFIGS.standard);
-rateLimiter.configure(IPC_CHANNELS.LLM_GET_BEDROCK_MODELS, RATE_LIMIT_CONFIGS.standard);
-rateLimiter.configure(IPC_CHANNELS.LLM_GET_GROQ_MODELS, RATE_LIMIT_CONFIGS.standard);
-rateLimiter.configure(IPC_CHANNELS.LLM_GET_XAI_MODELS, RATE_LIMIT_CONFIGS.standard);
-rateLimiter.configure(IPC_CHANNELS.LLM_GET_KIMI_MODELS, RATE_LIMIT_CONFIGS.standard);
-rateLimiter.configure(IPC_CHANNELS.LLM_GET_PI_MODELS, RATE_LIMIT_CONFIGS.standard);
-rateLimiter.configure(IPC_CHANNELS.LLM_GET_PI_PROVIDERS, RATE_LIMIT_CONFIGS.standard);
-rateLimiter.configure(IPC_CHANNELS.LLM_GET_OPENAI_COMPATIBLE_MODELS, RATE_LIMIT_CONFIGS.standard);
-rateLimiter.configure(IPC_CHANNELS.SEARCH_SAVE_SETTINGS, RATE_LIMIT_CONFIGS.limited);
-rateLimiter.configure(IPC_CHANNELS.SEARCH_TEST_PROVIDER, RATE_LIMIT_CONFIGS.expensive);
-rateLimiter.configure(IPC_CHANNELS.GATEWAY_ADD_CHANNEL, RATE_LIMIT_CONFIGS.limited);
-rateLimiter.configure(IPC_CHANNELS.GATEWAY_TEST_CHANNEL, RATE_LIMIT_CONFIGS.expensive);
-rateLimiter.configure(IPC_CHANNELS.GUARDRAIL_SAVE_SETTINGS, RATE_LIMIT_CONFIGS.limited);
+rateLimiter.configure(
+  IPC_CHANNELS.TASK_EXPORT_JSON,
+  RATE_LIMIT_CONFIGS.standard,
+);
+rateLimiter.configure(
+  IPC_CHANNELS.LLM_SAVE_SETTINGS,
+  RATE_LIMIT_CONFIGS.limited,
+);
+rateLimiter.configure(
+  IPC_CHANNELS.LLM_RESET_PROVIDER_CREDENTIALS,
+  RATE_LIMIT_CONFIGS.limited,
+);
+rateLimiter.configure(
+  IPC_CHANNELS.LLM_TEST_PROVIDER,
+  RATE_LIMIT_CONFIGS.expensive,
+);
+rateLimiter.configure(
+  IPC_CHANNELS.LLM_GET_ANTHROPIC_MODELS,
+  RATE_LIMIT_CONFIGS.standard,
+);
+rateLimiter.configure(
+  IPC_CHANNELS.LLM_GET_OLLAMA_MODELS,
+  RATE_LIMIT_CONFIGS.standard,
+);
+rateLimiter.configure(
+  IPC_CHANNELS.LLM_GET_GEMINI_MODELS,
+  RATE_LIMIT_CONFIGS.standard,
+);
+rateLimiter.configure(
+  IPC_CHANNELS.LLM_GET_OPENROUTER_MODELS,
+  RATE_LIMIT_CONFIGS.standard,
+);
+rateLimiter.configure(
+  IPC_CHANNELS.LLM_GET_BEDROCK_MODELS,
+  RATE_LIMIT_CONFIGS.standard,
+);
+rateLimiter.configure(
+  IPC_CHANNELS.LLM_GET_GROQ_MODELS,
+  RATE_LIMIT_CONFIGS.standard,
+);
+rateLimiter.configure(
+  IPC_CHANNELS.LLM_GET_XAI_MODELS,
+  RATE_LIMIT_CONFIGS.standard,
+);
+rateLimiter.configure(
+  IPC_CHANNELS.LLM_GET_KIMI_MODELS,
+  RATE_LIMIT_CONFIGS.standard,
+);
+rateLimiter.configure(
+  IPC_CHANNELS.LLM_GET_PI_MODELS,
+  RATE_LIMIT_CONFIGS.standard,
+);
+rateLimiter.configure(
+  IPC_CHANNELS.LLM_GET_PI_PROVIDERS,
+  RATE_LIMIT_CONFIGS.standard,
+);
+rateLimiter.configure(
+  IPC_CHANNELS.LLM_GET_OPENAI_COMPATIBLE_MODELS,
+  RATE_LIMIT_CONFIGS.standard,
+);
+rateLimiter.configure(
+  IPC_CHANNELS.SEARCH_SAVE_SETTINGS,
+  RATE_LIMIT_CONFIGS.limited,
+);
+rateLimiter.configure(
+  IPC_CHANNELS.SEARCH_TEST_PROVIDER,
+  RATE_LIMIT_CONFIGS.expensive,
+);
+rateLimiter.configure(
+  IPC_CHANNELS.GATEWAY_ADD_CHANNEL,
+  RATE_LIMIT_CONFIGS.limited,
+);
+rateLimiter.configure(
+  IPC_CHANNELS.GATEWAY_TEST_CHANNEL,
+  RATE_LIMIT_CONFIGS.expensive,
+);
+rateLimiter.configure(
+  IPC_CHANNELS.GUARDRAIL_SAVE_SETTINGS,
+  RATE_LIMIT_CONFIGS.limited,
+);
 rateLimiter.configure(IPC_CHANNELS.TEAM_CREATE, RATE_LIMIT_CONFIGS.limited);
 rateLimiter.configure(IPC_CHANNELS.TEAM_UPDATE, RATE_LIMIT_CONFIGS.limited);
 rateLimiter.configure(IPC_CHANNELS.TEAM_DELETE, RATE_LIMIT_CONFIGS.limited);
 rateLimiter.configure(IPC_CHANNELS.TEAM_MEMBER_ADD, RATE_LIMIT_CONFIGS.limited);
-rateLimiter.configure(IPC_CHANNELS.TEAM_MEMBER_UPDATE, RATE_LIMIT_CONFIGS.limited);
-rateLimiter.configure(IPC_CHANNELS.TEAM_MEMBER_REMOVE, RATE_LIMIT_CONFIGS.limited);
-rateLimiter.configure(IPC_CHANNELS.TEAM_MEMBER_REORDER, RATE_LIMIT_CONFIGS.limited);
+rateLimiter.configure(
+  IPC_CHANNELS.TEAM_MEMBER_UPDATE,
+  RATE_LIMIT_CONFIGS.limited,
+);
+rateLimiter.configure(
+  IPC_CHANNELS.TEAM_MEMBER_REMOVE,
+  RATE_LIMIT_CONFIGS.limited,
+);
+rateLimiter.configure(
+  IPC_CHANNELS.TEAM_MEMBER_REORDER,
+  RATE_LIMIT_CONFIGS.limited,
+);
 rateLimiter.configure(IPC_CHANNELS.TEAM_RUN_CREATE, RATE_LIMIT_CONFIGS.limited);
 rateLimiter.configure(IPC_CHANNELS.TEAM_RUN_RESUME, RATE_LIMIT_CONFIGS.limited);
 rateLimiter.configure(IPC_CHANNELS.TEAM_RUN_PAUSE, RATE_LIMIT_CONFIGS.limited);
 rateLimiter.configure(IPC_CHANNELS.TEAM_RUN_CANCEL, RATE_LIMIT_CONFIGS.limited);
-rateLimiter.configure(IPC_CHANNELS.TEAM_RUN_WRAP_UP, RATE_LIMIT_CONFIGS.limited);
-rateLimiter.configure(IPC_CHANNELS.TEAM_ITEM_CREATE, RATE_LIMIT_CONFIGS.limited);
-rateLimiter.configure(IPC_CHANNELS.TEAM_ITEM_UPDATE, RATE_LIMIT_CONFIGS.limited);
-rateLimiter.configure(IPC_CHANNELS.TEAM_ITEM_DELETE, RATE_LIMIT_CONFIGS.limited);
+rateLimiter.configure(
+  IPC_CHANNELS.TEAM_RUN_WRAP_UP,
+  RATE_LIMIT_CONFIGS.limited,
+);
+rateLimiter.configure(
+  IPC_CHANNELS.TEAM_ITEM_CREATE,
+  RATE_LIMIT_CONFIGS.limited,
+);
+rateLimiter.configure(
+  IPC_CHANNELS.TEAM_ITEM_UPDATE,
+  RATE_LIMIT_CONFIGS.limited,
+);
+rateLimiter.configure(
+  IPC_CHANNELS.TEAM_ITEM_DELETE,
+  RATE_LIMIT_CONFIGS.limited,
+);
 rateLimiter.configure(IPC_CHANNELS.TEAM_ITEM_MOVE, RATE_LIMIT_CONFIGS.limited);
 rateLimiter.configure(IPC_CHANNELS.REVIEW_GENERATE, RATE_LIMIT_CONFIGS.limited);
 rateLimiter.configure(IPC_CHANNELS.REVIEW_DELETE, RATE_LIMIT_CONFIGS.limited);
 rateLimiter.configure(IPC_CHANNELS.EVAL_RUN_SUITE, RATE_LIMIT_CONFIGS.limited);
-rateLimiter.configure(IPC_CHANNELS.EVAL_CREATE_CASE_FROM_TASK, RATE_LIMIT_CONFIGS.limited);
+rateLimiter.configure(
+  IPC_CHANNELS.EVAL_CREATE_CASE_FROM_TASK,
+  RATE_LIMIT_CONFIGS.limited,
+);
 rateLimiter.configure(IPC_CHANNELS.KIT_INIT, RATE_LIMIT_CONFIGS.limited);
-rateLimiter.configure(IPC_CHANNELS.KIT_PROJECT_CREATE, RATE_LIMIT_CONFIGS.limited);
+rateLimiter.configure(
+  IPC_CHANNELS.KIT_PROJECT_CREATE,
+  RATE_LIMIT_CONFIGS.limited,
+);
 rateLimiter.configure(IPC_CHANNELS.KIT_OPEN_FILE, RATE_LIMIT_CONFIGS.limited);
-rateLimiter.configure(IPC_CHANNELS.KIT_RESET_ADAPTIVE_STYLE, RATE_LIMIT_CONFIGS.limited);
-rateLimiter.configure(IPC_CHANNELS.KIT_SUBMIT_MESSAGE_FEEDBACK, RATE_LIMIT_CONFIGS.limited);
-rateLimiter.configure(IPC_CHANNELS.MEMORY_ADD_USER_FACT, RATE_LIMIT_CONFIGS.limited);
-rateLimiter.configure(IPC_CHANNELS.MEMORY_UPDATE_USER_FACT, RATE_LIMIT_CONFIGS.limited);
-rateLimiter.configure(IPC_CHANNELS.MEMORY_DELETE_USER_FACT, RATE_LIMIT_CONFIGS.limited);
-rateLimiter.configure(IPC_CHANNELS.MEMORY_DELETE_IMPORTED_ENTRY, RATE_LIMIT_CONFIGS.limited);
-rateLimiter.configure(IPC_CHANNELS.MEMORY_SET_IMPORTED_RECALL_IGNORED, RATE_LIMIT_CONFIGS.limited);
-rateLimiter.configure(IPC_CHANNELS.MEMORY_RELATIONSHIP_UPDATE, RATE_LIMIT_CONFIGS.limited);
-rateLimiter.configure(IPC_CHANNELS.MEMORY_RELATIONSHIP_DELETE, RATE_LIMIT_CONFIGS.limited);
+rateLimiter.configure(
+  IPC_CHANNELS.KIT_RESET_ADAPTIVE_STYLE,
+  RATE_LIMIT_CONFIGS.limited,
+);
+rateLimiter.configure(
+  IPC_CHANNELS.KIT_SUBMIT_MESSAGE_FEEDBACK,
+  RATE_LIMIT_CONFIGS.limited,
+);
+rateLimiter.configure(
+  IPC_CHANNELS.MEMORY_ADD_USER_FACT,
+  RATE_LIMIT_CONFIGS.limited,
+);
+rateLimiter.configure(
+  IPC_CHANNELS.MEMORY_UPDATE_USER_FACT,
+  RATE_LIMIT_CONFIGS.limited,
+);
+rateLimiter.configure(
+  IPC_CHANNELS.MEMORY_DELETE_USER_FACT,
+  RATE_LIMIT_CONFIGS.limited,
+);
+rateLimiter.configure(
+  IPC_CHANNELS.MEMORY_DELETE_IMPORTED_ENTRY,
+  RATE_LIMIT_CONFIGS.limited,
+);
+rateLimiter.configure(
+  IPC_CHANNELS.MEMORY_SET_IMPORTED_RECALL_IGNORED,
+  RATE_LIMIT_CONFIGS.limited,
+);
+rateLimiter.configure(
+  IPC_CHANNELS.MEMORY_RELATIONSHIP_UPDATE,
+  RATE_LIMIT_CONFIGS.limited,
+);
+rateLimiter.configure(
+  IPC_CHANNELS.MEMORY_RELATIONSHIP_DELETE,
+  RATE_LIMIT_CONFIGS.limited,
+);
 rateLimiter.configure(
   IPC_CHANNELS.MEMORY_RELATIONSHIP_CLEANUP_RECURRING,
   RATE_LIMIT_CONFIGS.limited,
 );
-rateLimiter.configure(IPC_CHANNELS.SUPERVISOR_EXCHANGE_RESOLVE, RATE_LIMIT_CONFIGS.limited);
+rateLimiter.configure(
+  IPC_CHANNELS.SUPERVISOR_EXCHANGE_RESOLVE,
+  RATE_LIMIT_CONFIGS.limited,
+);
 
 // Helper function to get the main window (avoids overlay/utility windows)
 let mainWindowGetter: (() => BrowserWindow | null) | null = null;
@@ -716,7 +941,9 @@ export async function setupIpcHandlers(
 
   const computerUseMainWindow = (): BrowserWindow | null =>
     options?.getMainWindow?.() ?? getMainWindow();
-  ComputerUseSessionManager.getInstance().setMainWindowGetter(computerUseMainWindow);
+  ComputerUseSessionManager.getInstance().setMainWindowGetter(
+    computerUseMainWindow,
+  );
   ComputerUseSessionManager.getInstance().setNotifyHandler((event) => {
     const win = computerUseMainWindow();
     if (win && !win.isDestroyed()) {
@@ -771,7 +998,8 @@ export async function setupIpcHandlers(
     createChildTask: (params) => agentDaemon.createChildTask(params as Any),
     cancelTask: (taskId: string) => agentDaemon.cancelTask(taskId),
     wrapUpTask: (taskId: string) => agentDaemon.wrapUpTask(taskId),
-    createOrchestrationGraphRun: (params) => agentDaemon.createOrchestrationGraphRun(params as Any),
+    createOrchestrationGraphRun: (params) =>
+      agentDaemon.createOrchestrationGraphRun(params as Any),
     appendOrchestrationGraphNodes: (params) =>
       agentDaemon.appendOrchestrationGraphNodes(params as Any),
     findOrchestrationGraphByTeamRunId: (teamRunId: string) =>
@@ -792,7 +1020,10 @@ export async function setupIpcHandlers(
   agentRoleRepo.seedDefaults();
 
   // Helper to validate path is within workspace (prevent path traversal attacks)
-  const isPathWithinWorkspace = (filePath: string, workspacePath: string): boolean => {
+  const isPathWithinWorkspace = (
+    filePath: string,
+    workspacePath: string,
+  ): boolean => {
     const normalizedWorkspace = path.resolve(workspacePath);
     const normalizedFile = path.resolve(normalizedWorkspace, filePath);
     const relative = path.relative(normalizedWorkspace, normalizedFile);
@@ -812,10 +1043,15 @@ export async function setupIpcHandlers(
           : trimmed;
 
     // Event payloads may normalize separators to "/" regardless of platform.
-    return path.sep === "/" ? expandedHome.replace(/\\/g, "/") : expandedHome.replace(/\//g, "\\");
+    return path.sep === "/"
+      ? expandedHome.replace(/\\/g, "/")
+      : expandedHome.replace(/\//g, "\\");
   };
 
-  const buildViewerPathCandidates = (filePath: string, workspacePath?: string): string[] => {
+  const buildViewerPathCandidates = (
+    filePath: string,
+    workspacePath?: string,
+  ): string[] => {
     const normalizedInput = normalizePotentialPath(filePath);
     const candidates: string[] = [];
     const seen = new Set<string>();
@@ -828,7 +1064,8 @@ export async function setupIpcHandlers(
     };
 
     if (!normalizedInput) return candidates;
-    const hasWorkspace = typeof workspacePath === "string" && workspacePath.trim().length > 0;
+    const hasWorkspace =
+      typeof workspacePath === "string" && workspacePath.trim().length > 0;
     const normalizedWorkspace = hasWorkspace
       ? path.resolve(normalizePotentialPath(workspacePath as string))
       : "";
@@ -852,12 +1089,22 @@ export async function setupIpcHandlers(
         const segments = normalizedInput.split(/[\\/]+/).filter(Boolean);
         const coworkIdx = segments.lastIndexOf(".cowork");
         if (coworkIdx >= 0 && coworkIdx < segments.length - 1) {
-          addCandidate(path.join(normalizedWorkspace, ".cowork", ...segments.slice(coworkIdx + 1)));
+          addCandidate(
+            path.join(
+              normalizedWorkspace,
+              ".cowork",
+              ...segments.slice(coworkIdx + 1),
+            ),
+          );
         }
         const artifactsIdx = segments.lastIndexOf("artifacts");
         if (artifactsIdx >= 0 && artifactsIdx < segments.length - 1) {
           addCandidate(
-            path.join(normalizedWorkspace, "artifacts", ...segments.slice(artifactsIdx + 1)),
+            path.join(
+              normalizedWorkspace,
+              "artifacts",
+              ...segments.slice(artifactsIdx + 1),
+            ),
           );
         }
       }
@@ -868,8 +1115,12 @@ export async function setupIpcHandlers(
       addCandidate(path.join(normalizedWorkspace, normalizedInput));
 
       if (!hasParentTraversal) {
-        addCandidate(path.join(normalizedWorkspace, ".cowork", normalizedRelativeInput));
-        addCandidate(path.join(normalizedWorkspace, "artifacts", normalizedRelativeInput));
+        addCandidate(
+          path.join(normalizedWorkspace, ".cowork", normalizedRelativeInput),
+        );
+        addCandidate(
+          path.join(normalizedWorkspace, "artifacts", normalizedRelativeInput),
+        );
 
         if (basename && basename !== normalizedRelativeInput) {
           addCandidate(path.join(normalizedWorkspace, basename));
@@ -889,7 +1140,8 @@ export async function setupIpcHandlers(
     workspacePath?: string,
     options?: { requireWorkspaceContainment?: boolean },
   ): Promise<{ resolvedPath: string | null; attemptedPaths: string[] }> => {
-    const requireWorkspaceContainment = options?.requireWorkspaceContainment === true;
+    const requireWorkspaceContainment =
+      options?.requireWorkspaceContainment === true;
     const candidates = buildViewerPathCandidates(filePath, workspacePath);
     const attemptedPaths: string[] = [];
     const workspaceRoot =
@@ -914,14 +1166,20 @@ export async function setupIpcHandlers(
       }
     }
 
-    if (requireWorkspaceContainment && attemptedPaths.length === 0 && sawOutOfWorkspaceCandidate) {
+    if (
+      requireWorkspaceContainment &&
+      attemptedPaths.length === 0 &&
+      sawOutOfWorkspaceCandidate
+    ) {
       throw new Error("Access denied: file path is outside the workspace");
     }
 
     return { resolvedPath: null, attemptedPaths };
   };
 
-  const renderPdfFirstPageThumbnail = async (pdfPath: string): Promise<string | undefined> => {
+  const renderPdfFirstPageThumbnail = async (
+    pdfPath: string,
+  ): Promise<string | undefined> => {
     let tempDir: string | undefined;
     try {
       tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "cowork-pdf-thumb-"));
@@ -1011,9 +1269,14 @@ export async function setupIpcHandlers(
     }
   };
 
-  const tempWorkspaceRoot = path.join(os.tmpdir(), TEMP_WORKSPACE_ROOT_DIR_NAME);
+  const tempWorkspaceRoot = path.join(
+    os.tmpdir(),
+    TEMP_WORKSPACE_ROOT_DIR_NAME,
+  );
 
-  const normalizeTempPermissions = (existing?: Workspace): Workspace["permissions"] => ({
+  const normalizeTempPermissions = (
+    existing?: Workspace,
+  ): Workspace["permissions"] => ({
     ...existing?.permissions,
     read: true,
     write: true,
@@ -1063,7 +1326,9 @@ export async function setupIpcHandlers(
   };
 
   const buildTempWorkspaceKey = (): string =>
-    sanitizeTempWorkspaceKey(`session-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`);
+    sanitizeTempWorkspaceKey(
+      `session-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`,
+    );
 
   // Temp workspace management
   // Creates isolated temp workspaces so each new session can use its own folder.
@@ -1078,7 +1343,11 @@ export async function setupIpcHandlers(
         .findAll()
         .find((workspace) => isTempWorkspaceInScope(workspace.id, "ui"));
       if (existingTemp) {
-        workspace = await ensureTempWorkspace(existingTemp.id, existingTemp.path, existingTemp);
+        workspace = await ensureTempWorkspace(
+          existingTemp.id,
+          existingTemp.path,
+          existingTemp,
+        );
       } else {
         await fs.mkdir(tempWorkspaceRoot, { recursive: true });
         const key = buildTempWorkspaceKey();
@@ -1113,40 +1382,54 @@ export async function setupIpcHandlers(
   };
 
   // File handlers - open files and show in Finder
-  ipcMain.handle("file:open", async (_, filePath: string, workspacePath?: string) => {
-    // Security: require workspacePath and validate path is within it
-    if (!workspacePath) {
-      throw new Error("Workspace path is required for file operations");
-    }
+  ipcMain.handle(
+    IPC_CHANNELS.FILE_OPEN,
+    async (_, filePath: string, workspacePath?: string) => {
+      // Security: require workspacePath and validate path is within it
+      if (!workspacePath) {
+        throw new Error("Workspace path is required for file operations");
+      }
 
-    const { resolvedPath } = await resolveExistingPathForViewer(filePath, workspacePath, {
-      requireWorkspaceContainment: true,
-    });
-    if (!resolvedPath) {
-      return "File not found";
-    }
+      const { resolvedPath } = await resolveExistingPathForViewer(
+        filePath,
+        workspacePath,
+        {
+          requireWorkspaceContainment: true,
+        },
+      );
+      if (!resolvedPath) {
+        return "File not found";
+      }
 
-    return shell.openPath(resolvedPath);
-  });
+      return shell.openPath(resolvedPath);
+    },
+  );
 
-  ipcMain.handle("file:showInFinder", async (_, filePath: string, workspacePath?: string) => {
-    // Security: require workspacePath and validate path is within it
-    if (!workspacePath) {
-      throw new Error("Workspace path is required for file operations");
-    }
+  ipcMain.handle(
+    IPC_CHANNELS.FILE_SHOW_IN_FINDER,
+    async (_, filePath: string, workspacePath?: string) => {
+      // Security: require workspacePath and validate path is within it
+      if (!workspacePath) {
+        throw new Error("Workspace path is required for file operations");
+      }
 
-    const { resolvedPath } = await resolveExistingPathForViewer(filePath, workspacePath, {
-      requireWorkspaceContainment: true,
-    });
-    if (!resolvedPath) {
-      throw new Error("File not found");
-    }
+      const { resolvedPath } = await resolveExistingPathForViewer(
+        filePath,
+        workspacePath,
+        {
+          requireWorkspaceContainment: true,
+        },
+      );
+      if (!resolvedPath) {
+        throw new Error("File not found");
+      }
 
-    shell.showItemInFolder(resolvedPath);
-  });
+      shell.showItemInFolder(resolvedPath);
+    },
+  );
 
   // Open external URL in system browser
-  ipcMain.handle("shell:openExternal", async (_, url: string) => {
+  ipcMain.handle(IPC_CHANNELS.SHELL_OPEN_EXTERNAL, async (_, url: string) => {
     // Validate URL to prevent security issues
     try {
       const parsedUrl = new URL(url);
@@ -1160,42 +1443,73 @@ export async function setupIpcHandlers(
   });
 
   // Open macOS System Settings panes (with AppleScript fallback for reliability)
-  ipcMain.handle(IPC_CHANNELS.SYSTEM_OPEN_SETTINGS, async (_, target: unknown) => {
-    if (process.platform !== "darwin") {
-      return { success: false, error: "System settings shortcuts are only available on macOS." };
-    }
+  ipcMain.handle(
+    IPC_CHANNELS.SYSTEM_OPEN_SETTINGS,
+    async (_, target: unknown) => {
+      if (process.platform !== "darwin") {
+        return {
+          success: false,
+          error: "System settings shortcuts are only available on macOS.",
+        };
+      }
 
-    if (!isMacSystemSettingsTarget(target)) {
-      return { success: false, error: "Unknown settings target." };
-    }
+      if (!isMacSystemSettingsTarget(target)) {
+        return { success: false, error: "Unknown settings target." };
+      }
 
-    try {
-      await openMacSystemSettings(target);
-      return { success: true };
-    } catch (error: Any) {
-      return { success: false, error: error?.message || "Failed to open System Settings." };
-    }
-  });
+      try {
+        await openMacSystemSettings(target);
+        return { success: true };
+      } catch (error: Any) {
+        return {
+          success: false,
+          error: error?.message || "Failed to open System Settings.",
+        };
+      }
+    },
+  );
 
   ipcMain.handle(IPC_CHANNELS.PROFILE_LIST, async () => {
     return ProfileManager.listProfiles();
   });
 
-  ipcMain.handle(IPC_CHANNELS.PROFILE_CREATE, async (_, rawProfileName: unknown) => {
-    const profileName = validateInput(ProfileNameSchema, rawProfileName, "profile name");
-    return ProfileManager.ensureProfile(profileName);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.PROFILE_CREATE,
+    async (_, rawProfileName: unknown) => {
+      const profileName = validateInput(
+        ProfileNameSchema,
+        rawProfileName,
+        "profile name",
+      );
+      return ProfileManager.ensureProfile(profileName);
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.PROFILE_SWITCH, async (_, rawProfileId: unknown) => {
-    const profileId = validateInput(ProfileNameSchema, rawProfileId, "profile id");
-    return ProfileManager.switchProfile(profileId);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.PROFILE_SWITCH,
+    async (_, rawProfileId: unknown) => {
+      const profileId = validateInput(
+        ProfileNameSchema,
+        rawProfileId,
+        "profile id",
+      );
+      return ProfileManager.switchProfile(profileId);
+    },
+  );
 
   ipcMain.handle(
     IPC_CHANNELS.PROFILE_EXPORT,
     async (_, payload: { profileId: unknown; destinationRoot: unknown }) => {
-      const profileId = validateInput(ProfileNameSchema, payload?.profileId, "profile id");
-      const destinationRoot = validateInput(z.string().trim().min(1), payload?.destinationRoot, "destination folder");
+      const profileId = validateInput(
+        ProfileNameSchema,
+        payload?.profileId,
+        "profile id",
+      );
+      const destinationRoot = validateInput(
+        z.string().trim().min(1),
+        payload?.destinationRoot,
+        "destination folder",
+      );
       return ProfileManager.exportProfile(profileId, destinationRoot);
     },
   );
@@ -1203,10 +1517,20 @@ export async function setupIpcHandlers(
   ipcMain.handle(
     IPC_CHANNELS.PROFILE_IMPORT,
     async (_, payload: { sourcePath: unknown; profileName?: unknown }) => {
-      const sourcePath = validateInput(z.string().trim().min(1), payload?.sourcePath, "source folder");
+      const sourcePath = validateInput(
+        z.string().trim().min(1),
+        payload?.sourcePath,
+        "source folder",
+      );
       const profileName =
-        payload && typeof payload.profileName === "string" && payload.profileName.trim().length > 0
-          ? validateInput(ProfileNameSchema, payload.profileName, "profile name")
+        payload &&
+        typeof payload.profileName === "string" &&
+        payload.profileName.trim().length > 0
+          ? validateInput(
+              ProfileNameSchema,
+              payload.profileName,
+              "profile name",
+            )
           : undefined;
       return ProfileManager.importProfile(sourcePath, profileName);
     },
@@ -1216,7 +1540,7 @@ export async function setupIpcHandlers(
   // Note: This handler allows viewing any file on the system for convenience.
   // File operations like open/showInFinder remain workspace-restricted.
   ipcMain.handle(
-    "file:readForViewer",
+    IPC_CHANNELS.FILE_READ_FOR_VIEWER,
     async (_, data: { filePath: string } & FileViewerRequestOptions) => {
       const {
         filePath,
@@ -1227,14 +1551,17 @@ export async function setupIpcHandlers(
         includePdfBase64 = false,
       } = data;
 
-      const { resolvedPath, attemptedPaths } = await resolveExistingPathForViewer(
-        filePath,
-        workspacePath,
-      );
+      const { resolvedPath, attemptedPaths } =
+        await resolveExistingPathForViewer(filePath, workspacePath);
       if (!resolvedPath) {
         const attempted =
-          attemptedPaths.length > 0 ? ` (tried ${attemptedPaths.length} location(s))` : "";
-        return { success: false, error: `File not found: ${filePath}${attempted}` };
+          attemptedPaths.length > 0
+            ? ` (tried ${attemptedPaths.length} location(s))`
+            : "";
+        return {
+          success: false,
+          error: `File not found: ${filePath}${attempted}`,
+        };
       }
 
       // Get file stats
@@ -1300,7 +1627,16 @@ export async function setupIpcHandlers(
           ".prettierrc",
           ".eslintrc",
         ];
-        const imageExtensions = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".ico"];
+        const imageExtensions = [
+          ".png",
+          ".jpg",
+          ".jpeg",
+          ".gif",
+          ".webp",
+          ".svg",
+          ".bmp",
+          ".ico",
+        ];
         const videoExtensions = [".mp4", ".webm"];
 
         if (ext === ".md" || ext === ".markdown") return "markdown";
@@ -1335,19 +1671,34 @@ export async function setupIpcHandlers(
       const MAX_INLINE_VIDEO_DATA_URL_SIZE = 25 * 1024 * 1024; // 25MB for reliable in-app playback
 
       if (fileType === "image" && stats.size > MAX_IMAGE_SIZE) {
-        return { success: false, error: "File too large for preview (max 10MB for images)" };
+        return {
+          success: false,
+          error: "File too large for preview (max 10MB for images)",
+        };
       }
       if (fileType === "video" && stats.size > MAX_VIDEO_SIZE) {
-        return { success: false, error: "File too large for preview (max 500MB for videos)" };
+        return {
+          success: false,
+          error: "File too large for preview (max 500MB for videos)",
+        };
       }
       if (fileType === "pptx" && stats.size > MAX_PPTX_VIEWER_SIZE) {
-        return { success: false, error: "PPTX file too large for preview (max 50MB)" };
+        return {
+          success: false,
+          error: "PPTX file too large for preview (max 50MB)",
+        };
       }
       if (fileType === "xlsx" && stats.size > MAX_XLSX_SIZE) {
-        return { success: false, error: "Spreadsheet too large for extraction (max 20MB)" };
+        return {
+          success: false,
+          error: "Spreadsheet too large for extraction (max 20MB)",
+        };
       }
       if (fileType === "pdf" && stats.size > MAX_PDF_SIZE) {
-        return { success: false, error: "PDF file too large for review (max 75MB)" };
+        return {
+          success: false,
+          error: "PDF file too large for review (max 75MB)",
+        };
       }
       if (
         fileType !== "image" &&
@@ -1358,7 +1709,10 @@ export async function setupIpcHandlers(
         fileType !== "pdf" &&
         stats.size > MAX_TEXT_SIZE
       ) {
-        return { success: false, error: "File too large for preview (max 5MB for text files)" };
+        return {
+          success: false,
+          error: "File too large for preview (max 5MB for text files)",
+        };
       }
 
       try {
@@ -1396,7 +1750,8 @@ export async function setupIpcHandlers(
             });
             content = pdfReview.content;
             pdfReviewSummary = pdfReview;
-            pdfThumbnailDataUrl = await renderPdfFirstPageThumbnail(resolvedPath);
+            pdfThumbnailDataUrl =
+              await renderPdfFirstPageThumbnail(resolvedPath);
             if (includePdfBase64 && stats.size <= MAX_PDF_BASE64_SIZE) {
               const buffer = await fs.readFile(resolvedPath);
               pdfDataBase64 = buffer.toString("base64");
@@ -1424,21 +1779,30 @@ export async function setupIpcHandlers(
 
             if (shouldAttemptImageOcr) {
               const requestOcrChars = resolveImageOcrChars(imageOcrMaxChars);
-              ocrText = (await runOcrFromImagePath(resolvedPath, requestOcrChars)) ?? undefined;
+              ocrText =
+                (await runOcrFromImagePath(resolvedPath, requestOcrChars)) ??
+                undefined;
             }
             break;
           }
 
           case "video": {
-            mimeType = ((mime.lookup(resolvedPath) || undefined) as string | undefined) || undefined;
-            if (!mimeType || (mimeType !== "video/mp4" && mimeType !== "video/webm")) {
+            mimeType =
+              ((mime.lookup(resolvedPath) || undefined) as
+                | string
+                | undefined) || undefined;
+            if (
+              !mimeType ||
+              (mimeType !== "video/mp4" && mimeType !== "video/webm")
+            ) {
               return { success: false, error: "Unsupported video type" };
             }
             if (mimeType === "video/mp4") {
-              const transcodedPreviewUrl = await generateTranscodedVideoPreviewDataUrl(
-                resolvedPath,
-                stats,
-              );
+              const transcodedPreviewUrl =
+                await generateTranscodedVideoPreviewDataUrl(
+                  resolvedPath,
+                  stats,
+                );
               if (transcodedPreviewUrl) {
                 playbackUrl = transcodedPreviewUrl;
                 content = null;
@@ -1450,7 +1814,10 @@ export async function setupIpcHandlers(
               playbackUrl = `data:${mimeType};base64,${buffer.toString("base64")}`;
             } else {
               if (!workspacePath || workspacePath.trim().length === 0) {
-                return { success: false, error: "Workspace path is required for video preview" };
+                return {
+                  success: false,
+                  error: "Workspace path is required for video preview",
+                };
               }
               playbackUrl = createMediaPlaybackUrl({
                 resolvedPath,
@@ -1490,7 +1857,11 @@ export async function setupIpcHandlers(
                     cells.push(String((val as Any).result ?? ""));
                   } else if (typeof val === "object" && "richText" in val) {
                     // Rich text — concatenate text fragments
-                    cells.push((val as Any).richText?.map((rt: Any) => rt.text).join("") ?? "");
+                    cells.push(
+                      (val as Any).richText
+                        ?.map((rt: Any) => rt.text)
+                        .join("") ?? "",
+                    );
                   } else if (val instanceof Date) {
                     cells.push(val.toISOString());
                   } else {
@@ -1506,10 +1877,14 @@ export async function setupIpcHandlers(
           }
 
           default:
-            return { success: false, error: "Unsupported file type", fileType: "unsupported" };
+            return {
+              success: false,
+              error: "Unsupported file type",
+              fileType: "unsupported",
+            };
         }
 
-      return {
+        return {
           success: true,
           data: {
             path: resolvedPath,
@@ -1527,14 +1902,17 @@ export async function setupIpcHandlers(
           },
         };
       } catch (error: Any) {
-        return { success: false, error: `Failed to read file: ${error.message}` };
+        return {
+          success: false,
+          error: `Failed to read file: ${error.message}`,
+        };
       }
     },
   );
 
   // File import handler - copy selected files into the workspace for attachment use
   ipcMain.handle(
-    "file:importToWorkspace",
+    IPC_CHANNELS.FILE_IMPORT_TO_WORKSPACE,
     async (_, data: { workspaceId: string; files: string[] }) => {
       const validated = validateInput(FileImportSchema, data, "file import");
       const workspace = workspaceRepo.findById(validated.workspaceId);
@@ -1548,16 +1926,25 @@ export async function setupIpcHandlers(
       }
 
       const sanitizeFileName = (fileName: string): string => {
-        const sanitized = fileName.replace(/[<>:"/\\|?*\x00-\x1F]/g, "_").trim();
+        const sanitized = fileName
+          .replace(/[<>:"/\\|?*\x00-\x1F]/g, "_")
+          .trim();
         return sanitized.length > 0 ? sanitized : "file";
       };
 
-      const ensureUniqueName = (dir: string, baseName: string, usedNames: Set<string>): string => {
+      const ensureUniqueName = (
+        dir: string,
+        baseName: string,
+        usedNames: Set<string>,
+      ): string => {
         const ext = path.extname(baseName);
         const stem = path.basename(baseName, ext);
         let candidate = baseName;
         let counter = 1;
-        while (usedNames.has(candidate) || fsSync.existsSync(path.join(dir, candidate))) {
+        while (
+          usedNames.has(candidate) ||
+          fsSync.existsSync(path.join(dir, candidate))
+        ) {
           candidate = `${stem}-${counter}${ext}`;
           counter += 1;
         }
@@ -1570,7 +1957,12 @@ export async function setupIpcHandlers(
 
       const ensureUploadRoot = async (): Promise<string> => {
         if (uploadRoot) return uploadRoot;
-        uploadRoot = path.join(workspace.path, ".cowork", "uploads", `${Date.now()}`);
+        uploadRoot = path.join(
+          workspace.path,
+          ".cowork",
+          "uploads",
+          `${Date.now()}`,
+        );
         await fs.mkdir(uploadRoot, { recursive: true });
         return uploadRoot;
       };
@@ -1583,7 +1975,9 @@ export async function setupIpcHandlers(
       }> = [];
 
       for (const filePath of validated.files) {
-        const absolutePath = path.isAbsolute(filePath) ? filePath : path.resolve(filePath);
+        const absolutePath = path.isAbsolute(filePath)
+          ? filePath
+          : path.resolve(filePath);
         const stats = await fs.stat(absolutePath);
 
         if (!stats.isFile()) {
@@ -1597,7 +1991,9 @@ export async function setupIpcHandlers(
           );
         }
 
-        const mimeType = (mime.lookup(absolutePath) || undefined) as string | undefined;
+        const mimeType = (mime.lookup(absolutePath) || undefined) as
+          | string
+          | undefined;
 
         if (isPathWithinWorkspace(absolutePath, workspace.path)) {
           results.push({
@@ -1607,6 +2003,12 @@ export async function setupIpcHandlers(
             mimeType,
           });
           continue;
+        }
+
+        if (!isApprovedImportFile(absolutePath)) {
+          throw new Error(
+            `Import denied for "${path.basename(absolutePath)}". Select the file again from the native picker before attaching it.`,
+          );
         }
 
         const safeName = sanitizeFileName(path.basename(absolutePath));
@@ -1630,7 +2032,7 @@ export async function setupIpcHandlers(
 
   // File import handler - save provided file data into the workspace (clipboard / drag data)
   ipcMain.handle(
-    "file:importDataToWorkspace",
+    IPC_CHANNELS.FILE_IMPORT_DATA_TO_WORKSPACE,
     async (
       _,
       data: {
@@ -1638,7 +2040,11 @@ export async function setupIpcHandlers(
         files: Array<{ name: string; data: string; mimeType?: string }>;
       },
     ) => {
-      const validated = validateInput(FileImportDataSchema, data, "file import data");
+      const validated = validateInput(
+        FileImportDataSchema,
+        data,
+        "file import data",
+      );
       const workspace = workspaceRepo.findById(validated.workspaceId);
 
       if (!workspace) {
@@ -1650,7 +2056,9 @@ export async function setupIpcHandlers(
       }
 
       const sanitizeFileName = (fileName: string): string => {
-        const sanitized = fileName.replace(/[<>:"/\\|?*\x00-\x1F]/g, "_").trim();
+        const sanitized = fileName
+          .replace(/[<>:"/\\|?*\x00-\x1F]/g, "_")
+          .trim();
         return sanitized.length > 0 ? sanitized : "file";
       };
 
@@ -1660,12 +2068,19 @@ export async function setupIpcHandlers(
         return ext ? `${fileName}.${ext}` : fileName;
       };
 
-      const ensureUniqueName = (dir: string, baseName: string, usedNames: Set<string>): string => {
+      const ensureUniqueName = (
+        dir: string,
+        baseName: string,
+        usedNames: Set<string>,
+      ): string => {
         const ext = path.extname(baseName);
         const stem = path.basename(baseName, ext);
         let candidate = baseName;
         let counter = 1;
-        while (usedNames.has(candidate) || fsSync.existsSync(path.join(dir, candidate))) {
+        while (
+          usedNames.has(candidate) ||
+          fsSync.existsSync(path.join(dir, candidate))
+        ) {
           candidate = `${stem}-${counter}${ext}`;
           counter += 1;
         }
@@ -1673,7 +2088,12 @@ export async function setupIpcHandlers(
         return candidate;
       };
 
-      const uploadRoot = path.join(workspace.path, ".cowork", "uploads", `${Date.now()}`);
+      const uploadRoot = path.join(
+        workspace.path,
+        ".cowork",
+        "uploads",
+        `${Date.now()}`,
+      );
       await fs.mkdir(uploadRoot, { recursive: true });
       const usedNames = new Set<string>();
 
@@ -1685,7 +2105,10 @@ export async function setupIpcHandlers(
       }> = [];
 
       for (const file of validated.files) {
-        const rawName = ensureExtension(sanitizeFileName(file.name), file.mimeType);
+        const rawName = ensureExtension(
+          sanitizeFileName(file.name),
+          file.mimeType,
+        );
         const uniqueName = ensureUniqueName(uploadRoot, rawName, usedNames);
         const destination = path.join(uploadRoot, uniqueName);
         const buffer = Buffer.from(file.data, "base64");
@@ -1717,7 +2140,10 @@ export async function setupIpcHandlers(
       data,
       "document editor open session",
     );
-    return documentEditorSessionService.openSession(validated.filePath, validated.workspacePath);
+    return documentEditorSessionService.openSession(
+      validated.filePath,
+      validated.workspacePath,
+    );
   });
 
   ipcMain.handle(IPC_CHANNELS.DOCUMENT_LIST_VERSIONS, async (_, data) => {
@@ -1726,12 +2152,19 @@ export async function setupIpcHandlers(
       data,
       "document editor version list",
     );
-    return documentEditorSessionService.listVersions(validated.filePath, validated.workspacePath);
+    return documentEditorSessionService.listVersions(
+      validated.filePath,
+      validated.workspacePath,
+    );
   });
 
   ipcMain.handle(IPC_CHANNELS.DOCUMENT_START_EDIT_TASK, async (_, data) => {
     checkRateLimit(IPC_CHANNELS.TASK_CREATE);
-    const validated = validateInput(DocumentEditRequestSchema, data, "document edit request");
+    const validated = validateInput(
+      DocumentEditRequestSchema,
+      data,
+      "document edit request",
+    );
     return documentEditorSessionService.startEditTask(validated);
   });
 
@@ -1740,95 +2173,149 @@ export async function setupIpcHandlers(
     return mailboxService.getSyncStatus();
   });
 
-  ipcMain.handle(IPC_CHANNELS.MAILBOX_SYNC, async (event, data?: { limit?: number }) => {
-    assertTrustedMailboxSender(event);
-    return mailboxService.sync(data?.limit);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.MAILBOX_SYNC,
+    async (event, data?: { limit?: number }) => {
+      assertTrustedMailboxSender(event);
+      return mailboxService.sync(data?.limit);
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.MAILBOX_LIST_THREADS, async (event, data?: Any) => {
-    assertTrustedMailboxSender(event);
-    return mailboxService.listThreads({
-      accountId: typeof data?.accountId === "string" ? data.accountId : undefined,
-      query: typeof data?.query === "string" ? data.query : undefined,
-      category: typeof data?.category === "string" ? data.category : "all",
-      mailboxView:
-        data?.mailboxView === "sent" || data?.mailboxView === "all" || data?.mailboxView === "inbox"
-          ? data.mailboxView
-          : undefined,
-      unreadOnly: typeof data?.unreadOnly === "boolean" ? data.unreadOnly : undefined,
-      needsReply: typeof data?.needsReply === "boolean" ? data.needsReply : undefined,
-      hasSuggestedProposal:
-        typeof data?.hasSuggestedProposal === "boolean" ? data.hasSuggestedProposal : undefined,
-      hasOpenCommitment:
-        typeof data?.hasOpenCommitment === "boolean" ? data.hasOpenCommitment : undefined,
-      cleanupCandidate:
-        typeof data?.cleanupCandidate === "boolean" ? data.cleanupCandidate : undefined,
-      sortBy: data?.sortBy === "recent" ? "recent" : data?.sortBy === "priority" ? "priority" : undefined,
-      limit: typeof data?.limit === "number" ? data.limit : undefined,
-    });
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.MAILBOX_LIST_THREADS,
+    async (event, data?: Any) => {
+      assertTrustedMailboxSender(event);
+      return mailboxService.listThreads({
+        accountId:
+          typeof data?.accountId === "string" ? data.accountId : undefined,
+        query: typeof data?.query === "string" ? data.query : undefined,
+        category: typeof data?.category === "string" ? data.category : "all",
+        mailboxView:
+          data?.mailboxView === "sent" ||
+          data?.mailboxView === "all" ||
+          data?.mailboxView === "inbox"
+            ? data.mailboxView
+            : undefined,
+        unreadOnly:
+          typeof data?.unreadOnly === "boolean" ? data.unreadOnly : undefined,
+        needsReply:
+          typeof data?.needsReply === "boolean" ? data.needsReply : undefined,
+        hasSuggestedProposal:
+          typeof data?.hasSuggestedProposal === "boolean"
+            ? data.hasSuggestedProposal
+            : undefined,
+        hasOpenCommitment:
+          typeof data?.hasOpenCommitment === "boolean"
+            ? data.hasOpenCommitment
+            : undefined,
+        cleanupCandidate:
+          typeof data?.cleanupCandidate === "boolean"
+            ? data.cleanupCandidate
+            : undefined,
+        sortBy:
+          data?.sortBy === "recent"
+            ? "recent"
+            : data?.sortBy === "priority"
+              ? "priority"
+              : undefined,
+        limit: typeof data?.limit === "number" ? data.limit : undefined,
+      });
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.MAILBOX_GET_THREAD, async (event, threadId: string) => {
-    assertTrustedMailboxSender(event);
-    return mailboxService.getThread(threadId);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.MAILBOX_GET_THREAD,
+    async (event, threadId: string) => {
+      assertTrustedMailboxSender(event);
+      return mailboxService.getThread(threadId);
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.MAILBOX_LIST_EVENTS, async (event, data?: Any) => {
-    assertTrustedMailboxSender(event);
-    return mailboxService.listMailboxEvents(
-      typeof data?.limit === "number" ? data.limit : undefined,
-      typeof data?.threadId === "string" ? data.threadId : undefined,
-    );
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.MAILBOX_LIST_EVENTS,
+    async (event, data?: Any) => {
+      assertTrustedMailboxSender(event);
+      return mailboxService.listMailboxEvents(
+        typeof data?.limit === "number" ? data.limit : undefined,
+        typeof data?.threadId === "string" ? data.threadId : undefined,
+      );
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.MAILBOX_AUTOMATION_LIST, async (event, data?: Any) => {
-    assertTrustedMailboxSender(event);
-    return mailboxService.listMailboxAutomations({
-      workspaceId: typeof data?.workspaceId === "string" ? data.workspaceId : undefined,
-      threadId: typeof data?.threadId === "string" ? data.threadId : undefined,
-    });
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.MAILBOX_AUTOMATION_LIST,
+    async (event, data?: Any) => {
+      assertTrustedMailboxSender(event);
+      return mailboxService.listMailboxAutomations({
+        workspaceId:
+          typeof data?.workspaceId === "string" ? data.workspaceId : undefined,
+        threadId:
+          typeof data?.threadId === "string" ? data.threadId : undefined,
+      });
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.MAILBOX_AUTOMATION_LIST_THREAD, async (event, threadId: string) => {
-    assertTrustedMailboxSender(event);
-    return mailboxService.listThreadAutomations(threadId);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.MAILBOX_AUTOMATION_LIST_THREAD,
+    async (event, threadId: string) => {
+      assertTrustedMailboxSender(event);
+      return mailboxService.listThreadAutomations(threadId);
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.MAILBOX_AUTOMATION_CREATE_RULE, async (event, data?: Any) => {
-    assertTrustedMailboxSender(event);
-    return mailboxService.createMailboxRule(data?.recipe || data);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.MAILBOX_AUTOMATION_CREATE_RULE,
+    async (event, data?: Any) => {
+      assertTrustedMailboxSender(event);
+      return mailboxService.createMailboxRule(data?.recipe || data);
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.MAILBOX_AUTOMATION_UPDATE_RULE, async (event, data?: Any) => {
-    assertTrustedMailboxSender(event);
-    if (typeof data?.id !== "string") {
-      throw new Error("Missing automation id for mailbox rule update");
-    }
-    return mailboxService.updateMailboxRule(data.id, data.patch || {});
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.MAILBOX_AUTOMATION_UPDATE_RULE,
+    async (event, data?: Any) => {
+      assertTrustedMailboxSender(event);
+      if (typeof data?.id !== "string") {
+        throw new Error("Missing automation id for mailbox rule update");
+      }
+      return mailboxService.updateMailboxRule(data.id, data.patch || {});
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.MAILBOX_AUTOMATION_DELETE_RULE, async (event, id: string) => {
-    assertTrustedMailboxSender(event);
-    return mailboxService.deleteMailboxRule(id);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.MAILBOX_AUTOMATION_DELETE_RULE,
+    async (event, id: string) => {
+      assertTrustedMailboxSender(event);
+      return mailboxService.deleteMailboxRule(id);
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.MAILBOX_AUTOMATION_CREATE_SCHEDULE, async (event, data?: Any) => {
-    assertTrustedMailboxSender(event);
-    return mailboxService.createMailboxSchedule(data?.recipe || data);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.MAILBOX_AUTOMATION_CREATE_SCHEDULE,
+    async (event, data?: Any) => {
+      assertTrustedMailboxSender(event);
+      return mailboxService.createMailboxSchedule(data?.recipe || data);
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.MAILBOX_AUTOMATION_UPDATE_SCHEDULE, async (event, data?: Any) => {
-    assertTrustedMailboxSender(event);
-    if (typeof data?.id !== "string") {
-      throw new Error("Missing automation id for mailbox schedule update");
-    }
-    return mailboxService.updateMailboxSchedule(data.id, data.patch || {});
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.MAILBOX_AUTOMATION_UPDATE_SCHEDULE,
+    async (event, data?: Any) => {
+      assertTrustedMailboxSender(event);
+      if (typeof data?.id !== "string") {
+        throw new Error("Missing automation id for mailbox schedule update");
+      }
+      return mailboxService.updateMailboxSchedule(data.id, data.patch || {});
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.MAILBOX_AUTOMATION_DELETE_SCHEDULE, async (event, id: string) => {
-    assertTrustedMailboxSender(event);
-    return mailboxService.deleteMailboxSchedule(id);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.MAILBOX_AUTOMATION_DELETE_SCHEDULE,
+    async (event, id: string) => {
+      assertTrustedMailboxSender(event);
+      return mailboxService.deleteMailboxSchedule(id);
+    },
+  );
 
   ipcMain.handle(IPC_CHANNELS.MAILBOX_GET_DIGEST, async (event, data?: Any) => {
     assertTrustedMailboxSender(event);
@@ -1837,17 +2324,30 @@ export async function setupIpcHandlers(
     );
   });
 
-  ipcMain.handle(IPC_CHANNELS.MAILBOX_SUMMARIZE_THREAD, async (event, data?: { threadId?: string }) => {
-    assertTrustedMailboxSender(event);
-    if (!data?.threadId) throw new Error("Missing threadId for mailbox summarize");
-    return mailboxService.summarizeThread(data.threadId);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.MAILBOX_SUMMARIZE_THREAD,
+    async (event, data?: { threadId?: string }) => {
+      assertTrustedMailboxSender(event);
+      if (!data?.threadId)
+        throw new Error("Missing threadId for mailbox summarize");
+      return mailboxService.summarizeThread(data.threadId);
+    },
+  );
 
   ipcMain.handle(
     IPC_CHANNELS.MAILBOX_GENERATE_DRAFT,
-    async (event, data?: { threadId?: string; tone?: Any; includeAvailability?: boolean; allowNoreplySender?: boolean }) => {
+    async (
+      event,
+      data?: {
+        threadId?: string;
+        tone?: Any;
+        includeAvailability?: boolean;
+        allowNoreplySender?: boolean;
+      },
+    ) => {
       assertTrustedMailboxSender(event);
-      if (!data?.threadId) throw new Error("Missing threadId for mailbox draft generation");
+      if (!data?.threadId)
+        throw new Error("Missing threadId for mailbox draft generation");
       return mailboxService.generateDraft(data.threadId, {
         tone: data.tone,
         includeAvailability: data.includeAvailability,
@@ -1856,18 +2356,27 @@ export async function setupIpcHandlers(
     },
   );
 
-  ipcMain.handle(IPC_CHANNELS.MAILBOX_EXTRACT_COMMITMENTS, async (event, data?: { threadId?: string }) => {
-    assertTrustedMailboxSender(event);
-    if (!data?.threadId) throw new Error("Missing threadId for mailbox commitment extraction");
-    return mailboxService.extractCommitments(data.threadId);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.MAILBOX_EXTRACT_COMMITMENTS,
+    async (event, data?: { threadId?: string }) => {
+      assertTrustedMailboxSender(event);
+      if (!data?.threadId)
+        throw new Error("Missing threadId for mailbox commitment extraction");
+      return mailboxService.extractCommitments(data.threadId);
+    },
+  );
 
   ipcMain.handle(
     IPC_CHANNELS.MAILBOX_REVIEW_BULK_ACTION,
-    async (event, data?: { type?: "cleanup" | "follow_up"; limit?: number }) => {
+    async (
+      event,
+      data?: { type?: "cleanup" | "follow_up"; limit?: number },
+    ) => {
       assertTrustedMailboxSender(event);
       if (data?.type !== "cleanup" && data?.type !== "follow_up") {
-        throw new Error('Mailbox bulk review requires type "cleanup" or "follow_up"');
+        throw new Error(
+          'Mailbox bulk review requires type "cleanup" or "follow_up"',
+        );
       }
       return mailboxService.reviewBulkAction({
         type: data.type,
@@ -1876,45 +2385,68 @@ export async function setupIpcHandlers(
     },
   );
 
-  ipcMain.handle(IPC_CHANNELS.MAILBOX_SCHEDULE_REPLY, async (event, data?: { threadId?: string }) => {
-    assertTrustedMailboxSender(event);
-    if (!data?.threadId) throw new Error("Missing threadId for mailbox schedule reply");
-    return mailboxService.scheduleReply(data.threadId);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.MAILBOX_SCHEDULE_REPLY,
+    async (event, data?: { threadId?: string }) => {
+      assertTrustedMailboxSender(event);
+      if (!data?.threadId)
+        throw new Error("Missing threadId for mailbox schedule reply");
+      return mailboxService.scheduleReply(data.threadId);
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.MAILBOX_RESEARCH_CONTACT, async (event, data?: { threadId?: string }) => {
-    assertTrustedMailboxSender(event);
-    if (!data?.threadId) throw new Error("Missing threadId for mailbox research");
-    return mailboxService.researchContact(data.threadId);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.MAILBOX_RESEARCH_CONTACT,
+    async (event, data?: { threadId?: string }) => {
+      assertTrustedMailboxSender(event);
+      if (!data?.threadId)
+        throw new Error("Missing threadId for mailbox research");
+      return mailboxService.researchContact(data.threadId);
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.MAILBOX_IDENTITY_RESOLVE, async (event, data?: { threadId?: string }) => {
-    assertTrustedMailboxSender(event);
-    if (!data?.threadId) throw new Error("Missing threadId for mailbox identity resolution");
-    return mailboxService.resolveContactIdentity(data.threadId);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.MAILBOX_IDENTITY_RESOLVE,
+    async (event, data?: { threadId?: string }) => {
+      assertTrustedMailboxSender(event);
+      if (!data?.threadId)
+        throw new Error("Missing threadId for mailbox identity resolution");
+      return mailboxService.resolveContactIdentity(data.threadId);
+    },
+  );
 
   ipcMain.handle(
     IPC_CHANNELS.MAILBOX_IDENTITY_GET,
     async (event, data?: { contactIdentityId?: string }) => {
       assertTrustedMailboxSender(event);
-      if (!data?.contactIdentityId) throw new Error("Missing contactIdentityId");
+      if (!data?.contactIdentityId)
+        throw new Error("Missing contactIdentityId");
       return mailboxService.getContactIdentity(data.contactIdentityId);
     },
   );
 
-  ipcMain.handle(IPC_CHANNELS.MAILBOX_IDENTITY_LIST, async (event, data?: { workspaceId?: string }) => {
-    assertTrustedMailboxSender(event);
-    return mailboxService.listContactIdentities(data?.workspaceId);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.MAILBOX_IDENTITY_LIST,
+    async (event, data?: { workspaceId?: string }) => {
+      assertTrustedMailboxSender(event);
+      return mailboxService.listContactIdentities(data?.workspaceId);
+    },
+  );
 
   ipcMain.handle(
     IPC_CHANNELS.MAILBOX_IDENTITY_SEARCH,
-    async (event, data?: { workspaceId?: string; query?: string; limit?: number }) => {
+    async (
+      event,
+      data?: { workspaceId?: string; query?: string; limit?: number },
+    ) => {
       assertTrustedMailboxSender(event);
       if (!data?.workspaceId) throw new Error("Missing workspaceId");
       if (!data?.query?.trim()) return [];
-      return mailboxService.searchIdentityLinkTargets(data.workspaceId, data.query, data.limit);
+      return mailboxService.searchIdentityLinkTargets(
+        data.workspaceId,
+        data.query,
+        data.limit,
+      );
     },
   );
 
@@ -1936,9 +2468,11 @@ export async function setupIpcHandlers(
     ) => {
       assertTrustedMailboxSender(event);
       if (!data?.workspaceId) throw new Error("Missing workspaceId");
-      if (!data?.contactIdentityId) throw new Error("Missing contactIdentityId");
+      if (!data?.contactIdentityId)
+        throw new Error("Missing contactIdentityId");
       if (!data?.handleType) throw new Error("Missing handleType");
-      if (!data?.normalizedValue && !data?.displayValue) throw new Error("Missing handle value");
+      if (!data?.normalizedValue && !data?.displayValue)
+        throw new Error("Missing handle value");
       return mailboxService.linkIdentityHandle({
         workspaceId: data.workspaceId,
         contactIdentityId: data.contactIdentityId,
@@ -1953,58 +2487,81 @@ export async function setupIpcHandlers(
     },
   );
 
-  ipcMain.handle(IPC_CHANNELS.MAILBOX_IDENTITY_TIMELINE, async (event, data?: Any) => {
-    assertTrustedMailboxSender(event);
-    return mailboxService.getRelationshipTimeline({
-      threadId: typeof data?.threadId === "string" ? data.threadId : undefined,
-      contactIdentityId:
-        typeof data?.contactIdentityId === "string" ? data.contactIdentityId : undefined,
-      companyHint: typeof data?.companyHint === "string" ? data.companyHint : undefined,
-      limit: typeof data?.limit === "number" ? data.limit : undefined,
-      startAt: typeof data?.startAt === "number" ? data.startAt : undefined,
-      endAt: typeof data?.endAt === "number" ? data.endAt : undefined,
-    });
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.MAILBOX_IDENTITY_TIMELINE,
+    async (event, data?: Any) => {
+      assertTrustedMailboxSender(event);
+      return mailboxService.getRelationshipTimeline({
+        threadId:
+          typeof data?.threadId === "string" ? data.threadId : undefined,
+        contactIdentityId:
+          typeof data?.contactIdentityId === "string"
+            ? data.contactIdentityId
+            : undefined,
+        companyHint:
+          typeof data?.companyHint === "string" ? data.companyHint : undefined,
+        limit: typeof data?.limit === "number" ? data.limit : undefined,
+        startAt: typeof data?.startAt === "number" ? data.startAt : undefined,
+        endAt: typeof data?.endAt === "number" ? data.endAt : undefined,
+      });
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.MAILBOX_IDENTITY_CANDIDATES, async (event, data?: Any) => {
-    assertTrustedMailboxSender(event);
-    return mailboxService.listIdentityCandidates(
-      typeof data?.workspaceId === "string" ? data.workspaceId : undefined,
-      typeof data?.status === "string" ? data.status : undefined,
-    );
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.MAILBOX_IDENTITY_CANDIDATES,
+    async (event, data?: Any) => {
+      assertTrustedMailboxSender(event);
+      return mailboxService.listIdentityCandidates(
+        typeof data?.workspaceId === "string" ? data.workspaceId : undefined,
+        typeof data?.status === "string" ? data.status : undefined,
+      );
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.MAILBOX_IDENTITY_CONFIRM, async (event, data?: { candidateId?: string }) => {
-    assertTrustedMailboxSender(event);
-    if (!data?.candidateId) throw new Error("Missing candidateId");
-    return mailboxService.confirmIdentityLink(data.candidateId);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.MAILBOX_IDENTITY_CONFIRM,
+    async (event, data?: { candidateId?: string }) => {
+      assertTrustedMailboxSender(event);
+      if (!data?.candidateId) throw new Error("Missing candidateId");
+      return mailboxService.confirmIdentityLink(data.candidateId);
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.MAILBOX_IDENTITY_REJECT, async (event, data?: { candidateId?: string }) => {
-    assertTrustedMailboxSender(event);
-    if (!data?.candidateId) throw new Error("Missing candidateId");
-    return mailboxService.rejectIdentityLink(data.candidateId);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.MAILBOX_IDENTITY_REJECT,
+    async (event, data?: { candidateId?: string }) => {
+      assertTrustedMailboxSender(event);
+      if (!data?.candidateId) throw new Error("Missing candidateId");
+      return mailboxService.rejectIdentityLink(data.candidateId);
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.MAILBOX_IDENTITY_UNLINK, async (event, data?: { handleId?: string }) => {
-    assertTrustedMailboxSender(event);
-    if (!data?.handleId) throw new Error("Missing handleId");
-    return mailboxService.unlinkIdentityHandle(data.handleId);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.MAILBOX_IDENTITY_UNLINK,
+    async (event, data?: { handleId?: string }) => {
+      assertTrustedMailboxSender(event);
+      if (!data?.handleId) throw new Error("Missing handleId");
+      return mailboxService.unlinkIdentityHandle(data.handleId);
+    },
+  );
 
   ipcMain.handle(
     IPC_CHANNELS.MAILBOX_IDENTITY_PREFERENCE,
     async (event, data?: { contactIdentityId?: string }) => {
       assertTrustedMailboxSender(event);
-      if (!data?.contactIdentityId) throw new Error("Missing contactIdentityId");
+      if (!data?.contactIdentityId)
+        throw new Error("Missing contactIdentityId");
       return mailboxService.getChannelPreferenceSummary(data.contactIdentityId);
     },
   );
 
-  ipcMain.handle(IPC_CHANNELS.MAILBOX_IDENTITY_COVERAGE, async (event, data?: { workspaceId?: string }) => {
-    assertTrustedMailboxSender(event);
-    return mailboxService.getIdentityCoverageStats(data?.workspaceId);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.MAILBOX_IDENTITY_COVERAGE,
+    async (event, data?: { workspaceId?: string }) => {
+      assertTrustedMailboxSender(event);
+      return mailboxService.getIdentityCoverageStats(data?.workspaceId);
+    },
+  );
 
   ipcMain.handle(
     IPC_CHANNELS.MAILBOX_REPLY_VIA_CHANNEL,
@@ -2034,10 +2591,15 @@ export async function setupIpcHandlers(
         throw new Error(`Reply target mismatch for ${data.channelType}`);
       }
 
-      await gateway.sendMessage(target.channelType as Any, target.chatId, data.message, {
-        channelDbId: target.channelId,
-        parseMode: data.parseMode || "text",
-      });
+      await gateway.sendMessage(
+        target.channelType as Any,
+        target.chatId,
+        data.message,
+        {
+          channelDbId: target.channelId,
+          parseMode: data.parseMode || "text",
+        },
+      );
       return { ok: true, target };
     },
   );
@@ -2046,25 +2608,34 @@ export async function setupIpcHandlers(
     IPC_CHANNELS.MAILBOX_MC_HANDOFF_PREVIEW,
     async (event, data?: { threadId?: string }) => {
       assertTrustedMailboxSender(event);
-      if (!data?.threadId) throw new Error("Missing threadId for mailbox handoff preview");
+      if (!data?.threadId)
+        throw new Error("Missing threadId for mailbox handoff preview");
       return mailboxService.previewMissionControlHandoff(data.threadId);
     },
   );
 
-  ipcMain.handle(IPC_CHANNELS.MAILBOX_MC_HANDOFF_CREATE, async (event, data?: Any) => {
-    assertTrustedMailboxSender(event);
-    if (!data?.threadId) throw new Error("Missing threadId for mailbox handoff");
-    if (!data?.companyId) throw new Error("Missing companyId for mailbox handoff");
-    if (!data?.operatorRoleId) throw new Error("Missing operatorRoleId for mailbox handoff");
-    if (!data?.issueTitle) throw new Error("Missing issueTitle for mailbox handoff");
-    return mailboxService.createMissionControlHandoff(data);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.MAILBOX_MC_HANDOFF_CREATE,
+    async (event, data?: Any) => {
+      assertTrustedMailboxSender(event);
+      if (!data?.threadId)
+        throw new Error("Missing threadId for mailbox handoff");
+      if (!data?.companyId)
+        throw new Error("Missing companyId for mailbox handoff");
+      if (!data?.operatorRoleId)
+        throw new Error("Missing operatorRoleId for mailbox handoff");
+      if (!data?.issueTitle)
+        throw new Error("Missing issueTitle for mailbox handoff");
+      return mailboxService.createMissionControlHandoff(data);
+    },
+  );
 
   ipcMain.handle(
     IPC_CHANNELS.MAILBOX_MC_HANDOFF_LIST,
     async (event, data?: { threadId?: string }) => {
       assertTrustedMailboxSender(event);
-      if (!data?.threadId) throw new Error("Missing threadId for mailbox handoff list");
+      if (!data?.threadId)
+        throw new Error("Missing threadId for mailbox handoff list");
       return mailboxService.listMissionControlHandoffs(data.threadId);
     },
   );
@@ -2074,90 +2645,133 @@ export async function setupIpcHandlers(
     return mailboxService.listMailboxSnippets();
   });
 
-  ipcMain.handle(IPC_CHANNELS.MAILBOX_SNIPPET_UPSERT, async (event, data?: Any) => {
-    assertTrustedMailboxSender(event);
-    return mailboxService.upsertMailboxSnippet({
-      id: typeof data?.id === "string" ? data.id : undefined,
-      shortcut: typeof data?.shortcut === "string" ? data.shortcut : "",
-      body: typeof data?.body === "string" ? data.body : "",
-      subjectHint: typeof data?.subjectHint === "string" ? data.subjectHint : undefined,
-    });
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.MAILBOX_SNIPPET_UPSERT,
+    async (event, data?: Any) => {
+      assertTrustedMailboxSender(event);
+      return mailboxService.upsertMailboxSnippet({
+        id: typeof data?.id === "string" ? data.id : undefined,
+        shortcut: typeof data?.shortcut === "string" ? data.shortcut : "",
+        body: typeof data?.body === "string" ? data.body : "",
+        subjectHint:
+          typeof data?.subjectHint === "string" ? data.subjectHint : undefined,
+      });
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.MAILBOX_SNIPPET_DELETE, async (event, data?: { id?: string }) => {
-    assertTrustedMailboxSender(event);
-    if (!data?.id) throw new Error("Missing snippet id");
-    return mailboxService.deleteMailboxSnippet(data.id);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.MAILBOX_SNIPPET_DELETE,
+    async (event, data?: { id?: string }) => {
+      assertTrustedMailboxSender(event);
+      if (!data?.id) throw new Error("Missing snippet id");
+      return mailboxService.deleteMailboxSnippet(data.id);
+    },
+  );
 
   ipcMain.handle(IPC_CHANNELS.MAILBOX_SAVED_VIEWS_LIST, async (event) => {
     assertTrustedMailboxSender(event);
     return mailboxService.listMailboxSavedViews();
   });
 
-  ipcMain.handle(IPC_CHANNELS.MAILBOX_SAVED_VIEW_CREATE, async (event, data?: Any) => {
-    assertTrustedMailboxSender(event);
-    if (typeof data?.name !== "string" || typeof data?.instructions !== "string") {
-      throw new Error("Missing name or instructions for saved view");
-    }
-    const threadIds = Array.isArray(data?.threadIds)
-      ? data.threadIds.filter((id: unknown): id is string => typeof id === "string")
-      : [];
-    return mailboxService.createMailboxSavedView({
-      name: data.name,
-      instructions: data.instructions,
-      seedThreadId: typeof data?.seedThreadId === "string" ? data.seedThreadId : undefined,
-      threadIds,
-      showInInbox: data?.showInInbox !== false,
-    });
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.MAILBOX_SAVED_VIEW_CREATE,
+    async (event, data?: Any) => {
+      assertTrustedMailboxSender(event);
+      if (
+        typeof data?.name !== "string" ||
+        typeof data?.instructions !== "string"
+      ) {
+        throw new Error("Missing name or instructions for saved view");
+      }
+      const threadIds = Array.isArray(data?.threadIds)
+        ? data.threadIds.filter(
+            (id: unknown): id is string => typeof id === "string",
+          )
+        : [];
+      return mailboxService.createMailboxSavedView({
+        name: data.name,
+        instructions: data.instructions,
+        seedThreadId:
+          typeof data?.seedThreadId === "string"
+            ? data.seedThreadId
+            : undefined,
+        threadIds,
+        showInInbox: data?.showInInbox !== false,
+      });
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.MAILBOX_SAVED_VIEW_DELETE, async (event, data?: { id?: string }) => {
-    assertTrustedMailboxSender(event);
-    if (!data?.id) throw new Error("Missing saved view id");
-    return mailboxService.deleteMailboxSavedView(data.id);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.MAILBOX_SAVED_VIEW_DELETE,
+    async (event, data?: { id?: string }) => {
+      assertTrustedMailboxSender(event);
+      if (!data?.id) throw new Error("Missing saved view id");
+      return mailboxService.deleteMailboxSavedView(data.id);
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.MAILBOX_SAVED_VIEW_PREVIEW_SIMILAR, async (event, data?: Any) => {
-    assertTrustedMailboxSender(event);
-    if (typeof data?.seedThreadId !== "string") throw new Error("Missing seedThreadId");
-    return mailboxService.previewMailboxLabelSimilar({
-      seedThreadId: data.seedThreadId,
-      name: typeof data?.name === "string" ? data.name : "",
-      instructions: typeof data?.instructions === "string" ? data.instructions : "",
-    });
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.MAILBOX_SAVED_VIEW_PREVIEW_SIMILAR,
+    async (event, data?: Any) => {
+      assertTrustedMailboxSender(event);
+      if (typeof data?.seedThreadId !== "string")
+        throw new Error("Missing seedThreadId");
+      return mailboxService.previewMailboxLabelSimilar({
+        seedThreadId: data.seedThreadId,
+        name: typeof data?.name === "string" ? data.name : "",
+        instructions:
+          typeof data?.instructions === "string" ? data.instructions : "",
+      });
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.MAILBOX_QUICK_REPLY_SUGGESTIONS, async (event, data?: { threadId?: string }) => {
-    assertTrustedMailboxSender(event);
-    if (!data?.threadId) throw new Error("Missing threadId for quick reply suggestions");
-    return mailboxService.getMailboxQuickReplySuggestions(data.threadId);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.MAILBOX_QUICK_REPLY_SUGGESTIONS,
+    async (event, data?: { threadId?: string }) => {
+      assertTrustedMailboxSender(event);
+      if (!data?.threadId)
+        throw new Error("Missing threadId for quick reply suggestions");
+      return mailboxService.getMailboxQuickReplySuggestions(data.threadId);
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.MAILBOX_SAVED_VIEW_REVIEW_SCHEDULE, async (event, data?: { viewId?: string }) => {
-    assertTrustedMailboxSender(event);
-    if (!data?.viewId) throw new Error("Missing viewId for review schedule");
-    return mailboxService.createReviewScheduleForSavedView(data.viewId);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.MAILBOX_SAVED_VIEW_REVIEW_SCHEDULE,
+    async (event, data?: { viewId?: string }) => {
+      assertTrustedMailboxSender(event);
+      if (!data?.viewId) throw new Error("Missing viewId for review schedule");
+      return mailboxService.createReviewScheduleForSavedView(data.viewId);
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.MAILBOX_APPLY_ACTION, async (event, data?: Any) => {
-    assertTrustedMailboxSender(event);
-    return mailboxService.applyAction({
-      proposalId: typeof data?.proposalId === "string" ? data.proposalId : undefined,
-      threadId: typeof data?.threadId === "string" ? data.threadId : undefined,
-      type: data?.type,
-      label: typeof data?.label === "string" ? data.label : undefined,
-      draftId: typeof data?.draftId === "string" ? data.draftId : undefined,
-      commitmentId: typeof data?.commitmentId === "string" ? data.commitmentId : undefined,
-    });
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.MAILBOX_APPLY_ACTION,
+    async (event, data?: Any) => {
+      assertTrustedMailboxSender(event);
+      return mailboxService.applyAction({
+        proposalId:
+          typeof data?.proposalId === "string" ? data.proposalId : undefined,
+        threadId:
+          typeof data?.threadId === "string" ? data.threadId : undefined,
+        type: data?.type,
+        label: typeof data?.label === "string" ? data.label : undefined,
+        draftId: typeof data?.draftId === "string" ? data.draftId : undefined,
+        commitmentId:
+          typeof data?.commitmentId === "string"
+            ? data.commitmentId
+            : undefined,
+      });
+    },
+  );
 
   ipcMain.handle(
     IPC_CHANNELS.MAILBOX_UPDATE_COMMITMENT_STATE,
     async (event, data?: { commitmentId?: string; state?: Any }) => {
       assertTrustedMailboxSender(event);
       if (!data?.commitmentId || typeof data?.state !== "string") {
-        throw new Error("Missing commitmentId/state for mailbox commitment update");
+        throw new Error(
+          "Missing commitmentId/state for mailbox commitment update",
+        );
       }
       return mailboxService.updateCommitmentState(
         data.commitmentId,
@@ -2166,53 +2780,75 @@ export async function setupIpcHandlers(
     },
   );
 
-  ipcMain.handle(IPC_CHANNELS.MAILBOX_UPDATE_COMMITMENT_DETAILS, async (event, data?: Any) => {
-    assertTrustedMailboxSender(event);
-    if (typeof data?.commitmentId !== "string") {
-      throw new Error("Missing commitmentId for mailbox commitment details update");
-    }
-    return mailboxService.updateCommitmentDetails(data.commitmentId, {
-      title: typeof data?.patch?.title === "string" ? data.patch.title : undefined,
-      dueAt: typeof data?.patch?.dueAt === "number" ? data.patch.dueAt : undefined,
-      ownerEmail:
-        typeof data?.patch?.ownerEmail === "string" ? data.patch.ownerEmail : undefined,
-      state:
-        data?.patch?.state === "suggested" ||
-        data?.patch?.state === "accepted" ||
-        data?.patch?.state === "done" ||
-        data?.patch?.state === "dismissed"
-          ? data.patch.state
-          : undefined,
-      sourceExcerpt:
-        typeof data?.patch?.sourceExcerpt === "string" ? data.patch.sourceExcerpt : undefined,
-    });
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.MAILBOX_UPDATE_COMMITMENT_DETAILS,
+    async (event, data?: Any) => {
+      assertTrustedMailboxSender(event);
+      if (typeof data?.commitmentId !== "string") {
+        throw new Error(
+          "Missing commitmentId for mailbox commitment details update",
+        );
+      }
+      return mailboxService.updateCommitmentDetails(data.commitmentId, {
+        title:
+          typeof data?.patch?.title === "string" ? data.patch.title : undefined,
+        dueAt:
+          typeof data?.patch?.dueAt === "number" ? data.patch.dueAt : undefined,
+        ownerEmail:
+          typeof data?.patch?.ownerEmail === "string"
+            ? data.patch.ownerEmail
+            : undefined,
+        state:
+          data?.patch?.state === "suggested" ||
+          data?.patch?.state === "accepted" ||
+          data?.patch?.state === "done" ||
+          data?.patch?.state === "dismissed"
+            ? data.patch.state
+            : undefined,
+        sourceExcerpt:
+          typeof data?.patch?.sourceExcerpt === "string"
+            ? data.patch.sourceExcerpt
+            : undefined,
+      });
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.MAILBOX_RECLASSIFY_THREAD, async (event, data?: Any) => {
-    assertTrustedMailboxSender(event);
-    const threadId = typeof data?.threadId === "string" ? data.threadId : undefined;
-    if (!threadId) {
-      throw new Error("Missing threadId for mailbox thread reclassification");
-    }
-    return mailboxService.reclassifyThread(threadId);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.MAILBOX_RECLASSIFY_THREAD,
+    async (event, data?: Any) => {
+      assertTrustedMailboxSender(event);
+      const threadId =
+        typeof data?.threadId === "string" ? data.threadId : undefined;
+      if (!threadId) {
+        throw new Error("Missing threadId for mailbox thread reclassification");
+      }
+      return mailboxService.reclassifyThread(threadId);
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.MAILBOX_RECLASSIFY_ACCOUNT, async (event, data?: Any) => {
-    assertTrustedMailboxSender(event);
-    const accountId = typeof data?.accountId === "string" ? data.accountId : undefined;
-    const threadId = typeof data?.threadId === "string" ? data.threadId : undefined;
-    const scope =
-      data?.scope === "thread" || data?.scope === "account" || data?.scope === "backfill"
-        ? data.scope
-        : undefined;
-    const limit = typeof data?.limit === "number" ? data.limit : undefined;
-    return mailboxService.reclassifyAccount({
-      accountId,
-      threadId,
-      scope,
-      limit,
-    });
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.MAILBOX_RECLASSIFY_ACCOUNT,
+    async (event, data?: Any) => {
+      assertTrustedMailboxSender(event);
+      const accountId =
+        typeof data?.accountId === "string" ? data.accountId : undefined;
+      const threadId =
+        typeof data?.threadId === "string" ? data.threadId : undefined;
+      const scope =
+        data?.scope === "thread" ||
+        data?.scope === "account" ||
+        data?.scope === "backfill"
+          ? data.scope
+          : undefined;
+      const limit = typeof data?.limit === "number" ? data.limit : undefined;
+      return mailboxService.reclassifyAccount({
+        accountId,
+        threadId,
+        scope,
+        limit,
+      });
+    },
+  );
 
   // Workspace handlers
   ipcMain.handle(IPC_CHANNELS.WORKSPACE_CREATE, async (_, data) => {
@@ -2248,9 +2884,12 @@ export async function setupIpcHandlers(
   });
 
   // Get or create the temp workspace (used when no workspace is selected)
-  ipcMain.handle(IPC_CHANNELS.WORKSPACE_GET_TEMP, async (_, options?: { createNew?: boolean }) => {
-    return getOrCreateTempWorkspace(options);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.WORKSPACE_GET_TEMP,
+    async (_, options?: { createNew?: boolean }) => {
+      return getOrCreateTempWorkspace(options);
+    },
+  );
 
   ipcMain.handle(IPC_CHANNELS.WORKSPACE_SELECT, async (_, id: string) => {
     const workspace = workspaceRepo.findById(id);
@@ -2344,14 +2983,20 @@ export async function setupIpcHandlers(
 
     // Capture mentioned agent roles for deferred dispatch (after main plan is created)
     try {
-      const activeRoles = agentRoleRepo.findAll(false).filter((role) => role.isActive);
-      const mentionedRoles = extractMentionedRoles(`${title}\n${prompt}`, activeRoles);
+      const activeRoles = agentRoleRepo
+        .findAll(false)
+        .filter((role) => role.isActive);
+      const mentionedRoles = extractMentionedRoles(
+        `${title}\n${prompt}`,
+        activeRoles,
+      );
       const mentionedAgentRoleIds = mentionedRoles.map((role) => role.id);
       if (mentionedAgentRoleIds.length > 0) {
         taskRepo.update(task.id, { mentionedAgentRoleIds });
       }
     } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
       console.error("Failed to record mentioned agents:", error);
       // Notify user of dispatch failure via activity feed
       const errorActivity = activityRepo.create({
@@ -2431,17 +3076,27 @@ export async function setupIpcHandlers(
           }
 
           // Emit for UI — this triggers the collaborative thoughts panel to appear
-          emitTeamEvent({ type: "team_run_created", timestamp: Date.now(), run });
+          emitTeamEvent({
+            type: "team_run_created",
+            timestamp: Date.now(),
+            run,
+          });
 
           // Kick off the orchestrator (spawns child tasks for each item)
           void teamOrchestrator.tickRun(run.id, "auto_collaborative");
         } catch (error: Any) {
-          console.error("[TASK_CREATE] Auto-collaborative setup failed:", error);
+          console.error(
+            "[TASK_CREATE] Auto-collaborative setup failed:",
+            error,
+          );
           // Fall back to normal execution
           try {
             await agentDaemon.startTask(task, validatedImages);
           } catch (startError: Any) {
-            agentDaemon.failTask(task.id, startError.message || "Failed to start task");
+            agentDaemon.failTask(
+              task.id,
+              startError.message || "Failed to start task",
+            );
           }
         }
       })();
@@ -2450,7 +3105,10 @@ export async function setupIpcHandlers(
     }
 
     // Multi-LLM mode: send same task to multiple LLM providers in parallel
-    if (normalizedAgentConfig?.multiLlmMode && normalizedAgentConfig?.multiLlmConfig) {
+    if (
+      normalizedAgentConfig?.multiLlmMode &&
+      normalizedAgentConfig?.multiLlmConfig
+    ) {
       taskRepo.update(task.id, { status: "executing" });
       task.status = "executing";
       task.updatedAt = Date.now();
@@ -2463,7 +3121,8 @@ export async function setupIpcHandlers(
 
           // Use the first default agent role as sentinel for FK references
           const allRoles = agentRoleRepo.findAll(false);
-          const sentinelRoleId = allRoles.length > 0 ? allRoles[0].id : "multi-llm-system";
+          const sentinelRoleId =
+            allRoles.length > 0 ? allRoles[0].id : "multi-llm-system";
 
           // Create ephemeral team
           const team = teamRepo.create({
@@ -2497,7 +3156,11 @@ export async function setupIpcHandlers(
           }
 
           // Emit for UI — triggers the thoughts panel
-          emitTeamEvent({ type: "team_run_created", timestamp: Date.now(), run });
+          emitTeamEvent({
+            type: "team_run_created",
+            timestamp: Date.now(),
+            run,
+          });
 
           // Kick off orchestrator
           void teamOrchestrator.tickRun(run.id, "multi_llm_start");
@@ -2506,7 +3169,10 @@ export async function setupIpcHandlers(
           try {
             await agentDaemon.startTask(task, validatedImages);
           } catch (startError: Any) {
-            agentDaemon.failTask(task.id, startError.message || "Failed to start task");
+            agentDaemon.failTask(
+              task.id,
+              startError.message || "Failed to start task",
+            );
           }
         }
       })();
@@ -2520,7 +3186,8 @@ export async function setupIpcHandlers(
     } catch (error: Any) {
       agentDaemon.failTask(task.id, error.message || "Failed to start task");
       throw new Error(
-        error.message || "Failed to start task. Please check your LLM provider settings.",
+        error.message ||
+          "Failed to start task. Please check your LLM provider settings.",
       );
     }
 
@@ -2531,76 +3198,94 @@ export async function setupIpcHandlers(
     return taskRepo.findById(id);
   });
 
-  ipcMain.handle(IPC_CHANNELS.TASK_LIST, async (_, opts?: { limit?: number; offset?: number }) => {
-    const limit = typeof opts?.limit === "number" && opts.limit > 0 ? opts.limit : 100;
-    const offset = typeof opts?.offset === "number" && opts.offset >= 0 ? opts.offset : 0;
-    return taskRepo.findAll(limit, offset);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.TASK_LIST,
+    async (_, opts?: { limit?: number; offset?: number }) => {
+      const limit =
+        typeof opts?.limit === "number" && opts.limit > 0 ? opts.limit : 100;
+      const offset =
+        typeof opts?.offset === "number" && opts.offset >= 0 ? opts.offset : 0;
+      return taskRepo.findAll(limit, offset);
+    },
+  );
 
   // Export task summaries as a structured JSON blob (prompt-free by design)
-  ipcMain.handle(IPC_CHANNELS.TASK_EXPORT_JSON, async (_, rawQuery?: TaskExportQuery) => {
-    checkRateLimit(IPC_CHANNELS.TASK_EXPORT_JSON);
+  ipcMain.handle(
+    IPC_CHANNELS.TASK_EXPORT_JSON,
+    async (_, rawQuery?: TaskExportQuery) => {
+      checkRateLimit(IPC_CHANNELS.TASK_EXPORT_JSON);
 
-    const query: TaskExportQuery = {
-      workspaceId: typeof rawQuery?.workspaceId === "string" ? rawQuery.workspaceId : undefined,
-      taskIds: Array.isArray(rawQuery?.taskIds)
-        ? rawQuery.taskIds
-            .filter((id): id is string => typeof id === "string")
-            .map((id) => id.trim())
-            .filter(Boolean)
-        : undefined,
-      limit:
-        typeof rawQuery?.limit === "number" && Number.isFinite(rawQuery.limit)
-          ? rawQuery.limit
+      const query: TaskExportQuery = {
+        workspaceId:
+          typeof rawQuery?.workspaceId === "string"
+            ? rawQuery.workspaceId
+            : undefined,
+        taskIds: Array.isArray(rawQuery?.taskIds)
+          ? rawQuery.taskIds
+              .filter((id): id is string => typeof id === "string")
+              .map((id) => id.trim())
+              .filter(Boolean)
           : undefined,
-      offset:
-        typeof rawQuery?.offset === "number" && Number.isFinite(rawQuery.offset)
-          ? rawQuery.offset
-          : undefined,
-    };
+        limit:
+          typeof rawQuery?.limit === "number" && Number.isFinite(rawQuery.limit)
+            ? rawQuery.limit
+            : undefined,
+        offset:
+          typeof rawQuery?.offset === "number" &&
+          Number.isFinite(rawQuery.offset)
+            ? rawQuery.offset
+            : undefined,
+      };
 
-    const maxLimit = 2000;
-    const limit = Math.min(Math.max(query.limit ?? 500, 1), maxLimit);
-    const offset = Math.max(query.offset ?? 0, 0);
+      const maxLimit = 2000;
+      const limit = Math.min(Math.max(query.limit ?? 500, 1), maxLimit);
+      const offset = Math.max(query.offset ?? 0, 0);
 
-    let tasks: Task[] = [];
+      let tasks: Task[] = [];
 
-    if (query.taskIds && query.taskIds.length > 0) {
-      tasks = query.taskIds.map((id) => taskRepo.findById(id)).filter((t): t is Task => !!t);
-    } else if (query.workspaceId) {
-      const all = taskRepo.findByWorkspace(query.workspaceId);
-      tasks = all.slice(offset, offset + limit);
-    } else {
-      tasks = taskRepo.findAll(limit, offset);
-    }
+      if (query.taskIds && query.taskIds.length > 0) {
+        tasks = query.taskIds
+          .map((id) => taskRepo.findById(id))
+          .filter((t): t is Task => !!t);
+      } else if (query.workspaceId) {
+        const all = taskRepo.findByWorkspace(query.workspaceId);
+        tasks = all.slice(offset, offset + limit);
+      } else {
+        tasks = taskRepo.findAll(limit, offset);
+      }
 
-    const taskIds = tasks.map((task) => task.id);
-    const events =
-      taskIds.length > 0
-        ? taskEventRepo.findByTaskIds(taskIds, [
-            "file_created",
-            "file_modified",
-            "file_deleted",
-            "llm_usage",
-          ])
-        : [];
+      const taskIds = tasks.map((task) => task.id);
+      const events =
+        taskIds.length > 0
+          ? taskEventRepo.findByTaskIds(taskIds, [
+              "file_created",
+              "file_modified",
+              "file_deleted",
+              "llm_usage",
+            ])
+          : [];
 
-    const workspaceIds = Array.from(new Set(tasks.map((task) => task.workspaceId)));
-    const workspaces = workspaceIds
-      .map((id) => workspaceRepo.findById(id))
-      .filter((ws): ws is Workspace => !!ws);
+      const workspaceIds = Array.from(
+        new Set(tasks.map((task) => task.workspaceId)),
+      );
+      const workspaces = workspaceIds
+        .map((id) => workspaceRepo.findById(id))
+        .filter((ws): ws is Workspace => !!ws);
 
-    return buildTaskExportJson({
-      query: {
-        ...query,
-        // Materialize defaults/caps so callers see what was actually applied.
-        ...(query.taskIds && query.taskIds.length > 0 ? {} : { limit, offset }),
-      },
-      tasks,
-      workspaces,
-      events,
-    });
-  });
+      return buildTaskExportJson({
+        query: {
+          ...query,
+          // Materialize defaults/caps so callers see what was actually applied.
+          ...(query.taskIds && query.taskIds.length > 0
+            ? {}
+            : { limit, offset }),
+        },
+        tasks,
+        workspaces,
+        events,
+      });
+    },
+  );
 
   ipcMain.handle(IPC_CHANNELS.TASK_CANCEL, async (_, id: string) => {
     try {
@@ -2648,18 +3333,26 @@ export async function setupIpcHandlers(
     IPC_CHANNELS.TASK_FORK_SESSION,
     async (
       _,
-      data: { taskId: string; prompt?: string; branchLabel?: string; fromEventId?: string },
+      data: {
+        taskId: string;
+        prompt?: string;
+        branchLabel?: string;
+        fromEventId?: string;
+      },
     ) => {
       checkRateLimit(IPC_CHANNELS.TASK_FORK_SESSION);
       const taskId = validateInput(UUIDSchema, data.taskId, "task ID");
       const fromEventId =
-        typeof data.fromEventId === "string" && data.fromEventId.trim().length > 0
+        typeof data.fromEventId === "string" &&
+        data.fromEventId.trim().length > 0
           ? data.fromEventId.trim()
           : undefined;
       return agentDaemon.forkTaskSession({
         taskId,
         ...(typeof data.prompt === "string" ? { prompt: data.prompt } : {}),
-        ...(typeof data.branchLabel === "string" ? { branchLabel: data.branchLabel } : {}),
+        ...(typeof data.branchLabel === "string"
+          ? { branchLabel: data.branchLabel }
+          : {}),
         ...(fromEventId ? { fromEventId } : {}),
       });
     },
@@ -2727,28 +3420,34 @@ export async function setupIpcHandlers(
   // ============ Sub-Agent / Parallel Agent Handlers ============
 
   // Get child tasks for a parent task
-  ipcMain.handle(IPC_CHANNELS.AGENT_GET_CHILDREN, async (_, parentTaskId: string) => {
-    return agentDaemon.getChildTasks(parentTaskId);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.AGENT_GET_CHILDREN,
+    async (_, parentTaskId: string) => {
+      return agentDaemon.getChildTasks(parentTaskId);
+    },
+  );
 
   // Get status of specific agents
-  ipcMain.handle(IPC_CHANNELS.AGENT_GET_STATUS, async (_, taskIds: string[]) => {
-    const tasks = [];
-    for (const id of taskIds) {
-      const task = await agentDaemon.getTaskById(id);
-      if (task) {
-        tasks.push({
-          taskId: id,
-          status: task.status,
-          title: task.title,
-          agentType: task.agentType,
-          resultSummary: task.resultSummary,
-          error: task.error,
-        });
+  ipcMain.handle(
+    IPC_CHANNELS.AGENT_GET_STATUS,
+    async (_, taskIds: string[]) => {
+      const tasks = [];
+      for (const id of taskIds) {
+        const task = await agentDaemon.getTaskById(id);
+        if (task) {
+          tasks.push({
+            taskId: id,
+            status: task.status,
+            title: task.title,
+            agentType: task.agentType,
+            resultSummary: task.resultSummary,
+            error: task.error,
+          });
+        }
       }
-    }
-    return tasks;
-  });
+      return tasks;
+    },
+  );
 
   // Task events handler - get historical events from database
   // For collaborative root tasks, also include file events from child tasks.
@@ -2758,12 +3457,23 @@ export async function setupIpcHandlers(
 
     // Include child task file events for collaborative/multi-LLM roots
     const task = taskRepo.findById(taskId);
-    if (task?.agentConfig?.collaborativeMode || task?.agentConfig?.multiLlmMode) {
+    if (
+      task?.agentConfig?.collaborativeMode ||
+      task?.agentConfig?.multiLlmMode
+    ) {
       const childTasks = taskRepo.findByParent(taskId);
       if (childTasks.length > 0) {
         const childIds = childTasks.map((c) => c.id);
-        const fileTypes = ["file_created", "file_modified", "file_deleted", "artifact_created"];
-        const childFileEvents = taskEventRepo.findByTaskIds(childIds, fileTypes);
+        const fileTypes = [
+          "file_created",
+          "file_modified",
+          "file_deleted",
+          "artifact_created",
+        ];
+        const childFileEvents = taskEventRepo.findByTaskIds(
+          childIds,
+          fileTypes,
+        );
         // Merge and sort by timestamp
         events.push(...childFileEvents);
         events.sort((a, b) => a.timestamp - b.timestamp);
@@ -2773,48 +3483,59 @@ export async function setupIpcHandlers(
   });
 
   // Semantic timeline projection — normalizer runs on the read path, no DB changes needed
-  ipcMain.handle(IPC_CHANNELS.TASK_SEMANTIC_TIMELINE, async (_, taskId: string) => {
-    const maxEvents = 1200;
-    const events = taskEventRepo.findRecentByTaskId(taskId, maxEvents);
-    const sorted = [...events].sort((a, b) => a.timestamp - b.timestamp);
-    return normalizeTaskEvents(sorted);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.TASK_SEMANTIC_TIMELINE,
+    async (_, taskId: string) => {
+      const maxEvents = 1200;
+      const events = taskEventRepo.findRecentByTaskId(taskId, maxEvents);
+      const sorted = [...events].sort((a, b) => a.timestamp - b.timestamp);
+      return normalizeTaskEvents(sorted);
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.TASK_LEARNING_PROGRESS, async (_, taskId: string) => {
-    const events = taskEventRepo.findByTaskId(taskId);
-    const learningEvents = events
-      .filter(
-        (event) => event.type === "learning_progress" || event.legacyType === "learning_progress",
-      )
-      .map((event) => event.payload)
-      .filter((payload): payload is TaskLearningProgress => {
-        return !!payload && typeof payload === "object";
-      });
-    learningEvents.sort((a, b) => a.completedAt - b.completedAt);
-    return learningEvents;
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.TASK_LEARNING_PROGRESS,
+    async (_, taskId: string) => {
+      const events = taskEventRepo.findByTaskId(taskId);
+      const learningEvents = events
+        .filter(
+          (event) =>
+            event.type === "learning_progress" ||
+            event.legacyType === "learning_progress",
+        )
+        .map((event) => event.payload)
+        .filter((payload): payload is TaskLearningProgress => {
+          return !!payload && typeof payload === "object";
+        });
+      learningEvents.sort((a, b) => a.completedAt - b.completedAt);
+      return learningEvents;
+    },
+  );
 
   ipcMain.handle(
     IPC_CHANNELS.UNIFIED_RECALL_QUERY,
     async (_, query: UnifiedRecallQuery): Promise<UnifiedRecallResponse> => {
-    const workspaceId =
-      typeof query?.workspaceId === "string" && query.workspaceId.trim().length > 0
-        ? query.workspaceId.trim()
+      const workspaceId =
+        typeof query?.workspaceId === "string" &&
+        query.workspaceId.trim().length > 0
+          ? query.workspaceId.trim()
+          : undefined;
+      const workspacePath = workspaceId
+        ? workspaceRepo.findById(workspaceId)?.path
         : undefined;
-    const workspacePath = workspaceId ? workspaceRepo.findById(workspaceId)?.path : undefined;
-    return RuntimeVisibilityService.collectUnifiedRecall(
-      {
-        taskRepo,
-        eventRepo: taskEventRepo,
-        activityRepo,
-        workspaceRepo,
-      },
-      {
-        ...query,
-        workspaceId,
-        workspacePath,
-      },
-    );
+      return RuntimeVisibilityService.collectUnifiedRecall(
+        {
+          taskRepo,
+          eventRepo: taskEventRepo,
+          activityRepo,
+          workspaceRepo,
+        },
+        {
+          ...query,
+          workspaceId,
+          workspacePath,
+        },
+      );
     },
   );
 
@@ -2833,51 +3554,94 @@ export async function setupIpcHandlers(
     });
   };
 
-  ipcMain.handle(IPC_CHANNELS.SHELL_SESSION_GET, async (_, data: {
-    taskId?: string;
-    workspaceId?: string;
-    scope?: ShellSessionScope;
-  }) => {
-    const taskId = typeof data?.taskId === "string" ? data.taskId.trim() : "";
-    const workspaceId = typeof data?.workspaceId === "string" ? data.workspaceId.trim() : "";
-    if (!taskId || !workspaceId) return null;
-    return shellSessionManager.getSessionInfo(taskId, workspaceId, data.scope || "task");
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.SHELL_SESSION_GET,
+    async (
+      _,
+      data: {
+        taskId?: string;
+        workspaceId?: string;
+        scope?: ShellSessionScope;
+      },
+    ) => {
+      const taskId = typeof data?.taskId === "string" ? data.taskId.trim() : "";
+      const workspaceId =
+        typeof data?.workspaceId === "string" ? data.workspaceId.trim() : "";
+      if (!taskId || !workspaceId) return null;
+      return shellSessionManager.getSessionInfo(
+        taskId,
+        workspaceId,
+        data.scope || "task",
+      );
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.SHELL_SESSION_LIST, async (_, data?: {
-    taskId?: string;
-    workspaceId?: string;
-  }) => {
-    const taskId = typeof data?.taskId === "string" ? data.taskId.trim() : undefined;
-    const workspaceId = typeof data?.workspaceId === "string" ? data.workspaceId.trim() : undefined;
-    return shellSessionManager.listSessions(taskId, workspaceId);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.SHELL_SESSION_LIST,
+    async (
+      _,
+      data?: {
+        taskId?: string;
+        workspaceId?: string;
+      },
+    ) => {
+      const taskId =
+        typeof data?.taskId === "string" ? data.taskId.trim() : undefined;
+      const workspaceId =
+        typeof data?.workspaceId === "string"
+          ? data.workspaceId.trim()
+          : undefined;
+      return shellSessionManager.listSessions(taskId, workspaceId);
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.SHELL_SESSION_RESET, async (_, data: {
-    taskId?: string;
-    workspaceId?: string;
-    scope?: ShellSessionScope;
-  }) => {
-    const taskId = typeof data?.taskId === "string" ? data.taskId.trim() : "";
-    const workspaceId = typeof data?.workspaceId === "string" ? data.workspaceId.trim() : "";
-    if (!taskId || !workspaceId) return null;
-    const session = await shellSessionManager.resetSession(taskId, workspaceId, data.scope || "task");
-    emitShellSessionLifecycle(taskId, "reset", session);
-    return session;
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.SHELL_SESSION_RESET,
+    async (
+      _,
+      data: {
+        taskId?: string;
+        workspaceId?: string;
+        scope?: ShellSessionScope;
+      },
+    ) => {
+      const taskId = typeof data?.taskId === "string" ? data.taskId.trim() : "";
+      const workspaceId =
+        typeof data?.workspaceId === "string" ? data.workspaceId.trim() : "";
+      if (!taskId || !workspaceId) return null;
+      const session = await shellSessionManager.resetSession(
+        taskId,
+        workspaceId,
+        data.scope || "task",
+      );
+      emitShellSessionLifecycle(taskId, "reset", session);
+      return session;
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.SHELL_SESSION_CLOSE, async (_, data: {
-    taskId?: string;
-    workspaceId?: string;
-    scope?: ShellSessionScope;
-  }) => {
-    const taskId = typeof data?.taskId === "string" ? data.taskId.trim() : "";
-    const workspaceId = typeof data?.workspaceId === "string" ? data.workspaceId.trim() : "";
-    if (!taskId || !workspaceId) return null;
-    const session = await shellSessionManager.closeSession(taskId, workspaceId, data.scope || "task");
-    emitShellSessionLifecycle(taskId, "closed", session);
-    return session;
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.SHELL_SESSION_CLOSE,
+    async (
+      _,
+      data: {
+        taskId?: string;
+        workspaceId?: string;
+        scope?: ShellSessionScope;
+      },
+    ) => {
+      const taskId = typeof data?.taskId === "string" ? data.taskId.trim() : "";
+      const workspaceId =
+        typeof data?.workspaceId === "string" ? data.workspaceId.trim() : "";
+      if (!taskId || !workspaceId) return null;
+      const session = await shellSessionManager.closeSession(
+        taskId,
+        workspaceId,
+        data.scope || "task",
+      );
+      emitShellSessionLifecycle(taskId, "closed", session);
+      return session;
+    },
+  );
 
   // Send follow-up message to a task
   ipcMain.handle(IPC_CHANNELS.TASK_SEND_MESSAGE, async (_, data) => {
@@ -2903,7 +3667,11 @@ export async function setupIpcHandlers(
 
   // Approval handlers
   ipcMain.handle(IPC_CHANNELS.APPROVAL_RESPOND, async (_, data) => {
-    const validated = validateInput(ApprovalResponseSchema, data, "approval response");
+    const validated = validateInput(
+      ApprovalResponseSchema,
+      data,
+      "approval response",
+    );
     await agentDaemon.respondToApproval(
       validated.approvalId,
       validated.approved ?? validated.action?.startsWith("allow_") === true,
@@ -2923,7 +3691,9 @@ export async function setupIpcHandlers(
     const taskId = typeof data?.taskId === "string" ? data.taskId.trim() : "";
     const status = typeof data?.status === "string" ? data.status.trim() : "";
     const normalizedStatus =
-      status === "pending" || status === "submitted" || status === "dismissed" ? status : undefined;
+      status === "pending" || status === "submitted" || status === "dismissed"
+        ? status
+        : undefined;
 
     return agentDaemon.listInputRequests({
       limit,
@@ -2934,14 +3704,21 @@ export async function setupIpcHandlers(
   });
 
   ipcMain.handle(IPC_CHANNELS.INPUT_REQUEST_RESPOND, async (_, data) => {
-    const validated = validateInput(InputRequestResponseSchema, data, "input request response");
+    const validated = validateInput(
+      InputRequestResponseSchema,
+      data,
+      "input request response",
+    );
     return agentDaemon.respondToInputRequest(validated);
   });
 
   // Session auto-approve handlers
-  ipcMain.handle(IPC_CHANNELS.APPROVAL_SESSION_AUTO_APPROVE_SET, async (_, enabled: boolean) => {
-    agentDaemon.setSessionAutoApproveAll(!!enabled);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.APPROVAL_SESSION_AUTO_APPROVE_SET,
+    async (_, enabled: boolean) => {
+      agentDaemon.setSessionAutoApproveAll(!!enabled);
+    },
+  );
 
   ipcMain.handle(IPC_CHANNELS.APPROVAL_SESSION_AUTO_APPROVE_GET, async () => {
     return agentDaemon.getSessionAutoApproveAll();
@@ -2972,22 +3749,32 @@ export async function setupIpcHandlers(
     ? SecureSettingsRepository.getInstance()
     : new SecureSettingsRepository(dbManager.getDatabase());
   const loadSkillsConfig = (): SkillsConfig => {
-    const stored = secureSettingsRepo.load<Partial<SkillsConfig>>("skills") || {};
+    const stored =
+      secureSettingsRepo.load<Partial<SkillsConfig>>("skills") || {};
     return {
       skillsDirectory: customSkillLoader.getManagedSkillsDir(),
       externalSkillDirectories: Array.isArray(stored.externalSkillDirectories)
-        ? stored.externalSkillDirectories.filter((value): value is string => typeof value === "string")
+        ? stored.externalSkillDirectories.filter(
+            (value): value is string => typeof value === "string",
+          )
         : [],
       enabledSkillIds: Array.isArray(stored.enabledSkillIds)
-        ? stored.enabledSkillIds.filter((value): value is string => typeof value === "string")
+        ? stored.enabledSkillIds.filter(
+            (value): value is string => typeof value === "string",
+          )
         : [],
-      registryUrl: typeof stored.registryUrl === "string" ? stored.registryUrl : undefined,
+      registryUrl:
+        typeof stored.registryUrl === "string" ? stored.registryUrl : undefined,
       autoUpdate: stored.autoUpdate === true,
       allowlist: Array.isArray(stored.allowlist)
-        ? stored.allowlist.filter((value): value is string => typeof value === "string")
+        ? stored.allowlist.filter(
+            (value): value is string => typeof value === "string",
+          )
         : undefined,
       denylist: Array.isArray(stored.denylist)
-        ? stored.denylist.filter((value): value is string => typeof value === "string")
+        ? stored.denylist.filter(
+            (value): value is string => typeof value === "string",
+          )
         : undefined,
     };
   };
@@ -3045,23 +3832,29 @@ export async function setupIpcHandlers(
     return skillsConfig;
   });
 
-  ipcMain.handle(IPC_CHANNELS.CUSTOM_SKILL_SET_EXTERNAL_DIRS, async (_, dirs: string[]) => {
-    const normalized = customSkillLoader.setExternalSkillDirs(dirs);
-    skillsConfig = {
-      ...skillsConfig,
-      skillsDirectory: customSkillLoader.getManagedSkillsDir(),
-      externalSkillDirectories: normalized,
-    };
-    secureSettingsRepo.save("skills", skillsConfig);
-    customSkillLoader.updateConfig(skillsConfig);
-    customSkillLoader.clearEligibilityCache();
-    await customSkillLoader.reloadSkills();
-    return skillsConfig;
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.CUSTOM_SKILL_SET_EXTERNAL_DIRS,
+    async (_, dirs: string[]) => {
+      const normalized = customSkillLoader.setExternalSkillDirs(dirs);
+      skillsConfig = {
+        ...skillsConfig,
+        skillsDirectory: customSkillLoader.getManagedSkillsDir(),
+        externalSkillDirectories: normalized,
+      };
+      secureSettingsRepo.save("skills", skillsConfig);
+      customSkillLoader.updateConfig(skillsConfig);
+      customSkillLoader.clearEligibilityCache();
+      await customSkillLoader.reloadSkills();
+      return skillsConfig;
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.CUSTOM_SKILL_OPEN_EXTERNAL_FOLDER, async (_, dir: string) => {
-    return customSkillLoader.openExternalSkillsFolder(dir);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.CUSTOM_SKILL_OPEN_EXTERNAL_FOLDER,
+    async (_, dir: string) => {
+      return customSkillLoader.openExternalSkillsFolder(dir);
+    },
+  );
 
   // Skill Registry (SkillHub) handlers
   const { getSkillRegistry } = await import("../agent/skill-registry");
@@ -3069,21 +3862,32 @@ export async function setupIpcHandlers(
 
   ipcMain.handle(
     IPC_CHANNELS.SKILL_REGISTRY_SEARCH,
-    async (_, query: string, options?: { page?: number; pageSize?: number }) => {
+    async (
+      _,
+      query: string,
+      options?: { page?: number; pageSize?: number },
+    ) => {
       return skillRegistry.search(query, options);
     },
   );
 
   ipcMain.handle(
     IPC_CHANNELS.SKILL_REGISTRY_CLAWHUB_SEARCH,
-    async (_, query: string, options?: { page?: number; pageSize?: number }) => {
+    async (
+      _,
+      query: string,
+      options?: { page?: number; pageSize?: number },
+    ) => {
       return skillRegistry.searchClawHub(query, options);
     },
   );
 
-  ipcMain.handle(IPC_CHANNELS.SKILL_REGISTRY_GET_DETAILS, async (_, skillId: string) => {
-    return skillRegistry.getSkillDetails(skillId);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.SKILL_REGISTRY_GET_DETAILS,
+    async (_, skillId: string) => {
+      return skillRegistry.getSkillDetails(skillId);
+    },
+  );
 
   ipcMain.handle(
     IPC_CHANNELS.SKILL_REGISTRY_INSTALL,
@@ -3099,32 +3903,41 @@ export async function setupIpcHandlers(
     },
   );
 
-  ipcMain.handle(IPC_CHANNELS.SKILL_REGISTRY_INSTALL_CLAWHUB, async (_, identifierOrUrl: string) => {
-    const result = await skillRegistry.installFromClawHub(identifierOrUrl);
-    if (result.success) {
-      await customSkillLoader.reloadSkills();
-      customSkillLoader.clearEligibilityCache();
-    }
-    return result;
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.SKILL_REGISTRY_INSTALL_CLAWHUB,
+    async (_, identifierOrUrl: string) => {
+      const result = await skillRegistry.installFromClawHub(identifierOrUrl);
+      if (result.success) {
+        await customSkillLoader.reloadSkills();
+        customSkillLoader.clearEligibilityCache();
+      }
+      return result;
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.SKILL_REGISTRY_INSTALL_URL, async (_, url: string) => {
-    const result = await skillRegistry.installFromUrl(url);
-    if (result.success) {
-      await customSkillLoader.reloadSkills();
-      customSkillLoader.clearEligibilityCache();
-    }
-    return result;
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.SKILL_REGISTRY_INSTALL_URL,
+    async (_, url: string) => {
+      const result = await skillRegistry.installFromUrl(url);
+      if (result.success) {
+        await customSkillLoader.reloadSkills();
+        customSkillLoader.clearEligibilityCache();
+      }
+      return result;
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.SKILL_REGISTRY_INSTALL_GIT, async (_, gitUrl: string) => {
-    const result = await skillRegistry.installFromGit(gitUrl);
-    if (result.success) {
-      await customSkillLoader.reloadSkills();
-      customSkillLoader.clearEligibilityCache();
-    }
-    return result;
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.SKILL_REGISTRY_INSTALL_GIT,
+    async (_, gitUrl: string) => {
+      const result = await skillRegistry.installFromGit(gitUrl);
+      if (result.success) {
+        await customSkillLoader.reloadSkills();
+        customSkillLoader.clearEligibilityCache();
+      }
+      return result;
+    },
+  );
 
   ipcMain.handle(
     IPC_CHANNELS.SKILL_REGISTRY_UPDATE,
@@ -3145,21 +3958,27 @@ export async function setupIpcHandlers(
     return result;
   });
 
-  ipcMain.handle(IPC_CHANNELS.SKILL_REGISTRY_UNINSTALL, async (_, skillId: string) => {
-    const result = skillRegistry.uninstall(skillId);
-    if (result.success) {
-      await customSkillLoader.reloadSkills();
-    }
-    return result;
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.SKILL_REGISTRY_UNINSTALL,
+    async (_, skillId: string) => {
+      const result = skillRegistry.uninstall(skillId);
+      if (result.success) {
+        await customSkillLoader.reloadSkills();
+      }
+      return result;
+    },
+  );
 
   ipcMain.handle(IPC_CHANNELS.SKILL_REGISTRY_LIST_MANAGED, async () => {
     return skillRegistry.listManagedSkills();
   });
 
-  ipcMain.handle(IPC_CHANNELS.SKILL_REGISTRY_CHECK_UPDATES, async (_, skillId: string) => {
-    return skillRegistry.checkForUpdates(skillId);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.SKILL_REGISTRY_CHECK_UPDATES,
+    async (_, skillId: string) => {
+      return skillRegistry.checkForUpdates(skillId);
+    },
+  );
 
   ipcMain.handle(IPC_CHANNELS.SKILL_REGISTRY_GET_STATUS, async () => {
     return customSkillLoader.getSkillStatus();
@@ -3169,6 +3988,61 @@ export async function setupIpcHandlers(
     return customSkillLoader.getEligibleSkills();
   });
 
+  const { getCapabilityBundleSecurityService } =
+    await import("../security/capability-bundle-security");
+  const capabilitySecurityService = getCapabilityBundleSecurityService();
+  const { getPluginRegistry } = await import("../extensions/registry");
+
+  ipcMain.handle(IPC_CHANNELS.IMPORT_SECURITY_LIST_QUARANTINED, async () => {
+    return capabilitySecurityService.listQuarantinedImports();
+  });
+
+  ipcMain.handle(
+    IPC_CHANNELS.IMPORT_SECURITY_GET_REPORT,
+    async (
+      _,
+      request: import("../../shared/types").ImportSecurityReportRequest,
+    ) => {
+      const pluginRegistry = getPluginRegistry();
+      const activePackPath =
+        request.bundleKind === "plugin-pack"
+          ? pluginRegistry.getPlugin(request.bundleId)?.path
+          : undefined;
+      return capabilitySecurityService.getImportSecurityReport(
+        request,
+        skillRegistry.getManagedSkillsDir(),
+        activePackPath,
+      );
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.IMPORT_SECURITY_RETRY_QUARANTINED,
+    async (_, recordId: string) => {
+      const result =
+        await capabilitySecurityService.retryQuarantinedImport(recordId);
+      await customSkillLoader.reloadSkills();
+      customSkillLoader.clearEligibilityCache();
+      try {
+        const pluginRegistry = getPluginRegistry();
+        await pluginRegistry.discoverNewPlugins();
+      } catch (error) {
+        console.warn(
+          "[IPC] Failed to refresh plugin registry after quarantine retry:",
+          error,
+        );
+      }
+      return result;
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.IMPORT_SECURITY_REMOVE_QUARANTINED,
+    async (_, recordId: string) => {
+      return capabilitySecurityService.removeQuarantinedImport(recordId);
+    },
+  );
+
   // LLM Settings handlers
   ipcMain.handle(IPC_CHANNELS.LLM_GET_SETTINGS, async () => {
     return LLMProviderFactory.loadSettings();
@@ -3176,110 +4050,18 @@ export async function setupIpcHandlers(
 
   ipcMain.handle(IPC_CHANNELS.LLM_SAVE_SETTINGS, async (_, settings) => {
     checkRateLimit(IPC_CHANNELS.LLM_SAVE_SETTINGS);
-    const validated = validateInput(LLMSettingsSchema, settings, "LLM settings");
+    const validated = validateInput(
+      LLMSettingsSchema,
+      settings,
+      "LLM settings",
+    );
 
     // Load existing settings to preserve cached models and OAuth tokens
     const existingSettings = LLMProviderFactory.loadSettings();
-
-    // Build OpenAI settings, preserving OAuth tokens from existing settings
-    let openaiSettings = validated.openai;
-    if (existingSettings.openai?.authMethod === "oauth") {
-      // Preserve OAuth tokens when saving settings
-      openaiSettings = {
-        ...validated.openai,
-        accessToken: existingSettings.openai.accessToken,
-        refreshToken: existingSettings.openai.refreshToken,
-        tokenExpiresAt: existingSettings.openai.tokenExpiresAt,
-        authMethod: existingSettings.openai.authMethod,
-      };
-    }
-
-    const normalizeAzureSettings = (
-      incoming?: LLMSettingsData["azure"],
-      existing?: LLMSettingsData["azure"],
-    ): LLMSettingsData["azure"] | undefined => {
-      if (!incoming && !existing) return undefined;
-      const mergedDeployments = [...(incoming?.deployments || []), ...(existing?.deployments || [])]
-        .map((entry) => entry.trim())
-        .filter(Boolean);
-      const deployment = (
-        incoming?.deployment ||
-        existing?.deployment ||
-        mergedDeployments[0] ||
-        ""
-      ).trim();
-      if (deployment && !mergedDeployments.includes(deployment)) {
-        mergedDeployments.unshift(deployment);
-      }
-      return {
-        ...existing,
-        ...incoming,
-        deployment: deployment || undefined,
-        deployments:
-          mergedDeployments.length > 0 ? Array.from(new Set(mergedDeployments)) : undefined,
-      };
-    };
-
-    const normalizeAzureAnthropicSettings = (
-      incoming?: LLMSettingsData["azureAnthropic"],
-      existing?: LLMSettingsData["azureAnthropic"],
-    ): LLMSettingsData["azureAnthropic"] | undefined => {
-      if (!incoming && !existing) return undefined;
-      const mergedDeployments = [
-        ...(incoming?.deployments || []),
-        ...(existing?.deployments || []),
-      ]
-        .map((entry) => entry.trim())
-        .filter(Boolean);
-      const deployment = (
-        incoming?.deployment ||
-        existing?.deployment ||
-        mergedDeployments[0] ||
-        ""
-      ).trim();
-      if (deployment && !mergedDeployments.includes(deployment)) {
-        mergedDeployments.unshift(deployment);
-      }
-      return {
-        ...existing,
-        ...incoming,
-        deployment: deployment || undefined,
-        deployments:
-          mergedDeployments.length > 0 ? Array.from(new Set(mergedDeployments)) : undefined,
-      };
-    };
-
+    const mergedSettings = buildSavedLLMSettings(validated, existingSettings);
     LLMProviderFactory.saveSettings({
-      providerType: validated.providerType,
-      modelKey: validated.modelKey as ModelKey,
-      anthropic: validated.anthropic,
-      bedrock: validated.bedrock,
-      ollama: validated.ollama,
-      gemini: validated.gemini,
-      openrouter: validated.openrouter,
-      openai: openaiSettings,
-      azure: normalizeAzureSettings(validated.azure, existingSettings.azure),
-      azureAnthropic: normalizeAzureAnthropicSettings(
-        validated.azureAnthropic,
-        existingSettings.azureAnthropic,
-      ),
-      groq: validated.groq,
-      xai: validated.xai,
-      kimi: validated.kimi,
-      openaiCompatible: validated.openaiCompatible,
-      customProviders: validated.customProviders ?? existingSettings.customProviders,
-      imageGeneration: validated.imageGeneration ?? existingSettings.imageGeneration,
-      videoGeneration: validated.videoGeneration ?? existingSettings.videoGeneration,
-      // Preserve cached models from existing settings
-      cachedGeminiModels: existingSettings.cachedGeminiModels,
-      cachedOpenRouterModels: existingSettings.cachedOpenRouterModels,
-      cachedOllamaModels: existingSettings.cachedOllamaModels,
-      cachedBedrockModels: existingSettings.cachedBedrockModels,
-      cachedOpenAIModels: existingSettings.cachedOpenAIModels,
-      cachedGroqModels: existingSettings.cachedGroqModels,
-      cachedXaiModels: existingSettings.cachedXaiModels,
-      cachedKimiModels: existingSettings.cachedKimiModels,
-      cachedOpenAICompatibleModels: existingSettings.cachedOpenAICompatibleModels,
+      ...mergedSettings,
+      modelKey: mergedSettings.modelKey as ModelKey,
     });
     // saveSettings() already updates the in-memory cache; calling clearCache() here
     // would throw away the updated cache and force a DB re-read, which can return
@@ -3288,155 +4070,214 @@ export async function setupIpcHandlers(
     return { success: true };
   });
 
-  ipcMain.handle(IPC_CHANNELS.LLM_RESET_PROVIDER_CREDENTIALS, async (_, providerType: string) => {
-    checkRateLimit(IPC_CHANNELS.LLM_RESET_PROVIDER_CREDENTIALS);
+  ipcMain.handle(
+    IPC_CHANNELS.LLM_RESET_PROVIDER_CREDENTIALS,
+    async (_, providerType: string) => {
+      checkRateLimit(IPC_CHANNELS.LLM_RESET_PROVIDER_CREDENTIALS);
 
-    const resolvedProviderType = resolveCustomProviderId(providerType);
-    const settings = LLMProviderFactory.loadSettings();
-    const updatedSettings = { ...settings };
+      const resolvedProviderType = resolveCustomProviderId(providerType);
+      const settings = LLMProviderFactory.loadSettings();
+      const updatedSettings = { ...settings };
 
-    const clearCustomProviderConfig = (providerId: string) => {
-      if (!updatedSettings.customProviders) return;
+      const clearCustomProviderConfig = (providerId: string) => {
+        if (!updatedSettings.customProviders) return;
 
-      const nextCustomProviders = { ...updatedSettings.customProviders };
-      delete nextCustomProviders[providerId];
-      if (providerId === "kimi-code") {
-        delete nextCustomProviders["kimi-coding"];
+        const nextCustomProviders = { ...updatedSettings.customProviders };
+        delete nextCustomProviders[providerId];
+        if (providerId === "kimi-code") {
+          delete nextCustomProviders["kimi-coding"];
+        }
+        updatedSettings.customProviders =
+          Object.keys(nextCustomProviders).length > 0
+            ? nextCustomProviders
+            : undefined;
+      };
+
+      switch (resolvedProviderType) {
+        case "anthropic":
+          updatedSettings.anthropic = undefined;
+          updatedSettings.cachedAnthropicModels = undefined;
+          break;
+        case "bedrock":
+          updatedSettings.bedrock = undefined;
+          updatedSettings.cachedBedrockModels = undefined;
+          break;
+        case "ollama":
+          updatedSettings.ollama = undefined;
+          updatedSettings.cachedOllamaModels = undefined;
+          break;
+        case "gemini":
+          updatedSettings.gemini = undefined;
+          updatedSettings.cachedGeminiModels = undefined;
+          break;
+        case "openrouter":
+          updatedSettings.openrouter = undefined;
+          updatedSettings.cachedOpenRouterModels = undefined;
+          break;
+        case "openai":
+          updatedSettings.openai = undefined;
+          updatedSettings.cachedOpenAIModels = undefined;
+          break;
+        case "azure":
+          updatedSettings.azure = undefined;
+          break;
+        case "azure-anthropic":
+          updatedSettings.azureAnthropic = undefined;
+          break;
+        case "groq":
+          updatedSettings.groq = undefined;
+          updatedSettings.cachedGroqModels = undefined;
+          break;
+        case "xai":
+          updatedSettings.xai = undefined;
+          updatedSettings.cachedXaiModels = undefined;
+          break;
+        case "kimi":
+          updatedSettings.kimi = undefined;
+          updatedSettings.cachedKimiModels = undefined;
+          break;
+        case "pi":
+          updatedSettings.pi = undefined;
+          updatedSettings.cachedPiModels = undefined;
+          break;
+        case "openai-compatible":
+          updatedSettings.openaiCompatible = undefined;
+          updatedSettings.cachedOpenAICompatibleModels = undefined;
+          break;
+        default:
+          clearCustomProviderConfig(resolvedProviderType);
+          break;
       }
-      updatedSettings.customProviders =
-        Object.keys(nextCustomProviders).length > 0 ? nextCustomProviders : undefined;
-    };
 
-    switch (resolvedProviderType) {
-      case "anthropic":
-        updatedSettings.anthropic = undefined;
-        break;
-      case "bedrock":
-        updatedSettings.bedrock = undefined;
-        updatedSettings.cachedBedrockModels = undefined;
-        break;
-      case "ollama":
-        updatedSettings.ollama = undefined;
-        updatedSettings.cachedOllamaModels = undefined;
-        break;
-      case "gemini":
-        updatedSettings.gemini = undefined;
-        updatedSettings.cachedGeminiModels = undefined;
-        break;
-      case "openrouter":
-        updatedSettings.openrouter = undefined;
-        updatedSettings.cachedOpenRouterModels = undefined;
-        break;
-      case "openai":
-        updatedSettings.openai = undefined;
-        updatedSettings.cachedOpenAIModels = undefined;
-        break;
-      case "azure":
-        updatedSettings.azure = undefined;
-        break;
-      case "azure-anthropic":
-        updatedSettings.azureAnthropic = undefined;
-        break;
-      case "groq":
-        updatedSettings.groq = undefined;
-        updatedSettings.cachedGroqModels = undefined;
-        break;
-      case "xai":
-        updatedSettings.xai = undefined;
-        updatedSettings.cachedXaiModels = undefined;
-        break;
-      case "kimi":
-        updatedSettings.kimi = undefined;
-        updatedSettings.cachedKimiModels = undefined;
-        break;
-      case "pi":
-        updatedSettings.pi = undefined;
-        updatedSettings.cachedPiModels = undefined;
-        break;
-      case "openai-compatible":
-        updatedSettings.openaiCompatible = undefined;
-        updatedSettings.cachedOpenAICompatibleModels = undefined;
-        break;
-      default:
-        clearCustomProviderConfig(resolvedProviderType);
-        break;
-    }
-
-    LLMProviderFactory.saveSettings(updatedSettings);
-    LLMProviderFactory.clearCache();
-    return { success: true };
-  });
+      LLMProviderFactory.saveSettings(updatedSettings);
+      LLMProviderFactory.clearCache();
+      return { success: true };
+    },
+  );
 
   ipcMain.handle(IPC_CHANNELS.LLM_TEST_PROVIDER, async (_, config: Any) => {
     checkRateLimit(IPC_CHANNELS.LLM_TEST_PROVIDER);
+    const validatedConfig = validateInput(
+      LLMSettingsSchema,
+      config,
+      "LLM provider test config",
+    );
     // For OpenAI OAuth, get tokens from stored settings if authMethod is 'oauth'
     let openaiAccessToken: string | undefined;
     let openaiRefreshToken: string | undefined;
     let openaiTokenExpiresAt: number | undefined;
-    if (config.providerType === "openai" && config.openai?.authMethod === "oauth") {
+    if (
+      validatedConfig.providerType === "openai" &&
+      validatedConfig.openai?.authMethod === "oauth"
+    ) {
       const settings = LLMProviderFactory.loadSettings();
       openaiAccessToken = settings.openai?.accessToken;
       openaiRefreshToken = settings.openai?.refreshToken;
       openaiTokenExpiresAt = settings.openai?.tokenExpiresAt;
     }
-    const resolvedProviderType = resolveCustomProviderId(config.providerType);
+    const resolvedProviderType = resolveCustomProviderId(validatedConfig.providerType);
     const customProviderConfig =
-      config.customProviders?.[resolvedProviderType] ||
-      config.customProviders?.[config.providerType];
-    const azureDeployment = config.azure?.deployment || config.azure?.deployments?.[0];
+      validatedConfig.customProviders?.[resolvedProviderType] ||
+      validatedConfig.customProviders?.[validatedConfig.providerType];
+    const openrouterBaseUrl = await validateOptionalProviderBaseUrl(
+      validatedConfig.openrouter?.baseUrl,
+      { providerLabel: "OpenRouter" },
+    );
+    const groqBaseUrl = await validateOptionalProviderBaseUrl(
+      validatedConfig.groq?.baseUrl,
+      { providerLabel: "Groq" },
+    );
+    const xaiBaseUrl = await validateOptionalProviderBaseUrl(
+      validatedConfig.xai?.baseUrl,
+      { providerLabel: "xAI" },
+    );
+    const kimiBaseUrl = await validateOptionalProviderBaseUrl(
+      validatedConfig.kimi?.baseUrl,
+      { providerLabel: "Kimi" },
+    );
+    const ollamaBaseUrl = await validateOptionalProviderBaseUrl(
+      validatedConfig.ollama?.baseUrl,
+      { providerLabel: "Ollama", allowLoopback: true },
+    );
+    const openaiCompatibleBaseUrl = await validateOptionalProviderBaseUrl(
+      validatedConfig.openaiCompatible?.baseUrl,
+      { providerLabel: "OpenAI-compatible provider", allowLoopback: true },
+    );
+    const providerBaseUrl = await validateOptionalProviderBaseUrl(
+      customProviderConfig?.baseUrl,
+      { providerLabel: `Custom provider ${resolvedProviderType}`, allowLoopback: true },
+    );
+    const anthropicCredential =
+      validatedConfig.anthropic?.authMethod === "subscription"
+        ? validatedConfig.anthropic?.subscriptionToken || validatedConfig.anthropic?.apiKey
+        : validatedConfig.anthropic?.authMethod === "api_key"
+          ? validatedConfig.anthropic?.apiKey || validatedConfig.anthropic?.subscriptionToken
+          : validatedConfig.anthropic?.subscriptionToken || validatedConfig.anthropic?.apiKey;
+    const azureDeployment =
+      validatedConfig.azure?.deployment || validatedConfig.azure?.deployments?.[0];
     const azureAnthropicDeployment =
-      config.azureAnthropic?.deployment || config.azureAnthropic?.deployments?.[0];
+      validatedConfig.azureAnthropic?.deployment ||
+      validatedConfig.azureAnthropic?.deployments?.[0];
     const providerConfig: LLMProviderConfig = {
-      type: config.providerType,
+      type: validatedConfig.providerType,
       model: LLMProviderFactory.getModelId(
-        config.modelKey as ModelKey,
-        config.providerType,
-        config.ollama?.model,
-        config.gemini?.model,
-        config.openrouter?.model,
-        config.openai?.model,
+        validatedConfig.modelKey as ModelKey,
+        validatedConfig.providerType,
+        validatedConfig.ollama?.model,
+        validatedConfig.gemini?.model,
+        validatedConfig.openrouter?.model,
+        validatedConfig.openai?.model,
         azureDeployment,
         azureAnthropicDeployment,
-        config.groq?.model,
-        config.xai?.model,
-        config.kimi?.model,
-        config.customProviders,
-        config.bedrock?.model,
+        validatedConfig.groq?.model,
+        validatedConfig.xai?.model,
+        validatedConfig.kimi?.model,
+        validatedConfig.customProviders,
+        validatedConfig.bedrock?.model,
       ),
-      anthropicApiKey: config.anthropic?.apiKey,
-      awsRegion: config.bedrock?.region,
-      awsAccessKeyId: config.bedrock?.accessKeyId,
-      awsSecretAccessKey: config.bedrock?.secretAccessKey,
-      awsSessionToken: config.bedrock?.sessionToken,
-      awsProfile: config.bedrock?.profile,
-      ollamaBaseUrl: config.ollama?.baseUrl,
-      ollamaApiKey: config.ollama?.apiKey,
-      geminiApiKey: config.gemini?.apiKey,
-      openrouterApiKey: config.openrouter?.apiKey,
-      openrouterBaseUrl: config.openrouter?.baseUrl,
-      openaiApiKey: config.openai?.apiKey,
-      openaiAccessToken: openaiAccessToken,
-      openaiRefreshToken: openaiRefreshToken,
-      openaiTokenExpiresAt: openaiTokenExpiresAt,
-      azureApiKey: config.azure?.apiKey,
-      azureEndpoint: config.azure?.endpoint,
+      anthropicApiKey: anthropicCredential,
+      awsRegion: validatedConfig.bedrock?.region,
+      awsAccessKeyId: validatedConfig.bedrock?.accessKeyId,
+      awsSecretAccessKey: validatedConfig.bedrock?.secretAccessKey,
+      awsSessionToken: validatedConfig.bedrock?.sessionToken,
+      awsProfile: validatedConfig.bedrock?.profile,
+      ollamaBaseUrl,
+      ollamaApiKey: validatedConfig.ollama?.apiKey,
+      geminiApiKey: validatedConfig.gemini?.apiKey,
+      openrouterApiKey: validateOptionalProviderApiKey(
+        validatedConfig.openrouter?.apiKey,
+        "OpenRouter",
+      ),
+      openrouterBaseUrl,
+      openaiApiKey: validatedConfig.openai?.apiKey,
+      openaiAccessToken,
+      openaiRefreshToken,
+      openaiTokenExpiresAt,
+      azureApiKey: validatedConfig.azure?.apiKey,
+      azureEndpoint: validatedConfig.azure?.endpoint,
       azureDeployment: azureDeployment,
-      azureApiVersion: config.azure?.apiVersion,
-      azureReasoningEffort: config.azure?.reasoningEffort,
-      azureAnthropicApiKey: config.azureAnthropic?.apiKey,
-      azureAnthropicEndpoint: config.azureAnthropic?.endpoint,
+      azureApiVersion: validatedConfig.azure?.apiVersion,
+      azureReasoningEffort: validatedConfig.azure?.reasoningEffort,
+      azureAnthropicApiKey: validatedConfig.azureAnthropic?.apiKey,
+      azureAnthropicEndpoint: validatedConfig.azureAnthropic?.endpoint,
       azureAnthropicDeployment: azureAnthropicDeployment,
-      azureAnthropicApiVersion: config.azureAnthropic?.apiVersion,
-      groqApiKey: config.groq?.apiKey,
-      groqBaseUrl: config.groq?.baseUrl,
-      xaiApiKey: config.xai?.apiKey,
-      xaiBaseUrl: config.xai?.baseUrl,
-      kimiApiKey: config.kimi?.apiKey,
-      kimiBaseUrl: config.kimi?.baseUrl,
-      openaiCompatibleApiKey: config.openaiCompatible?.apiKey,
-      openaiCompatibleBaseUrl: config.openaiCompatible?.baseUrl,
-      providerApiKey: customProviderConfig?.apiKey,
-      providerBaseUrl: customProviderConfig?.baseUrl,
+      azureAnthropicApiVersion: validatedConfig.azureAnthropic?.apiVersion,
+      groqApiKey: validateOptionalProviderApiKey(validatedConfig.groq?.apiKey, "Groq"),
+      groqBaseUrl,
+      xaiApiKey: validateOptionalProviderApiKey(validatedConfig.xai?.apiKey, "xAI"),
+      xaiBaseUrl,
+      kimiApiKey: validateOptionalProviderApiKey(validatedConfig.kimi?.apiKey, "Kimi"),
+      kimiBaseUrl,
+      openaiCompatibleApiKey: validateOptionalProviderApiKey(
+        validatedConfig.openaiCompatible?.apiKey,
+        "OpenAI-compatible provider",
+      ),
+      openaiCompatibleBaseUrl,
+      providerApiKey: validateOptionalProviderApiKey(
+        customProviderConfig?.apiKey,
+        `Custom provider ${resolvedProviderType}`,
+      ),
+      providerBaseUrl,
     };
     return LLMProviderFactory.testProvider(providerConfig);
   });
@@ -3455,17 +4296,29 @@ export async function setupIpcHandlers(
     return LLMProviderFactory.getConfigStatus();
   });
 
-  ipcMain.handle(IPC_CHANNELS.LLM_ROUTING_STATUS, async (): Promise<LLMRoutingRuntimeState> => {
-    return RuntimeVisibilityService.buildRoutingState(LLMProviderFactory.loadSettings());
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.LLM_ROUTING_STATUS,
+    async (): Promise<LLMRoutingRuntimeState> => {
+      return RuntimeVisibilityService.buildRoutingState(
+        LLMProviderFactory.loadSettings(),
+      );
+    },
+  );
 
   // Get models available for a specific provider type (for multi-LLM selection)
-  ipcMain.handle(IPC_CHANNELS.LLM_GET_PROVIDER_MODELS, async (_, providerType: string) => {
-    const settings = LLMProviderFactory.loadSettings();
-    const modifiedSettings = { ...settings, providerType: providerType as Any };
-    const modelStatus = LLMProviderFactory.getProviderModelStatus(modifiedSettings);
-    return modelStatus.models;
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.LLM_GET_PROVIDER_MODELS,
+    async (_, providerType: string) => {
+      const settings = LLMProviderFactory.loadSettings();
+      const modifiedSettings = {
+        ...settings,
+        providerType: providerType as Any,
+      };
+      const modelStatus =
+        LLMProviderFactory.getProviderModelStatus(modifiedSettings);
+      return modelStatus.models;
+    },
+  );
 
   ipcMain.handle(
     IPC_CHANNELS.LLM_REFRESH_CUSTOM_PROVIDER_MODELS,
@@ -3475,51 +4328,111 @@ export async function setupIpcHandlers(
       overrides?: { apiKey?: string; baseUrl?: string },
     ) => {
       checkRateLimit(IPC_CHANNELS.LLM_REFRESH_CUSTOM_PROVIDER_MODELS);
-      return LLMProviderFactory.getCustomProviderModels(providerType as Any, overrides);
+      const validatedProviderType = validateInput(
+        z.string().trim().min(1).max(200),
+        providerType,
+        "custom provider type",
+      );
+      const validatedOverrides = overrides
+        ? {
+            apiKey: validateOptionalProviderApiKey(overrides.apiKey, validatedProviderType),
+            baseUrl: await validateOptionalProviderBaseUrl(overrides.baseUrl, {
+              providerLabel: validatedProviderType,
+              allowLoopback: true,
+            }),
+          }
+        : undefined;
+      return LLMProviderFactory.getCustomProviderModels(
+        validatedProviderType as Any,
+        validatedOverrides,
+      );
     },
   );
 
   // Set the current model (persists selection across sessions)
   ipcMain.handle(IPC_CHANNELS.LLM_SET_MODEL, async (_, modelKey: string) => {
     const settings = LLMProviderFactory.loadSettings();
-    const updatedSettings = LLMProviderFactory.applyModelSelection(settings, modelKey);
+    const updatedSettings = LLMProviderFactory.applyModelSelection(
+      settings,
+      modelKey,
+    );
     LLMProviderFactory.saveSettings(updatedSettings);
     return { success: true };
   });
 
-  ipcMain.handle(IPC_CHANNELS.LLM_GET_OLLAMA_MODELS, async (_, baseUrl?: string) => {
-    checkRateLimit(IPC_CHANNELS.LLM_GET_OLLAMA_MODELS);
-    console.log("[IPC] Handling LLM_GET_OLLAMA_MODELS request");
-    const models = await LLMProviderFactory.getOllamaModels(baseUrl);
-    // Cache the models for use in config status
-    const cachedModels = models.map((m) => ({
-      key: m.name,
-      displayName: m.name,
-      description: `${Math.round(m.size / 1e9)}B parameter model`,
-      size: m.size,
-    }));
-    LLMProviderFactory.saveCachedModels("ollama", cachedModels);
-    return models;
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.LLM_GET_ANTHROPIC_MODELS,
+    async (
+      _,
+      credentials?: {
+        apiKey?: string;
+        subscriptionToken?: string;
+        authMethod?: "api_key" | "subscription";
+      },
+    ) => {
+      checkRateLimit(IPC_CHANNELS.LLM_GET_ANTHROPIC_MODELS);
+      const models = await LLMProviderFactory.getAnthropicModels(credentials);
+      const cachedModels = models.map((m) => ({
+        key: m.id,
+        displayName: m.displayName,
+        description: m.description,
+      }));
+      LLMProviderFactory.saveCachedModels("anthropic", cachedModels);
+      return models;
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.LLM_GET_GEMINI_MODELS, async (_, apiKey?: string) => {
-    checkRateLimit(IPC_CHANNELS.LLM_GET_GEMINI_MODELS);
-    const models = await LLMProviderFactory.getGeminiModels(apiKey);
-    // Cache the models for use in config status
-    const cachedModels = models.map((m) => ({
-      key: m.name,
-      displayName: m.displayName,
-      description: m.description,
-    }));
-    LLMProviderFactory.saveCachedModels("gemini", cachedModels);
-    return models;
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.LLM_GET_OLLAMA_MODELS,
+    async (_, baseUrl?: string) => {
+      checkRateLimit(IPC_CHANNELS.LLM_GET_OLLAMA_MODELS);
+      const validatedBaseUrl = await validateOptionalProviderBaseUrl(baseUrl, {
+        providerLabel: "Ollama",
+        allowLoopback: true,
+      });
+      logger.debug("Handling LLM_GET_OLLAMA_MODELS request");
+      const models = await LLMProviderFactory.getOllamaModels(validatedBaseUrl);
+      // Cache the models for use in config status
+      const cachedModels = models.map((m) => ({
+        key: m.name,
+        displayName: m.name,
+        description: `${Math.round(m.size / 1e9)}B parameter model`,
+        size: m.size,
+      }));
+      LLMProviderFactory.saveCachedModels("ollama", cachedModels);
+      return models;
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.LLM_GET_GEMINI_MODELS,
+    async (_, apiKey?: string) => {
+      checkRateLimit(IPC_CHANNELS.LLM_GET_GEMINI_MODELS);
+      const models = await LLMProviderFactory.getGeminiModels(
+        validateOptionalProviderApiKey(apiKey, "Gemini"),
+      );
+      // Cache the models for use in config status
+      const cachedModels = models.map((m) => ({
+        key: m.name,
+        displayName: m.displayName,
+        description: m.description,
+      }));
+      LLMProviderFactory.saveCachedModels("gemini", cachedModels);
+      return models;
+    },
+  );
 
   ipcMain.handle(
     IPC_CHANNELS.LLM_GET_OPENROUTER_MODELS,
     async (_, apiKey?: string, baseUrl?: string) => {
       checkRateLimit(IPC_CHANNELS.LLM_GET_OPENROUTER_MODELS);
-      const models = await LLMProviderFactory.getOpenRouterModels(apiKey, baseUrl);
+      const validatedBaseUrl = await validateOptionalProviderBaseUrl(baseUrl, {
+        providerLabel: "OpenRouter",
+      });
+      const models = await LLMProviderFactory.getOpenRouterModels(
+        validateOptionalProviderApiKey(apiKey, "OpenRouter"),
+        validatedBaseUrl,
+      );
       // Cache the models for use in config status
       const cachedModels = models.map((m) => ({
         key: m.id,
@@ -3532,66 +4445,101 @@ export async function setupIpcHandlers(
     },
   );
 
-  ipcMain.handle(IPC_CHANNELS.LLM_GET_OPENAI_MODELS, async (_, apiKey?: string) => {
-    checkRateLimit(IPC_CHANNELS.LLM_GET_OPENAI_MODELS);
-    const models = await LLMProviderFactory.getOpenAIModels(apiKey);
-    // Cache the models for use in config status
-    const cachedModels = models.map((m) => ({
-      key: m.id,
-      displayName: m.name,
-      description: m.description,
-    }));
-    LLMProviderFactory.saveCachedModels("openai", cachedModels);
-    return models;
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.LLM_GET_OPENAI_MODELS,
+    async (_, apiKey?: string) => {
+      checkRateLimit(IPC_CHANNELS.LLM_GET_OPENAI_MODELS);
+      const models = await LLMProviderFactory.getOpenAIModels(
+        validateOptionalProviderApiKey(apiKey, "OpenAI"),
+      );
+      // Cache the models for use in config status
+      const cachedModels = models.map((m) => ({
+        key: m.id,
+        displayName: m.name,
+        description: m.description,
+      }));
+      LLMProviderFactory.saveCachedModels("openai", cachedModels);
+      return models;
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.LLM_GET_GROQ_MODELS, async (_, apiKey?: string, baseUrl?: string) => {
-    checkRateLimit(IPC_CHANNELS.LLM_GET_GROQ_MODELS);
-    const models = await LLMProviderFactory.getGroqModels(apiKey, baseUrl);
-    const cachedModels = models.map((m) => ({
-      key: m.id,
-      displayName: m.name,
-      description: "Groq model",
-    }));
-    LLMProviderFactory.saveCachedModels("groq", cachedModels);
-    return models;
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.LLM_GET_GROQ_MODELS,
+    async (_, apiKey?: string, baseUrl?: string) => {
+      checkRateLimit(IPC_CHANNELS.LLM_GET_GROQ_MODELS);
+      const validatedBaseUrl = await validateOptionalProviderBaseUrl(baseUrl, {
+        providerLabel: "Groq",
+      });
+      const models = await LLMProviderFactory.getGroqModels(
+        validateOptionalProviderApiKey(apiKey, "Groq"),
+        validatedBaseUrl,
+      );
+      const cachedModels = models.map((m) => ({
+        key: m.id,
+        displayName: m.name,
+        description: "Groq model",
+      }));
+      LLMProviderFactory.saveCachedModels("groq", cachedModels);
+      return models;
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.LLM_GET_XAI_MODELS, async (_, apiKey?: string, baseUrl?: string) => {
-    checkRateLimit(IPC_CHANNELS.LLM_GET_XAI_MODELS);
-    const models = await LLMProviderFactory.getXAIModels(apiKey, baseUrl);
-    const cachedModels = models.map((m) => ({
-      key: m.id,
-      displayName: m.name,
-      description: "xAI model",
-    }));
-    LLMProviderFactory.saveCachedModels("xai", cachedModels);
-    return models;
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.LLM_GET_XAI_MODELS,
+    async (_, apiKey?: string, baseUrl?: string) => {
+      checkRateLimit(IPC_CHANNELS.LLM_GET_XAI_MODELS);
+      const validatedBaseUrl = await validateOptionalProviderBaseUrl(baseUrl, {
+        providerLabel: "xAI",
+      });
+      const models = await LLMProviderFactory.getXAIModels(
+        validateOptionalProviderApiKey(apiKey, "xAI"),
+        validatedBaseUrl,
+      );
+      const cachedModels = models.map((m) => ({
+        key: m.id,
+        displayName: m.name,
+        description: "xAI model",
+      }));
+      LLMProviderFactory.saveCachedModels("xai", cachedModels);
+      return models;
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.LLM_GET_KIMI_MODELS, async (_, apiKey?: string, baseUrl?: string) => {
-    checkRateLimit(IPC_CHANNELS.LLM_GET_KIMI_MODELS);
-    const models = await LLMProviderFactory.getKimiModels(apiKey, baseUrl);
-    const cachedModels = models.map((m) => ({
-      key: m.id,
-      displayName: m.name,
-      description: "Kimi model",
-    }));
-    LLMProviderFactory.saveCachedModels("kimi", cachedModels);
-    return models;
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.LLM_GET_KIMI_MODELS,
+    async (_, apiKey?: string, baseUrl?: string) => {
+      checkRateLimit(IPC_CHANNELS.LLM_GET_KIMI_MODELS);
+      const validatedBaseUrl = await validateOptionalProviderBaseUrl(baseUrl, {
+        providerLabel: "Kimi",
+      });
+      const models = await LLMProviderFactory.getKimiModels(
+        validateOptionalProviderApiKey(apiKey, "Kimi"),
+        validatedBaseUrl,
+      );
+      const cachedModels = models.map((m) => ({
+        key: m.id,
+        displayName: m.name,
+        description: "Kimi model",
+      }));
+      LLMProviderFactory.saveCachedModels("kimi", cachedModels);
+      return models;
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.LLM_GET_PI_MODELS, async (_, piProvider?: string) => {
-    checkRateLimit(IPC_CHANNELS.LLM_GET_PI_MODELS);
-    const models = await LLMProviderFactory.getPiModels(piProvider);
-    const cachedModels = models.map((m) => ({
-      key: m.id,
-      displayName: m.name,
-      description: m.description,
-    }));
-    LLMProviderFactory.saveCachedModels("pi", cachedModels);
-    return models;
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.LLM_GET_PI_MODELS,
+    async (_, piProvider?: string) => {
+      checkRateLimit(IPC_CHANNELS.LLM_GET_PI_MODELS);
+      const models = await LLMProviderFactory.getPiModels(piProvider);
+      const cachedModels = models.map((m) => ({
+        key: m.id,
+        displayName: m.name,
+        description: m.description,
+      }));
+      LLMProviderFactory.saveCachedModels("pi", cachedModels);
+      return models;
+    },
+  );
 
   ipcMain.handle(IPC_CHANNELS.LLM_GET_PI_PROVIDERS, async () => {
     checkRateLimit(IPC_CHANNELS.LLM_GET_PI_PROVIDERS);
@@ -3605,7 +4553,10 @@ export async function setupIpcHandlers(
       const validatedBaseUrl = await validateOpenAICompatibleBaseUrl(baseUrl, {
         allowLoopback: true,
       });
-      return LLMProviderFactory.getOpenAICompatibleModels(validatedBaseUrl, apiKey);
+      return LLMProviderFactory.getOpenAICompatibleModels(
+        validatedBaseUrl,
+        validateOptionalProviderApiKey(apiKey, "OpenAI-compatible provider"),
+      );
     },
   );
 
@@ -3695,7 +4646,11 @@ export async function setupIpcHandlers(
 
   ipcMain.handle(IPC_CHANNELS.SEARCH_SAVE_SETTINGS, async (_, settings) => {
     checkRateLimit(IPC_CHANNELS.SEARCH_SAVE_SETTINGS);
-    const validated = validateInput(SearchSettingsSchema, settings, "search settings");
+    const validated = validateInput(
+      SearchSettingsSchema,
+      settings,
+      "search settings",
+    );
     SearchProviderFactory.saveSettings(validated as SearchSettings);
     SearchProviderFactory.clearCache();
     return { success: true };
@@ -3705,10 +4660,13 @@ export async function setupIpcHandlers(
     return SearchProviderFactory.getConfigStatus();
   });
 
-  ipcMain.handle(IPC_CHANNELS.SEARCH_TEST_PROVIDER, async (_, providerType: SearchProviderType) => {
-    checkRateLimit(IPC_CHANNELS.SEARCH_TEST_PROVIDER);
-    return SearchProviderFactory.testProvider(providerType);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.SEARCH_TEST_PROVIDER,
+    async (_, providerType: SearchProviderType) => {
+      checkRateLimit(IPC_CHANNELS.SEARCH_TEST_PROVIDER);
+      return SearchProviderFactory.testProvider(providerType);
+    },
+  );
 
   // X/Twitter Settings handlers
   ipcMain.handle(IPC_CHANNELS.X_GET_SETTINGS, async () => {
@@ -3717,13 +4675,20 @@ export async function setupIpcHandlers(
 
   ipcMain.handle(IPC_CHANNELS.X_SAVE_SETTINGS, async (_, settings) => {
     checkRateLimit(IPC_CHANNELS.X_SAVE_SETTINGS);
-    const validated = validateInput(XSettingsSchema, settings, "x settings") as XSettingsData;
+    const validated = validateInput(
+      XSettingsSchema,
+      settings,
+      "x settings",
+    ) as XSettingsData;
     XSettingsManager.saveSettings(validated);
     XSettingsManager.clearCache();
     try {
       getXMentionBridgeService()?.triggerNow();
     } catch (error) {
-      console.warn("[X] Failed to trigger immediate mention bridge poll:", error);
+      console.warn(
+        "[X] Failed to trigger immediate mention bridge poll:",
+        error,
+      );
     }
     return { success: true };
   });
@@ -3805,7 +4770,11 @@ export async function setupIpcHandlers(
 
   ipcMain.handle(IPC_CHANNELS.BOX_SAVE_SETTINGS, async (_, settings) => {
     checkRateLimit(IPC_CHANNELS.BOX_SAVE_SETTINGS);
-    const validated = validateInput(BoxSettingsSchema, settings, "box settings") as BoxSettingsData;
+    const validated = validateInput(
+      BoxSettingsSchema,
+      settings,
+      "box settings",
+    ) as BoxSettingsData;
     BoxSettingsManager.saveSettings(validated);
     BoxSettingsManager.clearCache();
     return { success: true };
@@ -3881,17 +4850,20 @@ export async function setupIpcHandlers(
     return GoogleWorkspaceSettingsManager.loadSettings();
   });
 
-  ipcMain.handle(IPC_CHANNELS.GOOGLE_WORKSPACE_SAVE_SETTINGS, async (_, settings) => {
-    checkRateLimit(IPC_CHANNELS.GOOGLE_WORKSPACE_SAVE_SETTINGS);
-    const validated = validateInput(
-      GoogleWorkspaceSettingsSchema,
-      settings,
-      "google workspace settings",
-    ) as GoogleWorkspaceSettingsData;
-    GoogleWorkspaceSettingsManager.saveSettings(validated);
-    GoogleWorkspaceSettingsManager.clearCache();
-    return { success: true };
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.GOOGLE_WORKSPACE_SAVE_SETTINGS,
+    async (_, settings) => {
+      checkRateLimit(IPC_CHANNELS.GOOGLE_WORKSPACE_SAVE_SETTINGS);
+      const validated = validateInput(
+        GoogleWorkspaceSettingsSchema,
+        settings,
+        "google workspace settings",
+      ) as GoogleWorkspaceSettingsData;
+      GoogleWorkspaceSettingsManager.saveSettings(validated);
+      GoogleWorkspaceSettingsManager.clearCache();
+      return { success: true };
+    },
+  );
 
   ipcMain.handle(IPC_CHANNELS.GOOGLE_WORKSPACE_TEST_CONNECTION, async () => {
     checkRateLimit(IPC_CHANNELS.GOOGLE_WORKSPACE_TEST_CONNECTION);
@@ -3917,37 +4889,46 @@ export async function setupIpcHandlers(
     };
   });
 
-  ipcMain.handle(IPC_CHANNELS.GOOGLE_WORKSPACE_OAUTH_START, async (_, payload) => {
-    checkRateLimit(IPC_CHANNELS.GOOGLE_WORKSPACE_OAUTH_START);
-    return startGoogleWorkspaceOAuth(payload);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.GOOGLE_WORKSPACE_OAUTH_START,
+    async (_, payload) => {
+      checkRateLimit(IPC_CHANNELS.GOOGLE_WORKSPACE_OAUTH_START);
+      return startGoogleWorkspaceOAuth(payload);
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.GOOGLE_WORKSPACE_OAUTH_GET_LINK, async (_, payload) => {
-    checkRateLimit(IPC_CHANNELS.GOOGLE_WORKSPACE_OAUTH_GET_LINK);
-    const url = await startGoogleWorkspaceOAuthGetLink(
-      payload,
-      async (result) => {
-        // Tokens arrive in the background after the user completes auth in their browser.
-        // Merge into existing settings so other fields (clientId, scopes, etc.) are preserved.
-        const existing = await GoogleWorkspaceSettingsManager.loadSettings();
-        const tokenExpiresAt = result.expiresIn
-          ? Date.now() + result.expiresIn * 1000
-          : existing.tokenExpiresAt;
-        await GoogleWorkspaceSettingsManager.saveSettings({
-          ...existing,
-          enabled: true,
-          accessToken: result.accessToken,
-          refreshToken: result.refreshToken ?? existing.refreshToken,
-          tokenExpiresAt,
-          scopes: result.scopes ?? existing.scopes,
-        });
-      },
-      (err) => {
-        logger.error("Google Workspace OAuth (copy-link) failed:", err.message);
-      },
-    );
-    return { url };
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.GOOGLE_WORKSPACE_OAUTH_GET_LINK,
+    async (_, payload) => {
+      checkRateLimit(IPC_CHANNELS.GOOGLE_WORKSPACE_OAUTH_GET_LINK);
+      const url = await startGoogleWorkspaceOAuthGetLink(
+        payload,
+        async (result) => {
+          // Tokens arrive in the background after the user completes auth in their browser.
+          // Merge into existing settings so other fields (clientId, scopes, etc.) are preserved.
+          const existing = await GoogleWorkspaceSettingsManager.loadSettings();
+          const tokenExpiresAt = result.expiresIn
+            ? Date.now() + result.expiresIn * 1000
+            : existing.tokenExpiresAt;
+          await GoogleWorkspaceSettingsManager.saveSettings({
+            ...existing,
+            enabled: true,
+            accessToken: result.accessToken,
+            refreshToken: result.refreshToken ?? existing.refreshToken,
+            tokenExpiresAt,
+            scopes: result.scopes ?? existing.scopes,
+          });
+        },
+        (err) => {
+          logger.error(
+            "Google Workspace OAuth (copy-link) failed:",
+            err.message,
+          );
+        },
+      );
+      return { url };
+    },
+  );
 
   // Dropbox Settings handlers
   ipcMain.handle(IPC_CHANNELS.DROPBOX_GET_SETTINGS, async () => {
@@ -4071,12 +5052,16 @@ export async function setupIpcHandlers(
         validated.discordSupervisor
           ? {
               enabled: validated.discordSupervisor.enabled === true,
-              coordinationChannelId: validated.discordSupervisor.coordinationChannelId,
+              coordinationChannelId:
+                validated.discordSupervisor.coordinationChannelId,
               watchedChannelIds: validated.discordSupervisor.watchedChannelIds,
               workerAgentRoleId: validated.discordSupervisor.workerAgentRoleId,
-              supervisorAgentRoleId: validated.discordSupervisor.supervisorAgentRoleId,
-              humanEscalationChannelId: validated.discordSupervisor.humanEscalationChannelId,
-              humanEscalationUserId: validated.discordSupervisor.humanEscalationUserId,
+              supervisorAgentRoleId:
+                validated.discordSupervisor.supervisorAgentRoleId,
+              humanEscalationChannelId:
+                validated.discordSupervisor.humanEscalationChannelId,
+              humanEscalationUserId:
+                validated.discordSupervisor.humanEscalationUserId,
               peerBotUserIds: validated.discordSupervisor.peerBotUserIds,
               strictMode: validated.discordSupervisor.strictMode !== false,
             }
@@ -4107,7 +5092,8 @@ export async function setupIpcHandlers(
         {
           ambientMode: validated.ambientMode ?? false,
           silentUnauthorized: validated.silentUnauthorized ?? false,
-          ingestNonSelfChatsInSelfChatMode: validated.ingestNonSelfChatsInSelfChatMode ?? false,
+          ingestNonSelfChatsInSelfChatMode:
+            validated.ingestNonSelfChatsInSelfChatMode ?? false,
           trustedGroupMemoryOptIn: validated.trustedGroupMemoryOptIn ?? false,
           sendReadReceipts: validated.sendReadReceipts,
           deduplicationEnabled: validated.deduplicationEnabled,
@@ -4372,14 +5358,21 @@ export async function setupIpcHandlers(
   ipcMain.handle(IPC_CHANNELS.GATEWAY_UPDATE_CHANNEL, async (_, data) => {
     if (!gateway) throw new Error("Gateway not initialized");
 
-    const validated = validateInput(UpdateChannelSchema, data, "channel update");
+    const validated = validateInput(
+      UpdateChannelSchema,
+      data,
+      "channel update",
+    );
     const channel = gateway.getChannel(validated.id);
     if (!channel) throw new Error("Channel not found");
 
     const updates: Record<string, unknown> = {};
     if (validated.name !== undefined) updates.name = validated.name;
     if (validated.securityMode !== undefined) {
-      updates.securityConfig = { ...channel.securityConfig, mode: validated.securityMode };
+      updates.securityConfig = {
+        ...channel.securityConfig,
+        mode: validated.securityMode,
+      };
     }
     if (validated.config !== undefined) {
       const mergedConfig = { ...channel.config, ...validated.config };
@@ -4392,7 +5385,9 @@ export async function setupIpcHandlers(
         mergedConfig.supervisor =
           nextSupervisor && typeof nextSupervisor === "object"
             ? {
-                ...((channel.config?.supervisor as Record<string, unknown> | undefined) || {}),
+                ...((channel.config?.supervisor as
+                  | Record<string, unknown>
+                  | undefined) || {}),
                 ...nextSupervisor,
               }
             : nextSupervisor;
@@ -4422,10 +5417,13 @@ export async function setupIpcHandlers(
     await gateway.enableChannel(id);
   });
 
-  ipcMain.handle(IPC_CHANNELS.GATEWAY_DISABLE_CHANNEL, async (_, id: string) => {
-    if (!gateway) throw new Error("Gateway not initialized");
-    await gateway.disableChannel(id);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.GATEWAY_DISABLE_CHANNEL,
+    async (_, id: string) => {
+      if (!gateway) throw new Error("Gateway not initialized");
+      await gateway.disableChannel(id);
+    },
+  );
 
   ipcMain.handle(IPC_CHANNELS.GATEWAY_TEST_CHANNEL, async (_, id: string) => {
     checkRateLimit(IPC_CHANNELS.GATEWAY_TEST_CHANNEL);
@@ -4433,27 +5431,36 @@ export async function setupIpcHandlers(
     return gateway.testChannel(id);
   });
 
-  ipcMain.handle(IPC_CHANNELS.GATEWAY_GET_USERS, async (_, channelId: string) => {
-    if (!gateway) return [];
-    return gateway.getChannelUsers(channelId).map((u) => ({
-      id: u.id,
-      channelId: u.channelId,
-      channelUserId: u.channelUserId,
-      displayName: u.displayName,
-      username: u.username,
-      allowed: u.allowed,
-      lastSeenAt: u.lastSeenAt,
-    }));
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.GATEWAY_GET_USERS,
+    async (_, channelId: string) => {
+      if (!gateway) return [];
+      return gateway.getChannelUsers(channelId).map((u) => ({
+        id: u.id,
+        channelId: u.channelId,
+        channelUserId: u.channelUserId,
+        displayName: u.displayName,
+        username: u.username,
+        allowed: u.allowed,
+        lastSeenAt: u.lastSeenAt,
+      }));
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.GATEWAY_LIST_CHATS, async (_, channelId: string) => {
-    if (!gateway) return [];
-    return gateway.getDistinctChatIds(channelId);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.GATEWAY_LIST_CHATS,
+    async (_, channelId: string) => {
+      if (!gateway) return [];
+      return gateway.getDistinctChatIds(channelId);
+    },
+  );
 
   ipcMain.handle(
     IPC_CHANNELS.GATEWAY_SEND_TEST_MESSAGE,
-    async (_, data: { channelType: string; channelDbId?: string; chatId: string }) => {
+    async (
+      _,
+      data: { channelType: string; channelDbId?: string; chatId: string },
+    ) => {
       if (!gateway) throw new Error("Gateway not initialized");
       // Resolve channel type from DB ID if provided
       let resolvedType = data.channelType;
@@ -4461,10 +5468,15 @@ export async function setupIpcHandlers(
         const ch = gateway.getChannel(data.channelDbId);
         if (ch) resolvedType = ch.type;
       }
-      await gateway.sendMessage(resolvedType as Any, data.chatId, "Test delivery from CoWork OS", {
-        channelDbId: data.channelDbId,
-        parseMode: "text",
-      });
+      await gateway.sendMessage(
+        resolvedType as Any,
+        data.chatId,
+        "Test delivery from CoWork OS",
+        {
+          channelDbId: data.channelDbId,
+          parseMode: "text",
+        },
+      );
       return { ok: true };
     },
   );
@@ -4472,7 +5484,11 @@ export async function setupIpcHandlers(
   ipcMain.handle(IPC_CHANNELS.GATEWAY_GRANT_ACCESS, async (_, data) => {
     if (!gateway) throw new Error("Gateway not initialized");
     const validated = validateInput(GrantAccessSchema, data, "grant access");
-    gateway.grantUserAccess(validated.channelId, validated.userId, validated.displayName);
+    gateway.grantUserAccess(
+      validated.channelId,
+      validated.userId,
+      validated.displayName,
+    );
   });
 
   ipcMain.handle(IPC_CHANNELS.GATEWAY_REVOKE_ACCESS, async (_, data) => {
@@ -4483,7 +5499,11 @@ export async function setupIpcHandlers(
 
   ipcMain.handle(IPC_CHANNELS.GATEWAY_GENERATE_PAIRING, async (_, data) => {
     if (!gateway) throw new Error("Gateway not initialized");
-    const validated = validateInput(GeneratePairingSchema, data, "generate pairing");
+    const validated = validateInput(
+      GeneratePairingSchema,
+      data,
+      "generate pairing",
+    );
     return gateway.generatePairingCode(
       validated.channelId,
       validated.userId,
@@ -4492,12 +5512,12 @@ export async function setupIpcHandlers(
   });
 
   // WhatsApp-specific handlers
-  ipcMain.handle("whatsapp:get-info", async () => {
+  ipcMain.handle(IPC_CHANNELS.WHATSAPP_GET_INFO, async () => {
     if (!gateway) return {};
     return gateway.getWhatsAppInfo();
   });
 
-  ipcMain.handle("whatsapp:logout", async () => {
+  ipcMain.handle(IPC_CHANNELS.WHATSAPP_LOGOUT, async () => {
     if (!gateway) throw new Error("Gateway not initialized");
     await gateway.whatsAppLogout();
   });
@@ -4511,10 +5531,13 @@ export async function setupIpcHandlers(
     return updateManager.checkForUpdates();
   });
 
-  ipcMain.handle(IPC_CHANNELS.APP_DOWNLOAD_UPDATE, async (_, updateInfo: UpdateInfo) => {
-    await updateManager.downloadAndInstallUpdate(updateInfo);
-    return { success: true };
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.APP_DOWNLOAD_UPDATE,
+    async (_, updateInfo: UpdateInfo) => {
+      await updateManager.downloadAndInstallUpdate(updateInfo);
+      return { success: true };
+    },
+  );
 
   ipcMain.handle(IPC_CHANNELS.APP_INSTALL_UPDATE, async () => {
     await updateManager.installUpdateAndRestart();
@@ -4528,7 +5551,11 @@ export async function setupIpcHandlers(
 
   ipcMain.handle(IPC_CHANNELS.GUARDRAIL_SAVE_SETTINGS, async (_, settings) => {
     checkRateLimit(IPC_CHANNELS.GUARDRAIL_SAVE_SETTINGS);
-    const validated = validateInput(GuardrailSettingsSchema, settings, "guardrail settings");
+    const validated = validateInput(
+      GuardrailSettingsSchema,
+      settings,
+      "guardrail settings",
+    );
     GuardrailManager.saveSettings(validated);
     GuardrailManager.clearCache();
     return { success: true };
@@ -4542,24 +5569,48 @@ export async function setupIpcHandlers(
     return PermissionSettingsManager.loadSettings();
   });
 
-  ipcMain.handle(IPC_CHANNELS.PERMISSIONS_SAVE_SETTINGS, async (_, settings) => {
-    checkRateLimit(IPC_CHANNELS.PERMISSIONS_SAVE_SETTINGS);
-    const validated = validateInput(PermissionSettingsSchema, settings, "permission settings");
-    PermissionSettingsManager.saveSettings(validated);
-    PermissionSettingsManager.clearCache();
-    return { success: true };
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.PERMISSIONS_SAVE_SETTINGS,
+    async (_, settings) => {
+      checkRateLimit(IPC_CHANNELS.PERMISSIONS_SAVE_SETTINGS);
+      const validated = validateInput(
+        PermissionSettingsSchema,
+        settings,
+        "permission settings",
+      );
+      PermissionSettingsManager.saveSettings(validated);
+      PermissionSettingsManager.clearCache();
+      return { success: true };
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.PERMISSIONS_GET_WORKSPACE_RULES, async (_, workspaceId: string) => {
-    const validatedWorkspaceId = validateInput(WorkspaceIdSchema, workspaceId, "workspace ID");
-    return workspacePermissionRuleRepo.listByWorkspaceId(validatedWorkspaceId);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.PERMISSIONS_GET_WORKSPACE_RULES,
+    async (_, workspaceId: string) => {
+      const validatedWorkspaceId = validateInput(
+        WorkspaceIdSchema,
+        workspaceId,
+        "workspace ID",
+      );
+      return workspacePermissionRuleRepo.listByWorkspaceId(
+        validatedWorkspaceId,
+      );
+    },
+  );
 
   ipcMain.handle(
     IPC_CHANNELS.PERMISSIONS_DELETE_WORKSPACE_RULE,
     async (_, payload: { workspaceId: string; ruleId: string }) => {
-      const validatedWorkspaceId = validateInput(WorkspaceIdSchema, payload.workspaceId, "workspace ID");
-      const validatedRuleId = validateInput(z.string().uuid(), payload.ruleId, "workspace permission rule ID");
+      const validatedWorkspaceId = validateInput(
+        WorkspaceIdSchema,
+        payload.workspaceId,
+        "workspace ID",
+      );
+      const validatedRuleId = validateInput(
+        z.string().uuid(),
+        payload.ruleId,
+        "workspace permission rule ID",
+      );
       const deleted = workspacePermissionRuleRepo.deleteByWorkspaceAndId(
         validatedWorkspaceId,
         validatedRuleId,
@@ -4578,7 +5629,9 @@ export async function setupIpcHandlers(
         dbRemoved: true,
         manifestRemoved: manifestResult.removed,
         manifestPath: manifestResult.manifestPath,
-        manifestError: manifestResult.success ? undefined : manifestResult.error,
+        manifestError: manifestResult.success
+          ? undefined
+          : manifestResult.error,
       };
     },
   );
@@ -4610,11 +5663,14 @@ export async function setupIpcHandlers(
     return PersonalityManager.loadSettings();
   });
 
-  ipcMain.handle(IPC_CHANNELS.PERSONALITY_SAVE_SETTINGS, async (_, settings) => {
-    PersonalityManager.saveSettings(settings);
-    // Event emission is handled by PersonalityManager.saveSettings()
-    return { success: true };
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.PERSONALITY_SAVE_SETTINGS,
+    async (_, settings) => {
+      PersonalityManager.saveSettings(settings);
+      // Event emission is handled by PersonalityManager.saveSettings()
+      return { success: true };
+    },
+  );
 
   ipcMain.handle(IPC_CHANNELS.PERSONALITY_GET_DEFINITIONS, async () => {
     return PersonalityManager.getDefinitions();
@@ -4628,11 +5684,14 @@ export async function setupIpcHandlers(
     return PersonalityManager.getRelationshipStats();
   });
 
-  ipcMain.handle(IPC_CHANNELS.PERSONALITY_SET_ACTIVE, async (_, personalityId) => {
-    PersonalityManager.setActivePersonality(personalityId);
-    // Event emission is handled by PersonalityManager.saveSettings()
-    return { success: true };
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.PERSONALITY_SET_ACTIVE,
+    async (_, personalityId) => {
+      PersonalityManager.setActivePersonality(personalityId);
+      // Event emission is handled by PersonalityManager.saveSettings()
+      return { success: true };
+    },
+  );
 
   ipcMain.handle(IPC_CHANNELS.PERSONALITY_SET_PERSONA, async (_, personaId) => {
     PersonalityManager.setActivePersona(personaId);
@@ -4640,59 +5699,85 @@ export async function setupIpcHandlers(
     return { success: true };
   });
 
-  ipcMain.handle(IPC_CHANNELS.PERSONALITY_RESET, async (_, preserveRelationship?: boolean) => {
-    checkRateLimit(IPC_CHANNELS.PERSONALITY_RESET);
-    PersonalityManager.resetToDefaults(preserveRelationship);
-    // Event emission is handled by PersonalityManager.resetToDefaults()
-    return { success: true };
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.PERSONALITY_RESET,
+    async (_, preserveRelationship?: boolean) => {
+      checkRateLimit(IPC_CHANNELS.PERSONALITY_RESET);
+      PersonalityManager.resetToDefaults(preserveRelationship);
+      // Event emission is handled by PersonalityManager.resetToDefaults()
+      return { success: true };
+    },
+  );
 
   ipcMain.handle(IPC_CHANNELS.PERSONALITY_GET_CONFIG_V2, async () => {
     return PersonalityManager.loadConfigV2();
   });
 
-  ipcMain.handle(IPC_CHANNELS.PERSONALITY_SAVE_CONFIG_V2, async (_, config: unknown) => {
-    const validated = validateInput(PersonalityConfigV2Schema, config, "personality config");
-    const toSave = { ...validated, version: 2 } as import("../../shared/types").PersonalityConfigV2;
-    PersonalityManager.saveConfigV2(toSave);
-    return { success: true };
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.PERSONALITY_SAVE_CONFIG_V2,
+    async (_, config: unknown) => {
+      const validated = validateInput(
+        PersonalityConfigV2Schema,
+        config,
+        "personality config",
+      );
+      const toSave = {
+        ...validated,
+        version: 2,
+      } as import("../../shared/types").PersonalityConfigV2;
+      PersonalityManager.saveConfigV2(toSave);
+      return { success: true };
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.PERSONALITY_EXPORT, async (_, format?: "json" | "md") => {
-    return PersonalityManager.exportProfile(format ?? "json");
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.PERSONALITY_EXPORT,
+    async (_, format?: "json" | "md") => {
+      return PersonalityManager.exportProfile(format ?? "json");
+    },
+  );
 
   ipcMain.handle(IPC_CHANNELS.PERSONALITY_IMPORT, async (_, data: unknown) => {
-    const validated = validateInput(PersonalityImportSchema, data, "personality import");
+    const validated = validateInput(
+      PersonalityImportSchema,
+      data,
+      "personality import",
+    );
     return PersonalityManager.importProfile(validated);
   });
 
-  ipcMain.handle(IPC_CHANNELS.PERSONALITY_PREVIEW, async (_, draft: unknown, contextMode?: string) => {
-    if (contextMode !== undefined) {
-      validateInput(ContextModeSchema, contextMode, "context mode");
-    }
-    if (draft != null && typeof draft === "object") {
-      const size = JSON.stringify(draft).length;
-      if (size > MAX_PERSONALITY_PREVIEW_BYTES) {
-        throw new Error(
-          `Personality preview draft exceeds max size (${MAX_PERSONALITY_PREVIEW_BYTES / 1024}KB)`,
-        );
+  ipcMain.handle(
+    IPC_CHANNELS.PERSONALITY_PREVIEW,
+    async (_, draft: unknown, contextMode?: string) => {
+      if (contextMode !== undefined) {
+        validateInput(ContextModeSchema, contextMode, "context mode");
       }
-    }
-    return PersonalityManager.getPreviewPrompt(
-      draft as Partial<import("../../shared/types").PersonalityConfigV2>,
-      contextMode as import("../../shared/types").ContextMode,
-    );
-  });
+      if (draft != null && typeof draft === "object") {
+        const size = JSON.stringify(draft).length;
+        if (size > MAX_PERSONALITY_PREVIEW_BYTES) {
+          throw new Error(
+            `Personality preview draft exceeds max size (${MAX_PERSONALITY_PREVIEW_BYTES / 1024}KB)`,
+          );
+        }
+      }
+      return PersonalityManager.getPreviewPrompt(
+        draft as Partial<import("../../shared/types").PersonalityConfigV2>,
+        contextMode as import("../../shared/types").ContextMode,
+      );
+    },
+  );
 
   ipcMain.handle(IPC_CHANNELS.PERSONALITY_GET_TRAIT_PRESETS, async () => {
     return PersonalityManager.getTraitPresets();
   });
 
   // Agent Role / Squad handlers
-  ipcMain.handle(IPC_CHANNELS.AGENT_ROLE_LIST, async (_, includeInactive?: boolean) => {
-    return agentRoleRepo.findAll(includeInactive ?? false);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.AGENT_ROLE_LIST,
+    async (_, includeInactive?: boolean) => {
+      return agentRoleRepo.findAll(includeInactive ?? false);
+    },
+  );
 
   ipcMain.handle(IPC_CHANNELS.AGENT_ROLE_GET, async (_, id: string) => {
     const validated = validateInput(UUIDSchema, id, "agent role ID");
@@ -4703,14 +5788,20 @@ export async function setupIpcHandlers(
     checkRateLimit(IPC_CHANNELS.AGENT_ROLE_CREATE);
     // Validate name format (lowercase, alphanumeric, hyphens)
     if (!/^[a-z0-9-]+$/.test(request.name)) {
-      throw new Error("Agent role name must be lowercase alphanumeric with hyphens only");
+      throw new Error(
+        "Agent role name must be lowercase alphanumeric with hyphens only",
+      );
     }
     // Check for duplicate name
     if (agentRoleRepo.findByName(request.name)) {
       throw new Error(`Agent role with name "${request.name}" already exists`);
     }
     if (request.companyId !== undefined && request.companyId !== null) {
-      request.companyId = validateInput(UUIDSchema, request.companyId, "company ID");
+      request.companyId = validateInput(
+        UUIDSchema,
+        request.companyId,
+        "company ID",
+      );
     }
     return agentRoleRepo.create(request);
   });
@@ -4719,8 +5810,15 @@ export async function setupIpcHandlers(
     checkRateLimit(IPC_CHANNELS.AGENT_ROLE_UPDATE);
     const validated = validateInput(UUIDSchema, request.id, "agent role ID");
     const normalizedRequest = { ...request, id: validated };
-    if (normalizedRequest.companyId !== undefined && normalizedRequest.companyId !== null) {
-      normalizedRequest.companyId = validateInput(UUIDSchema, normalizedRequest.companyId, "company ID");
+    if (
+      normalizedRequest.companyId !== undefined &&
+      normalizedRequest.companyId !== null
+    ) {
+      normalizedRequest.companyId = validateInput(
+        UUIDSchema,
+        normalizedRequest.companyId,
+        "company ID",
+      );
     }
     const result = agentRoleRepo.update(normalizedRequest);
     if (!result) {
@@ -4745,13 +5843,19 @@ export async function setupIpcHandlers(
       checkRateLimit(IPC_CHANNELS.AGENT_ROLE_ASSIGN_TO_TASK);
       const validatedTaskId = validateInput(UUIDSchema, taskId, "task ID");
       if (agentRoleId !== null) {
-        const validatedRoleId = validateInput(UUIDSchema, agentRoleId, "agent role ID");
+        const validatedRoleId = validateInput(
+          UUIDSchema,
+          agentRoleId,
+          "agent role ID",
+        );
         const role = agentRoleRepo.findById(validatedRoleId);
         if (!role) {
           throw new Error("Agent role not found");
         }
       }
-      const taskUpdate: Partial<Task> = { assignedAgentRoleId: agentRoleId ?? undefined };
+      const taskUpdate: Partial<Task> = {
+        assignedAgentRoleId: agentRoleId ?? undefined,
+      };
       taskRepo.update(validatedTaskId, taskUpdate);
       const task = taskRepo.findById(validatedTaskId);
       if (task) {
@@ -4806,7 +5910,11 @@ export async function setupIpcHandlers(
 
   // Activity Feed handlers
   ipcMain.handle(IPC_CHANNELS.ACTIVITY_LIST, async (_, query: Any) => {
-    const validated = validateInput(WorkspaceIdSchema, query.workspaceId, "workspace ID");
+    const validated = validateInput(
+      WorkspaceIdSchema,
+      query.workspaceId,
+      "workspace ID",
+    );
     return activityRepo.list({ ...query, workspaceId: validated });
   });
 
@@ -4817,9 +5925,15 @@ export async function setupIpcHandlers(
       request.workspaceId,
       "workspace ID",
     );
-    const activity = activityRepo.create({ ...request, workspaceId: validatedWorkspaceId });
+    const activity = activityRepo.create({
+      ...request,
+      workspaceId: validatedWorkspaceId,
+    });
     // Emit activity event for real-time updates
-    getMainWindow()?.webContents.send(IPC_CHANNELS.ACTIVITY_EVENT, { type: "created", activity });
+    getMainWindow()?.webContents.send(IPC_CHANNELS.ACTIVITY_EVENT, {
+      type: "created",
+      activity,
+    });
     return activity;
   });
 
@@ -4836,23 +5950,33 @@ export async function setupIpcHandlers(
     return { success };
   });
 
-  ipcMain.handle(IPC_CHANNELS.ACTIVITY_MARK_ALL_READ, async (_, workspaceId: string) => {
-    checkRateLimit(IPC_CHANNELS.ACTIVITY_MARK_ALL_READ);
-    const validated = validateInput(WorkspaceIdSchema, workspaceId, "workspace ID");
-    const count = activityRepo.markAllRead(validated);
-    getMainWindow()?.webContents.send(IPC_CHANNELS.ACTIVITY_EVENT, {
-      type: "all_read",
-      workspaceId: validated,
-    });
-    return { count };
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.ACTIVITY_MARK_ALL_READ,
+    async (_, workspaceId: string) => {
+      checkRateLimit(IPC_CHANNELS.ACTIVITY_MARK_ALL_READ);
+      const validated = validateInput(
+        WorkspaceIdSchema,
+        workspaceId,
+        "workspace ID",
+      );
+      const count = activityRepo.markAllRead(validated);
+      getMainWindow()?.webContents.send(IPC_CHANNELS.ACTIVITY_EVENT, {
+        type: "all_read",
+        workspaceId: validated,
+      });
+      return { count };
+    },
+  );
 
   ipcMain.handle(IPC_CHANNELS.ACTIVITY_PIN, async (_, id: string) => {
     checkRateLimit(IPC_CHANNELS.ACTIVITY_PIN);
     const validated = validateInput(UUIDSchema, id, "activity ID");
     const activity = activityRepo.togglePin(validated);
     if (activity) {
-      getMainWindow()?.webContents.send(IPC_CHANNELS.ACTIVITY_EVENT, { type: "pinned", activity });
+      getMainWindow()?.webContents.send(IPC_CHANNELS.ACTIVITY_EVENT, {
+        type: "pinned",
+        activity,
+      });
     }
     return activity;
   });
@@ -4877,10 +6001,20 @@ export async function setupIpcHandlers(
 
   ipcMain.handle(IPC_CHANNELS.MENTION_CREATE, async (_, request: Any) => {
     checkRateLimit(IPC_CHANNELS.MENTION_CREATE);
-    const validatedWorkspaceId = validateInput(UUIDSchema, request.workspaceId, "workspace ID");
-    const mention = mentionRepo.create({ ...request, workspaceId: validatedWorkspaceId });
+    const validatedWorkspaceId = validateInput(
+      UUIDSchema,
+      request.workspaceId,
+      "workspace ID",
+    );
+    const mention = mentionRepo.create({
+      ...request,
+      workspaceId: validatedWorkspaceId,
+    });
     // Emit mention event for real-time updates
-    getMainWindow()?.webContents.send(IPC_CHANNELS.MENTION_EVENT, { type: "created", mention });
+    getMainWindow()?.webContents.send(IPC_CHANNELS.MENTION_EVENT, {
+      type: "created",
+      mention,
+    });
     // Also create an activity entry for the mention
     const fromAgent = request.fromAgentRoleId
       ? agentRoleRepo.findById(request.fromAgentRoleId)
@@ -4917,7 +6051,10 @@ export async function setupIpcHandlers(
     const validated = validateInput(UUIDSchema, id, "mention ID");
     const mention = mentionRepo.complete(validated);
     if (mention) {
-      getMainWindow()?.webContents.send(IPC_CHANNELS.MENTION_EVENT, { type: "completed", mention });
+      getMainWindow()?.webContents.send(IPC_CHANNELS.MENTION_EVENT, {
+        type: "completed",
+        mention,
+      });
     }
     return mention;
   });
@@ -4927,40 +6064,60 @@ export async function setupIpcHandlers(
     const validated = validateInput(UUIDSchema, id, "mention ID");
     const mention = mentionRepo.dismiss(validated);
     if (mention) {
-      getMainWindow()?.webContents.send(IPC_CHANNELS.MENTION_EVENT, { type: "dismissed", mention });
+      getMainWindow()?.webContents.send(IPC_CHANNELS.MENTION_EVENT, {
+        type: "dismissed",
+        mention,
+      });
     }
     return mention;
   });
 
-  ipcMain.handle(IPC_CHANNELS.SUPERVISOR_EXCHANGE_LIST, async (_, query: Any) => {
-    if (!gateway?.getDiscordSupervisorService()) {
-      return [];
-    }
-    const validatedWorkspaceId = validateInput(UUIDSchema, query.workspaceId, "workspace ID");
-    return gateway.getDiscordSupervisorService()!.listExchanges({
-      workspaceId: validatedWorkspaceId,
-      status: query.status,
-      limit: typeof query.limit === "number" ? query.limit : undefined,
-    });
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.SUPERVISOR_EXCHANGE_LIST,
+    async (_, query: Any) => {
+      if (!gateway?.getDiscordSupervisorService()) {
+        return [];
+      }
+      const validatedWorkspaceId = validateInput(
+        UUIDSchema,
+        query.workspaceId,
+        "workspace ID",
+      );
+      return gateway.getDiscordSupervisorService()!.listExchanges({
+        workspaceId: validatedWorkspaceId,
+        status: query.status,
+        limit: typeof query.limit === "number" ? query.limit : undefined,
+      });
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.SUPERVISOR_EXCHANGE_RESOLVE, async (_, request: Any) => {
-    checkRateLimit(IPC_CHANNELS.SUPERVISOR_EXCHANGE_RESOLVE, RATE_LIMIT_CONFIGS.limited);
-    const service = gateway?.getDiscordSupervisorService();
-    if (!service) {
-      throw new Error("Discord supervisor service is not available");
-    }
-    const id = validateInput(UUIDSchema, request?.id, "supervisor exchange ID");
-    const resolution = String(request?.resolution || "").trim();
-    if (!resolution) {
-      throw new Error("Resolution is required");
-    }
-    return service.resolveExchange({
-      id,
-      resolution,
-      mirrorToDiscord: request?.mirrorToDiscord === true,
-    });
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.SUPERVISOR_EXCHANGE_RESOLVE,
+    async (_, request: Any) => {
+      checkRateLimit(
+        IPC_CHANNELS.SUPERVISOR_EXCHANGE_RESOLVE,
+        RATE_LIMIT_CONFIGS.limited,
+      );
+      const service = gateway?.getDiscordSupervisorService();
+      if (!service) {
+        throw new Error("Discord supervisor service is not available");
+      }
+      const id = validateInput(
+        UUIDSchema,
+        request?.id,
+        "supervisor exchange ID",
+      );
+      const resolution = String(request?.resolution || "").trim();
+      if (!resolution) {
+        throw new Error("Resolution is required");
+      }
+      return service.resolveExchange({
+        id,
+        resolution,
+        mirrorToDiscord: request?.mirrorToDiscord === true,
+      });
+    },
+  );
 
   // Agent Teams (Mission Control)
   const emitTeamEvent = (event: Any) => {
@@ -4982,7 +6139,11 @@ export async function setupIpcHandlers(
 
   ipcMain.handle(IPC_CHANNELS.TEAM_CREATE, async (_, request: Any) => {
     checkRateLimit(IPC_CHANNELS.TEAM_CREATE);
-    const workspaceId = validateInput(UUIDSchema, request.workspaceId, "workspace ID");
+    const workspaceId = validateInput(
+      UUIDSchema,
+      request.workspaceId,
+      "workspace ID",
+    );
     const leadAgentRoleId = validateInput(
       UUIDSchema,
       request.leadAgentRoleId,
@@ -4996,19 +6157,30 @@ export async function setupIpcHandlers(
     const created = teamRepo.create({
       workspaceId,
       name,
-      description: typeof request.description === "string" ? request.description.trim() : undefined,
+      description:
+        typeof request.description === "string"
+          ? request.description.trim()
+          : undefined,
       leadAgentRoleId,
       maxParallelAgents:
-        typeof request.maxParallelAgents === "number" ? request.maxParallelAgents : undefined,
+        typeof request.maxParallelAgents === "number"
+          ? request.maxParallelAgents
+          : undefined,
       defaultModelPreference:
         typeof request.defaultModelPreference === "string"
           ? request.defaultModelPreference
           : undefined,
       defaultPersonality:
-        typeof request.defaultPersonality === "string" ? request.defaultPersonality : undefined,
+        typeof request.defaultPersonality === "string"
+          ? request.defaultPersonality
+          : undefined,
       isActive: request.isActive !== undefined ? !!request.isActive : undefined,
     });
-    emitTeamEvent({ type: "team_created", timestamp: Date.now(), team: created });
+    emitTeamEvent({
+      type: "team_created",
+      timestamp: Date.now(),
+      team: created,
+    });
     return created;
   });
 
@@ -5030,8 +6202,13 @@ export async function setupIpcHandlers(
             : null;
     }
     if (request.leadAgentRoleId !== undefined) {
-      const leadId = validateInput(UUIDSchema, request.leadAgentRoleId, "lead agent role ID");
-      if (!agentRoleRepo.findById(leadId)) throw new Error("Lead agent role not found");
+      const leadId = validateInput(
+        UUIDSchema,
+        request.leadAgentRoleId,
+        "lead agent role ID",
+      );
+      if (!agentRoleRepo.findById(leadId))
+        throw new Error("Lead agent role not found");
       updates.leadAgentRoleId = leadId;
     }
     if (request.maxParallelAgents !== undefined)
@@ -5043,7 +6220,11 @@ export async function setupIpcHandlers(
     if (request.isActive !== undefined) updates.isActive = !!request.isActive;
     const updated = teamRepo.update(updates);
     if (updated) {
-      emitTeamEvent({ type: "team_updated", timestamp: Date.now(), team: updated });
+      emitTeamEvent({
+        type: "team_updated",
+        timestamp: Date.now(),
+        team: updated,
+      });
     }
     return updated;
   });
@@ -5053,7 +6234,11 @@ export async function setupIpcHandlers(
     const validated = validateInput(UUIDSchema, id, "team ID");
     const success = teamRepo.delete(validated);
     if (success) {
-      emitTeamEvent({ type: "team_deleted", timestamp: Date.now(), teamId: validated });
+      emitTeamEvent({
+        type: "team_deleted",
+        timestamp: Date.now(),
+        teamId: validated,
+      });
     }
     return { success };
   });
@@ -5066,14 +6251,26 @@ export async function setupIpcHandlers(
   ipcMain.handle(IPC_CHANNELS.TEAM_MEMBER_ADD, async (_, request: Any) => {
     checkRateLimit(IPC_CHANNELS.TEAM_MEMBER_ADD);
     const teamId = validateInput(UUIDSchema, request.teamId, "team ID");
-    const agentRoleId = validateInput(UUIDSchema, request.agentRoleId, "agent role ID");
-    if (!agentRoleRepo.findById(agentRoleId)) throw new Error("Agent role not found");
+    const agentRoleId = validateInput(
+      UUIDSchema,
+      request.agentRoleId,
+      "agent role ID",
+    );
+    if (!agentRoleRepo.findById(agentRoleId))
+      throw new Error("Agent role not found");
     const member = teamMemberRepo.add({
       teamId,
       agentRoleId,
-      memberOrder: typeof request.memberOrder === "number" ? request.memberOrder : undefined,
-      isRequired: request.isRequired !== undefined ? !!request.isRequired : undefined,
-      roleGuidance: typeof request.roleGuidance === "string" ? request.roleGuidance : undefined,
+      memberOrder:
+        typeof request.memberOrder === "number"
+          ? request.memberOrder
+          : undefined,
+      isRequired:
+        request.isRequired !== undefined ? !!request.isRequired : undefined,
+      roleGuidance:
+        typeof request.roleGuidance === "string"
+          ? request.roleGuidance
+          : undefined,
     });
     emitTeamEvent({ type: "team_member_added", timestamp: Date.now(), member });
     return member;
@@ -5084,8 +6281,12 @@ export async function setupIpcHandlers(
     const id = validateInput(UUIDSchema, request.id, "team member ID");
     const updated = teamMemberRepo.update({
       id,
-      memberOrder: typeof request.memberOrder === "number" ? request.memberOrder : undefined,
-      isRequired: request.isRequired !== undefined ? !!request.isRequired : undefined,
+      memberOrder:
+        typeof request.memberOrder === "number"
+          ? request.memberOrder
+          : undefined,
+      isRequired:
+        request.isRequired !== undefined ? !!request.isRequired : undefined,
       roleGuidance:
         request.roleGuidance === null
           ? null
@@ -5094,7 +6295,11 @@ export async function setupIpcHandlers(
             : undefined,
     });
     if (updated) {
-      emitTeamEvent({ type: "team_member_updated", timestamp: Date.now(), member: updated });
+      emitTeamEvent({
+        type: "team_member_updated",
+        timestamp: Date.now(),
+        member: updated,
+      });
     }
     return updated;
   });
@@ -5104,10 +6309,19 @@ export async function setupIpcHandlers(
     async (_, data: { teamId: string; agentRoleId: string }) => {
       checkRateLimit(IPC_CHANNELS.TEAM_MEMBER_REMOVE);
       const teamId = validateInput(UUIDSchema, data.teamId, "team ID");
-      const agentRoleId = validateInput(UUIDSchema, data.agentRoleId, "agent role ID");
+      const agentRoleId = validateInput(
+        UUIDSchema,
+        data.agentRoleId,
+        "agent role ID",
+      );
       const success = teamMemberRepo.removeByTeamAndRole(teamId, agentRoleId);
       if (success) {
-        emitTeamEvent({ type: "team_member_removed", timestamp: Date.now(), teamId, agentRoleId });
+        emitTeamEvent({
+          type: "team_member_removed",
+          timestamp: Date.now(),
+          teamId,
+          agentRoleId,
+        });
       }
       return { success };
     },
@@ -5118,7 +6332,9 @@ export async function setupIpcHandlers(
     async (_, data: { teamId: string; orderedMemberIds: string[] }) => {
       checkRateLimit(IPC_CHANNELS.TEAM_MEMBER_REORDER);
       const teamId = validateInput(UUIDSchema, data.teamId, "team ID");
-      const ordered = Array.isArray(data.orderedMemberIds) ? data.orderedMemberIds : [];
+      const ordered = Array.isArray(data.orderedMemberIds)
+        ? data.orderedMemberIds
+        : [];
       const normalized = ordered
         .map((id) => (typeof id === "string" ? id.trim() : ""))
         .filter(Boolean);
@@ -5147,7 +6363,11 @@ export async function setupIpcHandlers(
   ipcMain.handle(IPC_CHANNELS.TEAM_RUN_CREATE, async (_, request: Any) => {
     checkRateLimit(IPC_CHANNELS.TEAM_RUN_CREATE);
     const teamId = validateInput(UUIDSchema, request.teamId, "team ID");
-    const rootTaskId = validateInput(UUIDSchema, request.rootTaskId, "root task ID");
+    const rootTaskId = validateInput(
+      UUIDSchema,
+      request.rootTaskId,
+      "root task ID",
+    );
     const rootTask = taskRepo.findById(rootTaskId);
     if (!rootTask) throw new Error("Root task not found");
     const created = teamRunRepo.create({
@@ -5157,7 +6377,11 @@ export async function setupIpcHandlers(
       startedAt: request.startedAt,
       collaborativeMode: request.collaborativeMode,
     });
-    emitTeamEvent({ type: "team_run_created", timestamp: Date.now(), run: created });
+    emitTeamEvent({
+      type: "team_run_created",
+      timestamp: Date.now(),
+      run: created,
+    });
     if (created.status === "running") {
       void teamOrchestrator.tickRun(created.id, "run_created");
     }
@@ -5169,7 +6393,11 @@ export async function setupIpcHandlers(
     const validated = validateInput(UUIDSchema, runId, "team run ID");
     const updated = teamRunRepo.update(validated, { status: "running" });
     if (updated) {
-      emitTeamEvent({ type: "team_run_updated", timestamp: Date.now(), run: updated });
+      emitTeamEvent({
+        type: "team_run_updated",
+        timestamp: Date.now(),
+        run: updated,
+      });
       void teamOrchestrator.tickRun(updated.id, "resume");
     }
     return { success: !!updated };
@@ -5180,7 +6408,11 @@ export async function setupIpcHandlers(
     const validated = validateInput(UUIDSchema, runId, "team run ID");
     const updated = teamRunRepo.update(validated, { status: "paused" });
     if (updated) {
-      emitTeamEvent({ type: "team_run_updated", timestamp: Date.now(), run: updated });
+      emitTeamEvent({
+        type: "team_run_updated",
+        timestamp: Date.now(),
+        run: updated,
+      });
     }
     return { success: !!updated };
   });
@@ -5206,24 +6438,40 @@ export async function setupIpcHandlers(
 
   ipcMain.handle(IPC_CHANNELS.TEAM_ITEM_CREATE, async (_, request: Any) => {
     checkRateLimit(IPC_CHANNELS.TEAM_ITEM_CREATE);
-    const teamRunId = validateInput(UUIDSchema, request.teamRunId, "team run ID");
+    const teamRunId = validateInput(
+      UUIDSchema,
+      request.teamRunId,
+      "team run ID",
+    );
     const title = typeof request.title === "string" ? request.title.trim() : "";
     if (!title) throw new Error("Item title is required");
     const created = teamItemRepo.create({
       teamRunId,
       parentItemId: request.parentItemId || undefined,
       title,
-      description: typeof request.description === "string" ? request.description : undefined,
+      description:
+        typeof request.description === "string"
+          ? request.description
+          : undefined,
       ownerAgentRoleId: request.ownerAgentRoleId
-        ? validateInput(UUIDSchema, request.ownerAgentRoleId, "owner agent role ID")
+        ? validateInput(
+            UUIDSchema,
+            request.ownerAgentRoleId,
+            "owner agent role ID",
+          )
         : undefined,
       sourceTaskId: request.sourceTaskId
         ? validateInput(UUIDSchema, request.sourceTaskId, "source task ID")
         : undefined,
       status: request.status,
-      sortOrder: typeof request.sortOrder === "number" ? request.sortOrder : undefined,
+      sortOrder:
+        typeof request.sortOrder === "number" ? request.sortOrder : undefined,
     });
-    emitTeamEvent({ type: "team_item_created", timestamp: Date.now(), item: created });
+    emitTeamEvent({
+      type: "team_item_created",
+      timestamp: Date.now(),
+      item: created,
+    });
     const run = teamRunRepo.findById(teamRunId);
     if (run?.status === "running") {
       void teamOrchestrator.tickRun(teamRunId, "item_created");
@@ -5289,7 +6537,11 @@ export async function setupIpcHandlers(
       sortOrder: request.sortOrder,
     });
     if (updated) {
-      emitTeamEvent({ type: "team_item_moved", timestamp: Date.now(), item: updated });
+      emitTeamEvent({
+        type: "team_item_moved",
+        timestamp: Date.now(),
+        item: updated,
+      });
       const run = teamRunRepo.findById(updated.teamRunId);
       if (run?.status === "running") {
         void teamOrchestrator.tickRun(updated.teamRunId, "item_moved");
@@ -5299,39 +6551,66 @@ export async function setupIpcHandlers(
   });
 
   // Collaborative Thoughts
-  ipcMain.handle(IPC_CHANNELS.TEAM_THOUGHT_LIST, async (_, teamRunId: string) => {
-    const validated = validateInput(UUIDSchema, teamRunId, "team run ID");
-    return teamThoughtRepo.listByRun(validated);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.TEAM_THOUGHT_LIST,
+    async (_, teamRunId: string) => {
+      const validated = validateInput(UUIDSchema, teamRunId, "team run ID");
+      return teamThoughtRepo.listByRun(validated);
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.TEAM_RUN_FIND_BY_ROOT_TASK, async (_, rootTaskId: string) => {
-    const validated = validateInput(UUIDSchema, rootTaskId, "root task ID");
-    return teamRunRepo.findByRootTaskId(validated) || null;
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.TEAM_RUN_FIND_BY_ROOT_TASK,
+    async (_, rootTaskId: string) => {
+      const validated = validateInput(UUIDSchema, rootTaskId, "root task ID");
+      return teamRunRepo.findByRootTaskId(validated) || null;
+    },
+  );
 
   // Agent Performance Reviews (Mission Control)
   ipcMain.handle(IPC_CHANNELS.REVIEW_GENERATE, async (_, request: Any) => {
     checkRateLimit(IPC_CHANNELS.REVIEW_GENERATE);
-    const workspaceId = validateInput(UUIDSchema, request.workspaceId, "workspace ID");
-    const agentRoleId = validateInput(UUIDSchema, request.agentRoleId, "agent role ID");
+    const workspaceId = validateInput(
+      UUIDSchema,
+      request.workspaceId,
+      "workspace ID",
+    );
+    const agentRoleId = validateInput(
+      UUIDSchema,
+      request.agentRoleId,
+      "agent role ID",
+    );
     if (!agentRoleRepo.findById(agentRoleId)) {
       throw new Error("Agent role not found");
     }
-    const periodDays = request.periodDays !== undefined ? Number(request.periodDays) : undefined;
+    const periodDays =
+      request.periodDays !== undefined ? Number(request.periodDays) : undefined;
     return reviewService.generate({ workspaceId, agentRoleId, periodDays });
   });
 
   ipcMain.handle(
     IPC_CHANNELS.REVIEW_GET_LATEST,
     async (_, workspaceId: string, agentRoleId: string) => {
-      const validatedWorkspaceId = validateInput(UUIDSchema, workspaceId, "workspace ID");
-      const validatedRoleId = validateInput(UUIDSchema, agentRoleId, "agent role ID");
+      const validatedWorkspaceId = validateInput(
+        UUIDSchema,
+        workspaceId,
+        "workspace ID",
+      );
+      const validatedRoleId = validateInput(
+        UUIDSchema,
+        agentRoleId,
+        "agent role ID",
+      );
       return reviewService.getLatest(validatedWorkspaceId, validatedRoleId);
     },
   );
 
   ipcMain.handle(IPC_CHANNELS.REVIEW_LIST, async (_, query: Any) => {
-    const validatedWorkspaceId = validateInput(UUIDSchema, query.workspaceId, "workspace ID");
+    const validatedWorkspaceId = validateInput(
+      UUIDSchema,
+      query.workspaceId,
+      "workspace ID",
+    );
     const agentRoleId = query.agentRoleId
       ? validateInput(UUIDSchema, query.agentRoleId, "agent role ID")
       : undefined;
@@ -5347,22 +6626,29 @@ export async function setupIpcHandlers(
   });
 
   // Eval Suites / Runs (Reliability Flywheel)
-  ipcMain.handle(IPC_CHANNELS.EVAL_LIST_SUITES, async (_, options?: { windowDays?: number }) => {
-    const windowDays =
-      typeof options?.windowDays === "number" && Number.isFinite(options.windowDays)
-        ? options.windowDays
-        : 30;
-    return {
-      suites: evalService.listSuites(),
-      metrics: evalService.getBaselineMetrics(windowDays),
-    };
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.EVAL_LIST_SUITES,
+    async (_, options?: { windowDays?: number }) => {
+      const windowDays =
+        typeof options?.windowDays === "number" &&
+        Number.isFinite(options.windowDays)
+          ? options.windowDays
+          : 30;
+      return {
+        suites: evalService.listSuites(),
+        metrics: evalService.getBaselineMetrics(windowDays),
+      };
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.EVAL_CREATE_CASE_FROM_TASK, async (_, data: { taskId: string }) => {
-    checkRateLimit(IPC_CHANNELS.EVAL_CREATE_CASE_FROM_TASK);
-    const taskId = validateInput(UUIDSchema, data?.taskId, "task ID");
-    return evalService.createCaseFromTask(taskId);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.EVAL_CREATE_CASE_FROM_TASK,
+    async (_, data: { taskId: string }) => {
+      checkRateLimit(IPC_CHANNELS.EVAL_CREATE_CASE_FROM_TASK);
+      const taskId = validateInput(UUIDSchema, data?.taskId, "task ID");
+      return evalService.createCaseFromTask(taskId);
+    },
+  );
 
   ipcMain.handle(IPC_CHANNELS.EVAL_GET_CASE, async (_, caseId: string) => {
     const validated = validateInput(UUIDSchema, caseId, "eval case ID");
@@ -5387,303 +6673,368 @@ export async function setupIpcHandlers(
       checkRateLimit(IPC_CHANNELS.USAGE_INSIGHTS_GET);
       // Allow "__all__" sentinel for cross-workspace aggregation
       const validatedWorkspaceId =
-        workspaceId === "__all__" ? null : validateInput(UUIDSchema, workspaceId, "workspace ID");
+        workspaceId === "__all__"
+          ? null
+          : validateInput(UUIDSchema, workspaceId, "workspace ID");
       // Clamp period to a reasonable range to prevent excessive DB scans
-      const clampedPeriod = Math.min(Math.max(Math.round(periodDays ?? 7), 1), 365);
-      const { UsageInsightsService } = await import("../reports/UsageInsightsService");
+      const clampedPeriod = Math.min(
+        Math.max(Math.round(periodDays ?? 7), 1),
+        365,
+      );
+      const { UsageInsightsService } =
+        await import("../reports/UsageInsightsService");
       const service = new UsageInsightsService(db);
       return service.generate(validatedWorkspaceId, clampedPeriod);
     },
   );
 
-  ipcMain.handle(IPC_CHANNELS.USAGE_INSIGHTS_EARLIEST, async (_, workspaceId: string) => {
-    checkRateLimit(IPC_CHANNELS.USAGE_INSIGHTS_EARLIEST);
-    const validatedWorkspaceId =
-      workspaceId === "__all__" ? null : validateInput(UUIDSchema, workspaceId, "workspace ID");
-    const { UsageInsightsService } = await import("../reports/UsageInsightsService");
-    const service = new UsageInsightsService(db);
-    return service.getEarliestActivityMs(validatedWorkspaceId);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.USAGE_INSIGHTS_EARLIEST,
+    async (_, workspaceId: string) => {
+      checkRateLimit(IPC_CHANNELS.USAGE_INSIGHTS_EARLIEST);
+      const validatedWorkspaceId =
+        workspaceId === "__all__"
+          ? null
+          : validateInput(UUIDSchema, workspaceId, "workspace ID");
+      const { UsageInsightsService } =
+        await import("../reports/UsageInsightsService");
+      const service = new UsageInsightsService(db);
+      return service.getEarliestActivityMs(validatedWorkspaceId);
+    },
+  );
 
   // Daily Briefing
-  ipcMain.handle(IPC_CHANNELS.DAILY_BRIEFING_GENERATE, async (_, workspaceId: string) => {
-    checkRateLimit(IPC_CHANNELS.DAILY_BRIEFING_GENERATE);
-    const { DailyBriefingService } = await import("../briefing/DailyBriefingService");
-    const { ProactiveSuggestionsService } = await import("../agent/ProactiveSuggestionsService");
-    const { readWorkspacePriorities, readWorkspaceOpenLoops } = await import(
-      "../briefing/workspace-briefing-context"
-    );
-    const ALL_WORKSPACES_ID = "__all__";
-    const workspaceRepo = new WorkspaceRepository(db);
-    const taskRepo = new TaskRepository(db);
-    const normalizedWorkspaceId =
-      workspaceId === ALL_WORKSPACES_ID
-        ? ALL_WORKSPACES_ID
-        : validateInput(UUIDSchema, workspaceId, "workspace ID");
-    const allMode = normalizedWorkspaceId === ALL_WORKSPACES_ID;
-    const briefingWorkspaceIds = allMode
-      ? workspaceRepo
-          .findAll()
-          .filter((workspace) => !workspace.isTemp && !isTempWorkspaceId(workspace.id))
-          .map((workspace) => workspace.id)
-      : [normalizedWorkspaceId];
-    const workspaceById = new Map(
-      workspaceRepo.findAll().map((workspace) => [workspace.id, workspace] as const),
-    );
-    const labelForWorkspace = (id: string) => workspaceById.get(id)?.name || id;
-    const service = new DailyBriefingService(
-      {
-        getRecentTasks: (_workspaceId, sinceMs) => {
-          const tasks = briefingWorkspaceIds.flatMap((id) =>
-            (taskRepo.findByCreatedAtRange({
-              startMs: sinceMs,
-              endMs: Date.now(),
-              limit: 100,
-              workspaceId: id,
-            }) || []).map((task) => ({
-              ...task,
-              workspaceName: labelForWorkspace(id),
-            })),
-          );
-          return tasks.sort((a: Any, b: Any) => (b.createdAt || 0) - (a.createdAt || 0));
-        },
-        searchMemory: (_currentWorkspaceId, query, limit) => {
-          const results = briefingWorkspaceIds.flatMap((id) =>
-            MemoryService.search(id, query, limit).map((memory) => ({
-              ...memory,
-              workspaceId: id,
-              workspaceName: labelForWorkspace(id),
-            })),
-          );
-          return results
-            .sort(
-              (a: Any, b: Any) =>
-                (b.relevanceScore || 0) - (a.relevanceScore || 0) ||
-                (b.createdAt || 0) - (a.createdAt || 0),
+  ipcMain.handle(
+    IPC_CHANNELS.DAILY_BRIEFING_GENERATE,
+    async (_, workspaceId: string) => {
+      checkRateLimit(IPC_CHANNELS.DAILY_BRIEFING_GENERATE);
+      const { DailyBriefingService } =
+        await import("../briefing/DailyBriefingService");
+      const { ProactiveSuggestionsService } =
+        await import("../agent/ProactiveSuggestionsService");
+      const { readWorkspacePriorities, readWorkspaceOpenLoops } =
+        await import("../briefing/workspace-briefing-context");
+      const ALL_WORKSPACES_ID = "__all__";
+      const workspaceRepo = new WorkspaceRepository(db);
+      const taskRepo = new TaskRepository(db);
+      const normalizedWorkspaceId =
+        workspaceId === ALL_WORKSPACES_ID
+          ? ALL_WORKSPACES_ID
+          : validateInput(UUIDSchema, workspaceId, "workspace ID");
+      const allMode = normalizedWorkspaceId === ALL_WORKSPACES_ID;
+      const briefingWorkspaceIds = allMode
+        ? workspaceRepo
+            .findAll()
+            .filter(
+              (workspace) =>
+                !workspace.isTemp && !isTempWorkspaceId(workspace.id),
             )
-            .slice(0, limit)
-            .map((memory) => ({
-              summary: memory.snippet,
-              content: memory.snippet,
-              snippet: memory.snippet,
-              type: memory.type,
-              workspaceId: memory.workspaceId,
-              workspaceName: memory.workspaceName,
-            }));
-        },
-        refreshSuggestions: async (currentWorkspaceId) => {
-          if (!allMode) {
-            await ProactiveSuggestionsService.generateAll(currentWorkspaceId);
-            return;
-          }
-          await Promise.all(briefingWorkspaceIds.map((id) => ProactiveSuggestionsService.generateAll(id)));
-        },
-        getActiveSuggestions: (currentWorkspaceId, limit = 5) => {
-          if (!allMode) {
-            return ProactiveSuggestionsService.getTopForBriefing(currentWorkspaceId, limit);
-          }
-          return ProactiveSuggestionsService.getTopForBriefingForWorkspaces(
-            currentWorkspaceId,
-            briefingWorkspaceIds,
-            limit,
-          ).map((suggestion) => ({
-            ...suggestion,
-            workspaceId: suggestion.workspaceId || currentWorkspaceId,
-            workspaceName: labelForWorkspace(suggestion.workspaceId || currentWorkspaceId),
-          }))
-            .sort((a: Any, b: Any) => (b.confidence || 0) - (a.confidence || 0))
-            .slice(0, limit);
-        },
-        getPriorities: (currentWorkspaceId) => {
-          if (!allMode) {
-            const workspacePath = workspaceRepo.findById(currentWorkspaceId)?.path;
-            return readWorkspacePriorities(workspacePath);
-          }
-          const blocks = briefingWorkspaceIds
-            .map((id) => {
-              const workspacePath = workspaceRepo.findById(id)?.path;
-              const raw = readWorkspacePriorities(workspacePath);
-              if (!raw) return "";
-              const lines = raw
-                .split("\n")
-                .map((line) => line.trim())
-                .filter((line) => line && !line.startsWith("#"))
-                .map((line) => {
-                  const item = line.replace(/^[-*\d.]+\s*/, "").trim();
-                  return item ? `- [${labelForWorkspace(id)}] ${item}` : "";
-                })
-                .filter(Boolean);
-              return lines.join("\n");
-            })
-            .filter(Boolean);
-          return blocks.join("\n");
-        },
-        getUpcomingJobs: async () => [],
-        getOpenLoops: (currentWorkspaceId) => {
-          if (!allMode) {
-            const workspacePath = workspaceRepo.findById(currentWorkspaceId)?.path;
-            return readWorkspaceOpenLoops(workspacePath);
-          }
-          return briefingWorkspaceIds.flatMap((id) => {
-            const workspacePath = workspaceRepo.findById(id)?.path;
-            const raw = readWorkspaceOpenLoops(workspacePath);
-            return raw.map((line) => `- [${labelForWorkspace(id)}] ${line}`);
-          });
-        },
-        getAwarenessSummary: async (currentWorkspaceId) => {
-          if (!allMode) {
-            return getAwarenessService().getSummary(currentWorkspaceId);
-          }
-          const summaries = await Promise.all(
-            briefingWorkspaceIds.map(async (id) => ({
-              id,
-              summary: getAwarenessService().getSummary(id),
-            })),
-          );
-          const mergedWhatChanged: Any[] = [];
-          const mergedWhatMattersNow: Any[] = [];
-          const mergedDueSoon: Any[] = [];
-          const mergedBeliefs: Any[] = [];
-          const mergedWakeReasons = new Set<string>();
-          for (const entry of summaries) {
-            const summary = entry.summary;
-            if (!summary) continue;
-            const label = labelForWorkspace(entry.id);
-            const decorateItem = (item: Any) => ({
-              ...item,
-              title: `[${label}] ${item.title}`,
-              workspaceId: entry.id,
-            });
-            mergedWhatChanged.push(...(summary.whatChanged || []).map(decorateItem));
-            mergedWhatMattersNow.push(...(summary.whatMattersNow || []).map(decorateItem));
-            mergedDueSoon.push(...(summary.dueSoon || []).map(decorateItem));
-            mergedBeliefs.push(...(summary.beliefs || []));
-            for (const reason of summary.wakeReasons || []) {
-              mergedWakeReasons.add(reason);
+            .map((workspace) => workspace.id)
+        : [normalizedWorkspaceId];
+      const workspaceById = new Map(
+        workspaceRepo
+          .findAll()
+          .map((workspace) => [workspace.id, workspace] as const),
+      );
+      const labelForWorkspace = (id: string) =>
+        workspaceById.get(id)?.name || id;
+      const service = new DailyBriefingService(
+        {
+          getRecentTasks: (_workspaceId, sinceMs) => {
+            const tasks = briefingWorkspaceIds.flatMap((id) =>
+              (
+                taskRepo.findByCreatedAtRange({
+                  startMs: sinceMs,
+                  endMs: Date.now(),
+                  limit: 100,
+                  workspaceId: id,
+                }) || []
+              ).map((task) => ({
+                ...task,
+                workspaceName: labelForWorkspace(id),
+              })),
+            );
+            return tasks.sort(
+              (a: Any, b: Any) => (b.createdAt || 0) - (a.createdAt || 0),
+            );
+          },
+          searchMemory: (_currentWorkspaceId, query, limit) => {
+            const results = briefingWorkspaceIds.flatMap((id) =>
+              MemoryService.search(id, query, limit).map((memory) => ({
+                ...memory,
+                workspaceId: id,
+                workspaceName: labelForWorkspace(id),
+              })),
+            );
+            return results
+              .sort(
+                (a: Any, b: Any) =>
+                  (b.relevanceScore || 0) - (a.relevanceScore || 0) ||
+                  (b.createdAt || 0) - (a.createdAt || 0),
+              )
+              .slice(0, limit)
+              .map((memory) => ({
+                summary: memory.snippet,
+                content: memory.snippet,
+                snippet: memory.snippet,
+                type: memory.type,
+                workspaceId: memory.workspaceId,
+                workspaceName: memory.workspaceName,
+              }));
+          },
+          refreshSuggestions: async (currentWorkspaceId) => {
+            if (!allMode) {
+              await ProactiveSuggestionsService.generateAll(currentWorkspaceId);
+              return;
             }
-          }
-          return {
-            generatedAt: Date.now(),
-            workspaceId: ALL_WORKSPACES_ID,
-            currentFocus: "All workspaces",
-            whatChanged: mergedWhatChanged,
-            whatMattersNow: mergedWhatMattersNow,
-            dueSoon: mergedDueSoon,
-            beliefs: mergedBeliefs,
-            wakeReasons: [...mergedWakeReasons],
-          };
+            await Promise.all(
+              briefingWorkspaceIds.map((id) =>
+                ProactiveSuggestionsService.generateAll(id),
+              ),
+            );
+          },
+          getActiveSuggestions: (currentWorkspaceId, limit = 5) => {
+            if (!allMode) {
+              return ProactiveSuggestionsService.getTopForBriefing(
+                currentWorkspaceId,
+                limit,
+              );
+            }
+            return ProactiveSuggestionsService.getTopForBriefingForWorkspaces(
+              currentWorkspaceId,
+              briefingWorkspaceIds,
+              limit,
+            )
+              .map((suggestion) => ({
+                ...suggestion,
+                workspaceId: suggestion.workspaceId || currentWorkspaceId,
+                workspaceName: labelForWorkspace(
+                  suggestion.workspaceId || currentWorkspaceId,
+                ),
+              }))
+              .sort(
+                (a: Any, b: Any) => (b.confidence || 0) - (a.confidence || 0),
+              )
+              .slice(0, limit);
+          },
+          getPriorities: (currentWorkspaceId) => {
+            if (!allMode) {
+              const workspacePath =
+                workspaceRepo.findById(currentWorkspaceId)?.path;
+              return readWorkspacePriorities(workspacePath);
+            }
+            const blocks = briefingWorkspaceIds
+              .map((id) => {
+                const workspacePath = workspaceRepo.findById(id)?.path;
+                const raw = readWorkspacePriorities(workspacePath);
+                if (!raw) return "";
+                const lines = raw
+                  .split("\n")
+                  .map((line) => line.trim())
+                  .filter((line) => line && !line.startsWith("#"))
+                  .map((line) => {
+                    const item = line.replace(/^[-*\d.]+\s*/, "").trim();
+                    return item ? `- [${labelForWorkspace(id)}] ${item}` : "";
+                  })
+                  .filter(Boolean);
+                return lines.join("\n");
+              })
+              .filter(Boolean);
+            return blocks.join("\n");
+          },
+          getUpcomingJobs: async () => [],
+          getOpenLoops: (currentWorkspaceId) => {
+            if (!allMode) {
+              const workspacePath =
+                workspaceRepo.findById(currentWorkspaceId)?.path;
+              return readWorkspaceOpenLoops(workspacePath);
+            }
+            return briefingWorkspaceIds.flatMap((id) => {
+              const workspacePath = workspaceRepo.findById(id)?.path;
+              const raw = readWorkspaceOpenLoops(workspacePath);
+              return raw.map((line) => `- [${labelForWorkspace(id)}] ${line}`);
+            });
+          },
+          getAwarenessSummary: async (currentWorkspaceId) => {
+            if (!allMode) {
+              return getAwarenessService().getSummary(currentWorkspaceId);
+            }
+            const summaries = await Promise.all(
+              briefingWorkspaceIds.map(async (id) => ({
+                id,
+                summary: getAwarenessService().getSummary(id),
+              })),
+            );
+            const mergedWhatChanged: Any[] = [];
+            const mergedWhatMattersNow: Any[] = [];
+            const mergedDueSoon: Any[] = [];
+            const mergedBeliefs: Any[] = [];
+            const mergedWakeReasons = new Set<string>();
+            for (const entry of summaries) {
+              const summary = entry.summary;
+              if (!summary) continue;
+              const label = labelForWorkspace(entry.id);
+              const decorateItem = (item: Any) => ({
+                ...item,
+                title: `[${label}] ${item.title}`,
+                workspaceId: entry.id,
+              });
+              mergedWhatChanged.push(
+                ...(summary.whatChanged || []).map(decorateItem),
+              );
+              mergedWhatMattersNow.push(
+                ...(summary.whatMattersNow || []).map(decorateItem),
+              );
+              mergedDueSoon.push(...(summary.dueSoon || []).map(decorateItem));
+              mergedBeliefs.push(...(summary.beliefs || []));
+              for (const reason of summary.wakeReasons || []) {
+                mergedWakeReasons.add(reason);
+              }
+            }
+            return {
+              generatedAt: Date.now(),
+              workspaceId: ALL_WORKSPACES_ID,
+              currentFocus: "All workspaces",
+              whatChanged: mergedWhatChanged,
+              whatMattersNow: mergedWhatMattersNow,
+              dueSoon: mergedDueSoon,
+              beliefs: mergedBeliefs,
+              wakeReasons: [...mergedWakeReasons],
+            };
+          },
+          getAutonomyState: async (currentWorkspaceId) => {
+            if (!allMode) {
+              return getAutonomyEngine().getWorldModel(currentWorkspaceId);
+            }
+            const states = await Promise.all(
+              briefingWorkspaceIds.map(async (id) => ({
+                id,
+                state: getAutonomyEngine().getWorldModel(id),
+              })),
+            );
+            const mergedGoals: Any[] = [];
+            const mergedProjects: Any[] = [];
+            const mergedOpenLoops: Any[] = [];
+            const mergedRoutines: Any[] = [];
+            const mergedBeliefs: Any[] = [];
+            const mergedCurrentPriorities: string[] = [];
+            const mergedContinuityNotes: string[] = [];
+            for (const entry of states) {
+              const state = entry.state;
+              if (!state) continue;
+              const label = labelForWorkspace(entry.id);
+              mergedGoals.push(
+                ...(state.goals || []).map((goal: Any) => ({
+                  ...goal,
+                  title: `[${label}] ${goal.title}`,
+                  workspaceId: entry.id,
+                })),
+              );
+              mergedProjects.push(
+                ...(state.projects || []).map((project: Any) => ({
+                  ...project,
+                  title: `[${label}] ${project.title}`,
+                  workspaceId: entry.id,
+                })),
+              );
+              mergedOpenLoops.push(
+                ...(state.openLoops || []).map((loop: Any) => ({
+                  ...loop,
+                  title: `[${label}] ${loop.title}`,
+                  workspaceId: entry.id,
+                })),
+              );
+              mergedRoutines.push(
+                ...(state.routines || []).map((routine: Any) => ({
+                  ...routine,
+                  title: `[${label}] ${routine.title}`,
+                  workspaceId: entry.id,
+                })),
+              );
+              mergedBeliefs.push(...(state.beliefs || []));
+              mergedCurrentPriorities.push(
+                ...(state.currentPriorities || []).map(
+                  (priority: string) => `[${label}] ${priority}`,
+                ),
+              );
+              mergedContinuityNotes.push(
+                ...(state.continuityNotes || []).map(
+                  (note: string) => `[${label}] ${note}`,
+                ),
+              );
+            }
+            return {
+              generatedAt: Date.now(),
+              workspaceId: ALL_WORKSPACES_ID,
+              currentFocus: "All workspaces",
+              goals: mergedGoals,
+              projects: mergedProjects,
+              openLoops: mergedOpenLoops,
+              routines: mergedRoutines,
+              beliefs: mergedBeliefs,
+              currentPriorities: mergedCurrentPriorities,
+              continuityNotes: mergedContinuityNotes,
+            };
+          },
+          getAutonomyDecisions: async (currentWorkspaceId) => {
+            if (!allMode) {
+              return getAutonomyEngine().listDecisions(currentWorkspaceId);
+            }
+            const decisions = await Promise.all(
+              briefingWorkspaceIds.map(async (id) => ({
+                id,
+                decisions: getAutonomyEngine().listDecisions(id),
+              })),
+            );
+            return decisions.flatMap((entry) =>
+              (entry.decisions || []).map((decision: Any) => ({
+                ...decision,
+                title: `[${labelForWorkspace(entry.id)}] ${decision.title}`,
+                description: `[${labelForWorkspace(entry.id)}] ${decision.description}`,
+                workspaceId: entry.id,
+              })),
+            );
+          },
+          log: (...args: unknown[]) => console.log("[Briefing]", ...args),
         },
-        getAutonomyState: async (currentWorkspaceId) => {
-          if (!allMode) {
-            return getAutonomyEngine().getWorldModel(currentWorkspaceId);
-          }
-          const states = await Promise.all(
-            briefingWorkspaceIds.map(async (id) => ({
-              id,
-              state: getAutonomyEngine().getWorldModel(id),
-            })),
-          );
-          const mergedGoals: Any[] = [];
-          const mergedProjects: Any[] = [];
-          const mergedOpenLoops: Any[] = [];
-          const mergedRoutines: Any[] = [];
-          const mergedBeliefs: Any[] = [];
-          const mergedCurrentPriorities: string[] = [];
-          const mergedContinuityNotes: string[] = [];
-          for (const entry of states) {
-            const state = entry.state;
-            if (!state) continue;
-            const label = labelForWorkspace(entry.id);
-            mergedGoals.push(
-              ...(state.goals || []).map((goal: Any) => ({
-                ...goal,
-                title: `[${label}] ${goal.title}`,
-                workspaceId: entry.id,
-              })),
-            );
-            mergedProjects.push(
-              ...(state.projects || []).map((project: Any) => ({
-                ...project,
-                title: `[${label}] ${project.title}`,
-                workspaceId: entry.id,
-              })),
-            );
-            mergedOpenLoops.push(
-              ...(state.openLoops || []).map((loop: Any) => ({
-                ...loop,
-                title: `[${label}] ${loop.title}`,
-                workspaceId: entry.id,
-              })),
-            );
-            mergedRoutines.push(
-              ...(state.routines || []).map((routine: Any) => ({
-                ...routine,
-                title: `[${label}] ${routine.title}`,
-                workspaceId: entry.id,
-              })),
-            );
-            mergedBeliefs.push(...(state.beliefs || []));
-            mergedCurrentPriorities.push(
-              ...(state.currentPriorities || []).map((priority: string) => `[${label}] ${priority}`),
-            );
-            mergedContinuityNotes.push(
-              ...(state.continuityNotes || []).map((note: string) => `[${label}] ${note}`),
-            );
-          }
-          return {
-            generatedAt: Date.now(),
-            workspaceId: ALL_WORKSPACES_ID,
-            currentFocus: "All workspaces",
-            goals: mergedGoals,
-            projects: mergedProjects,
-            openLoops: mergedOpenLoops,
-            routines: mergedRoutines,
-            beliefs: mergedBeliefs,
-            currentPriorities: mergedCurrentPriorities,
-            continuityNotes: mergedContinuityNotes,
-          };
-        },
-        getAutonomyDecisions: async (currentWorkspaceId) => {
-          if (!allMode) {
-            return getAutonomyEngine().listDecisions(currentWorkspaceId);
-          }
-          const decisions = await Promise.all(
-            briefingWorkspaceIds.map(async (id) => ({
-              id,
-              decisions: getAutonomyEngine().listDecisions(id),
-            })),
-          );
-          return decisions.flatMap((entry) =>
-            (entry.decisions || []).map((decision: Any) => ({
-              ...decision,
-              title: `[${labelForWorkspace(entry.id)}] ${decision.title}`,
-              description: `[${labelForWorkspace(entry.id)}] ${decision.description}`,
-              workspaceId: entry.id,
-            })),
-          );
-        },
-        log: (...args: unknown[]) => console.log("[Briefing]", ...args),
-      },
-      db,
-    );
-    return service.generateBriefing(normalizedWorkspaceId);
-  });
+        db,
+      );
+      return service.generateBriefing(normalizedWorkspaceId);
+    },
+  );
 
   // Proactive Suggestions
-  ipcMain.handle(IPC_CHANNELS.SUGGESTIONS_LIST, async (_, workspaceId: string) => {
-    checkRateLimit(IPC_CHANNELS.SUGGESTIONS_LIST);
-    const validatedWorkspaceId = validateInput(WorkspaceIdSchema, workspaceId, "workspace ID");
-    const { ProactiveSuggestionsService } = await import("../agent/ProactiveSuggestionsService");
-    return ProactiveSuggestionsService.listActive(validatedWorkspaceId);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.SUGGESTIONS_LIST,
+    async (_, workspaceId: string) => {
+      checkRateLimit(IPC_CHANNELS.SUGGESTIONS_LIST);
+      const validatedWorkspaceId = validateInput(
+        WorkspaceIdSchema,
+        workspaceId,
+        "workspace ID",
+      );
+      const { ProactiveSuggestionsService } =
+        await import("../agent/ProactiveSuggestionsService");
+      return ProactiveSuggestionsService.listActive(validatedWorkspaceId);
+    },
+  );
 
   ipcMain.handle(
     IPC_CHANNELS.SUGGESTIONS_DISMISS,
     async (_, workspaceId: string, suggestionId: string) => {
       checkRateLimit(IPC_CHANNELS.SUGGESTIONS_DISMISS);
-      const validatedWorkspaceId = validateInput(WorkspaceIdSchema, workspaceId, "workspace ID");
-      const validatedSuggestionId = validateInput(UUIDSchema, suggestionId, "suggestion ID");
-      const { ProactiveSuggestionsService } = await import("../agent/ProactiveSuggestionsService");
+      const validatedWorkspaceId = validateInput(
+        WorkspaceIdSchema,
+        workspaceId,
+        "workspace ID",
+      );
+      const validatedSuggestionId = validateInput(
+        UUIDSchema,
+        suggestionId,
+        "suggestion ID",
+      );
+      const { ProactiveSuggestionsService } =
+        await import("../agent/ProactiveSuggestionsService");
       const success = ProactiveSuggestionsService.dismiss(
         validatedWorkspaceId,
         validatedSuggestionId,
@@ -5696,9 +7047,18 @@ export async function setupIpcHandlers(
     IPC_CHANNELS.SUGGESTIONS_ACT,
     async (_, workspaceId: string, suggestionId: string) => {
       checkRateLimit(IPC_CHANNELS.SUGGESTIONS_ACT);
-      const validatedWorkspaceId = validateInput(WorkspaceIdSchema, workspaceId, "workspace ID");
-      const validatedSuggestionId = validateInput(UUIDSchema, suggestionId, "suggestion ID");
-      const { ProactiveSuggestionsService } = await import("../agent/ProactiveSuggestionsService");
+      const validatedWorkspaceId = validateInput(
+        WorkspaceIdSchema,
+        workspaceId,
+        "workspace ID",
+      );
+      const validatedSuggestionId = validateInput(
+        UUIDSchema,
+        suggestionId,
+        "suggestion ID",
+      );
+      const { ProactiveSuggestionsService } =
+        await import("../agent/ProactiveSuggestionsService");
       const actionPrompt = ProactiveSuggestionsService.actOn(
         validatedWorkspaceId,
         validatedSuggestionId,
@@ -5708,49 +7068,58 @@ export async function setupIpcHandlers(
   );
 
   // Task Board handlers
-  ipcMain.handle(IPC_CHANNELS.TASK_MOVE_COLUMN, async (_, taskId: string, column: string) => {
-    checkRateLimit(IPC_CHANNELS.TASK_MOVE_COLUMN);
-    const validatedId = validateInput(UUIDSchema, taskId, "task ID");
-    const task = taskRepo.moveToColumn(validatedId, column);
-    if (task) {
-      getMainWindow()?.webContents.send(IPC_CHANNELS.TASK_BOARD_EVENT, {
-        type: "moved",
-        task,
-        column,
-      });
-      const columnLabels: Record<string, string> = {
-        backlog: "Inbox",
-        todo: "Assigned",
-        in_progress: "In Progress",
-        review: "Review",
-        done: "Done",
-      };
-      const activity = activityRepo.create({
-        workspaceId: task.workspaceId,
-        taskId: task.id,
-        agentRoleId: task.assignedAgentRoleId,
-        actorType: "system",
-        activityType: "info",
-        title: `Moved to ${columnLabels[column] || column}`,
-        description: task.title,
-      });
-      getMainWindow()?.webContents.send(IPC_CHANNELS.ACTIVITY_EVENT, { type: "created", activity });
-    }
-    return task;
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.TASK_MOVE_COLUMN,
+    async (_, taskId: string, column: string) => {
+      checkRateLimit(IPC_CHANNELS.TASK_MOVE_COLUMN);
+      const validatedId = validateInput(UUIDSchema, taskId, "task ID");
+      const task = taskRepo.moveToColumn(validatedId, column);
+      if (task) {
+        getMainWindow()?.webContents.send(IPC_CHANNELS.TASK_BOARD_EVENT, {
+          type: "moved",
+          task,
+          column,
+        });
+        const columnLabels: Record<string, string> = {
+          backlog: "Inbox",
+          todo: "Assigned",
+          in_progress: "In Progress",
+          review: "Review",
+          done: "Done",
+        };
+        const activity = activityRepo.create({
+          workspaceId: task.workspaceId,
+          taskId: task.id,
+          agentRoleId: task.assignedAgentRoleId,
+          actorType: "system",
+          activityType: "info",
+          title: `Moved to ${columnLabels[column] || column}`,
+          description: task.title,
+        });
+        getMainWindow()?.webContents.send(IPC_CHANNELS.ACTIVITY_EVENT, {
+          type: "created",
+          activity,
+        });
+      }
+      return task;
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.TASK_SET_PRIORITY, async (_, taskId: string, priority: number) => {
-    checkRateLimit(IPC_CHANNELS.TASK_SET_PRIORITY);
-    const validatedId = validateInput(UUIDSchema, taskId, "task ID");
-    const task = taskRepo.setPriority(validatedId, priority);
-    if (task) {
-      getMainWindow()?.webContents.send(IPC_CHANNELS.TASK_BOARD_EVENT, {
-        type: "priority_changed",
-        task,
-      });
-    }
-    return task;
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.TASK_SET_PRIORITY,
+    async (_, taskId: string, priority: number) => {
+      checkRateLimit(IPC_CHANNELS.TASK_SET_PRIORITY);
+      const validatedId = validateInput(UUIDSchema, taskId, "task ID");
+      const task = taskRepo.setPriority(validatedId, priority);
+      if (task) {
+        getMainWindow()?.webContents.send(IPC_CHANNELS.TASK_BOARD_EVENT, {
+          type: "priority_changed",
+          task,
+        });
+      }
+      return task;
+    },
+  );
 
   ipcMain.handle(
     IPC_CHANNELS.TASK_SET_DUE_DATE,
@@ -5784,53 +7153,72 @@ export async function setupIpcHandlers(
     },
   );
 
-  ipcMain.handle(IPC_CHANNELS.TASK_ADD_LABEL, async (_, taskId: string, labelId: string) => {
-    checkRateLimit(IPC_CHANNELS.TASK_ADD_LABEL);
-    const validatedTaskId = validateInput(UUIDSchema, taskId, "task ID");
-    const validatedLabelId = validateInput(UUIDSchema, labelId, "label ID");
-    const task = taskRepo.addLabel(validatedTaskId, validatedLabelId);
-    if (task) {
-      getMainWindow()?.webContents.send(IPC_CHANNELS.TASK_BOARD_EVENT, {
-        type: "label_added",
-        task,
-        labelId: validatedLabelId,
-      });
-    }
-    return task;
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.TASK_ADD_LABEL,
+    async (_, taskId: string, labelId: string) => {
+      checkRateLimit(IPC_CHANNELS.TASK_ADD_LABEL);
+      const validatedTaskId = validateInput(UUIDSchema, taskId, "task ID");
+      const validatedLabelId = validateInput(UUIDSchema, labelId, "label ID");
+      const task = taskRepo.addLabel(validatedTaskId, validatedLabelId);
+      if (task) {
+        getMainWindow()?.webContents.send(IPC_CHANNELS.TASK_BOARD_EVENT, {
+          type: "label_added",
+          task,
+          labelId: validatedLabelId,
+        });
+      }
+      return task;
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.TASK_REMOVE_LABEL, async (_, taskId: string, labelId: string) => {
-    checkRateLimit(IPC_CHANNELS.TASK_REMOVE_LABEL);
-    const validatedTaskId = validateInput(UUIDSchema, taskId, "task ID");
-    const validatedLabelId = validateInput(UUIDSchema, labelId, "label ID");
-    const task = taskRepo.removeLabel(validatedTaskId, validatedLabelId);
-    if (task) {
-      getMainWindow()?.webContents.send(IPC_CHANNELS.TASK_BOARD_EVENT, {
-        type: "label_removed",
-        task,
-        labelId: validatedLabelId,
-      });
-    }
-    return task;
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.TASK_REMOVE_LABEL,
+    async (_, taskId: string, labelId: string) => {
+      checkRateLimit(IPC_CHANNELS.TASK_REMOVE_LABEL);
+      const validatedTaskId = validateInput(UUIDSchema, taskId, "task ID");
+      const validatedLabelId = validateInput(UUIDSchema, labelId, "label ID");
+      const task = taskRepo.removeLabel(validatedTaskId, validatedLabelId);
+      if (task) {
+        getMainWindow()?.webContents.send(IPC_CHANNELS.TASK_BOARD_EVENT, {
+          type: "label_removed",
+          task,
+          labelId: validatedLabelId,
+        });
+      }
+      return task;
+    },
+  );
 
   // Task Label handlers
-  ipcMain.handle(IPC_CHANNELS.TASK_LABEL_LIST, async (_, workspaceId: string) => {
-    const validated = validateInput(UUIDSchema, workspaceId, "workspace ID");
-    return taskLabelRepo.list({ workspaceId: validated });
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.TASK_LABEL_LIST,
+    async (_, workspaceId: string) => {
+      const validated = validateInput(UUIDSchema, workspaceId, "workspace ID");
+      return taskLabelRepo.list({ workspaceId: validated });
+    },
+  );
 
   ipcMain.handle(IPC_CHANNELS.TASK_LABEL_CREATE, async (_, request: Any) => {
     checkRateLimit(IPC_CHANNELS.TASK_LABEL_CREATE);
-    const validatedWorkspaceId = validateInput(UUIDSchema, request.workspaceId, "workspace ID");
-    return taskLabelRepo.create({ ...request, workspaceId: validatedWorkspaceId });
+    const validatedWorkspaceId = validateInput(
+      UUIDSchema,
+      request.workspaceId,
+      "workspace ID",
+    );
+    return taskLabelRepo.create({
+      ...request,
+      workspaceId: validatedWorkspaceId,
+    });
   });
 
-  ipcMain.handle(IPC_CHANNELS.TASK_LABEL_UPDATE, async (_, id: string, request: Any) => {
-    checkRateLimit(IPC_CHANNELS.TASK_LABEL_UPDATE);
-    const validated = validateInput(UUIDSchema, id, "label ID");
-    return taskLabelRepo.update(validated, request);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.TASK_LABEL_UPDATE,
+    async (_, id: string, request: Any) => {
+      checkRateLimit(IPC_CHANNELS.TASK_LABEL_UPDATE);
+      const validated = validateInput(UUIDSchema, id, "label ID");
+      return taskLabelRepo.update(validated, request);
+    },
+  );
 
   ipcMain.handle(IPC_CHANNELS.TASK_LABEL_DELETE, async (_, id: string) => {
     checkRateLimit(IPC_CHANNELS.TASK_LABEL_DELETE);
@@ -5844,21 +7232,40 @@ export async function setupIpcHandlers(
     return workingStateRepo.findById(validated);
   });
 
-  ipcMain.handle(IPC_CHANNELS.WORKING_STATE_GET_CURRENT, async (_, query: Any) => {
-    const validatedAgentRoleId = validateInput(UUIDSchema, query.agentRoleId, "agent role ID");
-    const validatedWorkspaceId = validateInput(UUIDSchema, query.workspaceId, "workspace ID");
-    return workingStateRepo.getCurrent({
-      agentRoleId: validatedAgentRoleId,
-      workspaceId: validatedWorkspaceId,
-      taskId: query.taskId,
-      stateType: query.stateType,
-    });
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.WORKING_STATE_GET_CURRENT,
+    async (_, query: Any) => {
+      const validatedAgentRoleId = validateInput(
+        UUIDSchema,
+        query.agentRoleId,
+        "agent role ID",
+      );
+      const validatedWorkspaceId = validateInput(
+        UUIDSchema,
+        query.workspaceId,
+        "workspace ID",
+      );
+      return workingStateRepo.getCurrent({
+        agentRoleId: validatedAgentRoleId,
+        workspaceId: validatedWorkspaceId,
+        taskId: query.taskId,
+        stateType: query.stateType,
+      });
+    },
+  );
 
   ipcMain.handle(IPC_CHANNELS.WORKING_STATE_UPDATE, async (_, request: Any) => {
     checkRateLimit(IPC_CHANNELS.WORKING_STATE_UPDATE);
-    const validatedAgentRoleId = validateInput(UUIDSchema, request.agentRoleId, "agent role ID");
-    const validatedWorkspaceId = validateInput(UUIDSchema, request.workspaceId, "workspace ID");
+    const validatedAgentRoleId = validateInput(
+      UUIDSchema,
+      request.agentRoleId,
+      "agent role ID",
+    );
+    const validatedWorkspaceId = validateInput(
+      UUIDSchema,
+      request.workspaceId,
+      "workspace ID",
+    );
     return workingStateRepo.update({
       agentRoleId: validatedAgentRoleId,
       workspaceId: validatedWorkspaceId,
@@ -5870,8 +7277,16 @@ export async function setupIpcHandlers(
   });
 
   ipcMain.handle(IPC_CHANNELS.WORKING_STATE_HISTORY, async (_, query: Any) => {
-    const validatedAgentRoleId = validateInput(UUIDSchema, query.agentRoleId, "agent role ID");
-    const validatedWorkspaceId = validateInput(UUIDSchema, query.workspaceId, "workspace ID");
+    const validatedAgentRoleId = validateInput(
+      UUIDSchema,
+      query.agentRoleId,
+      "agent role ID",
+    );
+    const validatedWorkspaceId = validateInput(
+      UUIDSchema,
+      query.workspaceId,
+      "workspace ID",
+    );
     return workingStateRepo.getHistory({
       agentRoleId: validatedAgentRoleId,
       workspaceId: validatedWorkspaceId,
@@ -5892,16 +7307,22 @@ export async function setupIpcHandlers(
     return { success: workingStateRepo.delete(validated) };
   });
 
-  ipcMain.handle(IPC_CHANNELS.WORKING_STATE_LIST_FOR_TASK, async (_, taskId: string) => {
-    const validated = validateInput(UUIDSchema, taskId, "task ID");
-    return workingStateRepo.listForTask(validated);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.WORKING_STATE_LIST_FOR_TASK,
+    async (_, taskId: string) => {
+      const validated = validateInput(UUIDSchema, taskId, "task ID");
+      return workingStateRepo.listForTask(validated);
+    },
+  );
 
   // Context Policy handlers (per-context security DM vs group)
   ipcMain.handle(
     IPC_CHANNELS.CONTEXT_POLICY_GET,
     async (_, channelId: string, contextType: string) => {
-      return contextPolicyManager.getPolicy(channelId, contextType as "dm" | "group");
+      return contextPolicyManager.getPolicy(
+        channelId,
+        contextType as "dm" | "group",
+      );
     },
   );
 
@@ -5912,9 +7333,12 @@ export async function setupIpcHandlers(
     },
   );
 
-  ipcMain.handle(IPC_CHANNELS.CONTEXT_POLICY_LIST, async (_, channelId: string) => {
-    return contextPolicyManager.getPoliciesForChannel(channelId);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.CONTEXT_POLICY_LIST,
+    async (_, channelId: string) => {
+      return contextPolicyManager.getPoliciesForChannel(channelId);
+    },
+  );
 
   ipcMain.handle(
     IPC_CHANNELS.CONTEXT_POLICY_UPDATE,
@@ -5925,27 +7349,47 @@ export async function setupIpcHandlers(
       options: { securityMode?: string; toolRestrictions?: string[] },
     ) => {
       checkRateLimit(IPC_CHANNELS.CONTEXT_POLICY_UPDATE);
-      return contextPolicyManager.updateByContext(channelId, contextType as "dm" | "group", {
-        securityMode: options.securityMode as "open" | "allowlist" | "pairing" | undefined,
-        toolRestrictions: options.toolRestrictions,
-      });
+      return contextPolicyManager.updateByContext(
+        channelId,
+        contextType as "dm" | "group",
+        {
+          securityMode: options.securityMode as
+            | "open"
+            | "allowlist"
+            | "pairing"
+            | undefined,
+          toolRestrictions: options.toolRestrictions,
+        },
+      );
     },
   );
 
-  ipcMain.handle(IPC_CHANNELS.CONTEXT_POLICY_DELETE, async (_, channelId: string) => {
-    checkRateLimit(IPC_CHANNELS.CONTEXT_POLICY_DELETE);
-    return { count: contextPolicyManager.deleteByChannel(channelId) };
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.CONTEXT_POLICY_DELETE,
+    async (_, channelId: string) => {
+      checkRateLimit(IPC_CHANNELS.CONTEXT_POLICY_DELETE);
+      return { count: contextPolicyManager.deleteByChannel(channelId) };
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.CONTEXT_POLICY_CREATE_DEFAULTS, async (_, channelId: string) => {
-    checkRateLimit(IPC_CHANNELS.CONTEXT_POLICY_CREATE_DEFAULTS);
-    contextPolicyManager.createDefaultPolicies(channelId);
-    return { success: true };
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.CONTEXT_POLICY_CREATE_DEFAULTS,
+    async (_, channelId: string) => {
+      checkRateLimit(IPC_CHANNELS.CONTEXT_POLICY_CREATE_DEFAULTS);
+      contextPolicyManager.createDefaultPolicies(channelId);
+      return { success: true };
+    },
+  );
 
   ipcMain.handle(
     IPC_CHANNELS.CONTEXT_POLICY_IS_TOOL_ALLOWED,
-    async (_, channelId: string, contextType: string, toolName: string, toolGroups: string[]) => {
+    async (
+      _,
+      channelId: string,
+      contextType: string,
+      toolName: string,
+      toolGroups: string[],
+    ) => {
       return {
         allowed: contextPolicyManager.isToolAllowed(
           channelId,
@@ -6010,15 +7454,42 @@ export async function setupIpcHandlers(
  * Set up Health IPC handlers
  */
 export function setupHealthHandlers(): void {
-  rateLimiter.configure(IPC_CHANNELS.HEALTH_UPSERT_SOURCE, RATE_LIMIT_CONFIGS.limited);
-  rateLimiter.configure(IPC_CHANNELS.HEALTH_REMOVE_SOURCE, RATE_LIMIT_CONFIGS.limited);
-  rateLimiter.configure(IPC_CHANNELS.HEALTH_SYNC_SOURCE, RATE_LIMIT_CONFIGS.standard);
-  rateLimiter.configure(IPC_CHANNELS.HEALTH_IMPORT_FILES, RATE_LIMIT_CONFIGS.limited);
-  rateLimiter.configure(IPC_CHANNELS.HEALTH_GENERATE_WORKFLOW, RATE_LIMIT_CONFIGS.expensive);
-  rateLimiter.configure(IPC_CHANNELS.HEALTH_APPLE_CONNECT, RATE_LIMIT_CONFIGS.expensive);
-  rateLimiter.configure(IPC_CHANNELS.HEALTH_APPLE_DISCONNECT, RATE_LIMIT_CONFIGS.limited);
-  rateLimiter.configure(IPC_CHANNELS.HEALTH_APPLE_PREVIEW_WRITEBACK, RATE_LIMIT_CONFIGS.standard);
-  rateLimiter.configure(IPC_CHANNELS.HEALTH_APPLE_APPLY_WRITEBACK, RATE_LIMIT_CONFIGS.expensive);
+  rateLimiter.configure(
+    IPC_CHANNELS.HEALTH_UPSERT_SOURCE,
+    RATE_LIMIT_CONFIGS.limited,
+  );
+  rateLimiter.configure(
+    IPC_CHANNELS.HEALTH_REMOVE_SOURCE,
+    RATE_LIMIT_CONFIGS.limited,
+  );
+  rateLimiter.configure(
+    IPC_CHANNELS.HEALTH_SYNC_SOURCE,
+    RATE_LIMIT_CONFIGS.standard,
+  );
+  rateLimiter.configure(
+    IPC_CHANNELS.HEALTH_IMPORT_FILES,
+    RATE_LIMIT_CONFIGS.limited,
+  );
+  rateLimiter.configure(
+    IPC_CHANNELS.HEALTH_GENERATE_WORKFLOW,
+    RATE_LIMIT_CONFIGS.expensive,
+  );
+  rateLimiter.configure(
+    IPC_CHANNELS.HEALTH_APPLE_CONNECT,
+    RATE_LIMIT_CONFIGS.expensive,
+  );
+  rateLimiter.configure(
+    IPC_CHANNELS.HEALTH_APPLE_DISCONNECT,
+    RATE_LIMIT_CONFIGS.limited,
+  );
+  rateLimiter.configure(
+    IPC_CHANNELS.HEALTH_APPLE_PREVIEW_WRITEBACK,
+    RATE_LIMIT_CONFIGS.standard,
+  );
+  rateLimiter.configure(
+    IPC_CHANNELS.HEALTH_APPLE_APPLY_WRITEBACK,
+    RATE_LIMIT_CONFIGS.expensive,
+  );
 
   ipcMain.handle(IPC_CHANNELS.HEALTH_GET_DASHBOARD, async (): Promise<Any> => {
     return HealthManager.getDashboard();
@@ -6030,37 +7501,69 @@ export function setupHealthHandlers(): void {
 
   ipcMain.handle(IPC_CHANNELS.HEALTH_UPSERT_SOURCE, async (_, source: Any) => {
     checkRateLimit(IPC_CHANNELS.HEALTH_UPSERT_SOURCE);
-    const validated = validateInput(HealthSourceInputSchema, source, "health source");
+    const validated = validateInput(
+      HealthSourceInputSchema,
+      source,
+      "health source",
+    );
     return HealthManager.upsertSource(validated);
   });
 
-  ipcMain.handle(IPC_CHANNELS.HEALTH_REMOVE_SOURCE, async (_, sourceId: string) => {
-    checkRateLimit(IPC_CHANNELS.HEALTH_REMOVE_SOURCE);
-    const validated = validateInput(StringIdSchema, sourceId, "health source ID");
-    return HealthManager.removeSource(validated);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.HEALTH_REMOVE_SOURCE,
+    async (_, sourceId: string) => {
+      checkRateLimit(IPC_CHANNELS.HEALTH_REMOVE_SOURCE);
+      const validated = validateInput(
+        StringIdSchema,
+        sourceId,
+        "health source ID",
+      );
+      return HealthManager.removeSource(validated);
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.HEALTH_SYNC_SOURCE, async (_, sourceId: string) => {
-    checkRateLimit(IPC_CHANNELS.HEALTH_SYNC_SOURCE);
-    const validated = validateInput(StringIdSchema, sourceId, "health source ID");
-    return HealthManager.syncSource(validated);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.HEALTH_SYNC_SOURCE,
+    async (_, sourceId: string) => {
+      checkRateLimit(IPC_CHANNELS.HEALTH_SYNC_SOURCE);
+      const validated = validateInput(
+        StringIdSchema,
+        sourceId,
+        "health source ID",
+      );
+      return HealthManager.syncSource(validated);
+    },
+  );
 
   ipcMain.handle(IPC_CHANNELS.HEALTH_IMPORT_FILES, async (_, request: Any) => {
     checkRateLimit(IPC_CHANNELS.HEALTH_IMPORT_FILES);
-    const validated = validateInput(HealthImportFilesSchema, request, "health import request");
+    const validated = validateInput(
+      HealthImportFilesSchema,
+      request,
+      "health import request",
+    );
     return HealthManager.importFiles(validated.sourceId, validated.filePaths);
   });
 
-  ipcMain.handle(IPC_CHANNELS.HEALTH_GENERATE_WORKFLOW, async (_, request: Any) => {
-    checkRateLimit(IPC_CHANNELS.HEALTH_GENERATE_WORKFLOW);
-    const validated = validateInput(HealthWorkflowRequestSchema, request, "health workflow request");
-    return HealthManager.generateWorkflow(validated);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.HEALTH_GENERATE_WORKFLOW,
+    async (_, request: Any) => {
+      checkRateLimit(IPC_CHANNELS.HEALTH_GENERATE_WORKFLOW);
+      const validated = validateInput(
+        HealthWorkflowRequestSchema,
+        request,
+        "health workflow request",
+      );
+      return HealthManager.generateWorkflow(validated);
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.HEALTH_APPLE_STATUS, async (_, sourceId?: string) => {
-    return HealthManager.getAppleHealthStatus(sourceId);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.HEALTH_APPLE_STATUS,
+    async (_, sourceId?: string) => {
+      return HealthManager.getAppleHealthStatus(sourceId);
+    },
+  );
 
   ipcMain.handle(IPC_CHANNELS.HEALTH_APPLE_CONNECT, async (_, request: Any) => {
     checkRateLimit(IPC_CHANNELS.HEALTH_APPLE_CONNECT);
@@ -6077,29 +7580,55 @@ export function setupHealthHandlers(): void {
     return HealthManager.connectAppleHealth(validated);
   });
 
-  ipcMain.handle(IPC_CHANNELS.HEALTH_APPLE_DISCONNECT, async (_, sourceId: string) => {
-    checkRateLimit(IPC_CHANNELS.HEALTH_APPLE_DISCONNECT);
-    const validated = validateInput(StringIdSchema, sourceId, "Apple Health source ID");
-    return HealthManager.disconnectAppleHealth(validated);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.HEALTH_APPLE_DISCONNECT,
+    async (_, sourceId: string) => {
+      checkRateLimit(IPC_CHANNELS.HEALTH_APPLE_DISCONNECT);
+      const validated = validateInput(
+        StringIdSchema,
+        sourceId,
+        "Apple Health source ID",
+      );
+      return HealthManager.disconnectAppleHealth(validated);
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.HEALTH_APPLE_RESET, async (_, sourceId?: string) => {
-    checkRateLimit(IPC_CHANNELS.HEALTH_APPLE_DISCONNECT);
-    const validated = sourceId ? validateInput(StringIdSchema, sourceId, "Apple Health source ID") : undefined;
-    return HealthManager.resetAppleHealth(validated);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.HEALTH_APPLE_RESET,
+    async (_, sourceId?: string) => {
+      checkRateLimit(IPC_CHANNELS.HEALTH_APPLE_DISCONNECT);
+      const validated = sourceId
+        ? validateInput(StringIdSchema, sourceId, "Apple Health source ID")
+        : undefined;
+      return HealthManager.resetAppleHealth(validated);
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.HEALTH_APPLE_PREVIEW_WRITEBACK, async (_, request: Any) => {
-    checkRateLimit(IPC_CHANNELS.HEALTH_APPLE_PREVIEW_WRITEBACK);
-    const validated = validateInput(HealthWritebackRequestSchema, request, "Apple Health writeback request");
-    return HealthManager.previewAppleHealthWriteback(validated);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.HEALTH_APPLE_PREVIEW_WRITEBACK,
+    async (_, request: Any) => {
+      checkRateLimit(IPC_CHANNELS.HEALTH_APPLE_PREVIEW_WRITEBACK);
+      const validated = validateInput(
+        HealthWritebackRequestSchema,
+        request,
+        "Apple Health writeback request",
+      );
+      return HealthManager.previewAppleHealthWriteback(validated);
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.HEALTH_APPLE_APPLY_WRITEBACK, async (_, request: Any) => {
-    checkRateLimit(IPC_CHANNELS.HEALTH_APPLE_APPLY_WRITEBACK);
-    const validated = validateInput(HealthWritebackRequestSchema, request, "Apple Health writeback request");
-    return HealthManager.applyAppleHealthWriteback(validated);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.HEALTH_APPLE_APPLY_WRITEBACK,
+    async (_, request: Any) => {
+      checkRateLimit(IPC_CHANNELS.HEALTH_APPLE_APPLY_WRITEBACK);
+      const validated = validateInput(
+        HealthWritebackRequestSchema,
+        request,
+        "Apple Health writeback request",
+      );
+      return HealthManager.applyAppleHealthWriteback(validated);
+    },
+  );
 }
 
 /**
@@ -6107,11 +7636,26 @@ export function setupHealthHandlers(): void {
  */
 function setupMCPHandlers(): void {
   // Configure rate limits for MCP channels
-  rateLimiter.configure(IPC_CHANNELS.MCP_SAVE_SETTINGS, RATE_LIMIT_CONFIGS.limited);
-  rateLimiter.configure(IPC_CHANNELS.MCP_CONNECT_SERVER, RATE_LIMIT_CONFIGS.expensive);
-  rateLimiter.configure(IPC_CHANNELS.MCP_TEST_SERVER, RATE_LIMIT_CONFIGS.expensive);
-  rateLimiter.configure(IPC_CHANNELS.MCP_REGISTRY_INSTALL, RATE_LIMIT_CONFIGS.expensive);
-  rateLimiter.configure(IPC_CHANNELS.MCP_CONNECTOR_OAUTH_START, RATE_LIMIT_CONFIGS.expensive);
+  rateLimiter.configure(
+    IPC_CHANNELS.MCP_SAVE_SETTINGS,
+    RATE_LIMIT_CONFIGS.limited,
+  );
+  rateLimiter.configure(
+    IPC_CHANNELS.MCP_CONNECT_SERVER,
+    RATE_LIMIT_CONFIGS.expensive,
+  );
+  rateLimiter.configure(
+    IPC_CHANNELS.MCP_TEST_SERVER,
+    RATE_LIMIT_CONFIGS.expensive,
+  );
+  rateLimiter.configure(
+    IPC_CHANNELS.MCP_REGISTRY_INSTALL,
+    RATE_LIMIT_CONFIGS.expensive,
+  );
+  rateLimiter.configure(
+    IPC_CHANNELS.MCP_CONNECTOR_OAUTH_START,
+    RATE_LIMIT_CONFIGS.expensive,
+  );
 
   // Initialize MCP settings manager
   MCPSettingsManager.initialize();
@@ -6124,7 +7668,11 @@ function setupMCPHandlers(): void {
   // Save settings
   ipcMain.handle(IPC_CHANNELS.MCP_SAVE_SETTINGS, async (_, settings) => {
     checkRateLimit(IPC_CHANNELS.MCP_SAVE_SETTINGS);
-    const validated = validateInput(MCPSettingsSchema, settings, "MCP settings") as MCPSettings;
+    const validated = validateInput(
+      MCPSettingsSchema,
+      settings,
+      "MCP settings",
+    ) as MCPSettings;
     MCPSettingsManager.saveSettings(validated);
     MCPSettingsManager.clearCache();
     return { success: true };
@@ -6139,50 +7687,68 @@ function setupMCPHandlers(): void {
   // Add a server
   ipcMain.handle(IPC_CHANNELS.MCP_ADD_SERVER, async (_, serverConfig) => {
     checkRateLimit(IPC_CHANNELS.MCP_ADD_SERVER);
-    const validated = validateInput(MCPServerConfigSchema, serverConfig, "MCP server config");
+    const validated = validateInput(
+      MCPServerConfigSchema,
+      serverConfig,
+      "MCP server config",
+    );
     const { id: _id, ...configWithoutId } = validated;
-    return MCPSettingsManager.addServer(configWithoutId as Omit<MCPServerConfig, "id">);
+    return MCPSettingsManager.addServer(
+      configWithoutId as Omit<MCPServerConfig, "id">,
+    );
   });
 
   // Update a server
-  ipcMain.handle(IPC_CHANNELS.MCP_UPDATE_SERVER, async (_, serverId: string, updates) => {
-    const validatedId = validateInput(UUIDSchema, serverId, "server ID");
-    const validatedUpdates = validateInput(
-      MCPServerUpdateSchema,
-      updates,
-      "server updates",
-    ) as Partial<MCPServerConfig>;
-    return MCPSettingsManager.updateServer(validatedId, validatedUpdates);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.MCP_UPDATE_SERVER,
+    async (_, serverId: string, updates) => {
+      const validatedId = validateInput(UUIDSchema, serverId, "server ID");
+      const validatedUpdates = validateInput(
+        MCPServerUpdateSchema,
+        updates,
+        "server updates",
+      ) as Partial<MCPServerConfig>;
+      return MCPSettingsManager.updateServer(validatedId, validatedUpdates);
+    },
+  );
 
   // Remove a server
-  ipcMain.handle(IPC_CHANNELS.MCP_REMOVE_SERVER, async (_, serverId: string) => {
-    const validatedId = validateInput(UUIDSchema, serverId, "server ID");
+  ipcMain.handle(
+    IPC_CHANNELS.MCP_REMOVE_SERVER,
+    async (_, serverId: string) => {
+      const validatedId = validateInput(UUIDSchema, serverId, "server ID");
 
-    // Disconnect if connected
-    try {
-      await MCPClientManager.getInstance().disconnectServer(validatedId);
-    } catch {
-      // Ignore errors
-    }
+      // Disconnect if connected
+      try {
+        await MCPClientManager.getInstance().disconnectServer(validatedId);
+      } catch {
+        // Ignore errors
+      }
 
-    return MCPSettingsManager.removeServer(validatedId);
-  });
+      return MCPSettingsManager.removeServer(validatedId);
+    },
+  );
 
   // Connect to a server
-  ipcMain.handle(IPC_CHANNELS.MCP_CONNECT_SERVER, async (_, serverId: string) => {
-    checkRateLimit(IPC_CHANNELS.MCP_CONNECT_SERVER);
-    const validatedId = validateInput(UUIDSchema, serverId, "server ID");
-    await MCPClientManager.getInstance().connectServer(validatedId);
-    return { success: true };
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.MCP_CONNECT_SERVER,
+    async (_, serverId: string) => {
+      checkRateLimit(IPC_CHANNELS.MCP_CONNECT_SERVER);
+      const validatedId = validateInput(UUIDSchema, serverId, "server ID");
+      await MCPClientManager.getInstance().connectServer(validatedId);
+      return { success: true };
+    },
+  );
 
   // Disconnect from a server
-  ipcMain.handle(IPC_CHANNELS.MCP_DISCONNECT_SERVER, async (_, serverId: string) => {
-    const validatedId = validateInput(UUIDSchema, serverId, "server ID");
-    await MCPClientManager.getInstance().disconnectServer(validatedId);
-    return { success: true };
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.MCP_DISCONNECT_SERVER,
+    async (_, serverId: string) => {
+      const validatedId = validateInput(UUIDSchema, serverId, "server ID");
+      await MCPClientManager.getInstance().disconnectServer(validatedId);
+      return { success: true };
+    },
+  );
 
   // Get status of all servers
   ipcMain.handle(IPC_CHANNELS.MCP_GET_STATUS, async () => {
@@ -6190,16 +7756,22 @@ function setupMCPHandlers(): void {
   });
 
   // Get status of a single server
-  ipcMain.handle(IPC_CHANNELS.MCP_GET_SERVER_STATUS, async (_, serverId: string) => {
-    const validatedId = validateInput(UUIDSchema, serverId, "server ID");
-    return MCPClientManager.getInstance().getServerStatus(validatedId);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.MCP_GET_SERVER_STATUS,
+    async (_, serverId: string) => {
+      const validatedId = validateInput(UUIDSchema, serverId, "server ID");
+      return MCPClientManager.getInstance().getServerStatus(validatedId);
+    },
+  );
 
   // Get tools from a specific server
-  ipcMain.handle(IPC_CHANNELS.MCP_GET_SERVER_TOOLS, async (_, serverId: string) => {
-    const validatedId = validateInput(UUIDSchema, serverId, "server ID");
-    return MCPClientManager.getInstance().getServerTools(validatedId);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.MCP_GET_SERVER_TOOLS,
+    async (_, serverId: string) => {
+      const validatedId = validateInput(UUIDSchema, serverId, "server ID");
+      return MCPClientManager.getInstance().getServerTools(validatedId);
+    },
+  );
 
   // Get tools from all servers
   ipcMain.handle(IPC_CHANNELS.MCP_GET_ALL_TOOLS, async () => {
@@ -6230,80 +7802,108 @@ function setupMCPHandlers(): void {
     return MCPRegistryManager.searchServers(validatedOptions);
   });
 
-  ipcMain.handle(IPC_CHANNELS.MCP_REGISTRY_INSTALL, async (_, entryId: string) => {
-    checkRateLimit(IPC_CHANNELS.MCP_REGISTRY_INSTALL);
-    const validatedId = validateInput(StringIdSchema, entryId, "registry entry ID");
-    return MCPRegistryManager.installServer(validatedId);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.MCP_REGISTRY_INSTALL,
+    async (_, entryId: string) => {
+      checkRateLimit(IPC_CHANNELS.MCP_REGISTRY_INSTALL);
+      const validatedId = validateInput(
+        StringIdSchema,
+        entryId,
+        "registry entry ID",
+      );
+      return MCPRegistryManager.installServer(validatedId);
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.MCP_REGISTRY_UNINSTALL, async (_, serverId: string) => {
-    const validatedId = validateInput(UUIDSchema, serverId, "server ID");
+  ipcMain.handle(
+    IPC_CHANNELS.MCP_REGISTRY_UNINSTALL,
+    async (_, serverId: string) => {
+      const validatedId = validateInput(UUIDSchema, serverId, "server ID");
 
-    // Disconnect if connected
-    try {
-      await MCPClientManager.getInstance().disconnectServer(validatedId);
-    } catch {
-      // Ignore errors
-    }
+      // Disconnect if connected
+      try {
+        await MCPClientManager.getInstance().disconnectServer(validatedId);
+      } catch {
+        // Ignore errors
+      }
 
-    await MCPRegistryManager.uninstallServer(validatedId);
-  });
+      await MCPRegistryManager.uninstallServer(validatedId);
+    },
+  );
 
   ipcMain.handle(IPC_CHANNELS.MCP_REGISTRY_CHECK_UPDATES, async () => {
     return MCPRegistryManager.checkForUpdates();
   });
 
-  ipcMain.handle(IPC_CHANNELS.MCP_REGISTRY_UPDATE_SERVER, async (_, serverId: string) => {
-    const validatedId = validateInput(UUIDSchema, serverId, "server ID");
-    return MCPRegistryManager.updateServer(validatedId);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.MCP_REGISTRY_UPDATE_SERVER,
+    async (_, serverId: string) => {
+      const validatedId = validateInput(UUIDSchema, serverId, "server ID");
+      return MCPRegistryManager.updateServer(validatedId);
+    },
+  );
 
   // MCP Connector OAuth (Salesforce/Jira)
   ipcMain.handle(IPC_CHANNELS.MCP_CONNECTOR_OAUTH_START, async (_, payload) => {
     checkRateLimit(IPC_CHANNELS.MCP_CONNECTOR_OAUTH_START);
-    const validated = validateInput(MCPConnectorOAuthSchema, payload, "connector oauth");
+    const validated = validateInput(
+      MCPConnectorOAuthSchema,
+      payload,
+      "connector oauth",
+    );
     return startConnectorOAuth(validated);
   });
 
   // MCP Host handlers
-  ipcMain.handle(IPC_CHANNELS.MCP_HOST_START, async (_, requestedPort?: number) => {
-    const hostServer = MCPHostServer.getInstance();
+  ipcMain.handle(
+    IPC_CHANNELS.MCP_HOST_START,
+    async (_, requestedPort?: number) => {
+      const hostServer = MCPHostServer.getInstance();
 
-    // If no tool provider is set, create a minimal one that exposes MCP tools
-    // from connected servers (useful for tool aggregation/forwarding)
-    if (!hostServer.hasToolProvider()) {
-      const hostDb = DatabaseManager.getInstance().getDatabase();
-      const hostWorkspaceRepo = new WorkspaceRepository(hostDb);
-      const hostTaskRepo = new TaskRepository(hostDb);
-      const hostTaskEventRepo = new TaskEventRepository(hostDb);
-      const hostArtifactRepo = new ArtifactRepository(hostDb);
-      const mcpClientManager = MCPClientManager.getInstance();
-      hostServer.setToolProvider(
-        new CoWorkHostProvider({
-          workspaceRepo: hostWorkspaceRepo,
-          taskRepo: hostTaskRepo,
-          taskEventRepo: hostTaskEventRepo,
-          artifactRepo: hostArtifactRepo,
-          toolDelegate: {
-            getTools() {
-              return mcpClientManager.getAllTools();
+      // If no tool provider is set, create a minimal one that exposes MCP tools
+      // from connected servers (useful for tool aggregation/forwarding)
+      if (!hostServer.hasToolProvider()) {
+        const hostDb = DatabaseManager.getInstance().getDatabase();
+        const hostWorkspaceRepo = new WorkspaceRepository(hostDb);
+        const hostTaskRepo = new TaskRepository(hostDb);
+        const hostTaskEventRepo = new TaskEventRepository(hostDb);
+        const hostArtifactRepo = new ArtifactRepository(hostDb);
+        const mcpClientManager = MCPClientManager.getInstance();
+        hostServer.setToolProvider(
+          new CoWorkHostProvider({
+            workspaceRepo: hostWorkspaceRepo,
+            taskRepo: hostTaskRepo,
+            taskEventRepo: hostTaskEventRepo,
+            artifactRepo: hostArtifactRepo,
+            toolDelegate: {
+              getTools() {
+                return mcpClientManager.getAllTools();
+              },
+              async executeTool(name: string, args: Record<string, Any>) {
+                return mcpClientManager.callTool(name, args);
+              },
             },
-            async executeTool(name: string, args: Record<string, Any>) {
-              return mcpClientManager.callTool(name, args);
-            },
-          },
-        }),
-      );
-    }
+          }),
+        );
+      }
 
-    if (typeof requestedPort === "number" && Number.isFinite(requestedPort) && requestedPort >= 1024) {
-      await hostServer.startHttp(Math.floor(requestedPort));
-      return { success: true, transport: "http", port: hostServer.getHttpPort() };
-    }
+      if (
+        typeof requestedPort === "number" &&
+        Number.isFinite(requestedPort) &&
+        requestedPort >= 1024
+      ) {
+        await hostServer.startHttp(Math.floor(requestedPort));
+        return {
+          success: true,
+          transport: "http",
+          port: hostServer.getHttpPort(),
+        };
+      }
 
-    await hostServer.startStdio();
-    return { success: true, transport: "stdio" };
-  });
+      await hostServer.startStdio();
+      return { success: true, transport: "stdio" };
+    },
+  );
 
   ipcMain.handle(IPC_CHANNELS.MCP_HOST_STOP, async () => {
     const hostServer = MCPHostServer.getInstance();
@@ -6331,11 +7931,14 @@ function setupMCPHandlers(): void {
     return BuiltinToolsSettingsManager.loadSettings();
   });
 
-  ipcMain.handle(IPC_CHANNELS.BUILTIN_TOOLS_SAVE_SETTINGS, async (_, settings) => {
-    BuiltinToolsSettingsManager.saveSettings(settings);
-    BuiltinToolsSettingsManager.clearCache(); // Clear cache to force reload
-    return { success: true };
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.BUILTIN_TOOLS_SAVE_SETTINGS,
+    async (_, settings) => {
+      BuiltinToolsSettingsManager.saveSettings(settings);
+      BuiltinToolsSettingsManager.clearCache(); // Clear cache to force reload
+      return { success: true };
+    },
+  );
 
   ipcMain.handle(IPC_CHANNELS.BUILTIN_TOOLS_GET_CATEGORIES, async () => {
     return BuiltinToolsSettingsManager.getToolsByCategory();
@@ -6411,7 +8014,10 @@ function setupMCPHandlers(): void {
  * Set up Infrastructure IPC handlers
  */
 function setupInfraHandlers(): void {
-  rateLimiter.configure(IPC_CHANNELS.INFRA_SAVE_SETTINGS, RATE_LIMIT_CONFIGS.limited);
+  rateLimiter.configure(
+    IPC_CHANNELS.INFRA_SAVE_SETTINGS,
+    RATE_LIMIT_CONFIGS.limited,
+  );
   rateLimiter.configure(IPC_CHANNELS.INFRA_SETUP, RATE_LIMIT_CONFIGS.expensive);
   rateLimiter.configure(IPC_CHANNELS.INFRA_RESET, RATE_LIMIT_CONFIGS.expensive);
 
@@ -6425,7 +8031,11 @@ function setupInfraHandlers(): void {
 
   ipcMain.handle(IPC_CHANNELS.INFRA_SAVE_SETTINGS, async (_, settings) => {
     checkRateLimit(IPC_CHANNELS.INFRA_SAVE_SETTINGS);
-    const validated = validateInput(InfraSettingsSchema, settings, "Infrastructure settings");
+    const validated = validateInput(
+      InfraSettingsSchema,
+      settings,
+      "Infrastructure settings",
+    );
     InfraSettingsManager.saveSettings(validated);
     InfraSettingsManager.clearCache();
     // Re-apply settings to providers
@@ -6446,7 +8056,8 @@ function setupInfraHandlers(): void {
     const settings = InfraSettingsManager.loadSettings();
     if (settings.wallet.provider === "coinbase_agentic") {
       await InfraManager.getInstance().applySettings(settings);
-      const wallet = await InfraManager.getInstance().getWalletInfoWithBalance();
+      const wallet =
+        await InfraManager.getInstance().getWalletInfoWithBalance();
       return {
         success: !!wallet?.address,
         address: wallet?.address || undefined,
@@ -6456,14 +8067,19 @@ function setupInfraHandlers(): void {
 
     // Attempt to migrate/restore wallet
     const check = WalletManager.startupCheck();
-    return { success: !!check.address, address: check.address || undefined, status: check.status };
+    return {
+      success: !!check.address,
+      address: check.address || undefined,
+      status: check.status,
+    };
   });
 
   ipcMain.handle(IPC_CHANNELS.INFRA_WALLET_VERIFY, async () => {
     const settings = InfraSettingsManager.loadSettings();
     if (settings.wallet.provider === "coinbase_agentic") {
       await InfraManager.getInstance().applySettings(settings);
-      const wallet = await InfraManager.getInstance().getWalletInfoWithBalance();
+      const wallet =
+        await InfraManager.getInstance().getWalletInfoWithBalance();
       return {
         status: wallet?.address ? "ok" : "no_wallet",
         address: wallet?.address || undefined,
@@ -6499,10 +8115,13 @@ function setupScrapingHandlers(): void {
     return ScrapingSettingsManager.loadSettings();
   });
 
-  ipcMain.handle(IPC_CHANNELS.SCRAPING_SAVE_SETTINGS, async (_: Any, settings: Any) => {
-    ScrapingSettingsManager.saveSettings(settings);
-    return { success: true };
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.SCRAPING_SAVE_SETTINGS,
+    async (_: Any, settings: Any) => {
+      ScrapingSettingsManager.saveSettings(settings);
+      return { success: true };
+    },
+  );
 
   ipcMain.handle(IPC_CHANNELS.SCRAPING_GET_STATUS, async () => {
     const settings = ScrapingSettingsManager.loadSettings();
@@ -6596,11 +8215,14 @@ function setupCronHandlers(): void {
   });
 
   // List all jobs
-  ipcMain.handle(IPC_CHANNELS.CRON_LIST_JOBS, async (_, opts?: { includeDisabled?: boolean }) => {
-    const service = getCronService();
-    if (!service) return [];
-    return service.list(opts);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.CRON_LIST_JOBS,
+    async (_, opts?: { includeDisabled?: boolean }) => {
+      const service = getCronService();
+      if (!service) return [];
+      return service.list(opts);
+    },
+  );
 
   // Get a single job
   ipcMain.handle(IPC_CHANNELS.CRON_GET_JOB, async (_, id: string) => {
@@ -6631,36 +8253,43 @@ function setupCronHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.CRON_REMOVE_JOB, async (_, id: string) => {
     const service = getCronService();
     if (!service) {
-      return { ok: false, removed: false, error: "Cron service not initialized" };
+      return {
+        ok: false,
+        removed: false,
+        error: "Cron service not initialized",
+      };
     }
     return service.remove(id);
   });
 
   // Run a job immediately
-  ipcMain.handle(IPC_CHANNELS.CRON_RUN_JOB, async (_, id: string, mode?: "due" | "force") => {
-    const service = getCronService();
-    if (!service) {
-      return { ok: false, error: "Cron service not initialized" };
-    }
-    return service.run(id, mode);
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.CRON_RUN_JOB,
+    async (_, id: string, mode?: "due" | "force") => {
+      const service = getCronService();
+      if (!service) {
+        return { ok: false, error: "Cron service not initialized" };
+      }
+      return service.run(id, mode);
+    },
+  );
 
   // Get run history for a job
-  ipcMain.handle("cron:getRunHistory", async (_, id: string) => {
+  ipcMain.handle(IPC_CHANNELS.CRON_GET_RUN_HISTORY, async (_, id: string) => {
     const service = getCronService();
     if (!service) return null;
     return service.getRunHistory(id);
   });
 
   // Clear run history for a job
-  ipcMain.handle("cron:clearRunHistory", async (_, id: string) => {
+  ipcMain.handle(IPC_CHANNELS.CRON_CLEAR_RUN_HISTORY, async (_, id: string) => {
     const service = getCronService();
     if (!service) return false;
     return service.clearRunHistory(id);
   });
 
   // Get webhook status
-  ipcMain.handle("cron:getWebhookStatus", async () => {
+  ipcMain.handle(IPC_CHANNELS.CRON_GET_WEBHOOK_STATUS, async () => {
     const service = getCronService();
     if (!service) return { enabled: false };
     const status = await service.status();
@@ -6669,7 +8298,9 @@ function setupCronHandlers(): void {
 }
 
 function setupCouncilHandlers(): void {
-  const ListCouncilsSchema = z.object({ workspaceId: WorkspaceIdSchema }).strict();
+  const ListCouncilsSchema = z
+    .object({ workspaceId: WorkspaceIdSchema })
+    .strict();
   const CouncilParticipantSchema = z
     .object({
       providerType: z.enum(LLM_PROVIDER_TYPES),
@@ -6720,9 +8351,23 @@ function setupCouncilHandlers(): void {
     })
     .strict();
   const CronScheduleSchema = z.union([
-    z.object({ kind: z.literal("cron"), expr: z.string().trim().min(1), tz: z.string().optional() }).strict(),
-    z.object({ kind: z.literal("every"), everyMs: z.number().int().positive(), anchorMs: z.number().int().optional() }).strict(),
-    z.object({ kind: z.literal("at"), atMs: z.number().int().positive() }).strict(),
+    z
+      .object({
+        kind: z.literal("cron"),
+        expr: z.string().trim().min(1),
+        tz: z.string().optional(),
+      })
+      .strict(),
+    z
+      .object({
+        kind: z.literal("every"),
+        everyMs: z.number().int().positive(),
+        anchorMs: z.number().int().optional(),
+      })
+      .strict(),
+    z
+      .object({ kind: z.literal("at"), atMs: z.number().int().positive() })
+      .strict(),
   ]);
   const CouncilCreateSchema = z
     .object({
@@ -6754,21 +8399,24 @@ function setupCouncilHandlers(): void {
       nextIdeaSeatIndex: z.number().int().min(0).optional(),
     })
     .strict();
-  const CouncilMemoQuerySchema = z
-    .union([
-      StringIdSchema,
-      z
-        .object({
-          id: z.string().optional(),
-          councilConfigId: z.string().optional(),
-        })
-        .strict(),
-    ]);
+  const CouncilMemoQuerySchema = z.union([
+    StringIdSchema,
+    z
+      .object({
+        id: z.string().optional(),
+        councilConfigId: z.string().optional(),
+      })
+      .strict(),
+  ]);
 
   ipcMain.handle(IPC_CHANNELS.COUNCIL_LIST, async (_, payload?: Any) => {
     const service = getCouncilService();
     if (!service) return [];
-    const validated = validateInput(ListCouncilsSchema, payload, "council list request");
+    const validated = validateInput(
+      ListCouncilsSchema,
+      payload,
+      "council list request",
+    );
     return service.list(validated.workspaceId);
   });
 
@@ -6785,7 +8433,11 @@ function setupCouncilHandlers(): void {
     if (!service) {
       throw new Error("Council service not initialized");
     }
-    const validated = validateInput(CouncilCreateSchema, payload, "council config");
+    const validated = validateInput(
+      CouncilCreateSchema,
+      payload,
+      "council config",
+    );
     return service.create(validated);
   });
 
@@ -6795,7 +8447,11 @@ function setupCouncilHandlers(): void {
     if (!service) {
       throw new Error("Council service not initialized");
     }
-    const validated = validateInput(CouncilUpdateSchema, payload, "council update");
+    const validated = validateInput(
+      CouncilUpdateSchema,
+      payload,
+      "council update",
+    );
     return (await service.update(validated)) ?? null;
   });
 
@@ -6837,7 +8493,11 @@ function setupCouncilHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.COUNCIL_GET_MEMO, async (_, payload: Any) => {
     const service = getCouncilService();
     if (!service) return null;
-    const validated = validateInput(CouncilMemoQuerySchema, payload, "council memo request");
+    const validated = validateInput(
+      CouncilMemoQuerySchema,
+      payload,
+      "council memo request",
+    );
     if (typeof validated === "string") {
       return service.getMemo(validated) ?? null;
     }
@@ -6921,7 +8581,7 @@ function setupNotificationHandlers(): void {
   });
 
   // Get unread count
-  ipcMain.handle("notification:unreadCount", async () => {
+  ipcMain.handle(IPC_CHANNELS.NOTIFICATION_UNREAD_COUNT, async () => {
     if (!notificationService) return 0;
     return notificationService.getUnreadCount();
   });
@@ -6985,7 +8645,9 @@ export function getHooksServer(): HooksServer | null {
   return hooksServer;
 }
 
-export function setHookTriggerEmitter(emitter: ((event: TriggerEvent) => void) | null): void {
+export function setHookTriggerEmitter(
+  emitter: ((event: TriggerEvent) => void) | null,
+): void {
   hookTriggerEmitter = emitter;
 }
 
@@ -7024,7 +8686,9 @@ async function setupHooksHandlers(agentDaemon: AgentDaemon): Promise<void> {
       // (e.g. migrated from legacy settings without a token)
       const token = HooksSettingsManager.regenerateToken();
       settings.token = token;
-      logger.debug("[Hooks] Auto-generated missing token for enabled hooks server");
+      logger.debug(
+        "[Hooks] Auto-generated missing token for enabled hooks server",
+      );
     }
 
     // If already running, just refresh config (covers mapping updates + token overrides).
@@ -7074,9 +8738,11 @@ async function setupHooksHandlers(agentDaemon: AgentDaemon): Promise<void> {
           err.statusCode = 404;
           throw err;
         }
-        void agentDaemon.sendMessage(action.taskId, action.message).catch((err) => {
-          console.error("[Hooks] Failed to process task message:", err);
-        });
+        void agentDaemon
+          .sendMessage(action.taskId, action.message)
+          .catch((err) => {
+            console.error("[Hooks] Failed to process task message:", err);
+          });
       },
       onApprovalRespond: async (action) => {
         logger.debug(
@@ -7084,7 +8750,10 @@ async function setupHooksHandlers(agentDaemon: AgentDaemon): Promise<void> {
           action.approvalId,
           action.approved ? "approve" : "deny",
         );
-        return agentDaemon.respondToApproval(action.approvalId, action.approved);
+        return agentDaemon.respondToApproval(
+          action.approvalId,
+          action.approved,
+        );
       },
       onEvent: (event) => {
         logger.debug("[Hooks] Server event:", event.action);
@@ -7127,84 +8796,94 @@ async function setupHooksHandlers(agentDaemon: AgentDaemon): Promise<void> {
   };
 
   // Get hooks settings
-  ipcMain.handle(IPC_CHANNELS.HOOKS_GET_SETTINGS, async (): Promise<HooksSettingsData> => {
-    const settings = HooksSettingsManager.getSettingsForDisplay();
-    return {
-      enabled: settings.enabled,
-      token: settings.token,
-      path: settings.path,
-      maxBodyBytes: settings.maxBodyBytes,
-      port: DEFAULT_HOOKS_PORT,
-      host: "127.0.0.1",
-      presets: settings.presets,
-      mappings: settings.mappings as HookMappingData[],
-      gmail: settings.gmail as GmailHooksSettingsData | undefined,
-      resend: settings.resend as ResendHooksSettingsData | undefined,
-    };
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.HOOKS_GET_SETTINGS,
+    async (): Promise<HooksSettingsData> => {
+      const settings = HooksSettingsManager.getSettingsForDisplay();
+      return {
+        enabled: settings.enabled,
+        token: settings.token,
+        path: settings.path,
+        maxBodyBytes: settings.maxBodyBytes,
+        port: DEFAULT_HOOKS_PORT,
+        host: "127.0.0.1",
+        presets: settings.presets,
+        mappings: settings.mappings as HookMappingData[],
+        gmail: settings.gmail as GmailHooksSettingsData | undefined,
+        resend: settings.resend as ResendHooksSettingsData | undefined,
+      };
+    },
+  );
 
   // Save hooks settings
-  ipcMain.handle(IPC_CHANNELS.HOOKS_SAVE_SETTINGS, async (_, data: Partial<HooksSettingsData>) => {
-    checkRateLimit(IPC_CHANNELS.HOOKS_SAVE_SETTINGS, RATE_LIMIT_CONFIGS.limited);
+  ipcMain.handle(
+    IPC_CHANNELS.HOOKS_SAVE_SETTINGS,
+    async (_, data: Partial<HooksSettingsData>) => {
+      checkRateLimit(
+        IPC_CHANNELS.HOOKS_SAVE_SETTINGS,
+        RATE_LIMIT_CONFIGS.limited,
+      );
 
-    const currentSettings = HooksSettingsManager.loadSettings();
-    const MASKED_SECRET = "***configured***";
+      const currentSettings = HooksSettingsManager.loadSettings();
+      const MASKED_SECRET = "***configured***";
 
-    const mergedGmail = data.gmail
-      ? {
-          ...currentSettings.gmail,
-          ...data.gmail,
-          pushToken:
-            data.gmail.pushToken === MASKED_SECRET
-              ? currentSettings.gmail?.pushToken
-              : (data.gmail.pushToken ?? currentSettings.gmail?.pushToken),
-        }
-      : currentSettings.gmail;
+      const mergedGmail = data.gmail
+        ? {
+            ...currentSettings.gmail,
+            ...data.gmail,
+            pushToken:
+              data.gmail.pushToken === MASKED_SECRET
+                ? currentSettings.gmail?.pushToken
+                : (data.gmail.pushToken ?? currentSettings.gmail?.pushToken),
+          }
+        : currentSettings.gmail;
 
-    const mergedResend = data.resend
-      ? {
-          ...currentSettings.resend,
-          ...data.resend,
-          webhookSecret:
-            data.resend.webhookSecret === MASKED_SECRET
-              ? currentSettings.resend?.webhookSecret
-              : (data.resend.webhookSecret ?? currentSettings.resend?.webhookSecret),
-        }
-      : currentSettings.resend;
+      const mergedResend = data.resend
+        ? {
+            ...currentSettings.resend,
+            ...data.resend,
+            webhookSecret:
+              data.resend.webhookSecret === MASKED_SECRET
+                ? currentSettings.resend?.webhookSecret
+                : (data.resend.webhookSecret ??
+                  currentSettings.resend?.webhookSecret),
+          }
+        : currentSettings.resend;
 
-    const updated = HooksSettingsManager.updateConfig({
-      ...currentSettings,
-      enabled: data.enabled ?? currentSettings.enabled,
-      token:
-        data.token === MASKED_SECRET
-          ? currentSettings.token
-          : (data.token ?? currentSettings.token),
-      path: data.path ?? currentSettings.path,
-      maxBodyBytes: data.maxBodyBytes ?? currentSettings.maxBodyBytes,
-      presets: data.presets ?? currentSettings.presets,
-      mappings: data.mappings ?? currentSettings.mappings,
-      gmail: mergedGmail,
-      resend: mergedResend,
-    });
+      const updated = HooksSettingsManager.updateConfig({
+        ...currentSettings,
+        enabled: data.enabled ?? currentSettings.enabled,
+        token:
+          data.token === MASKED_SECRET
+            ? currentSettings.token
+            : (data.token ?? currentSettings.token),
+        path: data.path ?? currentSettings.path,
+        maxBodyBytes: data.maxBodyBytes ?? currentSettings.maxBodyBytes,
+        presets: data.presets ?? currentSettings.presets,
+        mappings: data.mappings ?? currentSettings.mappings,
+        gmail: mergedGmail,
+        resend: mergedResend,
+      });
 
-    // Restart hooks server if needed
-    if (hooksServer && updated.enabled) {
-      hooksServer.setHooksConfig(updated);
-    }
+      // Restart hooks server if needed
+      if (hooksServer && updated.enabled) {
+        hooksServer.setHooksConfig(updated);
+      }
 
-    return {
-      enabled: updated.enabled,
-      token: updated.token ? "***configured***" : "",
-      path: updated.path,
-      maxBodyBytes: updated.maxBodyBytes,
-      port: DEFAULT_HOOKS_PORT,
-      host: "127.0.0.1",
-      presets: updated.presets,
-      mappings: updated.mappings as HookMappingData[],
-      gmail: updated.gmail as GmailHooksSettingsData | undefined,
-      resend: updated.resend as ResendHooksSettingsData | undefined,
-    };
-  });
+      return {
+        enabled: updated.enabled,
+        token: updated.token ? "***configured***" : "",
+        path: updated.path,
+        maxBodyBytes: updated.maxBodyBytes,
+        port: DEFAULT_HOOKS_PORT,
+        host: "127.0.0.1",
+        presets: updated.presets,
+        mappings: updated.mappings as HookMappingData[],
+        gmail: updated.gmail as GmailHooksSettingsData | undefined,
+        resend: updated.resend as ResendHooksSettingsData | undefined,
+      };
+    },
+  );
 
   // Enable hooks
   ipcMain.handle(IPC_CHANNELS.HOOKS_ENABLE, async () => {
@@ -7258,7 +8937,10 @@ async function setupHooksHandlers(agentDaemon: AgentDaemon): Promise<void> {
 
   // Regenerate hook token
   ipcMain.handle(IPC_CHANNELS.HOOKS_REGENERATE_TOKEN, async () => {
-    checkRateLimit(IPC_CHANNELS.HOOKS_REGENERATE_TOKEN, RATE_LIMIT_CONFIGS.limited);
+    checkRateLimit(
+      IPC_CHANNELS.HOOKS_REGENERATE_TOKEN,
+      RATE_LIMIT_CONFIGS.limited,
+    );
     const newToken = HooksSettingsManager.regenerateToken();
 
     // Update the running server with new token
@@ -7271,19 +8953,22 @@ async function setupHooksHandlers(agentDaemon: AgentDaemon): Promise<void> {
   });
 
   // Get hooks status
-  ipcMain.handle(IPC_CHANNELS.HOOKS_GET_STATUS, async (): Promise<HooksStatus> => {
-    const settings = HooksSettingsManager.loadSettings();
-    const gogAvailable = await isGogAvailable();
+  ipcMain.handle(
+    IPC_CHANNELS.HOOKS_GET_STATUS,
+    async (): Promise<HooksStatus> => {
+      const settings = HooksSettingsManager.loadSettings();
+      const gogAvailable = await isGogAvailable();
 
-    return {
-      enabled: settings.enabled,
-      serverRunning: hooksServer?.isRunning() ?? false,
-      serverAddress: hooksServer?.getAddress() ?? undefined,
-      gmailWatcherRunning: isGmailWatcherRunning(),
-      gmailAccount: settings.gmail?.account,
-      gogAvailable,
-    };
-  });
+      return {
+        enabled: settings.enabled,
+        serverRunning: hooksServer?.isRunning() ?? false,
+        serverAddress: hooksServer?.getAddress() ?? undefined,
+        gmailWatcherRunning: isGmailWatcherRunning(),
+        gmailAccount: settings.gmail?.account,
+        gogAvailable,
+      };
+    },
+  );
 
   // Auto-start the server on boot if hooks are enabled.
   // This avoids "hooks enabled but nothing listens" after app restarts.
@@ -7292,7 +8977,11 @@ async function setupHooksHandlers(agentDaemon: AgentDaemon): Promise<void> {
 
     // Auto-start Gmail watcher if configured (best-effort).
     const settings = getHooksRuntimeSettings();
-    if (settings.enabled && settings.gmail?.account && !isGmailWatcherRunning()) {
+    if (
+      settings.enabled &&
+      settings.gmail?.account &&
+      !isGmailWatcherRunning()
+    ) {
       const result = await startGmailWatcher(settings);
       if (!result.started) {
         console.warn("[Hooks] Gmail watcher not started:", result.reason);
@@ -7304,25 +8993,38 @@ async function setupHooksHandlers(agentDaemon: AgentDaemon): Promise<void> {
   }
 
   // Add a hook mapping
-  ipcMain.handle(IPC_CHANNELS.HOOKS_ADD_MAPPING, async (_, mapping: HookMappingData) => {
-    checkRateLimit(IPC_CHANNELS.HOOKS_ADD_MAPPING, RATE_LIMIT_CONFIGS.limited);
+  ipcMain.handle(
+    IPC_CHANNELS.HOOKS_ADD_MAPPING,
+    async (_, mapping: HookMappingData) => {
+      checkRateLimit(
+        IPC_CHANNELS.HOOKS_ADD_MAPPING,
+        RATE_LIMIT_CONFIGS.limited,
+      );
 
-    // Validate the mapping input
-    const validated = validateInput(HookMappingSchema, mapping, "hook mapping");
+      // Validate the mapping input
+      const validated = validateInput(
+        HookMappingSchema,
+        mapping,
+        "hook mapping",
+      );
 
-    const settings = HooksSettingsManager.addMapping(validated);
+      const settings = HooksSettingsManager.addMapping(validated);
 
-    // Update the server config if running
-    if (hooksServer) {
-      hooksServer.setHooksConfig(settings);
-    }
+      // Update the server config if running
+      if (hooksServer) {
+        hooksServer.setHooksConfig(settings);
+      }
 
-    return { ok: true };
-  });
+      return { ok: true };
+    },
+  );
 
   // Remove a hook mapping
   ipcMain.handle(IPC_CHANNELS.HOOKS_REMOVE_MAPPING, async (_, id: string) => {
-    checkRateLimit(IPC_CHANNELS.HOOKS_REMOVE_MAPPING, RATE_LIMIT_CONFIGS.limited);
+    checkRateLimit(
+      IPC_CHANNELS.HOOKS_REMOVE_MAPPING,
+      RATE_LIMIT_CONFIGS.limited,
+    );
 
     // Validate the mapping ID
     const validatedId = validateInput(StringIdSchema, id, "mapping ID");
@@ -7338,26 +9040,32 @@ async function setupHooksHandlers(agentDaemon: AgentDaemon): Promise<void> {
   });
 
   // Configure Gmail hooks
-  ipcMain.handle(IPC_CHANNELS.HOOKS_CONFIGURE_GMAIL, async (_, config: GmailHooksSettingsData) => {
-    checkRateLimit(IPC_CHANNELS.HOOKS_CONFIGURE_GMAIL, RATE_LIMIT_CONFIGS.limited);
+  ipcMain.handle(
+    IPC_CHANNELS.HOOKS_CONFIGURE_GMAIL,
+    async (_, config: GmailHooksSettingsData) => {
+      checkRateLimit(
+        IPC_CHANNELS.HOOKS_CONFIGURE_GMAIL,
+        RATE_LIMIT_CONFIGS.limited,
+      );
 
-    // Generate push token if not provided
-    if (!config.pushToken) {
-      config.pushToken = generateHookToken();
-    }
+      // Generate push token if not provided
+      if (!config.pushToken) {
+        config.pushToken = generateHookToken();
+      }
 
-    const settings = HooksSettingsManager.configureGmail(config);
+      const settings = HooksSettingsManager.configureGmail(config);
 
-    // Update the server config if running
-    if (hooksServer) {
-      hooksServer.setHooksConfig(settings);
-    }
+      // Update the server config if running
+      if (hooksServer) {
+        hooksServer.setHooksConfig(settings);
+      }
 
-    return {
-      ok: true,
-      gmail: HooksSettingsManager.getGmailConfig(),
-    };
-  });
+      return {
+        ok: true,
+        gmail: HooksSettingsManager.getGmailConfig(),
+      };
+    },
+  );
 
   // Get Gmail watcher status
   ipcMain.handle(IPC_CHANNELS.HOOKS_GET_GMAIL_STATUS, async () => {
@@ -7375,7 +9083,10 @@ async function setupHooksHandlers(agentDaemon: AgentDaemon): Promise<void> {
 
   // Start Gmail watcher manually
   ipcMain.handle(IPC_CHANNELS.HOOKS_START_GMAIL_WATCHER, async () => {
-    checkRateLimit(IPC_CHANNELS.HOOKS_START_GMAIL_WATCHER, RATE_LIMIT_CONFIGS.expensive);
+    checkRateLimit(
+      IPC_CHANNELS.HOOKS_START_GMAIL_WATCHER,
+      RATE_LIMIT_CONFIGS.expensive,
+    );
 
     const settings = HooksSettingsManager.loadSettings();
     if (!settings.enabled) {
@@ -7392,7 +9103,10 @@ async function setupHooksHandlers(agentDaemon: AgentDaemon): Promise<void> {
 
   // Stop Gmail watcher manually
   ipcMain.handle(IPC_CHANNELS.HOOKS_STOP_GMAIL_WATCHER, async () => {
-    checkRateLimit(IPC_CHANNELS.HOOKS_STOP_GMAIL_WATCHER, RATE_LIMIT_CONFIGS.limited);
+    checkRateLimit(
+      IPC_CHANNELS.HOOKS_STOP_GMAIL_WATCHER,
+      RATE_LIMIT_CONFIGS.limited,
+    );
     await stopGmailWatcher();
     return { ok: true };
   });
@@ -7410,11 +9124,17 @@ function broadcastPersonalitySettingsChanged(settings: Any): void {
     for (const win of windows) {
       try {
         if (win.webContents && !win.isDestroyed()) {
-          win.webContents.send(IPC_CHANNELS.PERSONALITY_SETTINGS_CHANGED, settings);
+          win.webContents.send(
+            IPC_CHANNELS.PERSONALITY_SETTINGS_CHANGED,
+            settings,
+          );
         }
       } catch (err) {
         // Window may have been destroyed between check and send
-        console.warn("[Personality] Failed to send settings changed event to window:", err);
+        console.warn(
+          "[Personality] Failed to send settings changed event to window:",
+          err,
+        );
       }
     }
   } catch (err) {
@@ -7453,7 +9173,11 @@ function setupKitHandlers(
     ].join("\n");
   };
 
-  const withKitFrontmatter = (relPath: string, content: string, updated: string): string => {
+  const withKitFrontmatter = (
+    relPath: string,
+    content: string,
+    updated: string,
+  ): string => {
     if (!relPath.toLowerCase().endsWith(".md")) {
       return content.endsWith("\n") ? content : `${content}\n`;
     }
@@ -7475,7 +9199,9 @@ function setupKitHandlers(
     return ws.path;
   };
 
-  const computeStatus = async (workspaceId: string): Promise<WorkspaceKitStatus> => {
+  const computeStatus = async (
+    workspaceId: string,
+  ): Promise<WorkspaceKitStatus> => {
     const workspacePath = getWorkspacePath(workspaceId);
     // Ensure lifecycle state is current (covers bootstrap deletion → onboardingCompletedAt)
     // before the pure status read so the returned onboarding timestamps are always accurate.
@@ -7758,7 +9484,9 @@ function setupKitHandlers(
       {
         relPath: path.join(kitDirName, "policy", "tools.monty"),
         content:
-          `# Workspace-local tool policy hook\n` + `# Default: allow.\n` + `{"decision": "pass"}\n`,
+          `# Workspace-local tool policy hook\n` +
+          `# Default: allow.\n` +
+          `{"decision": "pass"}\n`,
       },
       {
         relPath: path.join(kitDirName, "MEMORY.md"),
@@ -7828,10 +9556,7 @@ function setupKitHandlers(
               `1. \n` +
               `2. \n` +
               `3. \n\n`
-            : `## Current\n` +
-              `1. \n` +
-              `2. \n` +
-              `3. \n\n`) +
+            : `## Current\n` + `1. \n` + `2. \n` + `3. \n\n`) +
           `## Notes\n` +
           `- \n\n` +
           `## History\n`,
@@ -8075,7 +9800,9 @@ function setupKitHandlers(
 
     try {
       const existing = await cron.list({ includeDisabled: true });
-      const existingInWorkspace = existing.filter((j) => j.workspaceId === workspaceId);
+      const existingInWorkspace = existing.filter(
+        (j) => j.workspaceId === workspaceId,
+      );
 
       const desired: Array<{ marker: string; job: CronJobCreate }> = [
         {
@@ -8121,7 +9848,8 @@ function setupKitHandlers(
 
       const findJob = (name: string, marker: string) =>
         existingInWorkspace.find(
-          (j) => typeof j.description === "string" && j.description.includes(marker),
+          (j) =>
+            typeof j.description === "string" && j.description.includes(marker),
         ) ?? existingInWorkspace.find((j) => j.name === name);
 
       for (const spec of desired) {
@@ -8129,7 +9857,11 @@ function setupKitHandlers(
         if (!existingJob) {
           const res = await cron.add(spec.job);
           if (!res.ok) {
-            console.warn("[Kit] Failed to add scheduled job:", spec.job.name, res.error);
+            console.warn(
+              "[Kit] Failed to add scheduled job:",
+              spec.job.name,
+              res.error,
+            );
           }
           continue;
         }
@@ -8150,13 +9882,22 @@ function setupKitHandlers(
 
         const needsUpdate = (() => {
           if (existingJob.name !== patch.name) return true;
-          if ((existingJob.description || "") !== (patch.description || "")) return true;
+          if ((existingJob.description || "") !== (patch.description || ""))
+            return true;
           if (existingJob.taskPrompt !== patch.taskPrompt) return true;
-          if ((existingJob.taskTitle || "") !== (patch.taskTitle || "")) return true;
-          if ((existingJob.maxHistoryEntries || 0) !== (patch.maxHistoryEntries || 0)) return true;
+          if ((existingJob.taskTitle || "") !== (patch.taskTitle || ""))
+            return true;
+          if (
+            (existingJob.maxHistoryEntries || 0) !==
+            (patch.maxHistoryEntries || 0)
+          )
+            return true;
           if (kitMode === "overwrite") {
             if (existingJob.enabled !== patch.enabled) return true;
-            if (JSON.stringify(existingJob.schedule) !== JSON.stringify(patch.schedule))
+            if (
+              JSON.stringify(existingJob.schedule) !==
+              JSON.stringify(patch.schedule)
+            )
               return true;
           }
           return false;
@@ -8166,7 +9907,11 @@ function setupKitHandlers(
 
         const res = await cron.update(existingJob.id, patch);
         if (!res.ok) {
-          console.warn("[Kit] Failed to update scheduled job:", spec.job.name, res.error);
+          console.warn(
+            "[Kit] Failed to update scheduled job:",
+            spec.job.name,
+            res.error,
+          );
         }
       }
     } catch (error) {
@@ -8174,75 +9919,88 @@ function setupKitHandlers(
     }
   };
 
-  ipcMain.handle(IPC_CHANNELS.KIT_GET_STATUS, async (_event, workspaceId: string) => {
-    try {
-      return await computeStatus(workspaceId);
-    } catch (error: Any) {
-      return {
-        workspaceId,
-        hasKitDir: false,
-        files: [],
-        missingCount: 0,
-        error: error?.message || "Failed to load kit status",
-      } as Any;
-    }
-  });
-
-  ipcMain.handle(IPC_CHANNELS.KIT_INIT, async (_event, request: WorkspaceKitInitRequest) => {
-    checkRateLimit(IPC_CHANNELS.KIT_INIT, RATE_LIMIT_CONFIGS.limited);
-    const mode = request?.mode === "overwrite" ? "overwrite" : "missing";
-    const preset = request?.templatePreset === "venture_operator" ? "venture_operator" : "default";
-    const workspacePath = getWorkspacePath(request.workspaceId);
-    const workspaceStateBefore = await readWorkspaceKitState(workspacePath);
-
-    await ensureDir(workspacePath, path.join(kitDirName, "memory"));
-    await ensureDir(workspacePath, path.join(kitDirName, "memory", "hourly"));
-    await ensureDir(workspacePath, path.join(kitDirName, "memory", "weekly"));
-    await ensureDir(workspacePath, path.join(kitDirName, "projects"));
-    await ensureDir(workspacePath, path.join(kitDirName, "agents"));
-    await ensureDir(workspacePath, path.join(kitDirName, "uploads"));
-    await ensureDir(workspacePath, path.join(kitDirName, "transforms"));
-    await ensureDir(workspacePath, path.join(kitDirName, "router"));
-    await ensureDir(workspacePath, path.join(kitDirName, "policy"));
-    await ensureDir(workspacePath, path.join(kitDirName, "feedback"));
-
-    const now = new Date();
-    const templates = templatesForInit(now, preset);
-    for (const t of templates) {
-      const isBootstrapTemplate = t.relPath === path.join(kitDirName, "BOOTSTRAP.md");
-      if (
-        isBootstrapTemplate &&
-        mode === "missing" &&
-        workspaceStateBefore.onboardingCompletedAt &&
-        !fsSync.existsSync(path.join(workspacePath, t.relPath))
-      ) {
-        continue;
+  ipcMain.handle(
+    IPC_CHANNELS.KIT_GET_STATUS,
+    async (_event, workspaceId: string) => {
+      try {
+        return await computeStatus(workspaceId);
+      } catch (error: Any) {
+        return {
+          workspaceId,
+          hasKitDir: false,
+          files: [],
+          missingCount: 0,
+          error: error?.message || "Failed to load kit status",
+        } as Any;
       }
-      await writeTemplate(workspacePath, t.relPath, t.content, mode);
-    }
+    },
+  );
 
-    await ensureBootstrapLifecycleState(workspacePath, workspaceStateBefore);
+  ipcMain.handle(
+    IPC_CHANNELS.KIT_INIT,
+    async (_event, request: WorkspaceKitInitRequest) => {
+      checkRateLimit(IPC_CHANNELS.KIT_INIT, RATE_LIMIT_CONFIGS.limited);
+      const mode = request?.mode === "overwrite" ? "overwrite" : "missing";
+      const preset =
+        request?.templatePreset === "venture_operator"
+          ? "venture_operator"
+          : "default";
+      const workspacePath = getWorkspacePath(request.workspaceId);
+      const workspaceStateBefore = await readWorkspaceKitState(workspacePath);
 
-    // Best-effort: keep kit notes searchable for hybrid recall (does not affect kit init success).
-    try {
-      await MemoryService.syncWorkspaceMarkdown(
-        request.workspaceId,
-        path.join(workspacePath, kitDirName),
-        true,
-      );
-    } catch {
-      // optional enhancement
-    }
+      await ensureDir(workspacePath, path.join(kitDirName, "memory"));
+      await ensureDir(workspacePath, path.join(kitDirName, "memory", "hourly"));
+      await ensureDir(workspacePath, path.join(kitDirName, "memory", "weekly"));
+      await ensureDir(workspacePath, path.join(kitDirName, "projects"));
+      await ensureDir(workspacePath, path.join(kitDirName, "agents"));
+      await ensureDir(workspacePath, path.join(kitDirName, "uploads"));
+      await ensureDir(workspacePath, path.join(kitDirName, "transforms"));
+      await ensureDir(workspacePath, path.join(kitDirName, "router"));
+      await ensureDir(workspacePath, path.join(kitDirName, "policy"));
+      await ensureDir(workspacePath, path.join(kitDirName, "feedback"));
 
-    await ensureDefaultKitCronJobs(request.workspaceId, mode);
+      const now = new Date();
+      const templates = templatesForInit(now, preset);
+      for (const t of templates) {
+        const isBootstrapTemplate =
+          t.relPath === path.join(kitDirName, "BOOTSTRAP.md");
+        if (
+          isBootstrapTemplate &&
+          mode === "missing" &&
+          workspaceStateBefore.onboardingCompletedAt &&
+          !fsSync.existsSync(path.join(workspacePath, t.relPath))
+        ) {
+          continue;
+        }
+        await writeTemplate(workspacePath, t.relPath, t.content, mode);
+      }
 
-    return await computeStatus(request.workspaceId);
-  });
+      await ensureBootstrapLifecycleState(workspacePath, workspaceStateBefore);
+
+      // Best-effort: keep kit notes searchable for hybrid recall (does not affect kit init success).
+      try {
+        await MemoryService.syncWorkspaceMarkdown(
+          request.workspaceId,
+          path.join(workspacePath, kitDirName),
+          true,
+        );
+      } catch {
+        // optional enhancement
+      }
+
+      await ensureDefaultKitCronJobs(request.workspaceId, mode);
+
+      return await computeStatus(request.workspaceId);
+    },
+  );
 
   ipcMain.handle(
     IPC_CHANNELS.KIT_PROJECT_CREATE,
     async (_event, request: WorkspaceKitProjectCreateRequest) => {
-      checkRateLimit(IPC_CHANNELS.KIT_PROJECT_CREATE, RATE_LIMIT_CONFIGS.limited);
+      checkRateLimit(
+        IPC_CHANNELS.KIT_PROJECT_CREATE,
+        RATE_LIMIT_CONFIGS.limited,
+      );
       const workspacePath = getWorkspacePath(request.workspaceId);
 
       const rawId = (request.projectId || "").trim();
@@ -8303,7 +10061,11 @@ function setupKitHandlers(
       if (!fsSync.existsSync(absPath)) {
         const fileName = path.basename(relPath);
         const stamp = getLocalDateStamp(new Date());
-        let defaultContent = withKitFrontmatter(relPath, `# ${fileName.replace(".md", "")}\n\n`, stamp);
+        let defaultContent = withKitFrontmatter(
+          relPath,
+          `# ${fileName.replace(".md", "")}\n\n`,
+          stamp,
+        );
 
         if (fileName === "USER.md") {
           defaultContent = withKitFrontmatter(
@@ -8313,7 +10075,12 @@ function setupKitHandlers(
           );
         }
 
-        writeKitFileWithSnapshot(absPath, defaultContent, "system", "seed missing kit file");
+        writeKitFileWithSnapshot(
+          absPath,
+          defaultContent,
+          "system",
+          "seed missing kit file",
+        );
       }
 
       await shell.openPath(absPath);
@@ -8322,7 +10089,10 @@ function setupKitHandlers(
   );
 
   ipcMain.handle(IPC_CHANNELS.KIT_RESET_ADAPTIVE_STYLE, () => {
-    checkRateLimit(IPC_CHANNELS.KIT_RESET_ADAPTIVE_STYLE, RATE_LIMIT_CONFIGS.limited);
+    checkRateLimit(
+      IPC_CHANNELS.KIT_RESET_ADAPTIVE_STYLE,
+      RATE_LIMIT_CONFIGS.limited,
+    );
     AdaptiveStyleEngine.reset();
   });
 
@@ -8339,7 +10109,10 @@ function setupKitHandlers(
         kind?: "message" | "task";
       },
     ) => {
-      checkRateLimit(IPC_CHANNELS.KIT_SUBMIT_MESSAGE_FEEDBACK, RATE_LIMIT_CONFIGS.limited);
+      checkRateLimit(
+        IPC_CHANNELS.KIT_SUBMIT_MESSAGE_FEEDBACK,
+        RATE_LIMIT_CONFIGS.limited,
+      );
       const { taskId, decision, reason, note, kind, messageId } = payload;
       const feedback = [reason, note].filter(Boolean).join(": ") || undefined;
       agentDaemon.logEvent(taskId, "user_feedback", {
@@ -8347,7 +10120,12 @@ function setupKitHandlers(
         reason: feedback,
         kind: kind || "message",
         messageId,
-        rating: kind === "task" ? (decision === "accepted" ? "positive" : "negative") : undefined,
+        rating:
+          kind === "task"
+            ? decision === "accepted"
+              ? "positive"
+              : "negative"
+            : undefined,
       });
     },
   );
@@ -8357,38 +10135,65 @@ function setupKitHandlers(
  * Set up Memory System IPC handlers
  */
 function setupMemoryHandlers(): void {
-  rateLimiter.configure(IPC_CHANNELS.AWARENESS_SAVE_CONFIG, RATE_LIMIT_CONFIGS.limited);
-  rateLimiter.configure(IPC_CHANNELS.AWARENESS_UPDATE_BELIEF, RATE_LIMIT_CONFIGS.limited);
-  rateLimiter.configure(IPC_CHANNELS.AWARENESS_DELETE_BELIEF, RATE_LIMIT_CONFIGS.limited);
-  rateLimiter.configure(IPC_CHANNELS.AUTONOMY_SAVE_CONFIG, RATE_LIMIT_CONFIGS.limited);
-  rateLimiter.configure(IPC_CHANNELS.AUTONOMY_UPDATE_DECISION, RATE_LIMIT_CONFIGS.limited);
-  rateLimiter.configure(IPC_CHANNELS.AUTONOMY_TRIGGER_EVALUATION, RATE_LIMIT_CONFIGS.standard);
+  rateLimiter.configure(
+    IPC_CHANNELS.AWARENESS_SAVE_CONFIG,
+    RATE_LIMIT_CONFIGS.limited,
+  );
+  rateLimiter.configure(
+    IPC_CHANNELS.AWARENESS_UPDATE_BELIEF,
+    RATE_LIMIT_CONFIGS.limited,
+  );
+  rateLimiter.configure(
+    IPC_CHANNELS.AWARENESS_DELETE_BELIEF,
+    RATE_LIMIT_CONFIGS.limited,
+  );
+  rateLimiter.configure(
+    IPC_CHANNELS.AUTONOMY_SAVE_CONFIG,
+    RATE_LIMIT_CONFIGS.limited,
+  );
+  rateLimiter.configure(
+    IPC_CHANNELS.AUTONOMY_UPDATE_DECISION,
+    RATE_LIMIT_CONFIGS.limited,
+  );
+  rateLimiter.configure(
+    IPC_CHANNELS.AUTONOMY_TRIGGER_EVALUATION,
+    RATE_LIMIT_CONFIGS.standard,
+  );
 
   // Get memory settings for a workspace
-  ipcMain.handle(IPC_CHANNELS.MEMORY_GET_SETTINGS, async (_, workspaceId: string) => {
-    try {
-      return MemoryService.getSettings(workspaceId);
-    } catch (error) {
-      console.error("[Memory] Failed to get settings:", error);
-      // Return default settings if service not initialized
-      return {
-        workspaceId,
-        enabled: true,
-        autoCapture: true,
-        compressionEnabled: true,
-        retentionDays: 90,
-        maxStorageMb: 100,
-        privacyMode: "normal",
-        excludedPatterns: [],
-      };
-    }
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_GET_SETTINGS,
+    async (_, workspaceId: string) => {
+      try {
+        return MemoryService.getSettings(workspaceId);
+      } catch (error) {
+        console.error("[Memory] Failed to get settings:", error);
+        // Return default settings if service not initialized
+        return {
+          workspaceId,
+          enabled: true,
+          autoCapture: true,
+          compressionEnabled: true,
+          retentionDays: 90,
+          maxStorageMb: 100,
+          privacyMode: "normal",
+          excludedPatterns: [],
+        };
+      }
+    },
+  );
 
   // Save memory settings for a workspace
   ipcMain.handle(
     IPC_CHANNELS.MEMORY_SAVE_SETTINGS,
-    async (_, data: { workspaceId: string; settings: Partial<MemorySettings> }) => {
-      checkRateLimit(IPC_CHANNELS.MEMORY_SAVE_SETTINGS, RATE_LIMIT_CONFIGS.limited);
+    async (
+      _,
+      data: { workspaceId: string; settings: Partial<MemorySettings> },
+    ) => {
+      checkRateLimit(
+        IPC_CHANNELS.MEMORY_SAVE_SETTINGS,
+        RATE_LIMIT_CONFIGS.limited,
+      );
       try {
         MemoryService.updateSettings(data.workspaceId, data.settings);
         return { success: true };
@@ -8413,16 +10218,22 @@ function setupMemoryHandlers(): void {
   });
 
   // Save global memory feature toggles
-  ipcMain.handle(IPC_CHANNELS.MEMORY_FEATURES_SAVE_SETTINGS, async (_event, settings: Any) => {
-    checkRateLimit(IPC_CHANNELS.MEMORY_FEATURES_SAVE_SETTINGS, RATE_LIMIT_CONFIGS.limited);
-    try {
-      MemoryFeaturesManager.saveSettings(settings);
-      return { success: true };
-    } catch (error) {
-      console.error("[MemoryFeatures] Failed to save settings:", error);
-      throw error;
-    }
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_FEATURES_SAVE_SETTINGS,
+    async (_event, settings: Any) => {
+      checkRateLimit(
+        IPC_CHANNELS.MEMORY_FEATURES_SAVE_SETTINGS,
+        RATE_LIMIT_CONFIGS.limited,
+      );
+      try {
+        MemoryFeaturesManager.saveSettings(settings);
+        return { success: true };
+      } catch (error) {
+        console.error("[MemoryFeatures] Failed to save settings:", error);
+        throw error;
+      }
+    },
+  );
 
   // Search memories
   ipcMain.handle(
@@ -8474,14 +10285,22 @@ function setupMemoryHandlers(): void {
   );
 
   // Get memory statistics
-  ipcMain.handle(IPC_CHANNELS.MEMORY_GET_STATS, async (_, workspaceId: string) => {
-    try {
-      return MemoryService.getStats(workspaceId);
-    } catch (error) {
-      console.error("[Memory] Failed to get stats:", error);
-      return { count: 0, totalTokens: 0, compressedCount: 0, compressionRatio: 0 };
-    }
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_GET_STATS,
+    async (_, workspaceId: string) => {
+      try {
+        return MemoryService.getStats(workspaceId);
+      } catch (error) {
+        console.error("[Memory] Failed to get stats:", error);
+        return {
+          count: 0,
+          totalTokens: 0,
+          compressedCount: 0,
+          compressionRatio: 0,
+        };
+      }
+    },
+  );
 
   // Clear all memories for a workspace
   ipcMain.handle(IPC_CHANNELS.MEMORY_CLEAR, async (_, workspaceId: string) => {
@@ -8496,69 +10315,111 @@ function setupMemoryHandlers(): void {
   });
 
   // Get imported memory stats
-  ipcMain.handle(IPC_CHANNELS.MEMORY_GET_IMPORTED_STATS, async (_, workspaceId: string) => {
-    try {
-      return MemoryService.getImportedStats(workspaceId);
-    } catch (error) {
-      console.error("[Memory] Failed to get imported stats:", error);
-      return { count: 0, totalTokens: 0 };
-    }
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_GET_IMPORTED_STATS,
+    async (_, workspaceId: string) => {
+      try {
+        return MemoryService.getImportedStats(workspaceId);
+      } catch (error) {
+        console.error("[Memory] Failed to get imported stats:", error);
+        return { count: 0, totalTokens: 0 };
+      }
+    },
+  );
 
   // Find imported memories with pagination
-  ipcMain.handle(IPC_CHANNELS.MEMORY_FIND_IMPORTED, async (_, data: unknown) => {
-    const validated = validateInput(FindImportedSchema, data, "find imported memories");
-    try {
-      return MemoryService.findImported(validated.workspaceId, validated.limit, validated.offset);
-    } catch (error) {
-      console.error("[Memory] Failed to find imported:", error);
-      return [];
-    }
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_FIND_IMPORTED,
+    async (_, data: unknown) => {
+      const validated = validateInput(
+        FindImportedSchema,
+        data,
+        "find imported memories",
+      );
+      try {
+        return MemoryService.findImported(
+          validated.workspaceId,
+          validated.limit,
+          validated.offset,
+        );
+      } catch (error) {
+        console.error("[Memory] Failed to find imported:", error);
+        return [];
+      }
+    },
+  );
 
   // Delete all imported memories
-  ipcMain.handle(IPC_CHANNELS.MEMORY_DELETE_IMPORTED, async (_, workspaceId: string) => {
-    checkRateLimit(IPC_CHANNELS.MEMORY_DELETE_IMPORTED, RATE_LIMIT_CONFIGS.limited);
-    try {
-      const deleted = MemoryService.deleteImported(workspaceId);
-      return { success: true, deleted };
-    } catch (error) {
-      console.error("[Memory] Failed to delete imported:", error);
-      throw error;
-    }
-  });
-
-  ipcMain.handle(IPC_CHANNELS.MEMORY_DELETE_IMPORTED_ENTRY, async (_, data: unknown) => {
-    checkRateLimit(IPC_CHANNELS.MEMORY_DELETE_IMPORTED_ENTRY, RATE_LIMIT_CONFIGS.limited);
-    const validated = validateInput(DeleteImportedEntrySchema, data, "delete imported memory entry");
-    try {
-      const success = MemoryService.deleteImportedEntry(validated.workspaceId, validated.memoryId);
-      return { success };
-    } catch (error) {
-      console.error("[Memory] Failed to delete imported entry:", error);
-      throw error;
-    }
-  });
-
-  ipcMain.handle(IPC_CHANNELS.MEMORY_SET_IMPORTED_RECALL_IGNORED, async (_, data: unknown) => {
-    checkRateLimit(IPC_CHANNELS.MEMORY_SET_IMPORTED_RECALL_IGNORED, RATE_LIMIT_CONFIGS.limited);
-    const validated = validateInput(
-      SetImportedRecallIgnoredSchema,
-      data,
-      "set imported memory prompt-recall ignored state",
-    );
-    try {
-      const memory = MemoryService.setImportedPromptRecallIgnored(
-        validated.workspaceId,
-        validated.memoryId,
-        validated.ignored,
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_DELETE_IMPORTED,
+    async (_, workspaceId: string) => {
+      checkRateLimit(
+        IPC_CHANNELS.MEMORY_DELETE_IMPORTED,
+        RATE_LIMIT_CONFIGS.limited,
       );
-      return { success: Boolean(memory), memory };
-    } catch (error) {
-      console.error("[Memory] Failed to update imported memory prompt-recall state:", error);
-      throw error;
-    }
-  });
+      try {
+        const deleted = MemoryService.deleteImported(workspaceId);
+        return { success: true, deleted };
+      } catch (error) {
+        console.error("[Memory] Failed to delete imported:", error);
+        throw error;
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_DELETE_IMPORTED_ENTRY,
+    async (_, data: unknown) => {
+      checkRateLimit(
+        IPC_CHANNELS.MEMORY_DELETE_IMPORTED_ENTRY,
+        RATE_LIMIT_CONFIGS.limited,
+      );
+      const validated = validateInput(
+        DeleteImportedEntrySchema,
+        data,
+        "delete imported memory entry",
+      );
+      try {
+        const success = MemoryService.deleteImportedEntry(
+          validated.workspaceId,
+          validated.memoryId,
+        );
+        return { success };
+      } catch (error) {
+        console.error("[Memory] Failed to delete imported entry:", error);
+        throw error;
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_SET_IMPORTED_RECALL_IGNORED,
+    async (_, data: unknown) => {
+      checkRateLimit(
+        IPC_CHANNELS.MEMORY_SET_IMPORTED_RECALL_IGNORED,
+        RATE_LIMIT_CONFIGS.limited,
+      );
+      const validated = validateInput(
+        SetImportedRecallIgnoredSchema,
+        data,
+        "set imported memory prompt-recall ignored state",
+      );
+      try {
+        const memory = MemoryService.setImportedPromptRecallIgnored(
+          validated.workspaceId,
+          validated.memoryId,
+          validated.ignored,
+        );
+        return { success: Boolean(memory), memory };
+      } catch (error) {
+        console.error(
+          "[Memory] Failed to update imported memory prompt-recall state:",
+          error,
+        );
+        throw error;
+      }
+    },
+  );
 
   ipcMain.handle(IPC_CHANNELS.MEMORY_GET_USER_PROFILE, async () => {
     try {
@@ -8569,20 +10430,29 @@ function setupMemoryHandlers(): void {
     }
   });
 
-  ipcMain.handle(IPC_CHANNELS.MEMORY_ADD_USER_FACT, async (_, request: AddUserFactRequest) => {
-    checkRateLimit(IPC_CHANNELS.MEMORY_ADD_USER_FACT, RATE_LIMIT_CONFIGS.limited);
-    try {
-      return UserProfileService.addFact(request);
-    } catch (error) {
-      console.error("[Memory] Failed to add user fact:", error);
-      throw error;
-    }
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_ADD_USER_FACT,
+    async (_, request: AddUserFactRequest) => {
+      checkRateLimit(
+        IPC_CHANNELS.MEMORY_ADD_USER_FACT,
+        RATE_LIMIT_CONFIGS.limited,
+      );
+      try {
+        return UserProfileService.addFact(request);
+      } catch (error) {
+        console.error("[Memory] Failed to add user fact:", error);
+        throw error;
+      }
+    },
+  );
 
   ipcMain.handle(
     IPC_CHANNELS.MEMORY_UPDATE_USER_FACT,
     async (_, request: UpdateUserFactRequest) => {
-      checkRateLimit(IPC_CHANNELS.MEMORY_UPDATE_USER_FACT, RATE_LIMIT_CONFIGS.limited);
+      checkRateLimit(
+        IPC_CHANNELS.MEMORY_UPDATE_USER_FACT,
+        RATE_LIMIT_CONFIGS.limited,
+      );
       try {
         return UserProfileService.updateFact(request);
       } catch (error) {
@@ -8592,22 +10462,33 @@ function setupMemoryHandlers(): void {
     },
   );
 
-  ipcMain.handle(IPC_CHANNELS.MEMORY_DELETE_USER_FACT, async (_, id: string) => {
-    checkRateLimit(IPC_CHANNELS.MEMORY_DELETE_USER_FACT, RATE_LIMIT_CONFIGS.limited);
-    try {
-      return { success: UserProfileService.deleteFact(id) };
-    } catch (error) {
-      console.error("[Memory] Failed to delete user fact:", error);
-      throw error;
-    }
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_DELETE_USER_FACT,
+    async (_, id: string) => {
+      checkRateLimit(
+        IPC_CHANNELS.MEMORY_DELETE_USER_FACT,
+        RATE_LIMIT_CONFIGS.limited,
+      );
+      try {
+        return { success: UserProfileService.deleteFact(id) };
+      } catch (error) {
+        console.error("[Memory] Failed to delete user fact:", error);
+        throw error;
+      }
+    },
+  );
 
   ipcMain.handle(
     IPC_CHANNELS.MEMORY_RELATIONSHIP_LIST,
     async (
       _,
       data?: {
-        layer?: "identity" | "preferences" | "context" | "history" | "commitments";
+        layer?:
+          | "identity"
+          | "preferences"
+          | "context"
+          | "history"
+          | "commitments";
         includeDone?: boolean;
         limit?: number;
       },
@@ -8637,7 +10518,10 @@ function setupMemoryHandlers(): void {
         dueAt?: number | null;
       },
     ) => {
-      checkRateLimit(IPC_CHANNELS.MEMORY_RELATIONSHIP_UPDATE, RATE_LIMIT_CONFIGS.limited);
+      checkRateLimit(
+        IPC_CHANNELS.MEMORY_RELATIONSHIP_UPDATE,
+        RATE_LIMIT_CONFIGS.limited,
+      );
       try {
         if (!data?.id || typeof data.id !== "string") {
           throw new Error("id is required");
@@ -8655,50 +10539,75 @@ function setupMemoryHandlers(): void {
     },
   );
 
-  ipcMain.handle(IPC_CHANNELS.MEMORY_RELATIONSHIP_DELETE, async (_, id: string) => {
-    checkRateLimit(IPC_CHANNELS.MEMORY_RELATIONSHIP_DELETE, RATE_LIMIT_CONFIGS.limited);
-    try {
-      if (!id || typeof id !== "string") {
-        throw new Error("id is required");
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_RELATIONSHIP_DELETE,
+    async (_, id: string) => {
+      checkRateLimit(
+        IPC_CHANNELS.MEMORY_RELATIONSHIP_DELETE,
+        RATE_LIMIT_CONFIGS.limited,
+      );
+      try {
+        if (!id || typeof id !== "string") {
+          throw new Error("id is required");
+        }
+        return { success: RelationshipMemoryService.deleteItem(id) };
+      } catch (error) {
+        console.error(
+          "[Memory] Failed to delete relationship memory item:",
+          error,
+        );
+        throw error;
       }
-      return { success: RelationshipMemoryService.deleteItem(id) };
-    } catch (error) {
-      console.error("[Memory] Failed to delete relationship memory item:", error);
-      throw error;
-    }
-  });
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.MEMORY_RELATIONSHIP_CLEANUP_RECURRING, async () => {
-    checkRateLimit(IPC_CHANNELS.MEMORY_RELATIONSHIP_CLEANUP_RECURRING, RATE_LIMIT_CONFIGS.limited);
-    try {
-      const result = RelationshipMemoryService.cleanupRecurringTaskHistory();
-      return { success: true, ...result };
-    } catch (error) {
-      console.error("[Memory] Failed to cleanup recurring relationship history:", error);
-      throw error;
-    }
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_RELATIONSHIP_CLEANUP_RECURRING,
+    async () => {
+      checkRateLimit(
+        IPC_CHANNELS.MEMORY_RELATIONSHIP_CLEANUP_RECURRING,
+        RATE_LIMIT_CONFIGS.limited,
+      );
+      try {
+        const result = RelationshipMemoryService.cleanupRecurringTaskHistory();
+        return { success: true, ...result };
+      } catch (error) {
+        console.error(
+          "[Memory] Failed to cleanup recurring relationship history:",
+          error,
+        );
+        throw error;
+      }
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.MEMORY_COMMITMENTS_GET, async (_, data?: { limit?: number }) => {
-    try {
-      const limit =
-        typeof data?.limit === "number" && Number.isFinite(data.limit) ? data.limit : 25;
-      return RelationshipMemoryService.listOpenCommitments(limit);
-    } catch (error) {
-      console.error("[Memory] Failed to list open commitments:", error);
-      return [];
-    }
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_COMMITMENTS_GET,
+    async (_, data?: { limit?: number }) => {
+      try {
+        const limit =
+          typeof data?.limit === "number" && Number.isFinite(data.limit)
+            ? data.limit
+            : 25;
+        return RelationshipMemoryService.listOpenCommitments(limit);
+      } catch (error) {
+        console.error("[Memory] Failed to list open commitments:", error);
+        return [];
+      }
+    },
+  );
 
   ipcMain.handle(
     IPC_CHANNELS.MEMORY_COMMITMENTS_DUE_SOON,
     async (_, data?: { windowHours?: number }) => {
       try {
         const windowHours =
-          typeof data?.windowHours === "number" && Number.isFinite(data.windowHours)
+          typeof data?.windowHours === "number" &&
+          Number.isFinite(data.windowHours)
             ? data.windowHours
             : 72;
-        const items = RelationshipMemoryService.listDueSoonCommitments(windowHours);
+        const items =
+          RelationshipMemoryService.listDueSoonCommitments(windowHours);
         const reminderText =
           items.length > 0
             ? `You have ${items.length} commitment(s) due soon.`
@@ -8720,33 +10629,56 @@ function setupMemoryHandlers(): void {
     }
   });
 
-  ipcMain.handle(IPC_CHANNELS.AWARENESS_SAVE_CONFIG, async (_, config: unknown) => {
-    checkRateLimit(IPC_CHANNELS.AWARENESS_SAVE_CONFIG, RATE_LIMIT_CONFIGS.limited);
-    try {
-      const validated = validateInput(AwarenessConfigSchema, config, "awareness config");
-      return getAwarenessService().saveConfig(validated as Any);
-    } catch (error) {
-      console.error("[Awareness] Failed to save config:", error);
-      throw error;
-    }
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.AWARENESS_SAVE_CONFIG,
+    async (_, config: unknown) => {
+      checkRateLimit(
+        IPC_CHANNELS.AWARENESS_SAVE_CONFIG,
+        RATE_LIMIT_CONFIGS.limited,
+      );
+      try {
+        const validated = validateInput(
+          AwarenessConfigSchema,
+          config,
+          "awareness config",
+        );
+        return getAwarenessService().saveConfig(validated as Any);
+      } catch (error) {
+        console.error("[Awareness] Failed to save config:", error);
+        throw error;
+      }
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.AWARENESS_LIST_BELIEFS, async (_, workspaceId?: string) => {
-    try {
-      return getAwarenessService().listBeliefs(workspaceId);
-    } catch (error) {
-      console.error("[Awareness] Failed to list beliefs:", error);
-      return [];
-    }
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.AWARENESS_LIST_BELIEFS,
+    async (_, workspaceId?: string) => {
+      try {
+        return getAwarenessService().listBeliefs(workspaceId);
+      } catch (error) {
+        console.error("[Awareness] Failed to list beliefs:", error);
+        return [];
+      }
+    },
+  );
 
   ipcMain.handle(
     IPC_CHANNELS.AWARENESS_UPDATE_BELIEF,
     async (_, data: unknown) => {
-      checkRateLimit(IPC_CHANNELS.AWARENESS_UPDATE_BELIEF, RATE_LIMIT_CONFIGS.limited);
+      checkRateLimit(
+        IPC_CHANNELS.AWARENESS_UPDATE_BELIEF,
+        RATE_LIMIT_CONFIGS.limited,
+      );
       try {
-        const validated = validateInput(AwarenessUpdateBeliefSchema, data, "awareness update belief");
-        return getAwarenessService().updateBelief(validated.id, validated.patch || {});
+        const validated = validateInput(
+          AwarenessUpdateBeliefSchema,
+          data,
+          "awareness update belief",
+        );
+        return getAwarenessService().updateBelief(
+          validated.id,
+          validated.patch || {},
+        );
       } catch (error) {
         console.error("[Awareness] Failed to update belief:", error);
         throw error;
@@ -8754,33 +10686,45 @@ function setupMemoryHandlers(): void {
     },
   );
 
-  ipcMain.handle(IPC_CHANNELS.AWARENESS_DELETE_BELIEF, async (_, id: string) => {
-    checkRateLimit(IPC_CHANNELS.AWARENESS_DELETE_BELIEF, RATE_LIMIT_CONFIGS.limited);
-    try {
-      return { success: getAwarenessService().deleteBelief(id) };
-    } catch (error) {
-      console.error("[Awareness] Failed to delete belief:", error);
-      throw error;
-    }
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.AWARENESS_DELETE_BELIEF,
+    async (_, id: string) => {
+      checkRateLimit(
+        IPC_CHANNELS.AWARENESS_DELETE_BELIEF,
+        RATE_LIMIT_CONFIGS.limited,
+      );
+      try {
+        return { success: getAwarenessService().deleteBelief(id) };
+      } catch (error) {
+        console.error("[Awareness] Failed to delete belief:", error);
+        throw error;
+      }
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.AWARENESS_GET_SUMMARY, async (_, workspaceId?: string) => {
-    try {
-      return getAwarenessService().getSummary(workspaceId);
-    } catch (error) {
-      console.error("[Awareness] Failed to get summary:", error);
-      throw error;
-    }
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.AWARENESS_GET_SUMMARY,
+    async (_, workspaceId?: string) => {
+      try {
+        return getAwarenessService().getSummary(workspaceId);
+      } catch (error) {
+        console.error("[Awareness] Failed to get summary:", error);
+        throw error;
+      }
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.AWARENESS_GET_SNAPSHOT, async (_, workspaceId?: string) => {
-    try {
-      return getAwarenessService().getSnapshot(workspaceId);
-    } catch (error) {
-      console.error("[Awareness] Failed to get snapshot:", error);
-      throw error;
-    }
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.AWARENESS_GET_SNAPSHOT,
+    async (_, workspaceId?: string) => {
+      try {
+        return getAwarenessService().getSnapshot(workspaceId);
+      } catch (error) {
+        console.error("[Awareness] Failed to get snapshot:", error);
+        throw error;
+      }
+    },
+  );
 
   ipcMain.handle(
     IPC_CHANNELS.AWARENESS_LIST_EVENTS,
@@ -8803,51 +10747,80 @@ function setupMemoryHandlers(): void {
     }
   });
 
-  ipcMain.handle(IPC_CHANNELS.AUTONOMY_SAVE_CONFIG, async (_, config: unknown) => {
-    checkRateLimit(IPC_CHANNELS.AUTONOMY_SAVE_CONFIG, RATE_LIMIT_CONFIGS.limited);
-    try {
-      const validated = validateInput(AutonomyConfigSchema, config, "autonomy config");
-      return getAutonomyEngine().saveConfig(validated as Any);
-    } catch (error) {
-      console.error("[Autonomy] Failed to save config:", error);
-      throw error;
-    }
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.AUTONOMY_SAVE_CONFIG,
+    async (_, config: unknown) => {
+      checkRateLimit(
+        IPC_CHANNELS.AUTONOMY_SAVE_CONFIG,
+        RATE_LIMIT_CONFIGS.limited,
+      );
+      try {
+        const validated = validateInput(
+          AutonomyConfigSchema,
+          config,
+          "autonomy config",
+        );
+        return getAutonomyEngine().saveConfig(validated as Any);
+      } catch (error) {
+        console.error("[Autonomy] Failed to save config:", error);
+        throw error;
+      }
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.AUTONOMY_GET_STATE, async (_, workspaceId?: string) => {
-    try {
-      return getAutonomyEngine().getWorldModel(workspaceId);
-    } catch (error) {
-      console.error("[Autonomy] Failed to get state:", error);
-      throw error;
-    }
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.AUTONOMY_GET_STATE,
+    async (_, workspaceId?: string) => {
+      try {
+        return getAutonomyEngine().getWorldModel(workspaceId);
+      } catch (error) {
+        console.error("[Autonomy] Failed to get state:", error);
+        throw error;
+      }
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.AUTONOMY_LIST_DECISIONS, async (_, workspaceId?: string) => {
-    try {
-      return getAutonomyEngine().listDecisions(workspaceId);
-    } catch (error) {
-      console.error("[Autonomy] Failed to list decisions:", error);
-      return [];
-    }
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.AUTONOMY_LIST_DECISIONS,
+    async (_, workspaceId?: string) => {
+      try {
+        return getAutonomyEngine().listDecisions(workspaceId);
+      } catch (error) {
+        console.error("[Autonomy] Failed to list decisions:", error);
+        return [];
+      }
+    },
+  );
 
-  ipcMain.handle(IPC_CHANNELS.AUTONOMY_LIST_ACTIONS, async (_, workspaceId?: string) => {
-    try {
-      return getAutonomyEngine().listActions(workspaceId);
-    } catch (error) {
-      console.error("[Autonomy] Failed to list actions:", error);
-      return [];
-    }
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.AUTONOMY_LIST_ACTIONS,
+    async (_, workspaceId?: string) => {
+      try {
+        return getAutonomyEngine().listActions(workspaceId);
+      } catch (error) {
+        console.error("[Autonomy] Failed to list actions:", error);
+        return [];
+      }
+    },
+  );
 
   ipcMain.handle(
     IPC_CHANNELS.AUTONOMY_UPDATE_DECISION,
     async (_, data: unknown) => {
-      checkRateLimit(IPC_CHANNELS.AUTONOMY_UPDATE_DECISION, RATE_LIMIT_CONFIGS.limited);
+      checkRateLimit(
+        IPC_CHANNELS.AUTONOMY_UPDATE_DECISION,
+        RATE_LIMIT_CONFIGS.limited,
+      );
       try {
-        const validated = validateInput(AutonomyUpdateDecisionSchema, data, "autonomy update decision");
-        return getAutonomyEngine().updateDecision(validated.id, validated.patch || {});
+        const validated = validateInput(
+          AutonomyUpdateDecisionSchema,
+          data,
+          "autonomy update decision",
+        );
+        return getAutonomyEngine().updateDecision(
+          validated.id,
+          validated.patch || {},
+        );
       } catch (error) {
         console.error("[Autonomy] Failed to update decision:", error);
         throw error;
@@ -8855,50 +10828,69 @@ function setupMemoryHandlers(): void {
     },
   );
 
-  ipcMain.handle(IPC_CHANNELS.AUTONOMY_TRIGGER_EVALUATION, async (_, workspaceId?: string) => {
-    checkRateLimit(IPC_CHANNELS.AUTONOMY_TRIGGER_EVALUATION, RATE_LIMIT_CONFIGS.standard);
-    try {
-      return getAutonomyEngine().triggerEvaluation(workspaceId);
-    } catch (error) {
-      console.error("[Autonomy] Failed to trigger evaluation:", error);
-      throw error;
-    }
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.AUTONOMY_TRIGGER_EVALUATION,
+    async (_, workspaceId?: string) => {
+      checkRateLimit(
+        IPC_CHANNELS.AUTONOMY_TRIGGER_EVALUATION,
+        RATE_LIMIT_CONFIGS.standard,
+      );
+      try {
+        return getAutonomyEngine().triggerEvaluation(workspaceId);
+      } catch (error) {
+        console.error("[Autonomy] Failed to trigger evaluation:", error);
+        throw error;
+      }
+    },
+  );
 
   // ChatGPT Import handler
   let activeImportAbort: AbortController | null = null;
-  ipcMain.handle(IPC_CHANNELS.MEMORY_IMPORT_CHATGPT, async (event, options: unknown) => {
-    checkRateLimit(IPC_CHANNELS.MEMORY_IMPORT_CHATGPT, RATE_LIMIT_CONFIGS.limited);
-    const validated = validateInput(ChatGPTImportSchema, options, "ChatGPT import");
-    try {
-      const { ChatGPTImporter } = await import("../memory/ChatGPTImporter");
-
-      // Create an abort controller for cancellation
-      activeImportAbort = new AbortController();
-
-      // Forward progress events to renderer
-      const unsubscribe = ChatGPTImporter.onProgress((progress) => {
-        const win = BrowserWindow.fromWebContents(event.sender);
-        if (win && !win.isDestroyed()) {
-          win.webContents.send(IPC_CHANNELS.MEMORY_IMPORT_CHATGPT_PROGRESS, progress);
-        }
-      });
-
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_IMPORT_CHATGPT,
+    async (event, options: unknown) => {
+      checkRateLimit(
+        IPC_CHANNELS.MEMORY_IMPORT_CHATGPT,
+        RATE_LIMIT_CONFIGS.limited,
+      );
+      const validated = validateInput(
+        ChatGPTImportSchema,
+        options,
+        "ChatGPT import",
+      );
       try {
-        const result = await ChatGPTImporter.import({
-          ...validated,
-          signal: activeImportAbort.signal,
+        const { ChatGPTImporter } = await import("../memory/ChatGPTImporter");
+
+        // Create an abort controller for cancellation
+        activeImportAbort = new AbortController();
+
+        // Forward progress events to renderer
+        const unsubscribe = ChatGPTImporter.onProgress((progress) => {
+          const win = BrowserWindow.fromWebContents(event.sender);
+          if (win && !win.isDestroyed()) {
+            win.webContents.send(
+              IPC_CHANNELS.MEMORY_IMPORT_CHATGPT_PROGRESS,
+              progress,
+            );
+          }
         });
-        return result;
-      } finally {
-        unsubscribe();
-        activeImportAbort = null;
+
+        try {
+          const result = await ChatGPTImporter.import({
+            ...validated,
+            signal: activeImportAbort.signal,
+          });
+          return result;
+        } finally {
+          unsubscribe();
+          activeImportAbort = null;
+        }
+      } catch (error) {
+        console.error("[Memory] ChatGPT import failed:", error);
+        throw error;
       }
-    } catch (error) {
-      console.error("[Memory] ChatGPT import failed:", error);
-      throw error;
-    }
-  });
+    },
+  );
 
   // ChatGPT Import cancel handler
   ipcMain.handle(IPC_CHANNELS.MEMORY_IMPORT_CHATGPT_CANCEL, async () => {
@@ -8910,16 +10902,26 @@ function setupMemoryHandlers(): void {
   });
 
   // Text-based memory import handler (provider-agnostic)
-  ipcMain.handle(IPC_CHANNELS.MEMORY_IMPORT_TEXT, async (_, options: unknown) => {
-    checkRateLimit(IPC_CHANNELS.MEMORY_IMPORT_TEXT, RATE_LIMIT_CONFIGS.limited);
-    const validated = validateInput(TextMemoryImportSchema, options, "text memory import");
-    try {
-      return MemoryService.importFromText(validated);
-    } catch (error) {
-      console.error("[Memory] Text import failed:", error);
-      throw error;
-    }
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_IMPORT_TEXT,
+    async (_, options: unknown) => {
+      checkRateLimit(
+        IPC_CHANNELS.MEMORY_IMPORT_TEXT,
+        RATE_LIMIT_CONFIGS.limited,
+      );
+      const validated = validateInput(
+        TextMemoryImportSchema,
+        options,
+        "text memory import",
+      );
+      try {
+        return MemoryService.importFromText(validated);
+      } catch (error) {
+        console.error("[Memory] Text import failed:", error);
+        throw error;
+      }
+    },
+  );
 
   logger.debug("[Memory] Handlers initialized");
 
@@ -8927,19 +10929,30 @@ function setupMemoryHandlers(): void {
   // These handlers help show one-time notifications after app migration (cowork-oss → cowork-os)
 
   const userDataPath = getUserDataDir();
-  const migrationMarkerPath = path.join(userDataPath, ".migrated-from-cowork-oss");
-  const notificationDismissedPath = path.join(userDataPath, ".migration-notification-dismissed");
+  const migrationMarkerPath = path.join(
+    userDataPath,
+    ".migrated-from-cowork-oss",
+  );
+  const notificationDismissedPath = path.join(
+    userDataPath,
+    ".migration-notification-dismissed",
+  );
 
   // Get migration status
   ipcMain.handle(IPC_CHANNELS.MIGRATION_GET_STATUS, async () => {
     try {
       const migrated = fsSync.existsSync(migrationMarkerPath);
-      const notificationDismissed = fsSync.existsSync(notificationDismissedPath);
+      const notificationDismissed = fsSync.existsSync(
+        notificationDismissedPath,
+      );
 
       let timestamp: string | undefined;
       if (migrated) {
         try {
-          const markerContent = fsSync.readFileSync(migrationMarkerPath, "utf-8");
+          const markerContent = fsSync.readFileSync(
+            migrationMarkerPath,
+            "utf-8",
+          );
           const markerData = JSON.parse(markerContent);
           timestamp = markerData.timestamp;
         } catch {
@@ -9076,15 +11089,18 @@ function setupMemoryHandlers(): void {
   });
 
   // Get extension config
-  ipcMain.handle(IPC_CHANNELS.EXTENSIONS_GET_CONFIG, async (_, name: string) => {
-    try {
-      const registry = getPluginRegistry();
-      return registry.getPluginConfig(name) || {};
-    } catch (error) {
-      console.error("[Extensions] Failed to get config:", error);
-      return {};
-    }
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.EXTENSIONS_GET_CONFIG,
+    async (_, name: string) => {
+      try {
+        const registry = getPluginRegistry();
+        return registry.getPluginConfig(name) || {};
+      } catch (error) {
+        console.error("[Extensions] Failed to get config:", error);
+        return {};
+      }
+    },
+  );
 
   // Set extension config
   ipcMain.handle(
@@ -9248,18 +11264,21 @@ function setupMemoryHandlers(): void {
   });
 
   // Transcribe audio - accepts audio data as array from renderer
-  ipcMain.handle(IPC_CHANNELS.VOICE_TRANSCRIBE, async (_, audioData: number[]) => {
-    try {
-      const voiceService = getVoiceService();
-      // Convert array back to Buffer
-      const audioBuffer = Buffer.from(audioData);
-      const text = await voiceService.transcribe(audioBuffer);
-      return { text };
-    } catch (error: Any) {
-      console.error("[Voice] Failed to transcribe:", error);
-      return { text: "", error: error.message };
-    }
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.VOICE_TRANSCRIBE,
+    async (_, audioData: number[]) => {
+      try {
+        const voiceService = getVoiceService();
+        // Convert array back to Buffer
+        const audioBuffer = Buffer.from(audioData);
+        const text = await voiceService.transcribe(audioBuffer);
+        return { text };
+      } catch (error: Any) {
+        console.error("[Voice] Failed to transcribe:", error);
+        return { text: "", error: error.message };
+      }
+    },
+  );
 
   // Get ElevenLabs voices
   ipcMain.handle(IPC_CHANNELS.VOICE_GET_ELEVENLABS_VOICES, async () => {
@@ -9376,7 +11395,7 @@ function setupLocalAIHandlers(): void {
 
   let hfAgentsProcess: import("child_process").ChildProcess | null = null;
   let lastServerError: string | null = null;
-  let mlxServerLog: string[] = [];        // stdout/stderr captured from mlx_lm.server
+  let mlxServerLog: string[] = []; // stdout/stderr captured from mlx_lm.server
   let activeRuntime: "gguf" | "mlx" | null = null;
 
   // Expand PATH so Electron can find `hf` installed by brew Python
@@ -9411,17 +11430,22 @@ function setupLocalAIHandlers(): void {
     } catch (e: Any) {
       const stderr: string = e?.stderr || e?.message || "";
       try {
-        const versionResult = await execFileAsync("hf", ["--version"], { timeout: 5000, env: hfEnv }) as Any;
+        const versionResult = (await execFileAsync("hf", ["--version"], {
+          timeout: 5000,
+          env: hfEnv,
+        })) as Any;
         hfInstalled = true;
         // Detect the huggingface_hub downgrade case: old hf CLI has no 'agents' subcommand
         if (stderr.includes("invalid choice") && stderr.includes("agents")) {
-          message = "huggingface_hub was downgraded (e.g. by mlx-lm). Restore it with: pip install \"huggingface_hub>=1.0\" --force-reinstall\nThen re-run: hf extensions install hf-agents";
+          message =
+            'huggingface_hub was downgraded (e.g. by mlx-lm). Restore it with: pip install "huggingface_hub>=1.0" --force-reinstall\nThen re-run: hf extensions install hf-agents';
         } else {
           const hfVersion: string = (versionResult.stdout as string).trim();
           message = `hf CLI ${hfVersion} found but hf-agents extension not installed. Run: hf extensions install hf-agents`;
         }
       } catch {
-        message = "hf CLI not found. Install with: pip install huggingface_hub && hf extensions install hf-agents";
+        message =
+          "hf CLI not found. Install with: pip install huggingface_hub && hf extensions install hf-agents";
       }
     }
 
@@ -9431,31 +11455,53 @@ function setupLocalAIHandlers(): void {
     let mlxMessage = "";
     if (process.platform === "darwin") {
       try {
-        await execFileAsync("python3", ["-c", "import mlx_lm; import mlx.core"], {
-          timeout: 8000,
-          env: hfEnv,
-        });
+        await execFileAsync(
+          "python3",
+          ["-c", "import mlx_lm; import mlx.core"],
+          {
+            timeout: 8000,
+            env: hfEnv,
+          },
+        );
         mlxInstalled = "ok";
       } catch (mlxErr: Any) {
         // Import failed — check if package is present at all (without triggering dylib load)
         try {
-          const { stdout: spec } = await execFileAsync(
+          const { stdout: spec } = (await execFileAsync(
             "python3",
-            ["-c", "import importlib.util; s=importlib.util.find_spec('mlx_lm'); print('found' if s else 'missing')"],
-            { timeout: 5000, env: hfEnv }
-          ) as Any;
+            [
+              "-c",
+              "import importlib.util; s=importlib.util.find_spec('mlx_lm'); print('found' if s else 'missing')",
+            ],
+            { timeout: 5000, env: hfEnv },
+          )) as Any;
           if ((spec as string).trim() === "found") {
             mlxInstalled = "broken";
-            const raw: string = [mlxErr?.stderr, mlxErr?.message].filter(Boolean).join("\n");
-            mlxMessage = raw.includes("libmlx.dylib") || raw.includes("Library not loaded") || raw.includes("dlopen")
-              ? "MLX dylib missing — run: pip install mlx mlx-metal --force-reinstall --no-cache-dir"
-              : "mlx_lm is installed but failed to import. Try reinstalling: pip install mlx-lm --force-reinstall";
+            const raw: string = [mlxErr?.stderr, mlxErr?.message]
+              .filter(Boolean)
+              .join("\n");
+            mlxMessage =
+              raw.includes("libmlx.dylib") ||
+              raw.includes("Library not loaded") ||
+              raw.includes("dlopen")
+                ? "MLX dylib missing — run: pip install mlx mlx-metal --force-reinstall --no-cache-dir"
+                : "mlx_lm is installed but failed to import. Try reinstalling: pip install mlx-lm --force-reinstall";
           }
-        } catch { /* python3 not found at all */ }
+        } catch {
+          /* python3 not found at all */
+        }
       }
     }
 
-    return { installed, hfInstalled, version, message, mlxInstalled, mlxMessage, isMac: process.platform === "darwin" };
+    return {
+      installed,
+      hfInstalled,
+      version,
+      message,
+      mlxInstalled,
+      mlxMessage,
+      isMac: process.platform === "darwin",
+    };
   });
 
   /**
@@ -9476,12 +11522,20 @@ function setupLocalAIHandlers(): void {
         }),
       ]);
 
-      const recOut = recResult.status === "fulfilled"
-        ? ((recResult.value.stdout as string) + (recResult.value.stderr as string)).trim()
-        : (recResult.reason?.stderr || recResult.reason?.message || "");
-      const sysOut = sysResult.status === "fulfilled"
-        ? ((sysResult.value.stdout as string) + (sysResult.value.stderr as string)).trim()
-        : "";
+      const recOut =
+        recResult.status === "fulfilled"
+          ? (
+              (recResult.value.stdout as string) +
+              (recResult.value.stderr as string)
+            ).trim()
+          : recResult.reason?.stderr || recResult.reason?.message || "";
+      const sysOut =
+        sysResult.status === "fulfilled"
+          ? (
+              (sysResult.value.stdout as string) +
+              (sysResult.value.stderr as string)
+            ).trim()
+          : "";
 
       const output = [sysOut, recOut].filter(Boolean).join("\n\n");
 
@@ -9513,14 +11567,14 @@ function setupLocalAIHandlers(): void {
           // GGUF spec: "unsloth/Model-GGUF:Q4_K_M" — only valid for llama-server
           const spec = hasGguf
             ? `${ggufSource.repo}:${e.best_quant}`
-            : (e.name || e.repo_id || e.id || null);
+            : e.name || e.repo_id || e.id || null;
           if (!spec) continue;
           if (hasGguf) models.push(spec);
           modelDetails.push({
             spec,
             name: e.name || spec,
             hasGguf,
-            runtime: hasGguf ? "GGUF" : (e.runtime || "MLX"),
+            runtime: hasGguf ? "GGUF" : e.runtime || "MLX",
             params: e.parameter_count || "",
             tps: e.estimated_tps || 0,
             memoryGb: e.memory_required_gb || 0,
@@ -9530,14 +11584,25 @@ function setupLocalAIHandlers(): void {
         }
       } catch {
         // Fall back to numbered list format: "1. unsloth/Model:q4_k_n"
-        const modelLines = recOut.split("\n").filter((l: string) => /^\s*\d+[\.\)]\s+\S/.test(l));
-        models = modelLines.map((l: string) => {
-          const match = l.match(/\d+[\.\)]\s+(\S+)/);
-          return match ? match[1] : l.trim();
-        }).filter(Boolean);
+        const modelLines = recOut
+          .split("\n")
+          .filter((l: string) => /^\s*\d+[\.\)]\s+\S/.test(l));
+        models = modelLines
+          .map((l: string) => {
+            const match = l.match(/\d+[\.\)]\s+(\S+)/);
+            return match ? match[1] : l.trim();
+          })
+          .filter(Boolean);
         modelDetails = models.map((spec) => ({
-          spec, name: spec, hasGguf: true, runtime: "GGUF",
-          params: "", tps: 0, memoryGb: 0, quant: "", fitLevel: "",
+          spec,
+          name: spec,
+          hasGguf: true,
+          runtime: "GGUF",
+          params: "",
+          tps: 0,
+          memoryGb: 0,
+          quant: "",
+          fitLevel: "",
         }));
       }
 
@@ -9545,7 +11610,12 @@ function setupLocalAIHandlers(): void {
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : String(err);
       const errStderr = (err as { stderr?: string })?.stderr ?? "";
-      return { ok: false, models: [], error: errMsg, output: errStderr || errMsg };
+      return {
+        ok: false,
+        models: [],
+        error: errMsg,
+        output: errStderr || errMsg,
+      };
     }
   });
 
@@ -9554,7 +11624,10 @@ function setupLocalAIHandlers(): void {
    */
   async function readLlamaLog(lines = 20): Promise<string> {
     try {
-      const content: string = await fs.readFile("/tmp/hf-agents-llama-server.log", "utf-8");
+      const content: string = await fs.readFile(
+        "/tmp/hf-agents-llama-server.log",
+        "utf-8",
+      );
       const tail = content.trim().split("\n").slice(-lines).join("\n");
       return tail;
     } catch {
@@ -9566,154 +11639,189 @@ function setupLocalAIHandlers(): void {
    * Start the local AI server — either mlx_lm.server (MLX) or hf agents run pi (GGUF).
    * MLX models are passed as "mlx://<repo_id>", GGUF as plain "repo:quant" strings.
    */
-  ipcMain.handle(IPC_CHANNELS.LOCAL_AI_START_SERVER, async (_, model?: string) => {
-    if (hfAgentsProcess && !hfAgentsProcess.killed) {
-      return { ok: true, pid: hfAgentsProcess.pid, alreadyRunning: true };
-    }
-    lastServerError = null;
-    mlxServerLog = [];
-
-    const isMLX = model?.startsWith("mlx://");
-    const modelId = isMLX ? model!.slice(6) : model;
-    activeRuntime = isMLX ? "mlx" : "gguf";
-
-    let cmd: string;
-    let args: string[];
-
-    if (isMLX) {
-      // Pre-flight: verify mlx_lm actually imports (catches dylib/path issues early)
-      try {
-        await execFileAsync("python3", ["-c", "import mlx_lm; import mlx.core"], {
-          timeout: 8000,
-          env: hfEnv,
-        });
-      } catch (e: Any) {
-        // execFileAsync puts Python stderr in e.stderr; also check e.message
-        const raw: string = [e?.stderr, e?.stdout, e?.message].filter(Boolean).join("\n");
-        const isLibMissing = raw.includes("libmlx.dylib") || raw.includes("Library not loaded") || raw.includes("dlopen");
-        const hint = isLibMissing
-          ? "MLX dylib not found — reinstall with:\npip install mlx mlx-metal --force-reinstall --no-cache-dir"
-          : raw
-            ? `mlx_lm failed to import:\n${raw.split("\n").filter(Boolean).slice(-3).join("\n")}`
-            : "mlx_lm failed to import. Try: pip install mlx mlx-metal --force-reinstall --no-cache-dir";
-        return { ok: false, error: hint };
+  ipcMain.handle(
+    IPC_CHANNELS.LOCAL_AI_START_SERVER,
+    async (_, model?: string) => {
+      if (hfAgentsProcess && !hfAgentsProcess.killed) {
+        return { ok: true, pid: hfAgentsProcess.pid, alreadyRunning: true };
       }
-      // MLX: python3 -m mlx_lm.server --model <repo_id> --port 8080
-      cmd = "python3";
-      args = ["-m", "mlx_lm.server", "--model", modelId!, "--port", "8080"];
-    } else {
-      // GGUF: hf agents run pi [--model <spec>]
-      cmd = "hf";
-      args = ["agents", "run", "pi"];
-      if (modelId && modelId !== "auto") args.push("--model", modelId);
-    }
+      lastServerError = null;
+      mlxServerLog = [];
 
-    return await new Promise((resolve) => {
-      let stderrOutput = "";
-      let settled = false;
+      const isMLX = model?.startsWith("mlx://");
+      const modelId = isMLX ? model!.slice(6) : model;
+      activeRuntime = isMLX ? "mlx" : "gguf";
 
-      const getEarlyExitMsg = () =>
-        isMLX
-          ? (mlxServerLog.slice(-5).join("\n") || "mlx_lm.server exited immediately.")
-          : (stderrOutput || "Server process exited immediately.");
-
-      const proc = spawnProcess(cmd, args, {
-        stdio: ["ignore", "pipe", "pipe"],
-        detached: false,
-        env: hfEnv,
-      });
-
-      const appendMLXLog = (chunk: Buffer) => {
-        const lines = chunk.toString().split("\n").filter((l: string) => l.trim());
-        mlxServerLog.push(...lines);
-        if (mlxServerLog.length > 200) mlxServerLog = mlxServerLog.slice(-200);
-      };
+      let cmd: string;
+      let args: string[];
 
       if (isMLX) {
-        proc.stdout?.on("data", appendMLXLog);
-        proc.stderr?.on("data", appendMLXLog);
+        // Pre-flight: verify mlx_lm actually imports (catches dylib/path issues early)
+        try {
+          await execFileAsync(
+            "python3",
+            ["-c", "import mlx_lm; import mlx.core"],
+            {
+              timeout: 8000,
+              env: hfEnv,
+            },
+          );
+        } catch (e: Any) {
+          // execFileAsync puts Python stderr in e.stderr; also check e.message
+          const raw: string = [e?.stderr, e?.stdout, e?.message]
+            .filter(Boolean)
+            .join("\n");
+          const isLibMissing =
+            raw.includes("libmlx.dylib") ||
+            raw.includes("Library not loaded") ||
+            raw.includes("dlopen");
+          const hint = isLibMissing
+            ? "MLX dylib not found — reinstall with:\npip install mlx mlx-metal --force-reinstall --no-cache-dir"
+            : raw
+              ? `mlx_lm failed to import:\n${raw.split("\n").filter(Boolean).slice(-3).join("\n")}`
+              : "mlx_lm failed to import. Try: pip install mlx mlx-metal --force-reinstall --no-cache-dir";
+          return { ok: false, error: hint };
+        }
+        // MLX: python3 -m mlx_lm.server --model <repo_id> --port 8080
+        cmd = "python3";
+        args = ["-m", "mlx_lm.server", "--model", modelId!, "--port", "8080"];
       } else {
-        proc.stderr?.on("data", (chunk: Buffer) => { stderrOutput += chunk.toString(); });
+        // GGUF: hf agents run pi [--model <spec>]
+        cmd = "hf";
+        args = ["agents", "run", "pi"];
+        if (modelId && modelId !== "auto") args.push("--model", modelId);
       }
 
-      proc.on("error", (err: NodeJS.ErrnoException) => {
-        const cmdName = isMLX ? "python3 -m mlx_lm.server" : "hf";
-        const spawnError = err.code === "ENOENT"
-          ? `'${cmdName}' not found. ${isMLX ? "Install with: pip install mlx-lm" : "Make sure huggingface_hub is installed and 'hf' is in your PATH."}`
-          : err.message;
-        lastServerError = spawnError;
-        hfAgentsProcess = null;
-        if (!settled) {
-          settled = true;
-          clearInterval(pollId);
-          resolve({ ok: false, error: spawnError });
-        }
-      });
+      return await new Promise((resolve) => {
+        let stderrOutput = "";
+        let settled = false;
 
-      proc.on("exit", async (code: number | null) => {
-        if (hfAgentsProcess === proc) hfAgentsProcess = null;
-        if (code !== 0 && code !== null) {
-          if (isMLX) {
-            const detail = mlxServerLog.slice(-20).join("\n") || `mlx_lm.server exited with code ${code}`;
-            lastServerError = detail;
-          } else {
-            const logTail = await readLlamaLog(20);
-            lastServerError = logTail
-              ? `llama-server exited unexpectedly. Last 20 lines of log:\n${logTail}`
-              : (stderrOutput || `hf agents exited with code ${code}`);
-          }
-          logger.warn(`[LocalAI] ${cmd} exited with code ${code}.`);
-          if (!settled) {
-            settled = true;
-            clearInterval(pollId);
-            resolve({ ok: false, error: lastServerError ?? getEarlyExitMsg() });
-          }
-        }
-      });
+        const getEarlyExitMsg = () =>
+          isMLX
+            ? mlxServerLog.slice(-5).join("\n") ||
+              "mlx_lm.server exited immediately."
+            : stderrOutput || "Server process exited immediately.";
 
-      hfAgentsProcess = proc;
+        const proc = spawnProcess(cmd, args, {
+          stdio: ["ignore", "pipe", "pipe"],
+          detached: false,
+          env: hfEnv,
+        });
 
-      // Poll /v1/models every 2s for up to 30s. Resolve as soon as the server
-      // responds 200; fall through to "downloading" state when the poll times out
-      // (the model may still be loading — status continues to update via getServerStatus).
-      let attempts = 0;
-      const MAX_POLL_ATTEMPTS = 15; // 15 × 2s = 30s
-      const pollId = setInterval(async () => {
-        if (settled) {
-          clearInterval(pollId);
-          return;
-        }
-        if (!hfAgentsProcess || hfAgentsProcess.killed) {
-          if (!settled) {
-            settled = true;
-            clearInterval(pollId);
-            resolve({ ok: false, error: getEarlyExitMsg() });
-          }
-          return;
-        }
-        attempts++;
-        try {
-          const res = await fetch("http://localhost:8080/v1/models", {
-            signal: AbortSignal.timeout(1500),
+        const appendMLXLog = (chunk: Buffer) => {
+          const lines = chunk
+            .toString()
+            .split("\n")
+            .filter((l: string) => l.trim());
+          mlxServerLog.push(...lines);
+          if (mlxServerLog.length > 200)
+            mlxServerLog = mlxServerLog.slice(-200);
+        };
+
+        if (isMLX) {
+          proc.stdout?.on("data", appendMLXLog);
+          proc.stderr?.on("data", appendMLXLog);
+        } else {
+          proc.stderr?.on("data", (chunk: Buffer) => {
+            stderrOutput += chunk.toString();
           });
-          if (res.ok) {
+        }
+
+        proc.on("error", (err: NodeJS.ErrnoException) => {
+          const cmdName = isMLX ? "python3 -m mlx_lm.server" : "hf";
+          const spawnError =
+            err.code === "ENOENT"
+              ? `'${cmdName}' not found. ${isMLX ? "Install with: pip install mlx-lm" : "Make sure huggingface_hub is installed and 'hf' is in your PATH."}`
+              : err.message;
+          lastServerError = spawnError;
+          hfAgentsProcess = null;
+          if (!settled) {
             settled = true;
             clearInterval(pollId);
-            resolve({ ok: true, pid: hfAgentsProcess?.pid, runtime: activeRuntime, serverReady: true });
+            resolve({ ok: false, error: spawnError });
+          }
+        });
+
+        proc.on("exit", async (code: number | null) => {
+          if (hfAgentsProcess === proc) hfAgentsProcess = null;
+          if (code !== 0 && code !== null) {
+            if (isMLX) {
+              const detail =
+                mlxServerLog.slice(-20).join("\n") ||
+                `mlx_lm.server exited with code ${code}`;
+              lastServerError = detail;
+            } else {
+              const logTail = await readLlamaLog(20);
+              lastServerError = logTail
+                ? `llama-server exited unexpectedly. Last 20 lines of log:\n${logTail}`
+                : stderrOutput || `hf agents exited with code ${code}`;
+            }
+            logger.warn(`[LocalAI] ${cmd} exited with code ${code}.`);
+            if (!settled) {
+              settled = true;
+              clearInterval(pollId);
+              resolve({
+                ok: false,
+                error: lastServerError ?? getEarlyExitMsg(),
+              });
+            }
+          }
+        });
+
+        hfAgentsProcess = proc;
+
+        // Poll /v1/models every 2s for up to 30s. Resolve as soon as the server
+        // responds 200; fall through to "downloading" state when the poll times out
+        // (the model may still be loading — status continues to update via getServerStatus).
+        let attempts = 0;
+        const MAX_POLL_ATTEMPTS = 15; // 15 × 2s = 30s
+        const pollId = setInterval(async () => {
+          if (settled) {
+            clearInterval(pollId);
             return;
           }
-        } catch {
-          // Server not up yet — keep polling
-        }
-        if (attempts >= MAX_POLL_ATTEMPTS) {
-          // Process still alive but server hasn't responded yet — model likely downloading
-          settled = true;
-          clearInterval(pollId);
-          resolve({ ok: true, pid: hfAgentsProcess?.pid, runtime: activeRuntime, downloading: true });
-        }
-      }, 2000);
-    });
-  });
+          if (!hfAgentsProcess || hfAgentsProcess.killed) {
+            if (!settled) {
+              settled = true;
+              clearInterval(pollId);
+              resolve({ ok: false, error: getEarlyExitMsg() });
+            }
+            return;
+          }
+          attempts++;
+          try {
+            const res = await fetch("http://localhost:8080/v1/models", {
+              signal: AbortSignal.timeout(1500),
+            });
+            if (res.ok) {
+              settled = true;
+              clearInterval(pollId);
+              resolve({
+                ok: true,
+                pid: hfAgentsProcess?.pid,
+                runtime: activeRuntime,
+                serverReady: true,
+              });
+              return;
+            }
+          } catch {
+            // Server not up yet — keep polling
+          }
+          if (attempts >= MAX_POLL_ATTEMPTS) {
+            // Process still alive but server hasn't responded yet — model likely downloading
+            settled = true;
+            clearInterval(pollId);
+            resolve({
+              ok: true,
+              pid: hfAgentsProcess?.pid,
+              runtime: activeRuntime,
+              downloading: true,
+            });
+          }
+        }, 2000);
+      });
+    },
+  );
 
   /**
    * Stop the running hf-agents server process
@@ -9728,7 +11836,10 @@ function setupLocalAIHandlers(): void {
       hfAgentsProcess = null;
       return { ok: true, wasRunning: true };
     } catch (err: unknown) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+      };
     }
   });
 
@@ -9745,11 +11856,26 @@ function setupLocalAIHandlers(): void {
         const data = (await res.json().catch(() => null)) as Any;
         const models = data?.data?.map((m: Any) => m.id) || [];
         lastServerError = null; // clear error on successful connect
-        return { serverRunning: true, processAlive, pid: hfAgentsProcess?.pid, models };
+        return {
+          serverRunning: true,
+          processAlive,
+          pid: hfAgentsProcess?.pid,
+          models,
+        };
       }
-      return { serverRunning: false, processAlive, pid: hfAgentsProcess?.pid, lastError: lastServerError };
+      return {
+        serverRunning: false,
+        processAlive,
+        pid: hfAgentsProcess?.pid,
+        lastError: lastServerError,
+      };
     } catch {
-      return { serverRunning: false, processAlive, pid: hfAgentsProcess?.pid, lastError: lastServerError };
+      return {
+        serverRunning: false,
+        processAlive,
+        pid: hfAgentsProcess?.pid,
+        lastError: lastServerError,
+      };
     }
   });
 
@@ -9762,12 +11888,21 @@ function setupLocalAIHandlers(): void {
     if (activeRuntime === "mlx") {
       const lines = mlxServerLog.slice(-30);
       const joined = lines.join("\n");
-      let state: "idle" | "downloading" | "loading" | "ready" | "error" = "idle";
+      let state: "idle" | "downloading" | "loading" | "ready" | "error" =
+        "idle";
       let downloadingFile: string | undefined;
 
-      if (joined.includes("Application startup complete") || joined.includes("Uvicorn running on") || joined.includes("running on http")) {
+      if (
+        joined.includes("Application startup complete") ||
+        joined.includes("Uvicorn running on") ||
+        joined.includes("running on http")
+      ) {
         state = "ready";
-      } else if (joined.includes("Fetching") || joined.includes("Downloading") || joined.includes("fetch")) {
+      } else if (
+        joined.includes("Fetching") ||
+        joined.includes("Downloading") ||
+        joined.includes("fetch")
+      ) {
         state = "downloading";
         const dlMatch = joined.match(/Fetching\s+\d+\s+files?/);
         downloadingFile = dlMatch ? dlMatch[0] : undefined;
@@ -9781,20 +11916,36 @@ function setupLocalAIHandlers(): void {
 
     // GGUF: read llama-server log file
     try {
-      const content: string = await fs.readFile("/tmp/hf-agents-llama-server.log", "utf-8");
+      const content: string = await fs.readFile(
+        "/tmp/hf-agents-llama-server.log",
+        "utf-8",
+      );
       const allLines = content.split("\n");
       const lines = allLines.slice(-30).filter((l: string) => l.trim());
       const joined = lines.join("\n");
-      let state: "idle" | "downloading" | "loading" | "ready" | "error" = "idle";
+      let state: "idle" | "downloading" | "loading" | "ready" | "error" =
+        "idle";
       let downloadingFile: string | undefined;
 
-      if (joined.includes("HTTP server listening") || joined.includes("server is listening")) {
+      if (
+        joined.includes("HTTP server listening") ||
+        joined.includes("server is listening")
+      ) {
         state = "ready";
-      } else if (joined.includes("llm_load_tensors") || joined.includes("llm_load_print_meta") || joined.includes("loading model")) {
+      } else if (
+        joined.includes("llm_load_tensors") ||
+        joined.includes("llm_load_print_meta") ||
+        joined.includes("loading model")
+      ) {
         state = "loading";
-      } else if (joined.includes("downloadInProgress") || joined.includes("downloading from")) {
+      } else if (
+        joined.includes("downloadInProgress") ||
+        joined.includes("downloading from")
+      ) {
         state = "downloading";
-        const dlLines = allLines.filter((l: string) => l.includes("downloading from"));
+        const dlLines = allLines.filter((l: string) =>
+          l.includes("downloading from"),
+        );
         if (dlLines.length > 0) {
           const last = dlLines[dlLines.length - 1];
           const match = last.match(/resolve\/main\/([^\s]+?\.gguf)/);
@@ -9807,7 +11958,11 @@ function setupLocalAIHandlers(): void {
       }
       return { lines, state, downloadingFile, runtime: "gguf" };
     } catch {
-      return { lines: [] as string[], state: "idle" as const, runtime: activeRuntime ?? "gguf" };
+      return {
+        lines: [] as string[],
+        state: "idle" as const,
+        runtime: activeRuntime ?? "gguf",
+      };
     }
   });
 

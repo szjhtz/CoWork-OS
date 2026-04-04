@@ -156,6 +156,9 @@ Added shared prompt section module:
 
 Capabilities:
 - section-level token budgets
+- session-scoped memoization for stable sections
+- turn-scoped recomputation for dynamic sections
+- provider-aware stable-prefix prompt caching derived from section scopes
 - total prompt budget composition
 - optional section dropping by priority
 - truncation and dropped-section reporting
@@ -165,9 +168,47 @@ Capabilities:
 
 Wired into `src/electron/agent/executor.ts`:
 - shared policy core reused across planning/execution/follow-up prompts
+- shared section builder reused by execution and follow-up turns
 - explicit section budgets (role/context/memory/playbook/infra/personality/guidelines/tool descriptions)
 - plan prompt total budget (`PLAN_SYSTEM_PROMPT_TOTAL_BUDGET`)
 - execution/follow-up system prompt total budget (`EXECUTION_SYSTEM_PROMPT_TOTAL_BUDGET`)
+
+### Tool Prompt Rendering
+
+Tool guidance now follows a shared render pipeline instead of duplicating routing hints across prompt templates.
+
+- tool-local internal prompt metadata is attached to `LLMTool`
+- one render source produces both compact planning text and final provider-facing descriptions
+- rendering happens only after tool visibility and policy filtering
+- rendered tool arrays are cached against tool-catalog version plus stable render context
+
+This keeps prompt guidance closer to the tool definition while reducing executor-prompt duplication.
+
+The same prompt architecture now also feeds provider-side prompt caching: stable session sections form the cacheable prefix, dynamic turn sections stay uncached, and cache telemetry (`cachedTokens`, `cacheWriteTokens`) is available to cost accounting when providers expose it.
+
+### Adaptive Output Budget Recovery
+
+Execution and follow-up turns now share one provider-aware output-budget policy instead of relying on provider defaults or one-off token floors.
+
+Added policy module:
+- `src/electron/agent/llm/output-token-policy.ts`
+
+Wired through:
+- `src/electron/agent/executor-llm-turn-utils.ts`
+- `src/electron/agent/runtime/SessionRuntime.ts`
+- `src/electron/agent/runtime/turn-kernel.ts`
+- `src/electron/agent/executor-loop-utils.ts`
+
+Capabilities:
+- provider-family budgeting for Anthropic, Bedrock Claude, OpenAI, Azure OpenAI, Gemini, OpenRouter, and a conservative generic fallback
+- centralized transport-field mapping for `max_tokens`, `max_completion_tokens`, and `max_output_tokens`
+- explicit output budgets on agentic turns in adaptive mode instead of backend defaults
+- one same-request escalation on truncation before continuation prompting
+- truncation classification that distinguishes visible partial output from reasoning-budget exhaustion
+- targeted exhaustion guidance when a retry still produces no usable answer text
+- structured runtime logging for budget choice, escalation, truncation classification, and continuation fallback decisions
+
+This improves truncation recovery while keeping adapter hard caps, task-level overrides, and context-headroom clamps in place.
 
 ### Skill Routing Controls
 

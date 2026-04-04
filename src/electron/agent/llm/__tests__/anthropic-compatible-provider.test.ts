@@ -212,3 +212,155 @@ describe("AnthropicCompatibleProvider tool sequencing", () => {
     ]);
   });
 });
+
+describe("AnthropicCompatibleProvider prompt caching", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("serializes automatic prompt caching and normalizes cache usage", async () => {
+    let capturedBody: Any = null;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        capturedBody = init?.body ? JSON.parse(String(init.body)) : null;
+        return {
+          ok: true,
+          json: async () => ({
+            content: [{ type: "text", text: "ok" }],
+            stop_reason: "end_turn",
+            usage: {
+              input_tokens: 100,
+              output_tokens: 25,
+              cache_read_input_tokens: 60,
+              cache_creation_input_tokens: 40,
+            },
+          }),
+        } as Response;
+      }),
+    );
+
+    const provider = new AnthropicCompatibleProvider({
+      type: "anthropic-compatible",
+      providerName: "Anthropic-Compatible",
+      apiKey: "test-key",
+      baseUrl: "https://example.com/anthropic",
+      defaultModel: "claude-sonnet-4-5",
+    });
+
+    const response = await provider.createMessage({
+      model: "claude-sonnet-4-5",
+      maxTokens: 128,
+      system: "legacy system",
+      systemBlocks: [
+        {
+          text: "Stable instructions",
+          scope: "session",
+          cacheable: true,
+          stableKey: "identity:1",
+        },
+        {
+          text: "Current time: 2026-04-04T10:00:00Z",
+          scope: "turn",
+          cacheable: false,
+          stableKey: "time:1",
+        },
+      ],
+      promptCache: {
+        mode: "anthropic_auto",
+        ttl: "5m",
+        explicitRecentMessages: 3,
+      },
+      messages: [{ role: "user", content: "hello" }],
+    });
+
+    expect(capturedBody.cache_control).toEqual({ type: "ephemeral" });
+    expect(capturedBody.system).toEqual([
+      { type: "text", text: "Stable instructions" },
+      { type: "text", text: "Current time: 2026-04-04T10:00:00Z" },
+    ]);
+    expect(response.usage).toEqual({
+      inputTokens: 100,
+      outputTokens: 25,
+      cachedTokens: 60,
+      cacheWriteTokens: 40,
+    });
+  });
+
+  it("downgrades unsupported automatic caching to explicit cache breakpoints", async () => {
+    const requestBodies: Any[] = [];
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(async (_url: string, init?: RequestInit) => {
+        requestBodies.push(init?.body ? JSON.parse(String(init.body)) : null);
+        return {
+          ok: false,
+          status: 400,
+          statusText: "Bad Request",
+          json: async () => ({
+            error: {
+              message: "cache_control is not supported on this endpoint",
+            },
+          }),
+        } as Response;
+      })
+      .mockImplementationOnce(async (_url: string, init?: RequestInit) => {
+        requestBodies.push(init?.body ? JSON.parse(String(init.body)) : null);
+        return {
+          ok: true,
+          json: async () => ({
+            content: [{ type: "text", text: "ok" }],
+            stop_reason: "end_turn",
+            usage: { input_tokens: 10, output_tokens: 5 },
+          }),
+        } as Response;
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new AnthropicCompatibleProvider({
+      type: "anthropic-compatible",
+      providerName: "Anthropic-Compatible",
+      apiKey: "test-key",
+      baseUrl: "https://example.com/anthropic",
+      defaultModel: "claude-sonnet-4-5",
+    });
+
+    await provider.createMessage({
+      model: "claude-sonnet-4-5",
+      maxTokens: 128,
+      system: "legacy system",
+      systemBlocks: [
+        {
+          text: "Stable instructions",
+          scope: "session",
+          cacheable: true,
+          stableKey: "identity:1",
+        },
+        {
+          text: "Current time: 2026-04-04T10:00:00Z",
+          scope: "turn",
+          cacheable: false,
+          stableKey: "time:1",
+        },
+      ],
+      promptCache: {
+        mode: "anthropic_auto",
+        ttl: "5m",
+        explicitRecentMessages: 3,
+      },
+      messages: [
+        { role: "user", content: "hello" },
+        { role: "assistant", content: [{ type: "text", text: "hi" }] },
+        { role: "user", content: "continue" },
+      ],
+    });
+
+    expect(requestBodies[0].cache_control).toEqual({ type: "ephemeral" });
+    expect(requestBodies[1].cache_control).toBeUndefined();
+    expect(requestBodies[1].system[0].cache_control).toEqual({ type: "ephemeral" });
+    expect(requestBodies[1].messages[0].content[0].cache_control).toEqual({ type: "ephemeral" });
+    expect(requestBodies[1].messages[1].content[0].cache_control).toEqual({ type: "ephemeral" });
+    expect(requestBodies[1].messages[2].content[0].cache_control).toEqual({ type: "ephemeral" });
+  });
+});

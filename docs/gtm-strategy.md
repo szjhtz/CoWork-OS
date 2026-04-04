@@ -54,7 +54,7 @@ Users keep control of data and provider keys with optional offline model executi
 - 30+ LLM providers
 - 17 messaging channels
 - 100+ built-in skills
-- 4,500+ automated tests (4,583 passing in `npm run test`)
+- 4,932 automated tests in the suite across 390 test files
 - ZeroLeaks report published in-repo
 
 ## Narrative Guardrails

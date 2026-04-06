@@ -1186,9 +1186,9 @@ export class ControlPlaneCoreService {
       if (!role.monthlyBudgetCost || role.monthlyBudgetCost <= 0) continue;
       const summary = this.summarizeCostsByAgent(role.id, start, end);
       if (summary.totalCost <= role.monthlyBudgetCost) continue;
+      this.agentRoleRepo.updateHeartbeatConfig(role.id, { heartbeatEnabled: false });
       const updated = this.agentRoleRepo.update({
         id: role.id,
-        heartbeatEnabled: false,
         autoPausedAt: role.autoPausedAt || Date.now(),
       });
       if (updated) {
@@ -1275,11 +1275,20 @@ export class ControlPlaneCoreService {
           toolRestrictions: role.toolRestrictions,
           autonomyLevel: role.autonomyLevel,
           soul: role.soul,
-          heartbeatEnabled: role.heartbeatEnabled,
-          heartbeatIntervalMinutes: role.heartbeatIntervalMinutes,
-          heartbeatStaggerOffset: role.heartbeatStaggerOffset,
           monthlyBudgetCost: role.monthlyBudgetCost,
         });
+        if (role.heartbeatEnabled) {
+          this.agentRoleRepo.updateHeartbeatConfig(created.id, {
+            heartbeatEnabled: true,
+            heartbeatIntervalMinutes: role.heartbeatIntervalMinutes,
+            heartbeatStaggerOffset: role.heartbeatStaggerOffset,
+            pulseEveryMinutes: role.pulseEveryMinutes,
+            dispatchCooldownMinutes: role.dispatchCooldownMinutes,
+            maxDispatchesPerDay: role.maxDispatchesPerDay,
+            heartbeatProfile: role.heartbeatProfile,
+            activeHours: role.activeHours ?? null,
+          });
+        }
         agentRoleIdMap.set(role.id, created.id);
         this.agentRoleRepo.update({
           id: created.id,

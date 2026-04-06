@@ -37,10 +37,11 @@
 ### Why CoWork OS?
 
 - **Inbox Agent** — local-first email triage with AI classification, action-needed / suggested-actions / commitments views, draft handling, follow-up creation, and background sync.
-- **Digital Twin Personas** — Pre-built AI twins for every role (engineer, manager, PM, director). Heartbeat v3 keeps them cheap by default: deterministic Pulse checks run quietly, and Dispatch escalates only when signals, cadence, or manual intervention justify visible work.
-- **Zero-Human Company Ops** — Configure CoWork OS as a founder-directed autonomous company shell with venture workspace kits, a dedicated Companies tab, persistent operator twins, strategic planner loops, and Mission Control ops monitoring.
+- **Core Automation Runtime** — Always-on cognition is now a strict core made of Memory, Heartbeat, and Subconscious, owned by automation profiles for generic operator agents rather than by persona templates or device/trigger state.
+- **Digital Twin Personas** — Pre-built opt-in persona presets for every role. Twins stay visible and activatable, but they no longer own heartbeat, subconscious, or memory runtime state.
+- **Zero-Human Company Ops** — Configure CoWork OS as a founder-directed autonomous company shell with venture workspace kits, automation-profile-backed operator agents, strategic planner loops, and Mission Control ops monitoring.
 - **Managed Devices** — Run and inspect tasks across saved remote machines from a dedicated Devices tab with connection controls, summaries, remote task feeds, and remote file attachment picking.
-- **Automations Control Center** — A single Automations section now groups task queueing, `Subconscious`, scheduled tasks, connector-backed event triggers, webhooks, and daily briefings.
+- **Automations Control Center** — A single Automations section now separates Core Automation, Triggered Work, Remote/Device Work, and optional Twin surfaces instead of blending them into one runtime.
 - **34 LLM provider options** — 13 built-in providers plus 21 compatible/gateway options, including Claude, OpenAI, Google, Ollama, AWS Bedrock, and OpenRouter. Bring your own keys or run local models.
 - **17 messaging channels** — WhatsApp, Telegram, Discord, Slack, Teams, Google Chat, Feishu/Lark, WeCom, iMessage, Signal, X, and more. Chat with your AI from anywhere.
 - **44 MCP connectors** — Pre-built enterprise integrations across CRM, support, productivity, analytics, and payments, with native connector support for the most common internal surfaces.
@@ -75,7 +76,7 @@ Stable workflow entry points for the newest high-impact capabilities.
 - **Image generation** — configurable provider ordering across Gemini, OpenAI, Azure OpenAI, and OpenRouter.
 - **Video generation** — text-to-video and image-to-video routing with polling tools and inline preview.
 
-See [Features](docs/features.md), [Heartbeat v3](docs/heartbeat-v3.md), [Providers](docs/providers.md), and [Plugin Packs](docs/plugin-packs.md) for current runtime details.
+See [Core Automation](docs/core-automation.md), [I Gave CoWork OS A Subconscious, And Now It Self-Improves 24/7 | Full Guide](docs/continual-learning-in-cowork.md), [Features](docs/features.md), [Heartbeat v3](docs/heartbeat-v3.md), [Providers](docs/providers.md), and [Plugin Packs](docs/plugin-packs.md) for current runtime details.
 
 ### Latest Release
 
@@ -168,7 +169,7 @@ Long-running tasks now have clearer operator handoffs and stronger recovery defa
 
 ### Mission Control
 
-Centralized agent orchestration dashboard with a Kanban task board, real-time activity feed, and Heartbeat v3 monitoring for pulse, defer, dispatch, cooldown, and budget state. [Learn more](docs/mission-control.md) | [Heartbeat v3](docs/heartbeat-v3.md)
+Centralized orchestration and monitoring cockpit with a Kanban board, real-time activity feed, core automation profile visibility, and a `Core Harness` view for traces, failure clusters, evals, experiments, and learnings. [Learn more](docs/mission-control.md) | [Core Automation](docs/core-automation.md)
 
 ### Devices
 
@@ -176,15 +177,15 @@ The Devices tab turns CoWork OS into a multi-machine control surface. Save and r
 
 ### Automations
 
-Automations are now organized as a first-class operating surface instead of a scattered set of settings pages. The Automations section in Settings groups Task Queue, Subconscious, Scheduled Tasks, Webhooks, Event Triggers, and Daily Briefing, and Event Triggers can now subscribe to MCP connector/resource changes in addition to channel and webhook events. The home dashboard surfaces recent automation runs so you can monitor background systems without hunting through tabs. [Learn more](docs/features.md#automations-control-center)
+Automations are now organized around a hard boundary: `Memory + Heartbeat + Subconscious` form the core runtime, while Triggers, Devices, Scheduled Tasks, Webhooks, and Daily Briefing remain separate ingress or execution surfaces. The home dashboard surfaces recent automation runs so you can monitor background systems without hunting through tabs. [Learn more](docs/core-automation.md)
 
 ### Zero-Human Company Ops
 
-CoWork OS can be configured as a founder-operated autonomous company shell: venture workspace kit context, a dedicated `Settings > Companies` control surface, persistent company-linked operator agents, Heartbeat v3 operator loops, strategic planner issue generation, and Mission Control ops monitoring. Create the company in `Companies`, activate operator twins such as `Company Planner` and `Founder Office Operator`, then run and monitor the company loop from Mission Control. [Learn more](docs/zero-human-company.md) | [Heartbeat v3](docs/heartbeat-v3.md)
+CoWork OS can be configured as a founder-operated autonomous company shell: venture workspace kit context, a dedicated `Settings > Companies` control surface, company-linked operator agents, automation profiles, strategic planner issue generation, and Mission Control ops monitoring. Create the company in `Companies`, activate operator personas such as `Company Planner` and `Founder Office Operator`, then attach automation where needed and monitor the company loop from Mission Control. [Learn more](docs/zero-human-company.md) | [Core Automation](docs/core-automation.md)
 
 ### Digital Twin Personas
 
-Role-specific AI twins that proactively handle cognitive overhead. Pick a template (Software Engineer, Engineering Manager, Product Manager, VP, Founder Office Operator, Company Planner, and more), customize it, and activate — Heartbeat v3 runs cheap non-LLM Pulse checks by default, evaluates proactive cadence and checklist state, and only Dispatches into suggestions, tasks, runbooks, or cron handoff when justified. Built-in templates span engineering, management, product, data, operations, and venture/operator roles, and can now be persistently linked to a company for company-aware operations. [Learn more](docs/digital-twins.md) | [Heartbeat v3](docs/heartbeat-v3.md)
+Role-specific AI twins that handle cognitive overhead as optional persona presets. Pick a template (Software Engineer, Engineering Manager, Product Manager, VP, Founder Office Operator, Company Planner, and more), customize it, and activate it as a role preset with recommended skills and prompt/personality defaults. Twins can be linked to a company for company-aware operations, but they no longer own heartbeat or subconscious policy directly. [Learn more](docs/digital-twins.md)
 
 ### Live Canvas & Build Mode
 
@@ -242,7 +243,7 @@ Dashboard with task metrics, cost/token tracking by model, prompt-cache read tel
 
 ### Plugin Platform & Customize
 
-Unified plugin platform with 18 bundled role-specific packs (Engineering, DevOps, Product, Sales, QA, Finance, and more), each bundling skills, agent roles, connectors, and "Try asking" prompts. Packs can link to Digital Twin personas for proactive background work.
+Unified plugin platform with 18 bundled role-specific packs (Engineering, DevOps, Product, Sales, QA, Finance, and more), each bundling skills, agent roles, connectors, and "Try asking" prompts. Packs can link to Digital Twin personas as optional role presets.
 
 - **Search & filter**: Real-time sidebar search across pack names, descriptions, categories, and skill names
 - **Per-skill control**: Enable or disable individual skills within a pack without toggling the whole pack
@@ -418,7 +419,8 @@ See [CHANGELOG.md](CHANGELOG.md) for the full history of completed features.
 | [Development](docs/development.md) | Build from source, project structure |
 | [Architecture](docs/architecture.md) | Technical architecture deep-dive |
 | [Skills Runtime Model](docs/skills-runtime-model.md) | Canonical prompt invariant, additive skill application, routing shortlist model, and `use_skill` contract |
-| [Heartbeat v3](docs/heartbeat-v3.md) | Default two-lane heartbeat architecture, signals, Pulse, Dispatch, and operator semantics |
+| [Core Automation](docs/core-automation.md) | Runtime boundary for Memory + Heartbeat + Subconscious, automation profiles, and the core harness |
+| [Heartbeat v3](docs/heartbeat-v3.md) | Default two-lane heartbeat architecture, signals, Pulse, Dispatch, and automation-profile-backed operator semantics |
 | [Security Guide](docs/security-guide.md) | Security model and best practices |
 | [Enterprise Connectors](docs/enterprise-connectors.md) | MCP connector development |
 | [Self-Hosting](docs/self-hosting.md) | Docker and systemd deployment |
@@ -427,13 +429,13 @@ See [CHANGELOG.md](CHANGELOG.md) for the full history of completed features.
 | [Knowledge Graph](docs/knowledge-graph.md) | Structured entity/relationship memory |
 | [Context Compaction](docs/context-compaction.md) | Proactive session compaction with structured summaries and chat-history summarization |
 | [Mission Control](docs/mission-control.md) | Agent orchestration dashboard |
-| [Subconscious Loop](docs/subconscious-loop.md) | Architecture and operating model for the reflective evidence -> hypotheses -> critique -> winner -> backlog -> dispatch loop |
+| [Subconscious Loop](docs/subconscious-loop.md) | Architecture and operating model for the core reflective evidence -> hypotheses -> critique -> winner -> backlog -> dispatch loop |
 | [Zero-Human Company Ops](docs/zero-human-company.md) | Founder-directed company planning, operators, and Mission Control ops workflows |
 | [Plugin Packs](docs/plugin-packs.md) | Plugin platform, Customize panel, and Plugin Store |
 | [Skill Store & External Skills](docs/skill-store-and-external-skills.md) | ClawHub support, external skill imports, and managed-skill install flows |
 | [Best-Fit Workflows](docs/best-fit-workflows.md) | Support Ops, IT Ops, and Sales Ops — where CoWork OS delivers the strongest ROI |
 | [Admin Policies](docs/admin-policies.md) | Enterprise admin policies and organization pack management |
-| [Digital Twins](docs/digital-twins.md) | Role-based AI twin personas and cognitive offload |
+| [Digital Twins](docs/digital-twins.md) | Optional role-based persona presets and cognitive offload without core-runtime ownership |
 | [Digital Twins Guide](docs/digital-twin-personas-guide.md) | Comprehensive guide with scenarios and expanded job areas |
 | [Windows npm Smoke Test](docs/windows-npm-smoke-test.md) | Clean Windows install/launch validation checklist for npm releases |
 | [Troubleshooting](docs/troubleshooting.md) | Common issues and fixes |

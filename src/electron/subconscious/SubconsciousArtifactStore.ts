@@ -6,8 +6,11 @@ import type {
   SubconsciousCritique,
   SubconsciousDecision,
   SubconsciousDispatchRecord,
+  SubconsciousDreamArtifact,
   SubconsciousEvidence,
   SubconsciousHypothesis,
+  SubconsciousJournalEntry,
+  SubconsciousMemoryItem,
   SubconsciousRun,
   SubconsciousTargetRef,
   SubconsciousTargetSummary,
@@ -67,6 +70,10 @@ export class SubconsciousArtifactStore {
 
   getBrainRoot(): string {
     return path.join(this.resolveGlobalRoot(), ".cowork", "subconscious", "brain");
+  }
+
+  getJournalRoot(): string {
+    return path.join(this.resolveGlobalRoot(), ".cowork", "subconscious", "journal");
   }
 
   getTargetRoot(target: SubconsciousTargetRef): string {
@@ -142,7 +149,7 @@ export class SubconsciousArtifactStore {
     evidence: SubconsciousEvidence[];
     hypotheses: SubconsciousHypothesis[];
     critiques: SubconsciousCritique[];
-    decision: SubconsciousDecision;
+    decision?: SubconsciousDecision;
     backlog: SubconsciousBacklogItem[];
     dispatch?: SubconsciousDispatchRecord | null;
   }): Promise<string> {
@@ -157,12 +164,14 @@ export class SubconsciousArtifactStore {
     await fs.writeFile(path.join(runRoot, "critique.jsonl"), toJsonLines(params.critiques), "utf-8");
     await fs.writeFile(
       path.join(runRoot, "decision.json"),
-      JSON.stringify(params.decision, null, 2),
+      JSON.stringify(params.decision || null, null, 2),
       "utf-8",
     );
     await fs.writeFile(
       path.join(runRoot, "winning-recommendation.md"),
-      renderWinner(params.target, params.run, params.decision),
+      params.decision
+        ? renderWinner(params.target, params.run, params.decision)
+        : `# Run Outcome\n\nTarget: ${params.target.label}\nRun: ${params.run.id}\nOutcome: ${params.run.outcome || "unknown"}\n`,
       "utf-8",
     );
     await fs.writeFile(
@@ -176,5 +185,86 @@ export class SubconsciousArtifactStore {
       "utf-8",
     );
     return runRoot;
+  }
+
+  async appendJournalEntry(entry: SubconsciousJournalEntry): Promise<void> {
+    const journalRoot = this.getJournalRoot();
+    await fs.mkdir(journalRoot, { recursive: true });
+    const day = new Date(entry.createdAt).toISOString().slice(0, 10);
+    await fs.appendFile(path.join(journalRoot, `${day}.jsonl`), `${JSON.stringify(entry)}\n`, "utf-8");
+  }
+
+  async readJournalEntries(targetKey?: string, limit = 50): Promise<SubconsciousJournalEntry[]> {
+    const journalRoot = this.getJournalRoot();
+    const files = await fs.readdir(journalRoot).catch(() => []);
+    const ordered = files.filter((file) => file.endsWith(".jsonl")).sort().reverse();
+    const collected: SubconsciousJournalEntry[] = [];
+    for (const file of ordered) {
+      const content = await fs.readFile(path.join(journalRoot, file), "utf-8").catch(() => "");
+      const entries = content
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((line) => {
+          try {
+            return JSON.parse(line) as SubconsciousJournalEntry;
+          } catch {
+            return null;
+          }
+        })
+        .filter((entry): entry is SubconsciousJournalEntry => Boolean(entry));
+      for (const entry of entries.reverse()) {
+        if (targetKey && entry.targetKey && entry.targetKey !== targetKey) continue;
+        if (targetKey && !entry.targetKey) continue;
+        collected.push(entry);
+        if (collected.length >= limit) {
+          return collected.sort((a, b) => b.createdAt - a.createdAt);
+        }
+      }
+    }
+    return collected.sort((a, b) => b.createdAt - a.createdAt);
+  }
+
+  async writeMemoryIndex(target: SubconsciousTargetRef | null, items: SubconsciousMemoryItem[]): Promise<void> {
+    const root = target ? this.getTargetRoot(target) : this.getBrainRoot();
+    await fs.mkdir(root, { recursive: true });
+    await fs.writeFile(path.join(root, "memory-index.json"), JSON.stringify(items, null, 2), "utf-8");
+  }
+
+  async readMemoryIndex(targetKey?: string, target?: SubconsciousTargetRef): Promise<SubconsciousMemoryItem[]> {
+    const root = targetKey && target ? this.getTargetRoot(target) : this.getBrainRoot();
+    const content = await fs.readFile(path.join(root, "memory-index.json"), "utf-8").catch(() => "[]");
+    try {
+      return JSON.parse(content) as SubconsciousMemoryItem[];
+    } catch {
+      return [];
+    }
+  }
+
+  async writeDreamArtifact(target: SubconsciousTargetRef | null, artifact: SubconsciousDreamArtifact): Promise<void> {
+    const root = target ? path.join(this.getTargetRoot(target), "dreams") : path.join(this.getBrainRoot(), "dreams");
+    await fs.mkdir(root, { recursive: true });
+    await fs.writeFile(path.join(root, `${artifact.createdAt}-${sanitizeKey(artifact.id)}.json`), JSON.stringify(artifact, null, 2), "utf-8");
+    await fs.writeFile(path.join(root, "latest.json"), JSON.stringify(artifact, null, 2), "utf-8");
+  }
+
+  async readDreamArtifacts(target?: SubconsciousTargetRef, limit = 5): Promise<SubconsciousDreamArtifact[]> {
+    const root = target ? path.join(this.getTargetRoot(target), "dreams") : path.join(this.getBrainRoot(), "dreams");
+    const files = await fs.readdir(root).catch(() => []);
+    const ordered = files
+      .filter((file) => file.endsWith(".json") && file !== "latest.json")
+      .sort()
+      .reverse()
+      .slice(0, limit);
+    const results: SubconsciousDreamArtifact[] = [];
+    for (const file of ordered) {
+      const content = await fs.readFile(path.join(root, file), "utf-8").catch(() => "");
+      try {
+        results.push(JSON.parse(content) as SubconsciousDreamArtifact);
+      } catch {
+        // Ignore malformed dream artifacts.
+      }
+    }
+    return results.sort((a, b) => b.createdAt - a.createdAt);
   }
 }

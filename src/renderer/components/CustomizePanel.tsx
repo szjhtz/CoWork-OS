@@ -540,8 +540,8 @@ export function CustomizePanel({
                       <div className="cp-agent-info">
                         <span className="cp-agent-name">Agent Persona Available</span>
                         <span className="cp-agent-desc">
-                          This pack includes a proactive agent persona. Activate it from Agent
-                          Personas to get automation-driven background tasks.
+                          This pack includes an optional digital twin persona. Activate it from
+                          Agent Personas as a preset; core automation is configured separately.
                         </span>
                       </div>
                     </div>

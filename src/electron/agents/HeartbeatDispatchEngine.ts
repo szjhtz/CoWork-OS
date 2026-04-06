@@ -5,6 +5,10 @@ import {
   Task,
   type ProactiveTaskDefinition,
 } from "../../shared/types";
+import {
+  buildCoreAutomationAgentConfig,
+  resolveOperationalAutonomyPolicy,
+} from "./autonomy-policy";
 import type { HeartbeatChecklistItem } from "./heartbeat-maintenance";
 
 export interface HeartbeatDispatchDeps {
@@ -108,7 +112,9 @@ export class HeartbeatDispatchEngine {
           input.agent.id,
           {
             source: "hook",
-            agentConfig: { allowUserInput: false },
+            agentConfig: buildCoreAutomationAgentConfig(
+              resolveOperationalAutonomyPolicy(input.agent),
+            ),
             taskOverrides: {
               assignedAgentRoleId: input.agent.id,
               heartbeatRunId: input.heartbeatRunId,

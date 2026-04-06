@@ -4,6 +4,7 @@ import { SecureSettingsRepository } from "../database/SecureSettingsRepository";
 import type {
   SubconsciousBacklogItem,
   SubconsciousDecision,
+  SubconsciousRunOutcome,
   SubconsciousRun,
   SubconsciousTargetRef,
   SubconsciousTargetSummary,
@@ -83,6 +84,8 @@ export class SubconsciousMigrationService {
         target,
         health: row.status === "parked" ? "watch" : "healthy",
         state: row.status === "running" ? "active" : "idle",
+        persistence: "durable",
+        missedRunPolicy: "catchUp",
         lastEvidenceAt: Number(row.last_seen_at || Date.now()),
         backlogCount: 0,
       };
@@ -114,12 +117,14 @@ export class SubconsciousMigrationService {
     for (const row of rows) {
       const target = codeWorkspaceTarget(String(row.workspace_id));
       const runId = `legacy-${String(row.id)}`;
+      const migratedOutcome: SubconsciousRunOutcome =
+        row.status === "failed" ? "failed" : "dispatch";
       const run: SubconsciousRun = this.runRepo.create({
         id: runId,
         targetKey: target.key,
         workspaceId: target.workspaceId,
         stage: row.status === "failed" ? "failed" : "completed",
-        outcome: row.status === "failed" ? "failed" : "completed",
+        outcome: migratedOutcome,
         evidenceFingerprint: createHash("sha1").update(runId).digest("hex"),
         evidenceSummary: "Migrated from legacy improvement campaign.",
         artifactRoot: "",
@@ -137,7 +142,7 @@ export class SubconsciousMigrationService {
         rejectedHypothesisIds: [],
         rationale: "Imported from the legacy improvement campaign history.",
         nextBacklog: [],
-        outcome: row.status === "failed" ? "failed" : "completed",
+        outcome: migratedOutcome,
         createdAt: Number(row.completed_at || row.created_at || Date.now()),
       };
       this.decisionRepo.upsert(decision);

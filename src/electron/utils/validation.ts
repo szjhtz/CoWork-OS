@@ -7,6 +7,15 @@ import * as os from "os";
 import * as path from "path";
 import { z } from "zod";
 import {
+  CoreEvalCaseStatus,
+  CoreExperimentStatus,
+  CoreFailureCategory,
+  CoreFailureClusterStatus,
+  CoreFailureRecordStatus,
+  CoreMemoryCandidateStatus,
+  CoreMemoryScopeKind,
+  CoreTraceKind,
+  CoreTraceStatus,
   LLM_PROVIDER_TYPES,
   isTempWorkspaceId,
   PersonalityId,
@@ -1683,6 +1692,278 @@ export const StringIdSchema = z.string().min(1).max(100);
 export const TargetKeySchema = z.string().trim().min(1).max(1024);
 export const ProviderApiKeySchema = z.string().max(4000).optional();
 export const ProviderBaseUrlSchema = z.string().url().max(500).optional();
+const HEARTBEAT_PROFILE_VALUES = ["observer", "operator", "dispatcher"] as const;
+const CHANNEL_TYPE_VALUES = [
+  "telegram",
+  "discord",
+  "slack",
+  "whatsapp",
+  "imessage",
+  "signal",
+  "mattermost",
+  "matrix",
+  "twitch",
+  "line",
+  "bluebubbles",
+  "email",
+  "teams",
+  "googlechat",
+  "feishu",
+  "wecom",
+  "x",
+] as const;
+export const HeartbeatProfileSchema = z.enum(HEARTBEAT_PROFILE_VALUES);
+export const ChannelTypeSchema = z.enum(CHANNEL_TYPE_VALUES);
+export const HeartbeatActiveHoursSchema = z
+  .object({
+    timezone: z.string().trim().min(1).max(100).optional(),
+    startHour: z.number().int().min(0).max(23),
+    endHour: z.number().int().min(0).max(23),
+    weekdays: z.array(z.number().int().min(0).max(6)).max(7).optional(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.weekdays) {
+      const unique = new Set(value.weekdays);
+      if (unique.size !== value.weekdays.length) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["weekdays"],
+          message: "weekdays must not contain duplicates",
+        });
+      }
+    }
+  });
+export const HeartbeatConfigSchema = z
+  .object({
+    heartbeatEnabled: z.boolean().optional(),
+    heartbeatIntervalMinutes: z.number().int().min(15).max(7 * 24 * 60).optional(),
+    heartbeatStaggerOffset: z.number().int().min(0).max(7 * 24 * 60).optional(),
+    pulseEveryMinutes: z.number().int().min(15).max(7 * 24 * 60).optional(),
+    dispatchCooldownMinutes: z.number().int().min(15).max(7 * 24 * 60).optional(),
+    maxDispatchesPerDay: z.number().int().min(1).max(96).optional(),
+    heartbeatProfile: HeartbeatProfileSchema.optional(),
+    activeHours: HeartbeatActiveHoursSchema.nullable().optional(),
+  })
+  .strict();
+export const AutomationProfileCreateRequestSchema = z
+  .object({
+    agentRoleId: UUIDSchema,
+    enabled: z.boolean().optional(),
+    cadenceMinutes: z.number().int().min(15).max(7 * 24 * 60).optional(),
+    staggerOffsetMinutes: z.number().int().min(0).max(7 * 24 * 60).optional(),
+    dispatchCooldownMinutes: z.number().int().min(15).max(7 * 24 * 60).optional(),
+    maxDispatchesPerDay: z.number().int().min(1).max(96).optional(),
+    profile: HeartbeatProfileSchema.optional(),
+    activeHours: HeartbeatActiveHoursSchema.nullable().optional(),
+  })
+  .strict();
+export const AutomationProfileUpdateRequestSchema = z
+  .object({
+    id: UUIDSchema,
+    enabled: z.boolean().optional(),
+    cadenceMinutes: z.number().int().min(15).max(7 * 24 * 60).optional(),
+    staggerOffsetMinutes: z.number().int().min(0).max(7 * 24 * 60).optional(),
+    dispatchCooldownMinutes: z.number().int().min(15).max(7 * 24 * 60).optional(),
+    maxDispatchesPerDay: z.number().int().min(1).max(96).optional(),
+    profile: HeartbeatProfileSchema.optional(),
+    activeHours: HeartbeatActiveHoursSchema.nullable().optional(),
+  })
+  .strict();
+export const AutomationProfileAttachRequestSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    cadenceMinutes: z.number().int().min(15).max(7 * 24 * 60).optional(),
+    staggerOffsetMinutes: z.number().int().min(0).max(7 * 24 * 60).optional(),
+    dispatchCooldownMinutes: z.number().int().min(15).max(7 * 24 * 60).optional(),
+    maxDispatchesPerDay: z.number().int().min(1).max(96).optional(),
+    profile: HeartbeatProfileSchema.optional(),
+    activeHours: HeartbeatActiveHoursSchema.nullable().optional(),
+  })
+  .strict();
+export const StandupDeliveryRequestSchema = z
+  .object({
+    reportId: UUIDSchema,
+    channelType: ChannelTypeSchema,
+    channelId: z.string().trim().min(1).max(200),
+  })
+  .strict();
+export const CoreTraceKindSchema = z.enum([
+  "pulse_cycle",
+  "subconscious_cycle",
+  "memory_update",
+  "dream_distill",
+] as const satisfies readonly CoreTraceKind[]);
+export const CoreTraceStatusSchema = z.enum([
+  "running",
+  "completed",
+  "failed",
+  "skipped",
+] as const satisfies readonly CoreTraceStatus[]);
+export const CoreMemoryScopeKindSchema = z.enum([
+  "global",
+  "workspace",
+  "automation_profile",
+  "code_workspace",
+  "pull_request",
+] as const satisfies readonly CoreMemoryScopeKind[]);
+export const CoreMemoryCandidateStatusSchema = z.enum([
+  "proposed",
+  "accepted",
+  "rejected",
+  "merged",
+] as const satisfies readonly CoreMemoryCandidateStatus[]);
+export const CoreFailureCategorySchema = z.enum([
+  "wake_timing",
+  "dispatch_overreach",
+  "dispatch_underreach",
+  "memory_noise",
+  "memory_staleness",
+  "subconscious_duplication",
+  "subconscious_low_signal",
+  "routing_mismatch",
+  "workspace_context_gap",
+  "cooldown_policy_mismatch",
+  "budget_policy_mismatch",
+  "unknown",
+] as const satisfies readonly CoreFailureCategory[]);
+export const CoreFailureRecordStatusSchema = z.enum([
+  "open",
+  "clustered",
+  "resolved",
+  "archived",
+] as const satisfies readonly CoreFailureRecordStatus[]);
+export const CoreFailureClusterStatusSchema = z.enum([
+  "open",
+  "stable",
+  "evaluating",
+  "resolved",
+  "dismissed",
+] as const satisfies readonly CoreFailureClusterStatus[]);
+export const CoreEvalCaseStatusSchema = z.enum([
+  "draft",
+  "active",
+  "failing",
+  "archived",
+] as const satisfies readonly CoreEvalCaseStatus[]);
+export const CoreExperimentStatusSchema = z.enum([
+  "proposed",
+  "running",
+  "passed_gate",
+  "failed_gate",
+  "promoted",
+  "rejected",
+] as const satisfies readonly CoreExperimentStatus[]);
+export const CoreTraceListRequestSchema = z
+  .object({
+    profileId: UUIDSchema.optional(),
+    workspaceId: UUIDSchema.optional(),
+    targetKey: TargetKeySchema.optional(),
+    traceKind: CoreTraceKindSchema.optional(),
+    status: CoreTraceStatusSchema.optional(),
+    limit: z.number().int().min(1).max(500).optional(),
+  })
+  .strict();
+export const CoreMemoryCandidateListRequestSchema = z
+  .object({
+    profileId: UUIDSchema.optional(),
+    workspaceId: UUIDSchema.optional(),
+    traceId: StringIdSchema.optional(),
+    scopeKind: CoreMemoryScopeKindSchema.optional(),
+    status: CoreMemoryCandidateStatusSchema.optional(),
+    limit: z.number().int().min(1).max(500).optional(),
+  })
+  .strict();
+export const CoreMemoryCandidateReviewSchema = z
+  .object({
+    id: StringIdSchema,
+    status: z.enum(["accepted", "rejected", "merged"]),
+    resolution: z.string().max(4000).optional(),
+  })
+  .strict();
+export const CoreMemoryDistillRunNowSchema = z
+  .object({
+    profileId: UUIDSchema,
+    workspaceId: UUIDSchema.optional(),
+  })
+  .strict();
+export const CoreFailureRecordListRequestSchema = z
+  .object({
+    profileId: UUIDSchema.optional(),
+    workspaceId: UUIDSchema.optional(),
+    traceId: StringIdSchema.optional(),
+    category: CoreFailureCategorySchema.optional(),
+    status: CoreFailureRecordStatusSchema.optional(),
+    limit: z.number().int().min(1).max(500).optional(),
+  })
+  .strict();
+export const CoreFailureClusterListRequestSchema = z
+  .object({
+    profileId: UUIDSchema.optional(),
+    workspaceId: UUIDSchema.optional(),
+    category: CoreFailureCategorySchema.optional(),
+    status: CoreFailureClusterStatusSchema.optional(),
+    limit: z.number().int().min(1).max(500).optional(),
+  })
+  .strict();
+export const CoreFailureClusterReviewSchema = z
+  .object({
+    id: StringIdSchema,
+    status: z.enum(["stable", "resolved", "dismissed"]),
+    rootCauseSummary: z.string().max(4000).optional(),
+  })
+  .strict();
+export const CoreEvalCaseListRequestSchema = z
+  .object({
+    profileId: UUIDSchema.optional(),
+    workspaceId: UUIDSchema.optional(),
+    clusterId: StringIdSchema.optional(),
+    status: CoreEvalCaseStatusSchema.optional(),
+    limit: z.number().int().min(1).max(500).optional(),
+  })
+  .strict();
+export const CoreEvalCaseReviewSchema = z
+  .object({
+    id: StringIdSchema,
+    status: z.enum(["active", "archived", "failing"]),
+  })
+  .strict();
+export const CoreExperimentListRequestSchema = z
+  .object({
+    profileId: UUIDSchema.optional(),
+    workspaceId: UUIDSchema.optional(),
+    clusterId: StringIdSchema.optional(),
+    status: CoreExperimentStatusSchema.optional(),
+    limit: z.number().int().min(1).max(500).optional(),
+  })
+  .strict();
+export const CoreExperimentRunSchema = z
+  .object({
+    experimentId: StringIdSchema.optional(),
+    clusterId: StringIdSchema.optional(),
+    profileId: UUIDSchema.optional(),
+    workspaceId: UUIDSchema.optional(),
+    autoPromote: z.boolean().optional(),
+  })
+  .strict()
+  .refine((value) => Boolean(value.experimentId || value.clusterId), {
+    message: "experimentId or clusterId is required",
+  });
+export const CoreExperimentReviewSchema = z
+  .object({
+    id: StringIdSchema,
+    action: z.enum(["promote", "reject"]),
+  })
+  .strict();
+export const CoreLearningsListRequestSchema = z
+  .object({
+    profileId: UUIDSchema.optional(),
+    workspaceId: UUIDSchema.optional(),
+    relatedClusterId: StringIdSchema.optional(),
+    relatedExperimentId: StringIdSchema.optional(),
+    limit: z.number().int().min(1).max(500).optional(),
+  })
+  .strict();
 export const SubconsciousSettingsSchema = z
   .object({
     enabled: z.boolean(),
@@ -1697,6 +1978,20 @@ export const SubconsciousSettingsSchema = z
       )
       .min(1)
       .max(SUBCONSCIOUS_TARGET_KINDS.length),
+    durableTargetKinds: z
+      .array(
+        z.string().refine(
+          (value) => SUBCONSCIOUS_TARGET_KINDS.includes(value as (typeof SUBCONSCIOUS_TARGET_KINDS)[number]),
+          "Invalid subconscious target kind",
+        ),
+      )
+      .max(SUBCONSCIOUS_TARGET_KINDS.length),
+    catchUpOnRestart: z.boolean(),
+    journalingEnabled: z.boolean(),
+    dreamsEnabled: z.boolean(),
+    dreamCadenceHours: z.number().int().min(1).max(24 * 30),
+    autonomyMode: z.enum(["recommendation_first", "balanced_autopilot", "strong_autonomy"]),
+    trustedTargetKeys: z.array(z.string().trim().min(1).max(1024)).max(1000),
     phaseModels: z
       .object({
         collectingEvidence: z.string().max(200).optional(),
@@ -1713,14 +2008,21 @@ export const SubconsciousSettingsSchema = z
       .strict(),
     artifactRetentionDays: z.number().int().min(1).max(365),
     maxHypothesesPerRun: z.number().int().min(3).max(5),
+    notificationPolicy: z
+      .object({
+        inputNeeded: z.boolean(),
+        importantActionTaken: z.boolean(),
+        completedWhileAway: z.boolean(),
+        throttleMinutes: z.number().int().min(0).max(24 * 60),
+        quietHoursStart: z.number().int().min(0).max(23),
+        quietHoursEnd: z.number().int().min(0).max(23),
+      })
+      .strict(),
     perExecutorPolicy: z
       .object({
         task: z.object({ enabled: z.boolean() }).strict(),
         suggestion: z.object({ enabled: z.boolean() }).strict(),
-        scheduledTask: z.object({ enabled: z.boolean() }).strict(),
-        briefing: z.object({ enabled: z.boolean() }).strict(),
-        eventTriggerUpdate: z.object({ enabled: z.boolean() }).strict(),
-        mailboxAutomation: z.object({ enabled: z.boolean() }).strict(),
+        notify: z.object({ enabled: z.boolean() }).strict(),
         codeChangeTask: z
           .object({
             enabled: z.boolean(),

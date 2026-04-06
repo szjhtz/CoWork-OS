@@ -33,6 +33,11 @@ import { HeartbeatRunRepository } from "./HeartbeatRunRepository";
 import { HeartbeatPulseEngine, getSignalStrength } from "./HeartbeatPulseEngine";
 import { HeartbeatDispatchEngine } from "./HeartbeatDispatchEngine";
 import type { MemoryCaptureOptions } from "../memory/MemoryService";
+import { AutomationProfileRepository } from "./AutomationProfileRepository";
+import { CoreTraceService } from "../core/CoreTraceService";
+import { CoreMemoryCandidateService } from "../core/CoreMemoryCandidateService";
+import { CoreMemoryDistiller } from "../core/CoreMemoryDistiller";
+import { CoreLearningPipelineService } from "../core/CoreLearningPipelineService";
 
 type HeartbeatWakeMode = "now" | "next-heartbeat";
 type HeartbeatWakeSource = "hook" | "cron" | "api" | "manual";
@@ -138,6 +143,11 @@ export interface HeartbeatServiceDeps {
     isPrivate?: boolean,
     options?: MemoryCaptureOptions,
   ) => Promise<unknown>;
+  automationProfileRepo?: AutomationProfileRepository;
+  coreTraceService?: CoreTraceService;
+  coreMemoryCandidateService?: CoreMemoryCandidateService;
+  coreMemoryDistiller?: CoreMemoryDistiller;
+  coreLearningPipelineService?: CoreLearningPipelineService;
 }
 
 function normalizeWakeText(text?: string): string {
@@ -230,6 +240,14 @@ export class HeartbeatService extends EventEmitter {
       addNotification: deps.addNotification,
       recordActivity: deps.recordActivity,
     });
+  }
+
+  private async finalizeCoreLearning(traceId?: string): Promise<void> {
+    if (!traceId) return;
+    this.deps.coreMemoryCandidateService?.extractFromTrace(traceId);
+    this.deps.coreMemoryCandidateService?.autoAcceptHighSignalCandidates(traceId);
+    await this.deps.coreMemoryDistiller?.runHotPath(traceId);
+    this.deps.coreLearningPipelineService?.processTrace(traceId);
   }
 
   async start(): Promise<void> {
@@ -467,6 +485,32 @@ export class HeartbeatService extends EventEmitter {
       reason: manualOverride ? "manual_pulse" : "scheduled_pulse",
       status: "running",
     });
+    const profile = this.deps.automationProfileRepo?.findByAgentRoleId(agent.id);
+    const coreTrace = profile
+      ? this.deps.coreTraceService?.startTrace({
+          profileId: profile.id,
+          workspaceId,
+          targetKey: `agent_role:${agent.id}`,
+          sourceSurface: "heartbeat",
+          traceKind: "pulse_cycle",
+          status: "running",
+          heartbeatRunId: pulseRun.id,
+          startedAt: Date.now(),
+        })
+      : undefined;
+    if (coreTrace) {
+      this.deps.coreTraceService?.appendPhaseEvent(
+        coreTrace.id,
+        "start",
+        "heartbeat.pulse_started",
+        manualOverride ? "Manual heartbeat pulse started." : "Scheduled heartbeat pulse started.",
+        {
+          agentRoleId: agent.id,
+          workspaceId,
+          runId: pulseRun.id,
+        },
+      );
+    }
     this.emitHeartbeatEvent({
       type: "pulse_started",
       agentRoleId: agent.id,
@@ -487,6 +531,19 @@ export class HeartbeatService extends EventEmitter {
           : 0;
 
         if (!manualOverride && !isWithinActiveHours(agent)) {
+          if (coreTrace) {
+            this.deps.coreTraceService?.appendPhaseEvent(
+              coreTrace.id,
+              "gating",
+              "heartbeat.gated",
+              "Heartbeat pulse deferred because the operator is outside active hours.",
+            );
+            this.deps.coreTraceService?.completeTrace(
+              coreTrace.id,
+              "completed",
+              "Outside active hours.",
+            );
+          }
           const result: HeartbeatResult = {
             agentRoleId: agent.id,
             status: "ok",
@@ -542,46 +599,84 @@ export class HeartbeatService extends EventEmitter {
             agent.heartbeatPolicy?.maxDispatchesPerDay || agent.maxDispatchesPerDay || 6,
         };
 
-      if (decision.kind === "deferred") {
-        this.signalStore.setDeferredState(agent.id, decision.deferred || {
-          active: true,
-          compressedSignalCount: 0,
-        });
-        this.runRepo.finish(pulseRun.id, { status: "completed", summary: decision.reason });
-        result.deferred = true;
-        result.deferredReason = decision.reason;
-        this.emitHeartbeatEvent({
-          type: "pulse_deferred",
-          agentRoleId: agent.id,
-          agentName: agent.displayName,
-          timestamp: Date.now(),
-          result,
-          runId: pulseRun.id,
-          runType: "pulse",
-          deferred: decision.deferred,
-        });
-        this.finishPulse(agent, result);
-        return result;
-      }
+        if (decision.kind === "deferred") {
+          if (coreTrace) {
+            this.deps.coreTraceService?.appendPhaseEvent(
+              coreTrace.id,
+              "gating",
+              "heartbeat.deferred",
+              decision.reason,
+              {
+                compressedSignalCount: decision.compressedSignalCount,
+                signalCount: decision.signalCount,
+              },
+            );
+            this.deps.coreTraceService?.completeTrace(coreTrace.id, "completed", decision.reason);
+            await this.finalizeCoreLearning(coreTrace.id);
+          }
+          this.signalStore.setDeferredState(agent.id, decision.deferred || {
+            active: true,
+            compressedSignalCount: 0,
+          });
+          this.runRepo.finish(pulseRun.id, { status: "completed", summary: decision.reason });
+          result.deferred = true;
+          result.deferredReason = decision.reason;
+          this.emitHeartbeatEvent({
+            type: "pulse_deferred",
+            agentRoleId: agent.id,
+            agentName: agent.displayName,
+            timestamp: Date.now(),
+            result,
+            runId: pulseRun.id,
+            runType: "pulse",
+            deferred: decision.deferred,
+          });
+          this.finishPulse(agent, result);
+          return result;
+        }
 
-      this.signalStore.clearDeferredState(agent.id);
+        this.signalStore.clearDeferredState(agent.id);
 
         if (decision.kind === "idle" || !decision.dispatchKind) {
+          if (coreTrace) {
+            this.deps.coreTraceService?.appendPhaseEvent(
+              coreTrace.id,
+              "decision",
+              "heartbeat.idle",
+              decision.reason,
+            );
+            this.deps.coreTraceService?.completeTrace(coreTrace.id, "completed", decision.reason);
+            await this.finalizeCoreLearning(coreTrace.id);
+          }
           this.runRepo.finish(pulseRun.id, { status: "completed", summary: decision.reason });
           this.emitHeartbeatEvent({
             type: "pulse_completed",
-          agentRoleId: agent.id,
-          agentName: agent.displayName,
-          timestamp: Date.now(),
-          result,
-          runId: pulseRun.id,
-          runType: "pulse",
-        });
+            agentRoleId: agent.id,
+            agentName: agent.displayName,
+            timestamp: Date.now(),
+            result,
+            runId: pulseRun.id,
+            runType: "pulse",
+          });
           this.finishPulse(agent, result);
           return result;
         }
 
         if (!workspaceId) {
+          if (coreTrace) {
+            this.deps.coreTraceService?.appendPhaseEvent(
+              coreTrace.id,
+              "decision",
+              "heartbeat.no_workspace",
+              "Heartbeat could not dispatch because no workspace was available.",
+            );
+            this.deps.coreTraceService?.completeTrace(
+              coreTrace.id,
+              "completed",
+              "No workspace available for heartbeat dispatch.",
+            );
+            await this.finalizeCoreLearning(coreTrace.id);
+          }
           result = {
             ...result,
             pulseOutcome: "idle",
@@ -617,22 +712,35 @@ export class HeartbeatService extends EventEmitter {
 
         const dispatchRun = this.runRepo.create({
           agentRoleId: agent.id,
-        workspaceId,
-        runType: "dispatch",
-        dispatchKind: decision.dispatchKind,
-        reason: decision.reason,
-        evidenceRefs: decision.evidenceRefs,
-        status: "running",
-      });
-      this.emitHeartbeatEvent({
-        type: "dispatch_started",
-        agentRoleId: agent.id,
-        agentName: agent.displayName,
-        timestamp: Date.now(),
-        runId: dispatchRun.id,
+          workspaceId,
+          runType: "dispatch",
+          dispatchKind: decision.dispatchKind,
+          reason: decision.reason,
+          evidenceRefs: decision.evidenceRefs,
+          status: "running",
+        });
+        this.emitHeartbeatEvent({
+          type: "dispatch_started",
+          agentRoleId: agent.id,
+          agentName: agent.displayName,
+          timestamp: Date.now(),
+          runId: dispatchRun.id,
           runType: "dispatch",
           dispatchKind: decision.dispatchKind,
         });
+        if (coreTrace) {
+          this.deps.coreTraceService?.appendPhaseEvent(
+            coreTrace.id,
+            "dispatch",
+            "heartbeat.dispatch_started",
+            `Heartbeat started ${decision.dispatchKind} dispatch.`,
+            {
+              dispatchRunId: dispatchRun.id,
+              dispatchKind: decision.dispatchKind,
+              reason: decision.reason,
+            },
+          );
+        }
 
         let dispatchResult: HeartbeatResult;
         try {
@@ -676,6 +784,9 @@ export class HeartbeatService extends EventEmitter {
         });
         if (dispatchResult.taskCreated) {
           this.runRepo.attachTask(dispatchRun.id, dispatchResult.taskCreated);
+          if (coreTrace) {
+            this.deps.coreTraceService?.attachTask(coreTrace.id, dispatchResult.taskCreated);
+          }
         }
         if (dispatchResult.status !== "error") {
           this.markMaintenanceCompleted(agent, scopedChecklistItems, dueProactiveTasks, decision.kind);
@@ -707,6 +818,25 @@ export class HeartbeatService extends EventEmitter {
           status: "completed",
           summary: `${decision.kind}: ${decision.reason}`,
         });
+        if (coreTrace) {
+          this.deps.coreTraceService?.appendPhaseEvent(
+            coreTrace.id,
+            "dispatch",
+            "heartbeat.dispatch_completed",
+            `${decision.dispatchKind} dispatch ${dispatchResult.status === "error" ? "failed" : "completed"}.`,
+            {
+              dispatchRunId: dispatchRun.id,
+              taskId: dispatchResult.taskCreated,
+              status: dispatchResult.status,
+            },
+          );
+          this.deps.coreTraceService?.completeTrace(
+            coreTrace.id,
+            dispatchResult.status === "error" ? "failed" : "completed",
+            `${decision.kind}: ${decision.reason}`,
+          );
+          await this.finalizeCoreLearning(coreTrace.id);
+        }
         this.emitHeartbeatEvent({
           type: "dispatch_completed",
           agentRoleId: agent.id,
@@ -730,6 +860,16 @@ export class HeartbeatService extends EventEmitter {
         return result;
       } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      if (coreTrace) {
+        this.deps.coreTraceService?.appendPhaseEvent(
+          coreTrace.id,
+          "error",
+          "heartbeat.error",
+          message,
+        );
+        this.deps.coreTraceService?.failTrace(coreTrace.id, message);
+        await this.finalizeCoreLearning(coreTrace.id);
+      }
       this.runRepo.finish(pulseRun.id, { status: "failed", error: message });
       const result: HeartbeatResult = {
         agentRoleId: agent.id,

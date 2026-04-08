@@ -24,6 +24,39 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
+function buildValidityFilter(
+  asOf: number | undefined,
+  columnPrefix = "",
+): { clause: string; params: Any[] } {
+  if (!Number.isFinite(asOf)) {
+    return { clause: "", params: [] };
+  }
+  const prefix = columnPrefix ? `${columnPrefix}.` : "";
+  return {
+    clause: ` AND (${prefix}valid_from IS NULL OR ${prefix}valid_from <= ?) AND (${prefix}valid_to IS NULL OR ${prefix}valid_to > ?)`,
+    params: [asOf, asOf],
+  };
+}
+
+function intervalStart(edge: Pick<KGEdge, "createdAt" | "validFrom">): number {
+  return Number.isFinite(edge.validFrom) ? (edge.validFrom as number) : edge.createdAt;
+}
+
+function intervalEnd(edge: Pick<KGEdge, "validTo">): number | null {
+  return Number.isFinite(edge.validTo) ? (edge.validTo as number) : null;
+}
+
+function intervalsOverlap(
+  left: Pick<KGEdge, "createdAt" | "validFrom" | "validTo">,
+  right: Pick<KGEdge, "createdAt" | "validFrom" | "validTo">,
+): boolean {
+  const leftStart = intervalStart(left);
+  const leftEnd = intervalEnd(left) ?? Number.POSITIVE_INFINITY;
+  const rightStart = intervalStart(right);
+  const rightEnd = intervalEnd(right) ?? Number.POSITIVE_INFINITY;
+  return leftStart < rightEnd && rightStart < leftEnd;
+}
+
 export class KnowledgeGraphRepository {
   constructor(private db: Database.Database) {}
 
@@ -205,27 +238,58 @@ export class KnowledgeGraphRepository {
     confidence = 1.0,
     source: "manual" | "auto" | "agent" = "manual",
     sourceTaskId?: string,
+    validFrom?: number,
+    validTo?: number,
   ): KGEdge {
     const id = uuidv4();
     const now = Date.now();
     const propsJson = JSON.stringify(properties || {});
+    const normalizedValidFrom = Number.isFinite(validFrom) ? (validFrom as number) : now;
+    const normalizedValidTo = Number.isFinite(validTo) ? (validTo as number) : undefined;
+    const normalizedEdgeType = edgeType.toLowerCase().trim();
+    if (normalizedValidTo !== undefined && normalizedValidFrom >= normalizedValidTo) {
+      throw new Error("valid_to must be greater than valid_from");
+    }
+
+    const overlappingEdge = this.getRelationEdges(
+      workspaceId,
+      sourceEntityId,
+      targetEntityId,
+      normalizedEdgeType,
+    ).find((edge) =>
+      intervalsOverlap(
+        {
+          createdAt: now,
+          validFrom: normalizedValidFrom,
+          validTo: normalizedValidTo,
+        },
+        edge,
+      ),
+    );
+    if (overlappingEdge) {
+      throw new Error(
+        `Temporal edge overlaps existing relation interval (${overlappingEdge.id}) for ${normalizedEdgeType}`,
+      );
+    }
 
     this.db
       .prepare(
-        `INSERT INTO kg_edges (id, workspace_id, source_entity_id, target_entity_id, edge_type, properties, confidence, source, source_task_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO kg_edges (id, workspace_id, source_entity_id, target_entity_id, edge_type, properties, confidence, source, source_task_id, created_at, valid_from, valid_to)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
         workspaceId,
         sourceEntityId,
         targetEntityId,
-        edgeType.toLowerCase().trim(),
+        normalizedEdgeType,
         propsJson,
         clamp(confidence, 0, 1),
         source,
         sourceTaskId || null,
         now,
+        normalizedValidFrom,
+        normalizedValidTo || null,
       );
 
     return {
@@ -233,12 +297,14 @@ export class KnowledgeGraphRepository {
       workspaceId,
       sourceEntityId,
       targetEntityId,
-      edgeType: edgeType.toLowerCase().trim(),
+      edgeType: normalizedEdgeType,
       properties: properties || {},
       confidence: clamp(confidence, 0, 1),
       source,
       sourceTaskId,
       createdAt: now,
+      validFrom: normalizedValidFrom,
+      validTo: normalizedValidTo,
     };
   }
 
@@ -253,13 +319,58 @@ export class KnowledgeGraphRepository {
     return result.changes > 0;
   }
 
-  getEdgesBetween(entityId1: string, entityId2: string): KGEdge[] {
+  invalidateEdge(edgeId: string, validTo = Date.now()): KGEdge | undefined {
+    const edge = this.getEdge(edgeId);
+    if (!edge) return undefined;
+    const effectiveValidFrom = intervalStart(edge);
+    if (Number.isFinite(edge.validTo)) {
+      if (edge.validTo === validTo) {
+        return edge;
+      }
+      throw new Error(`Edge already invalidated at ${edge.validTo}`);
+    }
+    if (!Number.isFinite(validTo) || validTo <= effectiveValidFrom) {
+      throw new Error("valid_to must be greater than the edge valid_from");
+    }
+    this.db.prepare("UPDATE kg_edges SET valid_to = ? WHERE id = ?").run(validTo, edgeId);
+    return this.getEdge(edgeId);
+  }
+
+  getRelationEdges(
+    workspaceId: string,
+    sourceEntityId: string,
+    targetEntityId: string,
+    edgeType: string,
+  ): KGEdge[] {
+    const normalizedType = edgeType.toLowerCase().trim();
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM kg_edges
+         WHERE workspace_id = ?
+           AND source_entity_id = ?
+           AND target_entity_id = ?
+           AND edge_type = ?
+         ORDER BY COALESCE(valid_from, created_at) ASC, created_at ASC`,
+      )
+      .all(workspaceId, sourceEntityId, targetEntityId, normalizedType) as Any[];
+    return rows.map((row) => this.mapEdge(row));
+  }
+
+  getEdgesBetween(entityId1: string, entityId2: string, asOf?: number): KGEdge[] {
+    const validity = buildValidityFilter(asOf);
     const stmt = this.db.prepare(`
       SELECT * FROM kg_edges
-      WHERE (source_entity_id = ? AND target_entity_id = ?)
-         OR (source_entity_id = ? AND target_entity_id = ?)
+      WHERE ((source_entity_id = ? AND target_entity_id = ?)
+         OR (source_entity_id = ? AND target_entity_id = ?))
+      ${validity.clause}
     `);
-    const rows = stmt.all(entityId1, entityId2, entityId2, entityId1) as Any[];
+    const rows = stmt.all(
+      entityId1,
+      entityId2,
+      entityId2,
+      entityId1,
+      ...validity.params,
+    ) as Any[];
     return rows.map((r) => this.mapEdge(r));
   }
 
@@ -356,7 +467,7 @@ export class KnowledgeGraphRepository {
 
   // ─── Graph Traversal ──────────────────────────────────────────────
 
-  getNeighbors(entityId: string, depth = 1, edgeTypes?: string[]): KGNeighborResult[] {
+  getNeighbors(entityId: string, depth = 1, edgeTypes?: string[], asOf?: number): KGNeighborResult[] {
     const maxDepth = Math.min(Math.max(1, depth), 3);
     const results: KGNeighborResult[] = [];
     const visited = new Set<string>([entityId]);
@@ -371,6 +482,7 @@ export class KnowledgeGraphRepository {
 
       let edgeFilter = "";
       const params: Any[] = [...currentLevel, ...currentLevel];
+      const validity = buildValidityFilter(asOf);
 
       if (edgeTypes && edgeTypes.length > 0) {
         const edgePlaceholders = edgeTypes.map(() => "?").join(",");
@@ -382,8 +494,9 @@ export class KnowledgeGraphRepository {
         SELECT * FROM kg_edges
         WHERE (source_entity_id IN (${placeholders}) OR target_entity_id IN (${placeholders}))
         ${edgeFilter}
+        ${validity.clause}
       `);
-      const edges = stmt.all(...params) as Any[];
+      const edges = stmt.all(...params, ...validity.params) as Any[];
 
       const nextLevel: string[] = [];
 
@@ -416,7 +529,7 @@ export class KnowledgeGraphRepository {
 
   // ─── Subgraph ─────────────────────────────────────────────────────
 
-  getSubgraph(entityIds: string[]): KGSubgraph {
+  getSubgraph(entityIds: string[], asOf?: number): KGSubgraph {
     if (entityIds.length === 0) return { entities: [], edges: [] };
 
     const uniqueIds = [...new Set(entityIds)];
@@ -433,12 +546,18 @@ export class KnowledgeGraphRepository {
     const idSet = new Set(entities.map((e) => e.id));
     const placeholders = entities.map(() => "?").join(",");
 
+    const validity = buildValidityFilter(asOf);
     const stmt = this.db.prepare(`
       SELECT * FROM kg_edges
       WHERE source_entity_id IN (${placeholders})
         AND target_entity_id IN (${placeholders})
+      ${validity.clause}
     `);
-    const edgeRows = stmt.all(...entities.map((e) => e.id), ...entities.map((e) => e.id)) as Any[];
+    const edgeRows = stmt.all(
+      ...entities.map((e) => e.id),
+      ...entities.map((e) => e.id),
+      ...validity.params,
+    ) as Any[];
 
     const edges = edgeRows
       .map((r) => this.mapEdge(r))
@@ -563,6 +682,14 @@ export class KnowledgeGraphRepository {
       source: row.source === "auto" || row.source === "agent" ? row.source : "manual",
       sourceTaskId: row.source_task_id || undefined,
       createdAt: row.created_at,
+      validFrom:
+        typeof row.valid_from === "number" && Number.isFinite(row.valid_from)
+          ? row.valid_from
+          : undefined,
+      validTo:
+        typeof row.valid_to === "number" && Number.isFinite(row.valid_to)
+          ? row.valid_to
+          : undefined,
     };
   }
 

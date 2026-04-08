@@ -35,6 +35,64 @@ describe("buildSavedLLMSettings", () => {
     );
   });
 
+  it("preserves fallbackProviders and provider credentials when partial saves omit them", () => {
+    const existingSettings: LLMSettingsData = {
+      providerType: "openrouter",
+      modelKey: "openrouter/sonoma",
+      fallbackProviders: [
+        { providerType: "anthropic", modelKey: "sonnet-4-5" },
+        { providerType: "openai", modelKey: "gpt-4.1-mini" },
+      ],
+      openrouter: {
+        apiKey: "existing-openrouter-key",
+        model: "openrouter/sonoma",
+        baseUrl: "https://openrouter.ai/api/v1",
+      },
+      anthropic: {
+        apiKey: "existing-anthropic-key",
+      },
+    };
+
+    const validated: LLMSettingsData = {
+      providerType: "openrouter",
+      modelKey: "openrouter/free",
+    };
+
+    const saved = buildSavedLLMSettings(validated, existingSettings);
+
+    expect(saved.fallbackProviders).toEqual(existingSettings.fallbackProviders);
+    expect(saved.openrouter).toEqual(existingSettings.openrouter);
+    expect(saved.anthropic).toEqual(existingSettings.anthropic);
+  });
+
+  it("merges partial provider updates without dropping sibling settings", () => {
+    const existingSettings: LLMSettingsData = {
+      providerType: "openrouter",
+      modelKey: "openrouter/free",
+      openrouter: {
+        apiKey: "existing-openrouter-key",
+        model: "openrouter/free",
+        baseUrl: "https://openrouter.ai/api/v1",
+      },
+    };
+
+    const validated: LLMSettingsData = {
+      providerType: "openrouter",
+      modelKey: "openrouter/pro",
+      openrouter: {
+        model: "openrouter/pro",
+      },
+    };
+
+    const saved = buildSavedLLMSettings(validated, existingSettings);
+
+    expect(saved.openrouter).toEqual({
+      apiKey: "existing-openrouter-key",
+      model: "openrouter/pro",
+      baseUrl: "https://openrouter.ai/api/v1",
+    });
+  });
+
   it("preserves OpenAI OAuth tokens when saving unrelated settings changes", () => {
     const existingSettings: LLMSettingsData = {
       providerType: "openai",

@@ -1,158 +1,90 @@
 # CoWork OS vs OpenClaw: Improvement Plan
 
-**Last updated:** Aligned with current local codebase (docs, kit contracts, Settings structure).
+**Last updated:** After the layered-memory refactor, session recall tooling, curated hot memory, and edge-case hardening changes.
 
 ---
 
 ## Executive Summary
 
-CoWork OS already exceeds OpenClaw in several areas (feedback learning, encryption, unified memory synthesis). The main gaps are: (1) **adaptiveStyleEnabled** and **channelPersonaEnabled** exist in guardrails but are **not exposed in the UI** (GuardrailSettings.tsx), (2) session-level memory indexing and daily logs (OpenClaw-style `memory/YYYY-MM-DD.md`), (3) feedback UX (thumbs up/down) to surface the existing backend. **USER.md already exists** in `.cowork/` via kit-contracts and workspace init templates.
+The earlier OpenClaw-inspired memory gaps are mostly closed now:
+
+- `search_sessions` adds explicit recent-run transcript recall
+- `memory_topics_load` adds focused topical memory packs under `.cowork/memory/topics`
+- `memory_curate` and `memory_curated_read` add a Hermes-like curated hot-memory lane
+- archive memory is still searchable, but no longer injected by default
+- behavior-adaptation toggles are exposed in `GuardrailSettings`
+- task/message feedback UI already exists and feeds the learning loop
+
+The remaining differences versus OpenClaw are now mostly product-shape choices rather than missing primitives. OpenClaw still has the simpler plain-markdown mental model; CoWork OS now favors a layered system with a small always-visible curated lane and explicit recall tools for broader history.
 
 ---
 
-## Comparison Matrix
+## Current Comparison Matrix
 
-| Aspect | OpenClaw | CoWork OS | Winner / Gap |
-|--------|----------|-----------|---------------|
-| **Personalization** | `USER.md`, `IDENTITY.md`, `SOUL.md` in workspace | `UserProfileService`, `RelationshipMemoryService`, **USER.md in `.cowork/`** (kit-contracts), `MemorySynthesizer` | CoWork has both file-based and structured memory |
-| **Session memory** | `MEMORY.md`, `memory/YYYY-MM-DD.md`, session transcripts indexed | `MemoryService`, `search_memories`, `MEMORY.md` in kit, hybrid BM25+embeddings | Gap: no daily logs, no session transcript indexing |
-| **Style adaptation** | Static SOUL/IDENTITY prompts | `AdaptiveStyleEngine` — **exists but no UI toggle** | CoWork ahead but not discoverable |
-| **Feedback learning** | None | `FeedbackService`, `UserProfileService.ingestUserFeedback`, `PlaybookService` | CoWork ahead |
-| **Privacy** | Local-first, no encryption | `SecureSettingsRepository` (OS keychain + AES) | CoWork ahead |
-
----
-
-## Current Codebase Snapshot
-
-### Docs Structure
-
-- **docs/** — Main documentation (VitePress-style `docs/index.md` with hero, features)
-- **docs/evolving-agent-intelligence.md** — Evolving Intelligence architecture
-- **docs/openclaw-comparison.md** — Alternative positioning
-- **docs/openclaw-feature-comparison.md** — Feature-by-feature comparison
-- **docs/openclaw-improvement-plan.md** — This plan
-- **README.md** — Links to `docs/getting-started.md`, `docs/evolving-agent-intelligence.md`, etc.
-
-### Kit Contracts (`.cowork/`)
-
-- **src/electron/context/kit-contracts.ts** — Defines `USER.md`, `MEMORY.md`, `SOUL.md`, `IDENTITY.md`, `BOOTSTRAP.md`, `VIBES.md`, `LORE.md`, etc.
-- **USER.md** — Already in `WORKSPACE_KIT_CONTRACTS` with `parser: "kv-lines"`, `mutability: "user_owned"`
-- **Workspace init templates** — In `src/electron/ipc/handlers.ts` (e.g. USER.md template at ~line 5590)
-- **Kit injection** — `src/electron/context/kit-injection.ts` uses `WORKSPACE_PROMPT_ORDER` to build context
-
-### Settings Structure
-
-- **Settings tabs** — `guardrails` (Safety Limits), `memory` (MemoryHubSettings), `briefing` (BriefingPanel), etc.
-- **GuardrailSettings** — `src/renderer/components/GuardrailSettings.tsx` — Does **not** render `adaptiveStyleEnabled` or `channelPersonaEnabled`
-- **Guardrail defaults** — `src/electron/guardrails/guardrail-manager.ts` (both default `false`)
-
-### Memory & Feedback
-
-- **MemorySynthesizer** — `src/electron/memory/MemorySynthesizer.ts` — Merges 6 sources
-- **WorkspaceKitContext** — `src/electron/memory/WorkspaceKitContext.ts` — Includes kit files (USER.md, etc.)
-- **AssistantMessageContent** — `src/renderer/components/AssistantMessageContent.tsx` — Renders assistant messages (candidate for thumbs)
-- **MainContent** — Uses `AssistantMessageContent` for message display
+| Aspect | OpenClaw | CoWork OS | Current status |
+|--------|----------|-----------|----------------|
+| **Personalization** | `USER.md`, `IDENTITY.md`, `SOUL.md` in workspace | `UserProfileService`, `RelationshipMemoryService`, `.cowork/USER.md`, curated hot memory, adaptive style | CoWork has both file-based and structured personalization |
+| **Always-visible memory** | Plain markdown memory files | Curated hot memory in `<cowork_hot_memory>` plus auto-managed blocks in `.cowork/USER.md` and `.cowork/MEMORY.md` | CoWork now has a dedicated hot-memory lane |
+| **Archive recall** | Markdown memory history | `MemoryService`, `search_memories`, imported ChatGPT history, indexed `.cowork/` markdown | CoWork keeps broader searchable recall separate from always-on injection |
+| **Session recall** | Session-history tooling | `search_sessions` over transcript spans and checkpoints | Gap closed |
+| **Topic-focused recall** | Workspace-native markdown browsing | `memory_topics_load` packs focused topic files under `.cowork/memory/topics` | CoWork now has an explicit topical recall path |
+| **Daily logs** | `memory/YYYY-MM-DD.md` style files | `DailyLogService` + `DailyLogSummarizer` under `.cowork/memory/daily` and `.cowork/memory/summaries` | Primitive exists; writer wiring remains an optional follow-up |
+| **Style adaptation** | Static persona files | `AdaptiveStyleEngine` with UI toggles in `GuardrailSettings` | CoWork ahead |
+| **Feedback learning** | Limited in reviewed docs | Message/task thumbs, `FeedbackService`, `UserProfileService.ingestUserFeedback`, playbook reinforcement | CoWork ahead |
+| **Privacy** | Local-first | Local-first plus `SecureSettingsRepository` encryption | CoWork ahead |
 
 ---
 
-## Implementation Plan
+## What Changed
 
-### Phase 1: Expose Evolving Intelligence Toggles (Low Effort)
+### Memory runtime
 
-**Goal:** `adaptiveStyleEnabled` and `channelPersonaEnabled` exist in `GuardrailSettings` but have no UI. Add them so users can enable these features.
+- `src/electron/memory/CuratedMemoryService.ts` adds the curated hot-memory lane
+- `src/electron/memory/SessionRecallService.ts` adds transcript/checkpoint recall
+- `src/electron/memory/MemorySynthesizer.ts` now emits:
+  - `<cowork_hot_memory>`
+  - `<cowork_structured_memory>`
+  - `<cowork_recall_hints>`
+- `src/electron/settings/memory-features-manager.ts` now defaults archive injection to off
 
-| Task | Description | Files |
-|------|-------------|-------|
-| 1.1 Add Adaptive Style toggle | Add "Adaptive Style" section to GuardrailSettings: checkbox for `adaptiveStyleEnabled`, number input for `adaptiveStyleMaxDriftPerWeek`. | [src/renderer/components/GuardrailSettings.tsx](src/renderer/components/GuardrailSettings.tsx) |
-| 1.2 Add Channel Persona toggle | Add "Channel Persona" section: checkbox for `channelPersonaEnabled`. | [src/renderer/components/GuardrailSettings.tsx](src/renderer/components/GuardrailSettings.tsx) |
-| 1.3 Evolution Metrics on dashboard | Add "How is the agent improving?" card to HomeDashboard when user has 10+ completed tasks, linking to Briefing or Usage Insights. | [src/renderer/components/HomeDashboard.tsx](src/renderer/components/HomeDashboard.tsx) |
+### Tooling
 
----
+- `memory_curate`
+- `memory_curated_read`
+- `search_sessions`
+- `memory_topics_load`
 
-### Phase 2: USER.md Visibility (Low Effort)
+### UI and learning surfaces
 
-**Goal:** USER.md already exists in kit-contracts and is created on workspace init. Improve discoverability.
-
-| Task | Description | Files |
-|------|-------------|-------|
-| 2.1 Bootstrap prompt | Ensure BOOTSTRAP.md (or onboarding) prominently prompts users to fill `.cowork/USER.md`. Already referenced in handlers.ts bootstrap content. | [src/electron/ipc/handlers.ts](src/electron/ipc/handlers.ts) |
-| 2.2 Quick-edit link | Add "Edit User Profile" or "Open USER.md" link in Memory settings or workspace kit UI so users can open `.cowork/USER.md` in editor. | [src/renderer/components/MemoryHubSettings.tsx](src/renderer/components/MemoryHubSettings.tsx) or [src/renderer/components/MemorySettings.tsx](src/renderer/components/MemorySettings.tsx) |
-
----
-
-### Phase 3: Session-Level Memory and Daily Logs (Medium–High Effort)
-
-**Goal:** Add OpenClaw-style daily logs (`memory/YYYY-MM-DD.md`) and optional session transcript indexing.
-
-| Task | Description | Files |
-|------|-------------|-------|
-| 3.1 Daily log service | Create `DailyLogService` that writes to `.cowork/memory/YYYY-MM-DD.md`. Append-only. | New: `src/electron/memory/DailyLogService.ts` |
-| 3.2 memory_save daily_log type | Extend `memory_save` tool (or add `append_daily_log`) to write to daily log. | [src/electron/agent/tools/memory-tools.ts](src/electron/agent/tools/memory-tools.ts) |
-| 3.3 Load today + yesterday | Include today's and yesterday's daily log snippets in MemorySynthesizer or WorkspaceKitContext when building context. | [src/electron/memory/MemorySynthesizer.ts](src/electron/memory/MemorySynthesizer.ts) or [src/electron/memory/WorkspaceKitContext.ts](src/electron/memory/WorkspaceKitContext.ts) |
-| 3.4 Session transcript indexing (optional) | Index recent task messages for `search_memories` when `sessionMemoryEnabled` is true. | [src/electron/memory/MemoryService.ts](src/electron/memory/MemoryService.ts), [src/electron/database/repositories.ts](src/electron/database/repositories.ts) |
+- `src/renderer/components/GuardrailSettings.tsx` exposes `adaptiveStyleEnabled` and `channelPersonaEnabled`
+- `src/renderer/components/MainContent.tsx` and `src/renderer/components/RightPanel.tsx` expose message/task feedback controls
+- `src/renderer/components/MemoryHubSettings.tsx` already exposes `Open USER.md` and `Open MEMORY.md`
 
 ---
 
-### Phase 4: Feedback UX and Thumbs (Low–Medium Effort)
+## Remaining Optional Follow-Ups
 
-**Goal:** Add explicit thumbs up/down to assistant messages so users can easily send feedback.
+These are still reasonable OpenClaw-inspired improvements, but they are no longer parity blockers:
 
-| Task | Description | Files |
-|------|-------------|-------|
-| 4.1 Thumbs in message bubbles | Add thumbs up/down buttons to AssistantMessageContent (or parent message row). On click, call `user_feedback` IPC with `decision: "accepted"` or `"rejected"`. | [src/renderer/components/AssistantMessageContent.tsx](src/renderer/components/AssistantMessageContent.tsx), [src/renderer/components/MainContent.tsx](src/renderer/components/MainContent.tsx) |
-| 4.2 Wire to daemon | Ensure feedback flows to `FeedbackService` and `UserProfileService.ingestUserFeedback`. Daemon already captures `user_feedback` events. | [src/electron/agent/daemon.ts](src/electron/agent/daemon.ts) |
-| 4.3 Evolution Metrics | Ensure correction rate and FeedbackService patterns are visible in EvolutionMetricsService and Daily Briefing. | [src/electron/memory/EvolutionMetricsService.ts](src/electron/memory/EvolutionMetricsService.ts), [src/renderer/components/BriefingPanel.tsx](src/renderer/components/BriefingPanel.tsx) |
-
----
-
-### Phase 5: Documentation and Parity Checklist
-
-| Task | Description | Files |
-|------|-------------|-------|
-| 5.1 Parity checklist | Create `docs/openclaw-parity.md` listing what CoWork has vs OpenClaw and recommended settings for "OpenClaw-like" experience. | New: `docs/openclaw-parity.md` |
-| 5.2 README cross-link | Add brief mention of OpenClaw parity in README or docs index. | [README.md](README.md), [docs/index.md](docs/index.md) |
+1. Surface the memory-feature flags (`curatedMemoryEnabled`, `sessionRecallEnabled`, `topicMemoryEnabled`, `defaultArchiveInjectionEnabled`) in the Memory Hub instead of keeping them runtime/settings-only.
+2. Add a first-class UI for browsing generated topic packs under `.cowork/memory/topics`.
+3. Wire more automatic writers into `DailyLogService` if the product wants OpenClaw-style operational journaling to become a default workflow.
+4. Add an “OpenClaw-like memory mode” setup guide that explains how to lean more heavily on `.cowork/USER.md`, `.cowork/MEMORY.md`, and daily logs.
 
 ---
 
-## Recommended Implementation Order
-
-1. **Phase 1** — Expose toggles (quick win, no new subsystems)
-2. **Phase 4** — Feedback thumbs (makes existing backend visible)
-3. **Phase 2** — USER.md visibility (low effort)
-4. **Phase 3** — Daily logs + session memory (higher impact, more work)
-5. **Phase 5** — Docs
-
----
-
-## What CoWork Already Does Better Than OpenClaw
-
-- **Unified Memory Synthesizer** — 6 sources, dedup, relevance ranking
-- **Adaptive Style Engine** — Learns from messages and feedback (needs UI toggle)
-- **Feedback learning** — FeedbackService, Playbook, ImprovementCandidateService
-- **Encryption** — SecureSettingsRepository
-- **Playbook-to-Skill** — Auto-promotion of patterns to governed skills
-- **Channel Persona** — Per-channel style (needs UI toggle)
-- **USER.md** — Already in `.cowork/` via kit-contracts
-
----
-
-## Key File References (Current Paths)
+## Key File References
 
 | Component | Path |
 |-----------|------|
-| Kit contracts (USER.md, MEMORY.md, etc.) | `src/electron/context/kit-contracts.ts` |
-| Workspace init templates | `src/electron/ipc/handlers.ts` (~line 5590) |
-| Kit injection | `src/electron/context/kit-injection.ts` |
-| Memory synthesis | `src/electron/memory/MemorySynthesizer.ts` |
-| Workspace kit context | `src/electron/memory/WorkspaceKitContext.ts` |
-| User profile | `src/electron/memory/UserProfileService.ts` |
-| Relationship memory | `src/electron/memory/RelationshipMemoryService.ts` |
-| Adaptive Style Engine | `src/electron/memory/AdaptiveStyleEngine.ts` |
-| Channel Persona | `src/electron/memory/ChannelPersonaAdapter.ts` |
-| Guardrail defaults | `src/electron/guardrails/guardrail-manager.ts` |
-| GuardrailSettings UI | `src/renderer/components/GuardrailSettings.tsx` |
-| Memory settings | `src/renderer/components/MemoryHubSettings.tsx`, `MemorySettings.tsx` |
-| Assistant messages | `src/renderer/components/AssistantMessageContent.tsx` |
-| Home dashboard | `src/renderer/components/HomeDashboard.tsx` |
-| Daily briefing | `src/renderer/components/BriefingPanel.tsx` |
-| Evolving Intelligence docs | `docs/evolving-agent-intelligence.md` |
+| Curated hot memory | `src/electron/memory/CuratedMemoryService.ts` |
+| Session recall | `src/electron/memory/SessionRecallService.ts` |
+| Prompt memory assembly | `src/electron/memory/MemorySynthesizer.ts` |
+| Topic packs | `src/electron/memory/LayeredMemoryIndexService.ts` |
+| Archive memory | `src/electron/memory/MemoryService.ts` |
+| Memory tools | `src/electron/agent/tools/memory-tools.ts` |
+| System recall tools | `src/electron/agent/tools/system-tools.ts` |
+| Memory feature defaults | `src/electron/settings/memory-features-manager.ts` |
+| Guardrail adaptation UI | `src/renderer/components/GuardrailSettings.tsx` |
+| Memory hub UI | `src/renderer/components/MemoryHubSettings.tsx` |
+| Feedback UI | `src/renderer/components/MainContent.tsx`, `src/renderer/components/RightPanel.tsx` |

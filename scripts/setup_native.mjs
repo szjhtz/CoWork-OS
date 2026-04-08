@@ -24,6 +24,11 @@ import process from "node:process";
 
 const BETTER_SQLITE3_VERSION = "12.6.2";
 const NPM_CMD = process.platform === "win32" ? "npm.cmd" : "npm";
+const NPM_EXEC_PATH = (() => {
+  const raw = process.env.npm_execpath;
+  if (typeof raw !== "string" || raw.length === 0) return null;
+  return fs.existsSync(raw) ? raw : null;
+})();
 const cwdRequire = createRequire(path.join(process.cwd(), "package.json"));
 const scriptRequire = createRequire(import.meta.url);
 
@@ -76,15 +81,44 @@ function getInstallRootDir() {
   return process.cwd();
 }
 
+function spawnNpm(args, opts = {}) {
+  if (NPM_EXEC_PATH) {
+    return spawnSync(process.execPath, [NPM_EXEC_PATH, ...args], opts);
+  }
+  return spawnSync(NPM_CMD, args, opts);
+}
+
 function run(cmd, args, opts = {}) {
   const pretty = [cmd, ...(args || [])].join(" ");
   console.log(`\n[cowork] $ ${pretty}`);
-  const res = spawnSync(cmd, args, {
+  const runner = cmd === NPM_CMD ? spawnNpm : spawnSync;
+  const res = runner(cmd === NPM_CMD ? args : cmd, cmd === NPM_CMD ? {
+    stdio: "inherit",
+    env: opts.env || process.env,
+    cwd: opts.cwd || process.cwd(),
+  } : args, cmd === NPM_CMD ? undefined : {
     stdio: "inherit",
     env: opts.env || process.env,
     cwd: opts.cwd || process.cwd(),
   });
   return res;
+}
+
+function runNpm(args, opts = {}) {
+  console.log(`\n[cowork] $ npm ${args.join(" ")}`);
+  return spawnNpm(args, {
+    stdio: "inherit",
+    env: opts.env || process.env,
+    cwd: opts.cwd || process.cwd(),
+  });
+}
+
+function formatSpawnError(err) {
+  if (!err) return null;
+  if (err instanceof Error) {
+    return err.code ? `${err.name}: ${err.code}: ${err.message}` : `${err.name}: ${err.message}`;
+  }
+  return String(err);
 }
 
 function computeJobs() {
@@ -214,8 +248,7 @@ function tryWindowsArm64X64Fallback(
   if (installRes.status !== 0) return installRes;
 
   const x64ElectronEnv = makeElectronTargetEnv(env, electronVersion, "x64");
-  const rebuildRes = run(
-    NPM_CMD,
+  const rebuildRes = runNpm(
     ["rebuild", "--ignore-scripts=false", "better-sqlite3"],
     { env: x64ElectronEnv, cwd: installRootDir }
   );
@@ -290,8 +323,7 @@ function ensureBetterSqlite3(env, installRootDir) {
     console.log(`[cowork] Installing better-sqlite3 from root ${installRootDir}`);
   }
 
-  return run(
-    NPM_CMD,
+  return runNpm(
     [
       "install",
       "--no-audit",
@@ -312,6 +344,10 @@ function fail(res, context) {
   const code =
     res.status == null ? "" : ` (exit ${String(res.status).trim()})`;
   console.error(`\n[cowork] ${context} failed${sig}${code}.`);
+  const spawnError = formatSpawnError(res.error);
+  if (spawnError) {
+    console.error(`[cowork] Subprocess error: ${spawnError}`);
+  }
   if (isKilledByOS(res)) {
     console.error(
       "[cowork] The OS terminated the process (usually memory pressure). " +
@@ -346,7 +382,7 @@ function checkPrereqs() {
     const res = spawnSync("where", ["cl.exe"], { encoding: "utf8" });
     if (res.status !== 0) {
       // Also check via npm config for an explicit MSVC version.
-      const npmRes = spawnSync(NPM_CMD, ["config", "get", "msvs_version"], {
+      const npmRes = spawnNpm(["config", "get", "msvs_version"], {
         encoding: "utf8",
       });
       const hasMsvs =
@@ -445,8 +481,7 @@ function main() {
     // 2) Prefer an Electron-targeted rebuild for better-sqlite3 (often prebuilt, lighter).
     if (electronVersion) {
       const electronEnv = makeElectronTargetEnv(env, electronVersion, process.arch);
-      const rebuildElectronRes = run(
-        NPM_CMD,
+      const rebuildElectronRes = runNpm(
         ["rebuild", "--ignore-scripts=false", "better-sqlite3"],
         { env: electronEnv, cwd: installRootDir }
       );

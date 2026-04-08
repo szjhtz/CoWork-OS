@@ -16,6 +16,18 @@ import path from "node:path";
 import process from "node:process";
 
 const NPM_CMD = process.platform === "win32" ? "npm.cmd" : "npm";
+const NPM_EXEC_PATH = (() => {
+  const raw = process.env.npm_execpath;
+  if (typeof raw !== "string" || raw.length === 0) return null;
+  return fs.existsSync(raw) ? raw : null;
+})();
+
+function spawnNpm(args, opts = {}) {
+  if (NPM_EXEC_PATH) {
+    return spawnSync(process.execPath, [NPM_EXEC_PATH, ...args], opts);
+  }
+  return spawnSync(NPM_CMD, args, opts);
+}
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -47,7 +59,7 @@ async function main() {
     console.log(
       "[cowork] setup:bootstrap electron not found in local or parent node_modules; running fallback install."
     );
-    const installRes = spawnSync(NPM_CMD, ["install", "--ignore-scripts", "--no-audit", "--no-fund"], {
+    const installRes = spawnNpm(["install", "--ignore-scripts", "--no-audit", "--no-fund"], {
       stdio: "inherit",
       env: process.env,
     });

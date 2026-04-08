@@ -22,7 +22,41 @@ export interface TranscriptSearchResult {
   rawLine: string;
 }
 
+export type TranscriptCheckpointKind =
+  | "snapshot"
+  | "pre_compaction"
+  | "periodic"
+  | "completion";
+
+export interface TranscriptCheckpointStructuredSummary {
+  source: "snapshot" | "compaction_summary" | "completion" | "fallback";
+  rawText?: string;
+  decisions: string[];
+  openLoops: string[];
+  nextActions: string[];
+  keyFindings: string[];
+}
+
+export interface TranscriptCheckpointEvidenceSpan {
+  sourceType: "transcript_span" | "task_message";
+  objectId: string;
+  taskId: string;
+  timestamp: number;
+  type: string;
+  excerpt: string;
+  eventId?: string;
+  seq?: number;
+}
+
+export interface TranscriptCheckpointEvidencePacket {
+  generatedAt: number;
+  spanHash: string;
+  spanCount: number;
+  spans: TranscriptCheckpointEvidenceSpan[];
+}
+
 export interface TranscriptCheckpointPayload {
+  checkpointKind?: TranscriptCheckpointKind;
   conversationHistory?: unknown[];
   trackerState?: unknown;
   planSummary?: unknown;
@@ -35,6 +69,22 @@ export interface TranscriptCheckpointPayload {
   sourceEventId?: string;
   sourceTimestamp?: number;
   resumeStrategy?: "snapshot" | "checkpoint" | "transcript";
+  structuredSummary?: TranscriptCheckpointStructuredSummary;
+  evidencePacket?: TranscriptCheckpointEvidencePacket;
+  dedupeHash?: string;
+  sourceMetadata?: {
+    triggerEventType?: string;
+    meaningfulExchangeCount?: number;
+  };
+}
+
+function compareSearchResults(a: TranscriptSearchResult, b: TranscriptSearchResult): number {
+  return (
+    b.timestamp - a.timestamp ||
+    a.taskId.localeCompare(b.taskId) ||
+    (typeof b.seq === "number" ? b.seq : -1) - (typeof a.seq === "number" ? a.seq : -1) ||
+    a.type.localeCompare(b.type)
+  );
 }
 
 function rootDir(workspacePath: string): string {
@@ -60,6 +110,7 @@ function taskCheckpointPath(workspacePath: string, taskId: string): string {
 function shouldPersistSpan(type: string): boolean {
   return [
     "task_created",
+    "user_message",
     "assistant_message",
     "timeline_group_started",
     "timeline_group_finished",
@@ -193,7 +244,6 @@ export class TranscriptStore {
           .map((name) => path.join(spansDir(params.workspacePath), name));
 
     for (const file of files) {
-      if (results.length >= limit) break;
       const raw = await fs.readFile(file, "utf8").catch(() => "");
       if (!raw) continue;
       const lines = raw.split("\n").filter(Boolean);
@@ -203,10 +253,16 @@ export class TranscriptStore {
         const parsed = safeParseLine(line);
         if (!parsed) continue;
         results.push({ ...parsed, rawLine: line });
-        if (results.length >= limit) break;
+        if (results.length > limit) {
+          results.sort(compareSearchResults);
+          results.length = limit;
+        }
+        if (params.taskId && results.length >= limit) {
+          break;
+        }
       }
     }
 
-    return results;
+    return results.sort(compareSearchResults).slice(0, limit);
   }
 }

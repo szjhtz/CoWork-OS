@@ -20,3 +20,5 @@
 {"prompt":"What is the weather in Lisbon tomorrow?","expectedSkillIds":["weather"],"forbiddenSkillIds":["git-commit"]}
 {"prompt":"Set up 1Password CLI and verify signin works.","expectedSkillIds":["1password"],"forbiddenSkillIds":["translate"]}
 {"prompt":"Open a tmux session and run this long task in the background.","expectedSkillIds":["tmux"],"forbiddenSkillIds":["proofread"]}
+{"prompt":"Make a 3Blue1Brown-style Manim video explaining gradient descent.","expectedSkillIds":["manim-video"],"forbiddenSkillIds":["video-frames","generate-readme"]}
+{"prompt":"Create a Manim animation that visualizes Dijkstra's algorithm step by step.","expectedSkillIds":["manim-video"],"forbiddenSkillIds":["project-structure","video-frames"]}

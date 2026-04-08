@@ -117,6 +117,18 @@ Notes:
 - Phase 2+ enables path enforcement for `{baseDir}` references.
 - Phase 3 enables strict warning enforcement.
 
+### Testing `manim-video`
+
+The bundled `manim-video` skill has non-Node runtime dependencies, so when editing it you should validate both the content contract and the local helper scripts:
+
+```bash
+python3 -m py_compile resources/skills/manim-video/scripts/bootstrap_project.py
+bash resources/skills/manim-video/scripts/setup.sh
+npm run skills:check
+```
+
+`setup.sh` verifies the local Manim toolchain (`python3`, Manim CE, `ffmpeg`, and LaTeX). If Manim is missing, the skill can still scaffold projects, but render execution should be considered unavailable until the dependency is installed.
+
 ## Focused Test Suites
 
 For completion/output UX changes, run the focused suites:

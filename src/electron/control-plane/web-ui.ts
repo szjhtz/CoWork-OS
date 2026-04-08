@@ -701,6 +701,28 @@ export function getControlPlaneWebUIHtml(): string {
           pre.style.whiteSpace = 'pre-wrap';
           pre.textContent = a.description || '';
           desc.appendChild(pre);
+          const securityContext = a?.details?.permissionPrompt?.securityContext;
+          if (securityContext) {
+            const hint = document.createElement('div');
+            hint.className = 'muted small';
+            const target = securityContext.exportTarget || {};
+            const source = securityContext.directSource || null;
+            const parts = [];
+            if (target.method || target.domain || target.provider) {
+              parts.push(
+                'target: ' +
+                [target.method, target.domain || target.provider].filter(Boolean).join(' '),
+              );
+            }
+            if (source?.path) {
+              parts.push('source: ' + source.path + ' (' + source.sourceKind + ')');
+            }
+            if (securityContext.recentUntrustedContentRead) {
+              parts.push('recent untrusted content read');
+            }
+            hint.textContent = parts.join(' • ');
+            desc.appendChild(hint);
+          }
           if (a.details) {
             const details = document.createElement('details');
             const sum = document.createElement('summary');

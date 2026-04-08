@@ -109,6 +109,14 @@ export class KnowledgeGraphTools {
               type: "object",
               description: "Optional metadata for the relationship",
             },
+            valid_from: {
+              type: "number",
+              description: "Optional timestamp for when the relationship became valid",
+            },
+            valid_to: {
+              type: "number",
+              description: "Optional timestamp for when the relationship stopped being valid",
+            },
           },
           required: ["source_entity_id", "target_entity_id", "edge_type"],
         },
@@ -122,6 +130,25 @@ export class KnowledgeGraphTools {
             edge_id: {
               type: "string",
               description: "The ID of the edge to delete",
+            },
+          },
+          required: ["edge_id"],
+        },
+      },
+      {
+        name: "kg_invalidate_edge",
+        description:
+          "Invalidate an active relationship without deleting its history. Use this when an older fact should stop being current.",
+        input_schema: {
+          type: "object",
+          properties: {
+            edge_id: {
+              type: "string",
+              description: "The ID of the edge to invalidate",
+            },
+            valid_to: {
+              type: "number",
+              description: "Optional timestamp for when the relationship stopped being valid",
             },
           },
           required: ["edge_id"],
@@ -190,6 +217,10 @@ export class KnowledgeGraphTools {
               items: { type: "string" },
               description: "Optional: filter by specific edge types",
             },
+            as_of: {
+              type: "number",
+              description: "Optional timestamp for historical traversal",
+            },
           },
           required: ["entity_id"],
         },
@@ -205,6 +236,10 @@ export class KnowledgeGraphTools {
               type: "array",
               items: { type: "string" },
               description: "List of entity IDs to include in the subgraph",
+            },
+            as_of: {
+              type: "number",
+              description: "Optional timestamp for historical subgraph lookup",
             },
           },
           required: ["entity_ids"],
@@ -233,6 +268,8 @@ export class KnowledgeGraphTools {
         return this.createEdge(input);
       case "kg_delete_edge":
         return this.deleteEdge(input);
+      case "kg_invalidate_edge":
+        return this.invalidateEdge(input);
       case "kg_add_observation":
         return this.addObservation(input);
       case "kg_search":
@@ -305,6 +342,8 @@ export class KnowledgeGraphTools {
           targetEntityId: input.target_entity_id,
           edgeType: input.edge_type,
           properties: input.properties,
+          validFrom: input.valid_from,
+          validTo: input.valid_to,
         },
         "agent",
         this.taskId,
@@ -316,6 +355,8 @@ export class KnowledgeGraphTools {
           type: edge.edgeType,
           source: edge.sourceEntityId,
           target: edge.targetEntityId,
+          ...(typeof edge.validFrom === "number" ? { validFrom: edge.validFrom } : {}),
+          ...(typeof edge.validTo === "number" ? { validTo: edge.validTo } : {}),
         },
       };
     } catch (error: Any) {
@@ -326,6 +367,31 @@ export class KnowledgeGraphTools {
   private deleteEdge(input: Any): Any {
     const deleted = KnowledgeGraphService.deleteEdge(input.edge_id);
     return { success: deleted, message: deleted ? "Edge deleted" : "Edge not found" };
+  }
+
+  private invalidateEdge(input: Any): Any {
+    try {
+      const edge = KnowledgeGraphService.invalidateEdge(
+        input.edge_id,
+        Number.isFinite(input.valid_to) ? input.valid_to : Date.now(),
+      );
+      if (!edge) {
+        return { error: `Edge not found: ${input.edge_id}` };
+      }
+      return {
+        success: true,
+        edge: {
+          id: edge.id,
+          type: edge.edgeType,
+          source: edge.sourceEntityId,
+          target: edge.targetEntityId,
+          ...(typeof edge.validFrom === "number" ? { validFrom: edge.validFrom } : {}),
+          ...(typeof edge.validTo === "number" ? { validTo: edge.validTo } : {}),
+        },
+      };
+    } catch (error: Any) {
+      return { error: error.message || "Failed to invalidate edge" };
+    }
   }
 
   private addObservation(input: Any): Any {
@@ -374,7 +440,12 @@ export class KnowledgeGraphTools {
 
   private getNeighbors(input: Any): Any {
     const depth = Math.min(Math.max(1, input.depth || 1), 3);
-    const neighbors = KnowledgeGraphService.getNeighbors(input.entity_id, depth, input.edge_types);
+    const neighbors = KnowledgeGraphService.getNeighbors(
+      input.entity_id,
+      depth,
+      input.edge_types,
+      input.as_of,
+    );
 
     return {
       neighbors: neighbors.map((n) => ({
@@ -388,6 +459,8 @@ export class KnowledgeGraphTools {
           id: n.edge.id,
           type: n.edge.edgeType,
           direction: n.direction,
+          ...(typeof n.edge.validFrom === "number" ? { validFrom: n.edge.validFrom } : {}),
+          ...(typeof n.edge.validTo === "number" ? { validTo: n.edge.validTo } : {}),
         },
         depth: n.depth,
       })),
@@ -396,7 +469,7 @@ export class KnowledgeGraphTools {
   }
 
   private getSubgraph(input: Any): Any {
-    const subgraph = KnowledgeGraphService.getSubgraph(input.entity_ids || []);
+    const subgraph = KnowledgeGraphService.getSubgraph(input.entity_ids || [], input.as_of);
 
     return {
       entities: subgraph.entities.map((e) => ({
@@ -411,6 +484,8 @@ export class KnowledgeGraphTools {
         type: e.edgeType,
         source: e.sourceEntityId,
         target: e.targetEntityId,
+        ...(typeof e.validFrom === "number" ? { validFrom: e.validFrom } : {}),
+        ...(typeof e.validTo === "number" ? { validTo: e.validTo } : {}),
       })),
       entityCount: subgraph.entities.length,
       edgeCount: subgraph.edges.length,

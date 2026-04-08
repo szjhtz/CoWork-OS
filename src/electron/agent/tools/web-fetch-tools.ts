@@ -1,6 +1,7 @@
 import { Workspace } from "../../../shared/types";
 import { AgentDaemon } from "../daemon";
 import { LLMTool } from "../llm/types";
+import { GuardrailManager } from "../../guardrails/guardrail-manager";
 
 /**
  * WebFetchTools provides lightweight URL fetching without browser automation.
@@ -20,6 +21,18 @@ export class WebFetchTools {
    */
   setWorkspace(workspace: Workspace): void {
     this.workspace = workspace;
+  }
+
+  private ensureDomainAllowed(url: string): void {
+    if (GuardrailManager.isDomainAllowed(url)) return;
+    const settings = GuardrailManager.loadSettings();
+    const allowedDomainsStr =
+      settings.allowedDomains.length > 0 ? settings.allowedDomains.join(", ") : "(none configured)";
+    throw new Error(
+      `Domain not allowed: "${url}"\n` +
+        `Allowed domains: ${allowedDomainsStr}\n` +
+        `You can modify allowed domains in Settings > Guardrails.`,
+    );
   }
 
   /**
@@ -135,6 +148,7 @@ export class WebFetchTools {
       if (!["http:", "https:"].includes(parsedUrl.protocol)) {
         throw new Error("Only HTTP and HTTPS URLs are supported");
       }
+      this.ensureDomainAllowed(parsedUrl.toString());
 
       // Fetch with timeout
       const controller = new AbortController();
@@ -267,6 +281,7 @@ export class WebFetchTools {
       if (!["http:", "https:"].includes(parsedUrl.protocol)) {
         throw new Error("Only HTTP and HTTPS URLs are supported");
       }
+      this.ensureDomainAllowed(parsedUrl.toString());
 
       // Setup abort controller for timeout
       const controller = new AbortController();

@@ -1,5 +1,14 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import type { LLMProviderType, PersonaId } from "../../shared/types";
+import type { LLMProviderType, LLMSettingsData, PersonaId } from "../../shared/types";
+import {
+  deriveOnboardingPersonalityPreset,
+  deriveOnboardingPersona,
+  deriveResponseStylePreferences,
+  type OnboardingAssistantTraitId,
+  type OnboardingPriorityId,
+  type OnboardingResponseStyleId,
+  type OnboardingTimeDrainId,
+} from "../../shared/onboarding";
 
 // Onboarding conversation states
 export type OnboardingState =
@@ -8,8 +17,20 @@ export type OnboardingState =
   | "greeting"
   | "ask_name"
   | "confirm_name"
-  | "ask_persona"
-  | "confirm_persona"
+  | "ask_assistant_traits"
+  | "confirm_assistant_traits"
+  | "ask_user_profile"
+  | "confirm_user_profile"
+  | "ask_time_drains"
+  | "confirm_time_drains"
+  | "ask_priorities"
+  | "confirm_priorities"
+  | "ask_tools"
+  | "confirm_tools"
+  | "ask_response_style"
+  | "confirm_response_style"
+  | "ask_additional_guidance"
+  | "confirm_additional_guidance"
   | "ask_voice"
   | "confirm_voice"
   | "ask_work_style"
@@ -39,10 +60,32 @@ const SCRIPT = {
     name
       ? `${name}. Great choice. I'll carry that into every conversation.`
       : "I'll go by CoWork. Ready when you are.",
-  ask_persona: "How do you want me to show up in your day-to-day work?",
-  confirm_persona_companion:
-    "Then I'll be warm, thoughtful, and present while we work through things together.",
-  confirm_persona_neutral: "Understood. I'll keep it direct, clear, and execution-focused.",
+  ask_assistant_traits: "What kind of assistant do you want me to be? Pick what fits.",
+  confirm_assistant_traits:
+    "Good. I have the shape of the role now. Let me understand who I'm working with.",
+  ask_user_profile:
+    "Tell me about you. What's your name, and what kind of work or pressure fills most of your day?",
+  confirm_user_profile:
+    "Perfect. That gives me enough context to stop being generic and start being useful.",
+  ask_time_drains:
+    "Where does your time disappear most often? Pick the things that actually drag on your day.",
+  confirm_time_drains:
+    "Good. Those are exactly the kinds of bottlenecks I should be paying attention to.",
+  ask_priorities:
+    "Given what you told me, what do you want the most help with first? Pick your top priorities.",
+  confirm_priorities:
+    "Perfect. That's concrete enough to optimize around from the start.",
+  ask_tools:
+    "What apps or tools are central to your workflow? Include anything I should treat like home base.",
+  confirm_tools:
+    "Good. I'll treat that stack as your working surface instead of starting from scratch each time.",
+  ask_response_style: "How do you like your responses?",
+  confirm_response_style:
+    "Understood. I'll keep that response shape consistent unless the task clearly needs otherwise.",
+  ask_additional_guidance:
+    "One last thing before setup: is there anything you'd always want me to keep in mind?",
+  confirm_additional_guidance:
+    "Good. I'll carry that forward as part of how I operate with you.",
   ask_voice: "Would you like spoken responses when they help?",
   confirm_voice_on: "Great. I'll speak when it adds clarity.",
   confirm_voice_off: "No problem. We'll stay text-first for now.",
@@ -93,15 +136,29 @@ const SCRIPT = {
     `${name || "CoWork"} is ready. Give me one quick prompt by voice or text.`,
   completion: (name: string) =>
     `All set${name ? `, ${name}` : ""}. Tell me what you want done, or just talk with me.`,
+  save_error:
+    "I couldn't save your onboarding setup cleanly. Review the recap and try entering CoWork again.",
 };
 
 interface UseOnboardingOptions {
   onComplete: (dontShowAgain: boolean) => void;
+  workspaceId?: string | null;
 }
 
 interface OnboardingData {
   assistantName: string;
   persona: PersonaId;
+  assistantTraits: OnboardingAssistantTraitId[];
+  userName: string;
+  userContext: string;
+  timeDrains: OnboardingTimeDrainId[];
+  timeDrainsOther: string;
+  priorities: OnboardingPriorityId[];
+  prioritiesOther: string;
+  workflowTools: string;
+  responseStyle: OnboardingResponseStyleId | null;
+  responseStyleCustom: string;
+  additionalGuidance: string;
   voiceEnabled: boolean | null;
   workStyle: "planner" | "flexible" | null;
   memoryEnabled: boolean;
@@ -111,7 +168,19 @@ interface OnboardingData {
   detectedOllamaModel: string | null;
 }
 
-type RecapEditTarget = "name" | "persona" | "voice" | "style" | "memory" | "model";
+type RecapEditTarget =
+  | "name"
+  | "assistant_traits"
+  | "user_profile"
+  | "time_drains"
+  | "priorities"
+  | "tools"
+  | "response_style"
+  | "guidance"
+  | "voice"
+  | "style"
+  | "memory"
+  | "model";
 
 interface OnboardingResumeSnapshot {
   version: number;
@@ -134,9 +203,25 @@ interface OnboardingResumeSnapshot {
   data: OnboardingData;
 }
 
+interface OnboardingSaveResult {
+  success: boolean;
+  error?: string;
+}
+
 const INITIAL_ONBOARDING_DATA: OnboardingData = {
   assistantName: "",
   persona: "companion",
+  assistantTraits: ["adaptive"],
+  userName: "",
+  userContext: "",
+  timeDrains: [],
+  timeDrainsOther: "",
+  priorities: [],
+  prioritiesOther: "",
+  workflowTools: "",
+  responseStyle: "depends",
+  responseStyleCustom: "",
+  additionalGuidance: "",
   voiceEnabled: null,
   workStyle: null,
   memoryEnabled: true,
@@ -156,8 +241,20 @@ const ONBOARDING_STATES: OnboardingState[] = [
   "greeting",
   "ask_name",
   "confirm_name",
-  "ask_persona",
-  "confirm_persona",
+  "ask_assistant_traits",
+  "confirm_assistant_traits",
+  "ask_user_profile",
+  "confirm_user_profile",
+  "ask_time_drains",
+  "confirm_time_drains",
+  "ask_priorities",
+  "confirm_priorities",
+  "ask_tools",
+  "confirm_tools",
+  "ask_response_style",
+  "confirm_response_style",
+  "ask_additional_guidance",
+  "confirm_additional_guidance",
   "ask_voice",
   "confirm_voice",
   "ask_work_style",
@@ -193,12 +290,34 @@ const getFallbackTextForState = (
       return SCRIPT.ask_name;
     case "confirm_name":
       return SCRIPT.confirm_name(data.assistantName);
-    case "ask_persona":
-      return SCRIPT.ask_persona;
-    case "confirm_persona":
-      return data.persona === "companion"
-        ? SCRIPT.confirm_persona_companion
-        : SCRIPT.confirm_persona_neutral;
+    case "ask_assistant_traits":
+      return SCRIPT.ask_assistant_traits;
+    case "confirm_assistant_traits":
+      return SCRIPT.confirm_assistant_traits;
+    case "ask_user_profile":
+      return SCRIPT.ask_user_profile;
+    case "confirm_user_profile":
+      return SCRIPT.confirm_user_profile;
+    case "ask_time_drains":
+      return SCRIPT.ask_time_drains;
+    case "confirm_time_drains":
+      return SCRIPT.confirm_time_drains;
+    case "ask_priorities":
+      return SCRIPT.ask_priorities;
+    case "confirm_priorities":
+      return SCRIPT.confirm_priorities;
+    case "ask_tools":
+      return SCRIPT.ask_tools;
+    case "confirm_tools":
+      return SCRIPT.confirm_tools;
+    case "ask_response_style":
+      return SCRIPT.ask_response_style;
+    case "confirm_response_style":
+      return SCRIPT.confirm_response_style;
+    case "ask_additional_guidance":
+      return SCRIPT.ask_additional_guidance;
+    case "confirm_additional_guidance":
+      return SCRIPT.confirm_additional_guidance;
     case "ask_voice":
       return SCRIPT.ask_voice;
     case "confirm_voice":
@@ -242,7 +361,7 @@ const getRequiredUiForState = (state: OnboardingState) => ({
   showInput: state === "ask_name" || state === "ask_work_style",
   showProviders: state === "llm_setup",
   showApiInput: state === "llm_api_key",
-  showPersonaOptions: state === "ask_persona",
+  showPersonaOptions: false,
   showVoiceOptions: state === "ask_voice",
   showOllamaDetection: state === "ollama_detected",
 });
@@ -344,7 +463,7 @@ const clearResumeSnapshot = (): void => {
   }
 };
 
-export function useOnboardingFlow({ onComplete }: UseOnboardingOptions) {
+export function useOnboardingFlow({ onComplete, workspaceId }: UseOnboardingOptions) {
   const [state, setState] = useState<OnboardingState>("dormant");
   const [currentText, setCurrentText] = useState("");
   const [greetingIndex, setGreetingIndex] = useState(0);
@@ -367,7 +486,11 @@ export function useOnboardingFlow({ onComplete }: UseOnboardingOptions) {
   const startedRef = useRef(false);
   const canPersistRef = useRef(false);
   const styleCountdownIntervalRef = useRef<number | null>(null);
-  const saveOnboardingSettingsRef = useRef<() => Promise<void>>(async () => {});
+  const saveOnboardingSettingsRef = useRef<() => Promise<OnboardingSaveResult>>(async () => ({
+    success: false,
+    error: SCRIPT.save_error,
+  }));
+  const asyncMutationTokenRef = useRef(0);
 
   // Clear timeout on unmount
   useEffect(() => {
@@ -392,6 +515,19 @@ export function useOnboardingFlow({ onComplete }: UseOnboardingOptions) {
     if (styleCountdownIntervalRef.current === null) return;
     window.clearInterval(styleCountdownIntervalRef.current);
     styleCountdownIntervalRef.current = null;
+  }, []);
+
+  const beginAsyncMutation = useCallback(() => {
+    asyncMutationTokenRef.current += 1;
+    return asyncMutationTokenRef.current;
+  }, []);
+
+  const invalidateAsyncMutations = useCallback(() => {
+    asyncMutationTokenRef.current += 1;
+  }, []);
+
+  const isActiveAsyncMutation = useCallback((token: number) => {
+    return asyncMutationTokenRef.current === token;
   }, []);
 
   const resetViewState = useCallback(() => {
@@ -495,13 +631,54 @@ export function useOnboardingFlow({ onComplete }: UseOnboardingOptions) {
 
       case "confirm_name":
         timeoutRef.current = setTimeout(() => {
-          setState("ask_persona");
-          setCurrentText(SCRIPT.ask_persona);
-          setShowPersonaOptions(true);
+          setState("ask_assistant_traits");
+          setCurrentText(SCRIPT.ask_assistant_traits);
         }, 1200);
         break;
 
-      case "confirm_persona":
+      case "confirm_assistant_traits":
+        timeoutRef.current = setTimeout(() => {
+          setState("ask_user_profile");
+          setCurrentText(SCRIPT.ask_user_profile);
+        }, 1200);
+        break;
+
+      case "confirm_user_profile":
+        timeoutRef.current = setTimeout(() => {
+          setState("ask_time_drains");
+          setCurrentText(SCRIPT.ask_time_drains);
+        }, 1200);
+        break;
+
+      case "confirm_time_drains":
+        timeoutRef.current = setTimeout(() => {
+          setState("ask_priorities");
+          setCurrentText(SCRIPT.ask_priorities);
+        }, 1200);
+        break;
+
+      case "confirm_priorities":
+        timeoutRef.current = setTimeout(() => {
+          setState("ask_tools");
+          setCurrentText(SCRIPT.ask_tools);
+        }, 1200);
+        break;
+
+      case "confirm_tools":
+        timeoutRef.current = setTimeout(() => {
+          setState("ask_response_style");
+          setCurrentText(SCRIPT.ask_response_style);
+        }, 1200);
+        break;
+
+      case "confirm_response_style":
+        timeoutRef.current = setTimeout(() => {
+          setState("ask_additional_guidance");
+          setCurrentText(SCRIPT.ask_additional_guidance);
+        }, 1200);
+        break;
+
+      case "confirm_additional_guidance":
         timeoutRef.current = setTimeout(() => {
           setState("ask_voice");
           setCurrentText(SCRIPT.ask_voice);
@@ -534,40 +711,44 @@ export function useOnboardingFlow({ onComplete }: UseOnboardingOptions) {
         break;
 
       case "transition_setup":
-        timeoutRef.current = setTimeout(() => {
-          // Probe for local Ollama server before showing provider picker
-          let settled = false;
-          const settle = (
-            models: Array<{ name: string; size: number; modified: string }> | null,
-          ) => {
-            if (settled) return;
-            settled = true;
-            if (models && models.length > 0) {
-              // Pick most recently modified model (proxy for last used)
-              const sorted = [...models].sort(
-                (a, b) => new Date(b.modified).getTime() - new Date(a.modified).getTime(),
-              );
-              const recommended = sorted[0].name;
-              setData((d) => ({ ...d, detectedOllamaModel: recommended }));
-              setState("ollama_detected");
-              setCurrentText(SCRIPT.ollama_detected(recommended));
-              setShowOllamaDetection(true);
-            } else {
-              // No Ollama or no models — fall through to normal provider picker
-              setState("llm_setup");
-              setCurrentText(SCRIPT.llm_intro);
-              setShowProviders(true);
-            }
-          };
+        {
+          const mutationToken = beginAsyncMutation();
+          timeoutRef.current = setTimeout(() => {
+            // Probe for local Ollama server before showing provider picker
+            let settled = false;
+            const settle = (
+              models: Array<{ name: string; size: number; modified: string }> | null,
+            ) => {
+              if (settled) return;
+              if (!isActiveAsyncMutation(mutationToken)) return;
+              settled = true;
+              if (models && models.length > 0) {
+                // Pick most recently modified model (proxy for last used)
+                const sorted = [...models].sort(
+                  (a, b) => new Date(b.modified).getTime() - new Date(a.modified).getTime(),
+                );
+                const recommended = sorted[0].name;
+                setData((d) => ({ ...d, detectedOllamaModel: recommended }));
+                setState("ollama_detected");
+                setCurrentText(SCRIPT.ollama_detected(recommended));
+                setShowOllamaDetection(true);
+              } else {
+                // No Ollama or no models — fall through to normal provider picker
+                setState("llm_setup");
+                setCurrentText(SCRIPT.llm_intro);
+                setShowProviders(true);
+              }
+            };
 
-          window.electronAPI
-            .getOllamaModels()
-            .then((m) => settle(m))
-            .catch(() => settle(null));
+            window.electronAPI
+              .getOllamaModels()
+              .then((m) => settle(m))
+              .catch(() => settle(null));
 
-          // 3-second timeout fallback
-          setTimeout(() => settle(null), 3000);
-        }, 1500);
+            // 3-second timeout fallback
+            setTimeout(() => settle(null), 3000);
+          }, 1500);
+        }
         break;
 
       case "ollama_detected":
@@ -582,20 +763,47 @@ export function useOnboardingFlow({ onComplete }: UseOnboardingOptions) {
         break;
 
       case "completion":
-        timeoutRef.current = setTimeout(() => {
-          void (async () => {
-            await saveOnboardingSettingsRef.current();
-            setState("transitioning");
-            clearResumeSnapshot();
-            // Call onComplete after transition animation
-            timeoutRef.current = setTimeout(() => {
-              onComplete(true);
-            }, 800);
-          })();
-        }, 1200);
+        {
+          const mutationToken = beginAsyncMutation();
+          timeoutRef.current = setTimeout(() => {
+            if (!isActiveAsyncMutation(mutationToken)) {
+              return;
+            }
+            void (async () => {
+              const result = await saveOnboardingSettingsRef.current();
+              if (!isActiveAsyncMutation(mutationToken)) {
+                return;
+              }
+              if (!result.success) {
+                resetViewState();
+                setState("recap");
+                setCurrentText(result.error || SCRIPT.save_error);
+                return;
+              }
+              setState("transitioning");
+              clearResumeSnapshot();
+              // Call onComplete after transition animation
+              timeoutRef.current = setTimeout(() => {
+                if (!isActiveAsyncMutation(mutationToken)) {
+                  return;
+                }
+                onComplete(true);
+              }, 800);
+            })();
+          }, 1200);
+        }
         break;
     }
-  }, [clearStyleCountdownInterval, state, greetingIndex, data.assistantName, onComplete]);
+  }, [
+    beginAsyncMutation,
+    clearStyleCountdownInterval,
+    data.assistantName,
+    greetingIndex,
+    isActiveAsyncMutation,
+    onComplete,
+    resetViewState,
+    state,
+  ]);
 
   // Handle user name input
   const submitName = useCallback((name: string) => {
@@ -609,20 +817,89 @@ export function useOnboardingFlow({ onComplete }: UseOnboardingOptions) {
     setCurrentText(SCRIPT.confirm_name(trimmedName));
   }, []);
 
-  // Handle persona selection
-  const submitPersona = useCallback((persona: PersonaId) => {
-    setShowPersonaOptions(false);
-    setData((d) => ({ ...d, persona }));
-    setState("confirm_persona");
-    setCurrentText(
-      persona === "companion" ? SCRIPT.confirm_persona_companion : SCRIPT.confirm_persona_neutral,
-    );
+  const submitAssistantTraits = useCallback((traits: OnboardingAssistantTraitId[]) => {
+    const normalizedTraits =
+      traits.length > 0 ? Array.from(new Set(traits)) : INITIAL_ONBOARDING_DATA.assistantTraits;
+    const nextPersona = deriveOnboardingPersona({
+      ...INITIAL_ONBOARDING_DATA,
+      ...data,
+      assistantTraits: normalizedTraits,
+    });
+
+    setData((d) => ({
+      ...d,
+      assistantTraits: normalizedTraits,
+      persona: nextPersona,
+    }));
+    setState("confirm_assistant_traits");
+    setCurrentText(SCRIPT.confirm_assistant_traits);
 
     if (window.electronAPI?.setActivePersona) {
-      void window.electronAPI.setActivePersona(persona).catch((error) => {
+      void window.electronAPI.setActivePersona(nextPersona).catch((error) => {
         console.error("Failed to set persona during onboarding:", error);
       });
     }
+  }, [data]);
+
+  const submitUserProfile = useCallback((userName: string, userContext: string) => {
+    setData((d) => ({
+      ...d,
+      userName: userName.trim(),
+      userContext: userContext.trim(),
+    }));
+    setState("confirm_user_profile");
+    setCurrentText(SCRIPT.confirm_user_profile);
+  }, []);
+
+  const submitTimeDrains = useCallback((timeDrains: OnboardingTimeDrainId[], other: string) => {
+    setData((d) => ({
+      ...d,
+      timeDrains: Array.from(new Set(timeDrains)),
+      timeDrainsOther: other.trim(),
+    }));
+    setState("confirm_time_drains");
+    setCurrentText(SCRIPT.confirm_time_drains);
+  }, []);
+
+  const submitPriorities = useCallback((priorities: OnboardingPriorityId[], other: string) => {
+    setData((d) => ({
+      ...d,
+      priorities: Array.from(new Set(priorities)),
+      prioritiesOther: other.trim(),
+    }));
+    setState("confirm_priorities");
+    setCurrentText(SCRIPT.confirm_priorities);
+  }, []);
+
+  const submitWorkflowTools = useCallback((workflowTools: string) => {
+    setData((d) => ({
+      ...d,
+      workflowTools: workflowTools.trim(),
+    }));
+    setState("confirm_tools");
+    setCurrentText(SCRIPT.confirm_tools);
+  }, []);
+
+  const submitResponseStyle = useCallback(
+    (responseStyle: OnboardingResponseStyleId, customResponseStyle = "") => {
+      setData((d) => ({
+        ...d,
+        responseStyle,
+        responseStyleCustom: customResponseStyle.trim(),
+      }));
+      setState("confirm_response_style");
+      setCurrentText(SCRIPT.confirm_response_style);
+    },
+    [],
+  );
+
+  const submitAdditionalGuidance = useCallback((additionalGuidance: string) => {
+    setData((d) => ({
+      ...d,
+      additionalGuidance: additionalGuidance.trim(),
+    }));
+    setState("confirm_additional_guidance");
+    setCurrentText(SCRIPT.confirm_additional_guidance);
   }, []);
 
   // Handle voice preference selection
@@ -660,6 +937,7 @@ export function useOnboardingFlow({ onComplete }: UseOnboardingOptions) {
   const changeWorkStyle = useCallback(() => {
     // Clear any running countdown/timeout
     clearPendingTransition();
+    invalidateAsyncMutations();
     clearStyleCountdownInterval();
     setShowStyleImplications(false);
     setStyleCountdown(0);
@@ -667,7 +945,7 @@ export function useOnboardingFlow({ onComplete }: UseOnboardingOptions) {
     setState("ask_work_style");
     setCurrentText(SCRIPT.ask_work_style);
     setShowInput(true);
-  }, [clearPendingTransition, clearStyleCountdownInterval]);
+  }, [clearPendingTransition, clearStyleCountdownInterval, invalidateAsyncMutations]);
 
   const setMemoryTrustChoice = useCallback((enabled: boolean) => {
     setData((d) => ({ ...d, memoryEnabled: enabled }));
@@ -689,9 +967,28 @@ export function useOnboardingFlow({ onComplete }: UseOnboardingOptions) {
     setCurrentText(SCRIPT.completion(data.assistantName));
   }, [data.assistantName]);
 
+  const exitOnboarding = useCallback(() => {
+    clearPendingTransition();
+    invalidateAsyncMutations();
+    clearStyleCountdownInterval();
+    resetViewState();
+    clearResumeSnapshot();
+    setState("transitioning");
+    timeoutRef.current = setTimeout(() => {
+      onComplete(true);
+    }, 250);
+  }, [
+    clearPendingTransition,
+    clearStyleCountdownInterval,
+    invalidateAsyncMutations,
+    onComplete,
+    resetViewState,
+  ]);
+
   const editRecapSection = useCallback(
     (target: RecapEditTarget) => {
       clearPendingTransition();
+      invalidateAsyncMutations();
       resetViewState();
 
       switch (target) {
@@ -701,10 +998,39 @@ export function useOnboardingFlow({ onComplete }: UseOnboardingOptions) {
           setShowInput(true);
           return;
 
-        case "persona":
-          setState("ask_persona");
-          setCurrentText(SCRIPT.ask_persona);
-          setShowPersonaOptions(true);
+        case "assistant_traits":
+          setState("ask_assistant_traits");
+          setCurrentText(SCRIPT.ask_assistant_traits);
+          return;
+
+        case "user_profile":
+          setState("ask_user_profile");
+          setCurrentText(SCRIPT.ask_user_profile);
+          return;
+
+        case "time_drains":
+          setState("ask_time_drains");
+          setCurrentText(SCRIPT.ask_time_drains);
+          return;
+
+        case "priorities":
+          setState("ask_priorities");
+          setCurrentText(SCRIPT.ask_priorities);
+          return;
+
+        case "tools":
+          setState("ask_tools");
+          setCurrentText(SCRIPT.ask_tools);
+          return;
+
+        case "response_style":
+          setState("ask_response_style");
+          setCurrentText(SCRIPT.ask_response_style);
+          return;
+
+        case "guidance":
+          setState("ask_additional_guidance");
+          setCurrentText(SCRIPT.ask_additional_guidance);
           return;
 
         case "voice":
@@ -731,12 +1057,18 @@ export function useOnboardingFlow({ onComplete }: UseOnboardingOptions) {
           return;
       }
     },
-    [clearPendingTransition, resetViewState],
+    [clearPendingTransition, invalidateAsyncMutations, resetViewState],
   );
 
   const canGoBack = [
     "ask_name",
-    "ask_persona",
+    "ask_assistant_traits",
+    "ask_user_profile",
+    "ask_time_drains",
+    "ask_priorities",
+    "ask_tools",
+    "ask_response_style",
+    "ask_additional_guidance",
     "ask_voice",
     "ask_work_style",
     "reflect_style",
@@ -750,6 +1082,7 @@ export function useOnboardingFlow({ onComplete }: UseOnboardingOptions) {
 
   const goBack = useCallback(() => {
     clearPendingTransition();
+    invalidateAsyncMutations();
     clearStyleCountdownInterval();
 
     switch (state) {
@@ -762,20 +1095,47 @@ export function useOnboardingFlow({ onComplete }: UseOnboardingOptions) {
         setCurrentText(SCRIPT.greeting[SCRIPT.greeting.length - 1]);
         return;
 
-      case "ask_persona":
-        setShowPersonaOptions(false);
-        setShowVoiceOptions(false);
-        setShowInput(true);
+      case "ask_assistant_traits":
         setState("ask_name");
         setCurrentText(SCRIPT.ask_name);
+        setShowInput(true);
+        return;
+
+      case "ask_user_profile":
+        setState("ask_assistant_traits");
+        setCurrentText(SCRIPT.ask_assistant_traits);
+        return;
+
+      case "ask_time_drains":
+        setState("ask_user_profile");
+        setCurrentText(SCRIPT.ask_user_profile);
+        return;
+
+      case "ask_priorities":
+        setState("ask_time_drains");
+        setCurrentText(SCRIPT.ask_time_drains);
+        return;
+
+      case "ask_tools":
+        setState("ask_priorities");
+        setCurrentText(SCRIPT.ask_priorities);
+        return;
+
+      case "ask_response_style":
+        setState("ask_tools");
+        setCurrentText(SCRIPT.ask_tools);
+        return;
+
+      case "ask_additional_guidance":
+        setState("ask_response_style");
+        setCurrentText(SCRIPT.ask_response_style);
         return;
 
       case "ask_voice":
         setShowVoiceOptions(false);
         setShowInput(false);
-        setShowPersonaOptions(true);
-        setState("ask_persona");
-        setCurrentText(SCRIPT.ask_persona);
+        setState("ask_additional_guidance");
+        setCurrentText(SCRIPT.ask_additional_guidance);
         return;
 
       case "ask_work_style":
@@ -834,7 +1194,13 @@ export function useOnboardingFlow({ onComplete }: UseOnboardingOptions) {
         setCurrentText(SCRIPT.recap_intro(data.assistantName));
         return;
     }
-  }, [clearPendingTransition, clearStyleCountdownInterval, data.assistantName, state]);
+  }, [
+    clearPendingTransition,
+    clearStyleCountdownInterval,
+    data.assistantName,
+    invalidateAsyncMutations,
+    state,
+  ]);
 
   // Get default model for a provider
   const getDefaultModel = useCallback((provider: LLMProviderType): string => {
@@ -861,6 +1227,100 @@ export function useOnboardingFlow({ onComplete }: UseOnboardingOptions) {
         return "sonnet-4";
     }
   }, []);
+
+  const loadExistingLlmSettings = useCallback(async (): Promise<LLMSettingsData | null> => {
+    try {
+      return await window.electronAPI.getLLMSettings();
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const getConfiguredModelForProvider = useCallback(
+    (provider: LLMProviderType, existingSettings?: LLMSettingsData | null): string => {
+      if (!existingSettings) {
+        if (provider === "ollama" && data.detectedOllamaModel) {
+          return data.detectedOllamaModel;
+        }
+        return getDefaultModel(provider);
+      }
+
+      let currentModel: string | undefined;
+      switch (provider) {
+        case "openai":
+          currentModel = existingSettings.openai?.model;
+          break;
+        case "gemini":
+          currentModel = existingSettings.gemini?.model;
+          break;
+        case "openrouter":
+          currentModel = existingSettings.openrouter?.model;
+          break;
+        case "ollama":
+          currentModel = existingSettings.ollama?.model;
+          break;
+        case "bedrock":
+          currentModel = existingSettings.bedrock?.model;
+          break;
+        case "groq":
+          currentModel = existingSettings.groq?.model;
+          break;
+        case "xai":
+          currentModel = existingSettings.xai?.model;
+          break;
+        case "kimi":
+          currentModel = existingSettings.kimi?.model;
+          break;
+        default:
+          currentModel = undefined;
+          break;
+      }
+
+      if (currentModel?.trim()) {
+        return currentModel;
+      }
+      if (existingSettings.providerType === provider && existingSettings.modelKey?.trim()) {
+        return existingSettings.modelKey;
+      }
+      if (provider === "ollama" && data.detectedOllamaModel) {
+        return data.detectedOllamaModel;
+      }
+      return getDefaultModel(provider);
+    },
+    [data.detectedOllamaModel, getDefaultModel],
+  );
+
+  const providerHasSavedCredentials = useCallback(
+    (provider: LLMProviderType, existingSettings?: LLMSettingsData | null): boolean => {
+      if (!existingSettings) return false;
+
+      switch (provider) {
+        case "anthropic":
+          return !!(
+            existingSettings.anthropic?.apiKey || existingSettings.anthropic?.subscriptionToken
+          );
+        case "openai":
+          return !!(
+            existingSettings.openai?.apiKey ||
+            existingSettings.openai?.accessToken ||
+            existingSettings.openai?.refreshToken
+          );
+        case "gemini":
+          return !!existingSettings.gemini?.apiKey;
+        case "openrouter":
+          return !!existingSettings.openrouter?.apiKey;
+        case "groq":
+          return !!existingSettings.groq?.apiKey;
+        case "xai":
+          return !!existingSettings.xai?.apiKey;
+        case "kimi":
+          return !!existingSettings.kimi?.apiKey;
+        default:
+          return false;
+      }
+    },
+    [],
+  );
 
   // Build test config for a provider
   const buildTestConfig = useCallback(
@@ -894,57 +1354,128 @@ export function useOnboardingFlow({ onComplete }: UseOnboardingOptions) {
 
   // Build save settings for a provider
   const buildSaveSettings = useCallback(
-    (provider: LLMProviderType, apiKey: string) => {
+    (
+      provider: LLMProviderType,
+      apiKey: string,
+      existingSettings?: LLMSettingsData | null,
+    ) => {
+      const trimmedApiKey = apiKey.trim();
+      const modelKey = getConfiguredModelForProvider(provider, existingSettings);
       const settings: Record<string, unknown> = {
         providerType: provider,
-        modelKey: getDefaultModel(provider),
+        modelKey,
       };
 
       if (provider === "anthropic") {
-        settings.anthropic = { apiKey };
+        const shouldUseApiKey =
+          !!trimmedApiKey ||
+          existingSettings?.anthropic?.authMethod === "api_key" ||
+          !existingSettings?.anthropic?.subscriptionToken;
+        const authMethod = shouldUseApiKey ? "api_key" : "subscription";
+        settings.anthropic = {
+          ...existingSettings?.anthropic,
+          ...(trimmedApiKey ? { apiKey: trimmedApiKey } : {}),
+          authMethod,
+        };
       } else if (provider === "openai") {
-        settings.openai = { apiKey, authMethod: "api_key", model: "gpt-4o-mini" };
+        settings.openai = {
+          ...existingSettings?.openai,
+          ...(trimmedApiKey ? { apiKey: trimmedApiKey, authMethod: "api_key" } : {}),
+          model: modelKey,
+        };
       } else if (provider === "gemini") {
-        settings.gemini = { apiKey, model: "gemini-2.0-flash" };
+        settings.gemini = {
+          ...existingSettings?.gemini,
+          ...(trimmedApiKey ? { apiKey: trimmedApiKey } : {}),
+          model: modelKey,
+        };
       } else if (provider === "openrouter") {
-        settings.openrouter = { apiKey, model: "openrouter/free" };
+        settings.openrouter = {
+          ...existingSettings?.openrouter,
+          ...(trimmedApiKey ? { apiKey: trimmedApiKey } : {}),
+          model: modelKey,
+        };
       } else if (provider === "ollama") {
-        const model = data.detectedOllamaModel || "llama3.2";
-        settings.ollama = { baseUrl: data.ollamaUrl, model };
+        settings.ollama = {
+          ...existingSettings?.ollama,
+          baseUrl: existingSettings?.ollama?.baseUrl || data.ollamaUrl,
+          model: modelKey,
+        };
       } else if (provider === "bedrock") {
-        settings.bedrock = { region: "us-east-1", useDefaultCredentials: true };
+        settings.bedrock = {
+          ...existingSettings?.bedrock,
+          region: existingSettings?.bedrock?.region || "us-east-1",
+          useDefaultCredentials: existingSettings?.bedrock?.useDefaultCredentials ?? true,
+          model: modelKey,
+        };
       } else if (provider === "groq") {
-        settings.groq = { apiKey, model: "llama-3.1-8b-instant" };
+        settings.groq = {
+          ...existingSettings?.groq,
+          ...(trimmedApiKey ? { apiKey: trimmedApiKey } : {}),
+          model: modelKey,
+        };
       } else if (provider === "xai") {
-        settings.xai = { apiKey, model: "grok-4-fast-non-reasoning" };
+        settings.xai = {
+          ...existingSettings?.xai,
+          ...(trimmedApiKey ? { apiKey: trimmedApiKey } : {}),
+          model: modelKey,
+        };
       } else if (provider === "kimi") {
-        settings.kimi = { apiKey, model: "kimi-k2.5" };
+        settings.kimi = {
+          ...existingSettings?.kimi,
+          ...(trimmedApiKey ? { apiKey: trimmedApiKey } : {}),
+          model: modelKey,
+        };
       }
 
       return settings;
     },
-    [data.ollamaUrl, getDefaultModel],
+    [data.ollamaUrl, getConfiguredModelForProvider],
   );
 
   // Handle provider selection
   const selectProvider = useCallback(
     async (provider: LLMProviderType) => {
+      clearPendingTransition();
+      const mutationToken = beginAsyncMutation();
       setData((d) => ({ ...d, selectedProvider: provider }));
       setCurrentText(SCRIPT.llm_selected(provider));
+      setTestResult(null);
 
       // After showing the response, show API key input (except for Ollama/Bedrock)
       timeoutRef.current = setTimeout(async () => {
-        if (provider === "ollama" || provider === "bedrock") {
-          // For Ollama/Bedrock, skip API key and save settings directly
-          setShowProviders(false);
+        if (!isActiveAsyncMutation(mutationToken)) {
+          return;
+        }
+        const existingSettings = await loadExistingLlmSettings();
+        if (!isActiveAsyncMutation(mutationToken)) {
+          return;
+        }
+        const shouldSkipCredentialPrompt =
+          provider === "ollama" ||
+          provider === "bedrock" ||
+          providerHasSavedCredentials(provider, existingSettings);
 
-          // Save settings for these providers
-          const settings = buildSaveSettings(provider, "");
+        if (shouldSkipCredentialPrompt) {
+          setShowProviders(false);
+          setShowApiInput(false);
+          setTestResult(null);
+
+          const settings = buildSaveSettings(provider, "", existingSettings);
           try {
+            if (!isActiveAsyncMutation(mutationToken)) {
+              return;
+            }
             await window.electronAPI.saveLLMSettings(settings);
+            if (!isActiveAsyncMutation(mutationToken)) {
+              return;
+            }
             setState("llm_confirmed");
             setCurrentText(SCRIPT.llm_success);
           } catch {
+            if (!isActiveAsyncMutation(mutationToken)) {
+              return;
+            }
             // Even if save fails, proceed to recap
             setState("recap");
             setCurrentText(SCRIPT.recap_intro(data.assistantName));
@@ -956,12 +1487,22 @@ export function useOnboardingFlow({ onComplete }: UseOnboardingOptions) {
         }
       }, 1500);
     },
-    [buildSaveSettings, data.assistantName],
+    [
+      beginAsyncMutation,
+      buildSaveSettings,
+      clearPendingTransition,
+      data.assistantName,
+      isActiveAsyncMutation,
+      loadExistingLlmSettings,
+      providerHasSavedCredentials,
+    ],
   );
 
   // Handle API key submission
   const submitApiKey = useCallback(
     async (key: string) => {
+      clearPendingTransition();
+      const mutationToken = beginAsyncMutation();
       setShowApiInput(false);
       setShowProviders(false);
       setData((d) => ({ ...d, apiKey: key }));
@@ -972,21 +1513,44 @@ export function useOnboardingFlow({ onComplete }: UseOnboardingOptions) {
       try {
         const testConfig = buildTestConfig(data.selectedProvider!, key);
         const result = await window.electronAPI.testLLMProvider(testConfig);
+        if (!isActiveAsyncMutation(mutationToken)) {
+          return;
+        }
 
         if (result.success) {
           // Save the LLM settings
-          const saveSettings = buildSaveSettings(data.selectedProvider!, key);
+          const existingSettings = await loadExistingLlmSettings();
+          if (!isActiveAsyncMutation(mutationToken)) {
+            return;
+          }
+          const saveSettings = buildSaveSettings(
+            data.selectedProvider!,
+            key,
+            existingSettings,
+          );
+          if (!isActiveAsyncMutation(mutationToken)) {
+            return;
+          }
           await window.electronAPI.saveLLMSettings(saveSettings);
+          if (!isActiveAsyncMutation(mutationToken)) {
+            return;
+          }
 
           setTestResult({ success: true });
           setState("llm_confirmed");
           setCurrentText(SCRIPT.llm_success);
         } else {
+          if (!isActiveAsyncMutation(mutationToken)) {
+            return;
+          }
           setTestResult({ success: false, error: result.error });
           setCurrentText(SCRIPT.llm_error);
           setShowApiInput(true);
         }
       } catch (error) {
+        if (!isActiveAsyncMutation(mutationToken)) {
+          return;
+        }
         setTestResult({
           success: false,
           error: error instanceof Error ? error.message : "Connection failed",
@@ -995,66 +1559,142 @@ export function useOnboardingFlow({ onComplete }: UseOnboardingOptions) {
         setShowApiInput(true);
       }
     },
-    [data.selectedProvider, buildTestConfig, buildSaveSettings],
+    [
+      beginAsyncMutation,
+      buildTestConfig,
+      buildSaveSettings,
+      clearPendingTransition,
+      data.selectedProvider,
+      isActiveAsyncMutation,
+      loadExistingLlmSettings,
+    ],
   );
 
   // Accept auto-detected Ollama provider
   const acceptOllamaDetection = useCallback(async () => {
+    clearPendingTransition();
+    const mutationToken = beginAsyncMutation();
     setShowOllamaDetection(false);
     const modelName = data.detectedOllamaModel || "llama3.2";
     setData((d) => ({ ...d, selectedProvider: "ollama" }));
     setCurrentText(SCRIPT.llm_selected("ollama"));
 
     timeoutRef.current = setTimeout(async () => {
-      const settings: Record<string, unknown> = {
+      if (!isActiveAsyncMutation(mutationToken)) {
+        return;
+      }
+      const existingSettings = await loadExistingLlmSettings();
+      if (!isActiveAsyncMutation(mutationToken)) {
+        return;
+      }
+      const settings = buildSaveSettings("ollama", "", {
+        ...(existingSettings || {}),
         providerType: "ollama",
         modelKey: modelName,
-        ollama: { baseUrl: data.ollamaUrl, model: modelName },
-      };
+        ollama: {
+          ...existingSettings?.ollama,
+          model: modelName,
+        },
+      });
       try {
+        if (!isActiveAsyncMutation(mutationToken)) {
+          return;
+        }
         await window.electronAPI.saveLLMSettings(settings);
+        if (!isActiveAsyncMutation(mutationToken)) {
+          return;
+        }
         setState("llm_confirmed");
         setCurrentText(SCRIPT.llm_success);
       } catch {
+        if (!isActiveAsyncMutation(mutationToken)) {
+          return;
+        }
         setState("recap");
         setCurrentText(SCRIPT.recap_intro(data.assistantName));
       }
     }, 1500);
-  }, [data.detectedOllamaModel, data.ollamaUrl, data.assistantName]);
+  }, [
+    beginAsyncMutation,
+    buildSaveSettings,
+    clearPendingTransition,
+    data.detectedOllamaModel,
+    data.assistantName,
+    isActiveAsyncMutation,
+    loadExistingLlmSettings,
+  ]);
 
   // Decline auto-detected Ollama — show normal provider picker
   const declineOllamaDetection = useCallback(() => {
+    clearPendingTransition();
+    invalidateAsyncMutations();
     setShowOllamaDetection(false);
     setState("llm_setup");
     setCurrentText(SCRIPT.llm_intro);
     setShowProviders(true);
-  }, []);
+  }, [clearPendingTransition, invalidateAsyncMutations]);
 
   // Skip LLM setup — default to OpenRouter with a free model so the app
   // has a provider pre-selected and users aren't pointed at paid-only services.
   const skipLLMSetup = useCallback(async () => {
+    clearPendingTransition();
+    const mutationToken = beginAsyncMutation();
     setShowProviders(false);
     setShowApiInput(false);
-    setData((d) => ({ ...d, selectedProvider: "openrouter" }));
+    setTestResult(null);
 
-    const defaultSettings: Record<string, unknown> = {
-      providerType: "openrouter",
-      modelKey: "openrouter/free",
-      openrouter: { apiKey: "", model: "openrouter/free" },
-    };
-    try {
-      await window.electronAPI.saveLLMSettings(defaultSettings);
-    } catch {
-      // Best-effort — proceed to recap regardless
+    const existingSettings = await loadExistingLlmSettings();
+    if (!isActiveAsyncMutation(mutationToken)) {
+      return;
     }
+
+    const fallbackProvider: LLMProviderType =
+      existingSettings?.providerType || "openrouter";
+    const fallbackSettings =
+      existingSettings?.providerType
+        ? buildSaveSettings(fallbackProvider, "", existingSettings)
+        : buildSaveSettings("openrouter", "", {
+            ...(existingSettings || {}),
+            providerType: "openrouter",
+            modelKey: getDefaultModel("openrouter"),
+            openrouter: {
+              ...existingSettings?.openrouter,
+              model: getDefaultModel("openrouter"),
+            },
+          });
+    try {
+      await window.electronAPI.saveLLMSettings(fallbackSettings);
+    } catch {
+      // Continue through onboarding recap even if the fallback save fails.
+    }
+    if (!isActiveAsyncMutation(mutationToken)) {
+      return;
+    }
+
+    setData((d) => ({
+      ...d,
+      apiKey: "",
+      selectedProvider: fallbackProvider,
+    }));
 
     setState("recap");
     setCurrentText(SCRIPT.recap_intro(data.assistantName));
-  }, [data.assistantName]);
+  }, [
+    beginAsyncMutation,
+    buildSaveSettings,
+    clearPendingTransition,
+    data.assistantName,
+    getDefaultModel,
+    isActiveAsyncMutation,
+    loadExistingLlmSettings,
+  ]);
 
   // Save onboarding choices to settings
-  const saveOnboardingSettings = useCallback(async () => {
+  const saveOnboardingSettings = useCallback(async (): Promise<OnboardingSaveResult> => {
     const name = data.assistantName || "CoWork";
+    const responseStyle = deriveResponseStylePreferences(data);
+    const activePersona = deriveOnboardingPersona(data);
+    const activePersonality = deriveOnboardingPersonalityPreset(data);
     try {
       // Save to AppearanceSettings (for backward compatibility)
       const currentAppearance = await window.electronAPI.getAppearanceSettings();
@@ -1067,9 +1707,15 @@ export function useOnboardingFlow({ onComplete }: UseOnboardingOptions) {
       const currentPersonality = await window.electronAPI.getPersonalitySettings();
       await window.electronAPI.savePersonalitySettings({
         ...currentPersonality,
+        activePersonality,
         agentName: name,
         workStyle: data.workStyle || undefined,
-        activePersona: data.persona || currentPersonality.activePersona,
+        activePersona,
+        relationship: {
+          ...currentPersonality.relationship,
+          userName: data.userName.trim() || currentPersonality.relationship?.userName,
+        },
+        responseStyle,
       });
 
       if (window.electronAPI?.saveVoiceSettings && data.voiceEnabled !== null) {
@@ -1110,31 +1756,57 @@ export function useOnboardingFlow({ onComplete }: UseOnboardingOptions) {
         }
         if (tempWorkspace?.id) workspaceIds.add(tempWorkspace.id);
 
-        await Promise.all(
-          Array.from(workspaceIds).map(async (workspaceId) => {
-            const currentMemorySettings = await window.electronAPI.getMemorySettings(workspaceId);
-            const nextPrivacyMode = data.memoryEnabled
-              ? currentMemorySettings.privacyMode === "disabled"
-                ? "normal"
-                : currentMemorySettings.privacyMode
-              : "disabled";
+        for (const targetWorkspaceId of Array.from(workspaceIds)) {
+          const currentMemorySettings = await window.electronAPI.getMemorySettings(targetWorkspaceId);
+          const nextPrivacyMode: typeof currentMemorySettings.privacyMode = data.memoryEnabled
+            ? currentMemorySettings.privacyMode === "disabled"
+              ? "normal"
+              : currentMemorySettings.privacyMode
+            : "disabled";
+          const nextMemorySettings = {
+            ...currentMemorySettings,
+            enabled: data.memoryEnabled,
+            autoCapture: data.memoryEnabled,
+            privacyMode: nextPrivacyMode,
+          };
 
-            await window.electronAPI.saveMemorySettings({
-              workspaceId,
-              settings: {
-                ...currentMemorySettings,
-                enabled: data.memoryEnabled,
-                autoCapture: data.memoryEnabled,
-                privacyMode: nextPrivacyMode,
-              },
-            });
-          }),
-        );
+          const isUnchanged =
+            currentMemorySettings.enabled === nextMemorySettings.enabled &&
+            currentMemorySettings.autoCapture === nextMemorySettings.autoCapture &&
+            currentMemorySettings.privacyMode === nextMemorySettings.privacyMode;
+          if (isUnchanged) continue;
+
+          await window.electronAPI.saveMemorySettings({
+            workspaceId: targetWorkspaceId,
+            settings: nextMemorySettings,
+          });
+        }
       }
+
+      if (workspaceId && window.electronAPI?.initWorkspaceKit && window.electronAPI?.applyOnboardingProfile) {
+        await window.electronAPI.initWorkspaceKit({
+          workspaceId,
+          mode: "missing",
+        });
+        await window.electronAPI.applyOnboardingProfile({
+          workspaceId,
+          data,
+        });
+      } else if (window.electronAPI?.applyOnboardingProfile) {
+        await window.electronAPI.applyOnboardingProfile({
+          workspaceId: null,
+          data,
+        });
+      }
+      return { success: true };
     } catch (error) {
       console.error("Failed to save onboarding settings:", error);
+      return {
+        success: false,
+        error: error instanceof Error && error.message.trim() ? error.message : SCRIPT.save_error,
+      };
     }
-  }, [data.assistantName, data.memoryEnabled, data.persona, data.voiceEnabled, data.workStyle]);
+  }, [data, workspaceId]);
 
   useEffect(() => {
     saveOnboardingSettingsRef.current = saveOnboardingSettings;
@@ -1273,7 +1945,13 @@ export function useOnboardingFlow({ onComplete }: UseOnboardingOptions) {
     onAwakeningComplete,
     onTextComplete,
     submitName,
-    submitPersona,
+    submitAssistantTraits,
+    submitUserProfile,
+    submitTimeDrains,
+    submitPriorities,
+    submitWorkflowTools,
+    submitResponseStyle,
+    submitAdditionalGuidance,
     submitVoicePreference,
     submitWorkStyle,
     changeWorkStyle,
@@ -1281,6 +1959,7 @@ export function useOnboardingFlow({ onComplete }: UseOnboardingOptions) {
     submitMemoryTrust,
     continueFromRecap,
     completeOnboarding,
+    exitOnboarding,
     editRecapSection,
     updateData: (updates: Partial<OnboardingData>) => setData((d) => ({ ...d, ...updates })),
     canGoBack,

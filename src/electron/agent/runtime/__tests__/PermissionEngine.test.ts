@@ -159,6 +159,13 @@ describe("PermissionEngine", () => {
 
     expect(
       evaluate({
+        toolName: "edit_file",
+        mode: "dangerous_only",
+      }).decision,
+    ).toBe("allow");
+
+    expect(
+      evaluate({
         toolName: "open_url",
         mode: "default",
       }).decision,
@@ -177,6 +184,115 @@ describe("PermissionEngine", () => {
         mode: "bypass_permissions",
       }).decision,
     ).toBe("allow");
+
+    expect(
+      evaluate({
+        toolName: "http_request",
+        approvalType: "data_export",
+        mode: "dont_ask",
+        toolInput: {
+          url: "https://api.example.com/export",
+          method: "POST",
+          body: "payload",
+        },
+      }).decision,
+    ).toBe("ask");
+  });
+
+  it("allows safe commands and read-only tools in dangerous_only mode", () => {
+    expect(
+      evaluate({
+        toolName: "run_command",
+        approvalType: "run_command",
+        command: "npm test -- --runInBand",
+        mode: "dangerous_only",
+      }).decision,
+    ).toBe("allow");
+
+    expect(
+      evaluate({
+        toolName: "read_file",
+        mode: "dangerous_only",
+      }).decision,
+    ).toBe("allow");
+  });
+
+  it("prompts for privacy-sensitive or ambiguous reads in dangerous_only mode", () => {
+    expect(
+      evaluate({
+        toolName: "read_clipboard",
+        mode: "dangerous_only",
+      }).decision,
+    ).toBe("ask");
+
+    expect(
+      evaluate({
+        toolName: "browser_get_content",
+        mode: "dangerous_only",
+      }).decision,
+    ).toBe("ask");
+
+    expect(
+      evaluate({
+        toolName: "computer_screenshot",
+        approvalType: "computer_use",
+        mode: "dangerous_only",
+      }).decision,
+    ).toBe("ask");
+  });
+
+  it("prompts for destructive or ambiguous actions in dangerous_only mode", () => {
+    expect(
+      evaluate({
+        toolName: "delete_file",
+        approvalType: "delete_file",
+        mode: "dangerous_only",
+      }).decision,
+    ).toBe("ask");
+
+    expect(
+      evaluate({
+        toolName: "run_command",
+        approvalType: "run_command",
+        command: "rm -rf dist",
+        mode: "dangerous_only",
+      }).decision,
+    ).toBe("ask");
+
+    expect(
+      evaluate({
+        toolName: "http_request",
+        toolInput: {
+          url: "https://example.com/api",
+          method: "POST",
+        },
+        mode: "dangerous_only",
+      }).decision,
+    ).toBe("ask");
+
+    expect(
+      evaluate({
+        toolName: "mcp_fetch_issue",
+        serverName: "github",
+        mode: "dangerous_only",
+      }).decision,
+    ).toBe("ask");
+
+    expect(
+      evaluate({
+        toolName: "run_applescript",
+        mode: "dangerous_only",
+      }).decision,
+    ).toBe("ask");
+
+    expect(
+      evaluate({
+        toolName: "run_command",
+        approvalType: "run_command",
+        command: "npm install",
+        mode: "dangerous_only",
+      }).decision,
+    ).toBe("ask");
   });
 
   it("allows read-only network tools in default mode when network permission is enabled", () => {
@@ -224,6 +340,7 @@ describe("PermissionEngine", () => {
   it("treats mutating http_request methods as approval-worthy external side effects", () => {
     const result = evaluate({
       toolName: "http_request",
+      approvalType: "data_export",
       mode: "default",
       toolInput: {
         url: "https://example.com/api",
@@ -234,6 +351,54 @@ describe("PermissionEngine", () => {
 
     expect(result.decision).toBe("ask");
     expect(result.reason.type).toBe("mode");
+    expect(result.suggestions.some((entry) => entry.action === "allow_profile")).toBe(false);
+  });
+
+  it("infers a domain scope for network and export requests", () => {
+    const readResult = evaluate({
+      toolName: "web_fetch",
+      approvalType: "network_access",
+      mode: "default",
+      toolInput: {
+        url: "https://docs.example.com/page",
+      },
+    });
+    const exportResult = evaluate({
+      toolName: "http_request",
+      approvalType: "data_export",
+      mode: "default",
+      toolInput: {
+        url: "https://api.example.com/export",
+        method: "POST",
+        body: "payload",
+      },
+      rules: [
+        {
+          source: "session",
+          effect: "allow",
+          scope: {
+            kind: "domain",
+            toolName: "http_request",
+            domain: "api.example.com",
+          },
+        },
+      ],
+    });
+
+    expect(PermissionEngine.inferScope({
+      workspace,
+      toolName: "web_fetch",
+      approvalType: "network_access",
+      mode: "default",
+      rules: [],
+      toolInput: { url: "https://docs.example.com/page" },
+    })).toEqual({
+      kind: "domain",
+      toolName: "web_fetch",
+      domain: "docs.example.com",
+    });
+    expect(exportResult.decision).toBe("allow");
+    expect(readResult.scopePreview).toContain("docs.example.com");
   });
 
   it("treats browser navigation as a mutating action in default mode", () => {

@@ -3,6 +3,15 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import type { Workspace } from "../../../../shared/types";
+
+const { extractPdfTextMock } = vi.hoisted(() => ({
+  extractPdfTextMock: vi.fn(),
+}));
+
+vi.mock("../../../utils/pdf-text", () => ({
+  extractPdfText: extractPdfTextMock,
+}));
+
 import { FileTools } from "../file-tools";
 import { GlobTools } from "../glob-tools";
 import { readFilesByPatterns } from "../read-files";
@@ -19,6 +28,7 @@ describe("readFilesByPatterns", () => {
   let globTools: GlobTools;
 
   beforeEach(() => {
+    vi.clearAllMocks();
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "cowork-read-files-"));
     workspace = {
       id: "w1",
@@ -63,6 +73,36 @@ describe("readFilesByPatterns", () => {
     expect(res.files.map((f) => f.path)).toEqual(["src/a.ts", "src/b.ts"]);
     expect(res.files[0].content).toContain("export const a");
     expect(res.files[1].content).toContain("export const b");
+  });
+
+  it("reads PDFs through the dedicated text extractor", async () => {
+    writeFile(path.join(tmpDir, "docs", "book.pdf"), "%PDF-1.7");
+    extractPdfTextMock.mockResolvedValue({
+      text: "Bonjour le monde.\nDeuxieme ligne.",
+      pageCount: 3,
+      extractionMode: "pdf-parse",
+      usedFallback: false,
+      previewLimited: false,
+      extractionStatus: "complete",
+      extractionNote: "complete via embedded text layer; OCR not needed",
+    });
+
+    const out = await fileTools.readFile("docs/book.pdf");
+
+    expect(out.format).toBe("pdf");
+    expect(out.content).toContain("[PDF Metadata: Pages: 3 | Extraction:");
+    expect(out.content).toContain("Extraction: complete via embedded text layer; OCR not needed");
+    expect(out.content).toContain("Bonjour le monde.");
+    expect(out.content).not.toContain("[Page 1]");
+    expect(out.pdf_extraction).toEqual({
+      status: "complete",
+      mode: "pdf-parse",
+      used_fallback: false,
+      preview_limited: false,
+      note: "complete via embedded text layer; OCR not needed",
+      page_count: 3,
+    });
+    expect(extractPdfTextMock).toHaveBeenCalledOnce();
   });
 
   it("supports exclusion patterns with leading !", async () => {

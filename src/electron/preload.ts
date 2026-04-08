@@ -5,6 +5,10 @@ import * as os from "os";
 import { randomBytes } from "crypto";
 import { IPC_CHANNELS as SHARED_IPC_CHANNELS } from "../shared/types";
 import type {
+  ApplyOnboardingProfileRequest,
+  ApplyOnboardingProfileResult,
+} from "../shared/onboarding";
+import type {
   AgentTeam,
   AgentTeamItem,
   AgentTeamMember,
@@ -42,6 +46,7 @@ import type {
   ImageAttachment,
   LLMProviderType,
   MemoryFeaturesSettings,
+  MemoryLayerPreviewPayload,
   WorkspaceKitInitRequest,
   WorkspaceKitProjectCreateRequest,
   WorkspaceKitStatus,
@@ -55,6 +60,7 @@ import type {
   ApprovalResponse,
   InputRequest,
   InputRequestResponse,
+  QuotedAssistantMessage,
   Workspace,
   GuardrailSettings,
   PersistedPermissionRule,
@@ -336,859 +342,7 @@ const IPC_CHANNELS = SHARED_IPC_CHANNELS;
  * Legacy mirrored channel list retained temporarily to minimize churn in this
  * large file while runtime now sources channel names from shared/types.
  */
-const LEGACY_IPC_CHANNELS_MIRROR = {
-  TASK_CREATE: "task:create",
-  TASK_GET: "task:get",
-  TASK_LIST: "task:list",
-  TASK_EXPORT_JSON: "task:exportJSON",
-  TASK_PIN: "task:pin",
-  TASK_CANCEL: "task:cancel",
-  TASK_WRAP_UP: "task:wrapUp",
-  TASK_PAUSE: "task:pause",
-  TASK_RESUME: "task:resume",
-  TASK_CONTINUE: "task:continue",
-  TASK_FORK_SESSION: "task:forkSession",
-  TASK_RENAME: "task:rename",
-  TASK_DELETE: "task:delete",
-  DIALOG_SELECT_FOLDER: "dialog:selectFolder",
-  DIALOG_SELECT_FILES: "dialog:selectFiles",
-  WINDOW_MINIMIZE: "window:minimize",
-  WINDOW_MAXIMIZE: "window:maximize",
-  WINDOW_CLOSE: "window:close",
-  WINDOW_IS_MAXIMIZED: "window:isMaximized",
-  FILE_OPEN: "file:open",
-  FILE_SHOW_IN_FINDER: "file:showInFinder",
-  FILE_READ_FOR_VIEWER: "file:readForViewer",
-  FILE_IMPORT_TO_WORKSPACE: "file:importToWorkspace",
-  FILE_IMPORT_DATA_TO_WORKSPACE: "file:importDataToWorkspace",
-  DOCUMENT_OPEN_EDITOR_SESSION: "document:openEditorSession",
-  DOCUMENT_LIST_VERSIONS: "document:listVersions",
-  DOCUMENT_START_EDIT_TASK: "document:startEditTask",
-  SHELL_OPEN_EXTERNAL: "shell:openExternal",
-  MAILBOX_GET_SYNC_STATUS: "mailbox:getSyncStatus",
-  MAILBOX_SYNC: "mailbox:sync",
-  MAILBOX_LIST_THREADS: "mailbox:listThreads",
-  MAILBOX_GET_THREAD: "mailbox:getThread",
-  MAILBOX_LIST_EVENTS: "mailbox:listEvents",
-  MAILBOX_AUTOMATION_LIST: "mailboxAutomation:list",
-  MAILBOX_AUTOMATION_LIST_THREAD: "mailboxAutomation:listThread",
-  MAILBOX_AUTOMATION_CREATE_RULE: "mailboxAutomation:createRule",
-  MAILBOX_AUTOMATION_UPDATE_RULE: "mailboxAutomation:updateRule",
-  MAILBOX_AUTOMATION_DELETE_RULE: "mailboxAutomation:deleteRule",
-  MAILBOX_AUTOMATION_CREATE_SCHEDULE: "mailboxAutomation:createSchedule",
-  MAILBOX_AUTOMATION_UPDATE_SCHEDULE: "mailboxAutomation:updateSchedule",
-  MAILBOX_AUTOMATION_DELETE_SCHEDULE: "mailboxAutomation:deleteSchedule",
-  MAILBOX_GET_DIGEST: "mailbox:getDigest",
-  MAILBOX_SUMMARIZE_THREAD: "mailbox:summarizeThread",
-  MAILBOX_GENERATE_DRAFT: "mailbox:generateDraft",
-  MAILBOX_EXTRACT_COMMITMENTS: "mailbox:extractCommitments",
-  MAILBOX_REVIEW_BULK_ACTION: "mailbox:reviewBulkAction",
-  MAILBOX_SCHEDULE_REPLY: "mailbox:scheduleReply",
-  MAILBOX_RESEARCH_CONTACT: "mailbox:researchContact",
-  MAILBOX_APPLY_ACTION: "mailbox:applyAction",
-  MAILBOX_UPDATE_COMMITMENT_STATE: "mailbox:updateCommitmentState",
-  MAILBOX_UPDATE_COMMITMENT_DETAILS: "mailbox:updateCommitmentDetails",
-  MAILBOX_RECLASSIFY_THREAD: "mailbox:reclassifyThread",
-  MAILBOX_RECLASSIFY_ACCOUNT: "mailbox:reclassifyAccount",
-  MAILBOX_IDENTITY_RESOLVE: "mailbox:identityResolve",
-  MAILBOX_IDENTITY_GET: "mailbox:identityGet",
-  MAILBOX_IDENTITY_LIST: "mailbox:identityList",
-  MAILBOX_IDENTITY_SEARCH: "mailbox:identitySearch",
-  MAILBOX_IDENTITY_LINK: "mailbox:identityLink",
-  MAILBOX_IDENTITY_TIMELINE: "mailbox:identityTimeline",
-  MAILBOX_IDENTITY_CANDIDATES: "mailbox:identityCandidates",
-  MAILBOX_IDENTITY_CONFIRM: "mailbox:identityConfirm",
-  MAILBOX_IDENTITY_REJECT: "mailbox:identityReject",
-  MAILBOX_IDENTITY_UNLINK: "mailbox:identityUnlink",
-  MAILBOX_IDENTITY_PREFERENCE: "mailbox:identityPreference",
-  MAILBOX_IDENTITY_COVERAGE: "mailbox:identityCoverage",
-  MAILBOX_REPLY_VIA_CHANNEL: "mailbox:replyViaChannel",
-  MAILBOX_MC_HANDOFF_PREVIEW: "mailbox:missionControlHandoffPreview",
-  MAILBOX_MC_HANDOFF_CREATE: "mailbox:missionControlHandoffCreate",
-  MAILBOX_MC_HANDOFF_LIST: "mailbox:missionControlHandoffList",
-  MAILBOX_SNIPPETS_LIST: "mailbox:snippetsList",
-  MAILBOX_SNIPPET_UPSERT: "mailbox:snippetUpsert",
-  MAILBOX_SNIPPET_DELETE: "mailbox:snippetDelete",
-  MAILBOX_SAVED_VIEWS_LIST: "mailbox:savedViewsList",
-  MAILBOX_SAVED_VIEW_CREATE: "mailbox:savedViewCreate",
-  MAILBOX_SAVED_VIEW_DELETE: "mailbox:savedViewDelete",
-  MAILBOX_SAVED_VIEW_PREVIEW_SIMILAR: "mailbox:savedViewPreviewSimilar",
-  MAILBOX_QUICK_REPLY_SUGGESTIONS: "mailbox:quickReplySuggestions",
-  MAILBOX_SAVED_VIEW_REVIEW_SCHEDULE: "mailbox:savedViewReviewSchedule",
-  MAILBOX_EVENT: "mailbox:event",
-  TASK_EVENT: "task:event",
-  TASK_EVENTS: "task:events",
-  TASK_SEMANTIC_TIMELINE: "task:semanticTimeline",
-  TASK_LEARNING_EVENT: "task:learningEvent",
-  TASK_LEARNING_PROGRESS: "task:learningProgress",
-  TASK_SEND_MESSAGE: "task:sendMessage",
-  TASK_STEP_FEEDBACK: "task:stepFeedback",
-  TASK_SEND_STDIN: "task:sendStdin",
-  TASK_KILL_COMMAND: "task:killCommand",
-  SHELL_SESSION_EVENT: "shell:sessionEvent",
-  SHELL_SESSION_GET: "shell:sessionGet",
-  SHELL_SESSION_LIST: "shell:sessionList",
-  SHELL_SESSION_RESET: "shell:sessionReset",
-  SHELL_SESSION_CLOSE: "shell:sessionClose",
-  UNIFIED_RECALL_QUERY: "recall:query",
-  LLM_ROUTING_STATUS: "llm:routingStatus",
-  LLM_ROUTING_EVENT: "llm:routingEvent",
-  // Sub-agent operations
-  AGENT_GET_CHILDREN: "agent:getChildren",
-  AGENT_GET_STATUS: "agent:getStatus",
-  WORKSPACE_SELECT: "workspace:select",
-  WORKSPACE_LIST: "workspace:list",
-  WORKSPACE_CREATE: "workspace:create",
-  WORKSPACE_UPDATE_PERMISSIONS: "workspace:updatePermissions",
-  WORKSPACE_TOUCH: "workspace:touch",
-  WORKSPACE_GET_TEMP: "workspace:getTemp",
-  APPROVAL_RESPOND: "approval:respond",
-  APPROVAL_SESSION_AUTO_APPROVE_SET: "approval:sessionAutoApprove:set",
-  APPROVAL_SESSION_AUTO_APPROVE_GET: "approval:sessionAutoApprove:get",
-  INPUT_REQUEST_LIST: "inputRequest:list",
-  INPUT_REQUEST_RESPOND: "inputRequest:respond",
-  ARTIFACT_LIST: "artifact:list",
-  ARTIFACT_PREVIEW: "artifact:preview",
-  SKILL_LIST: "skill:list",
-  SKILL_GET: "skill:get",
-  LLM_GET_SETTINGS: "llm:getSettings",
-  LLM_SAVE_SETTINGS: "llm:saveSettings",
-  LLM_RESET_PROVIDER_CREDENTIALS: "llm:resetProviderCredentials",
-  LLM_TEST_PROVIDER: "llm:testProvider",
-  LLM_GET_MODELS: "llm:getModels",
-  LLM_GET_CONFIG_STATUS: "llm:getConfigStatus",
-  LLM_SET_MODEL: "llm:setModel",
-  LLM_GET_PROVIDER_MODELS: "llm:getProviderModels",
-  LLM_GET_ANTHROPIC_MODELS: "llm:getAnthropicModels",
-  LLM_GET_OLLAMA_MODELS: "llm:getOllamaModels",
-  LLM_GET_GEMINI_MODELS: "llm:getGeminiModels",
-  LLM_GET_OPENROUTER_MODELS: "llm:getOpenRouterModels",
-  LLM_GET_OPENAI_MODELS: "llm:getOpenAIModels",
-  LLM_GET_GROQ_MODELS: "llm:getGroqModels",
-  LLM_GET_XAI_MODELS: "llm:getXAIModels",
-  LLM_GET_KIMI_MODELS: "llm:getKimiModels",
-  LLM_GET_PI_MODELS: "llm:getPiModels",
-  LLM_GET_PI_PROVIDERS: "llm:getPiProviders",
-  LLM_GET_OPENAI_COMPATIBLE_MODELS: "llm:getOpenAICompatibleModels",
-  LLM_REFRESH_CUSTOM_PROVIDER_MODELS: "llm:refreshCustomProviderModels",
-  LLM_OPENAI_OAUTH_START: "llm:openaiOAuthStart",
-  LLM_OPENAI_OAUTH_LOGOUT: "llm:openaiOAuthLogout",
-  LLM_GET_BEDROCK_MODELS: "llm:getBedrockModels",
-  // Local AI (hf-agents)
-  LOCAL_AI_CHECK_HF: "localai:checkHf",
-  LOCAL_AI_DETECT_HARDWARE: "localai:detectHardware",
-  LOCAL_AI_START_SERVER: "localai:startServer",
-  LOCAL_AI_STOP_SERVER: "localai:stopServer",
-  LOCAL_AI_GET_SERVER_STATUS: "localai:getServerStatus",
-  LOCAL_AI_GET_SERVER_LOG: "localai:getServerLog",
-  // Gateway / Channels
-  GATEWAY_GET_CHANNELS: "gateway:getChannels",
-  GATEWAY_ADD_CHANNEL: "gateway:addChannel",
-  GATEWAY_UPDATE_CHANNEL: "gateway:updateChannel",
-  GATEWAY_REMOVE_CHANNEL: "gateway:removeChannel",
-  GATEWAY_ENABLE_CHANNEL: "gateway:enableChannel",
-  GATEWAY_DISABLE_CHANNEL: "gateway:disableChannel",
-  GATEWAY_TEST_CHANNEL: "gateway:testChannel",
-  GATEWAY_GET_USERS: "gateway:getUsers",
-  GATEWAY_GRANT_ACCESS: "gateway:grantAccess",
-  GATEWAY_REVOKE_ACCESS: "gateway:revokeAccess",
-  GATEWAY_GENERATE_PAIRING: "gateway:generatePairing",
-  GATEWAY_LIST_CHATS: "gateway:listChats",
-  GATEWAY_SEND_TEST_MESSAGE: "gateway:sendTestMessage",
-  // Search Settings
-  SEARCH_GET_SETTINGS: "search:getSettings",
-  SEARCH_SAVE_SETTINGS: "search:saveSettings",
-  SEARCH_GET_CONFIG_STATUS: "search:getConfigStatus",
-  SEARCH_TEST_PROVIDER: "search:testProvider",
-  // X/Twitter Settings
-  X_GET_SETTINGS: "x:getSettings",
-  X_SAVE_SETTINGS: "x:saveSettings",
-  X_TEST_CONNECTION: "x:testConnection",
-  X_GET_STATUS: "x:getStatus",
-  // Notion Settings
-  NOTION_GET_SETTINGS: "notion:getSettings",
-  NOTION_SAVE_SETTINGS: "notion:saveSettings",
-  NOTION_TEST_CONNECTION: "notion:testConnection",
-  NOTION_GET_STATUS: "notion:getStatus",
-  // Box Settings
-  BOX_GET_SETTINGS: "box:getSettings",
-  BOX_SAVE_SETTINGS: "box:saveSettings",
-  BOX_TEST_CONNECTION: "box:testConnection",
-  BOX_GET_STATUS: "box:getStatus",
-  // OneDrive Settings
-  ONEDRIVE_GET_SETTINGS: "onedrive:getSettings",
-  ONEDRIVE_SAVE_SETTINGS: "onedrive:saveSettings",
-  ONEDRIVE_TEST_CONNECTION: "onedrive:testConnection",
-  ONEDRIVE_GET_STATUS: "onedrive:getStatus",
-  // Google Workspace Settings
-  GOOGLE_WORKSPACE_GET_SETTINGS: "googleWorkspace:getSettings",
-  GOOGLE_WORKSPACE_SAVE_SETTINGS: "googleWorkspace:saveSettings",
-  GOOGLE_WORKSPACE_TEST_CONNECTION: "googleWorkspace:testConnection",
-  GOOGLE_WORKSPACE_GET_STATUS: "googleWorkspace:getStatus",
-  GOOGLE_WORKSPACE_OAUTH_START: "googleWorkspace:oauthStart",
-  GOOGLE_WORKSPACE_OAUTH_GET_LINK: "googleWorkspace:oauthGetLink",
-  // Dropbox Settings
-  DROPBOX_GET_SETTINGS: "dropbox:getSettings",
-  DROPBOX_SAVE_SETTINGS: "dropbox:saveSettings",
-  DROPBOX_TEST_CONNECTION: "dropbox:testConnection",
-  DROPBOX_GET_STATUS: "dropbox:getStatus",
-  // SharePoint Settings
-  SHAREPOINT_GET_SETTINGS: "sharepoint:getSettings",
-  SHAREPOINT_SAVE_SETTINGS: "sharepoint:saveSettings",
-  SHAREPOINT_TEST_CONNECTION: "sharepoint:testConnection",
-  SHAREPOINT_GET_STATUS: "sharepoint:getStatus",
-  PROFILE_LIST: "profile:list",
-  PROFILE_CREATE: "profile:create",
-  PROFILE_SWITCH: "profile:switch",
-  PROFILE_EXPORT: "profile:export",
-  PROFILE_IMPORT: "profile:import",
-  HEALTH_GET_DASHBOARD: "health:getDashboard",
-  HEALTH_LIST_SOURCES: "health:listSources",
-  HEALTH_UPSERT_SOURCE: "health:upsertSource",
-  HEALTH_REMOVE_SOURCE: "health:removeSource",
-  HEALTH_SYNC_SOURCE: "health:syncSource",
-  HEALTH_IMPORT_FILES: "health:importFiles",
-  HEALTH_GENERATE_WORKFLOW: "health:generateWorkflow",
-  HEALTH_APPLE_STATUS: "health:appleStatus",
-  HEALTH_APPLE_CONNECT: "health:appleConnect",
-  HEALTH_APPLE_DISCONNECT: "health:appleDisconnect",
-  HEALTH_APPLE_RESET: "health:appleReset",
-  HEALTH_APPLE_PREVIEW_WRITEBACK: "health:applePreviewWriteback",
-  HEALTH_APPLE_APPLY_WRITEBACK: "health:appleApplyWriteback",
-  // App Updates
-  APP_CHECK_UPDATES: "app:checkUpdates",
-  APP_DOWNLOAD_UPDATE: "app:downloadUpdate",
-  APP_INSTALL_UPDATE: "app:installUpdate",
-  APP_GET_VERSION: "app:getVersion",
-  APP_UPDATE_AVAILABLE: "app:updateAvailable",
-  APP_UPDATE_PROGRESS: "app:updateProgress",
-  APP_UPDATE_DOWNLOADED: "app:updateDownloaded",
-  APP_UPDATE_ERROR: "app:updateError",
-  SYSTEM_OPEN_SETTINGS: "system:openSettings",
-  // Guardrails
-  GUARDRAIL_GET_SETTINGS: "guardrail:getSettings",
-  GUARDRAIL_SAVE_SETTINGS: "guardrail:saveSettings",
-  GUARDRAIL_GET_DEFAULTS: "guardrail:getDefaults",
-  // Permissions
-  PERMISSIONS_GET_SETTINGS: "permissions:getSettings",
-  PERMISSIONS_SAVE_SETTINGS: "permissions:saveSettings",
-  PERMISSIONS_GET_WORKSPACE_RULES: "permissions:getWorkspaceRules",
-  PERMISSIONS_DELETE_WORKSPACE_RULE: "permissions:deleteWorkspaceRule",
-  // Appearance
-  APPEARANCE_GET_SETTINGS: "appearance:getSettings",
-  APPEARANCE_SAVE_SETTINGS: "appearance:saveSettings",
-  APPEARANCE_GET_RUNTIME_INFO: "appearance:getRuntimeInfo",
-  // Agent Personality
-  PERSONALITY_GET_SETTINGS: "personality:getSettings",
-  PERSONALITY_SAVE_SETTINGS: "personality:saveSettings",
-  PERSONALITY_GET_DEFINITIONS: "personality:getDefinitions",
-  PERSONALITY_GET_PERSONAS: "personality:getPersonas",
-  PERSONALITY_GET_RELATIONSHIP_STATS: "personality:getRelationshipStats",
-  PERSONALITY_SET_ACTIVE: "personality:setActive",
-  PERSONALITY_SET_PERSONA: "personality:setPersona",
-  PERSONALITY_RESET: "personality:reset",
-  PERSONALITY_SETTINGS_CHANGED: "personality:settingsChanged",
-  PERSONALITY_EXPORT: "personality:export",
-  PERSONALITY_IMPORT: "personality:import",
-  PERSONALITY_PREVIEW: "personality:preview",
-  PERSONALITY_GET_TRAIT_PRESETS: "personality:getTraitPresets",
-  PERSONALITY_GET_CONFIG_V2: "personality:getConfigV2",
-  PERSONALITY_SAVE_CONFIG_V2: "personality:saveConfigV2",
-  // Task Queue
-  QUEUE_GET_STATUS: "queue:getStatus",
-  QUEUE_GET_SETTINGS: "queue:getSettings",
-  QUEUE_SAVE_SETTINGS: "queue:saveSettings",
-  QUEUE_CLEAR: "queue:clear",
-  QUEUE_UPDATE: "queue:update",
-  // Custom User Skills
-  CUSTOM_SKILL_LIST: "customSkill:list",
-  CUSTOM_SKILL_LIST_TASKS: "customSkill:listTasks",
-  CUSTOM_SKILL_LIST_GUIDELINES: "customSkill:listGuidelines",
-  CUSTOM_SKILL_GET: "customSkill:get",
-  CUSTOM_SKILL_CREATE: "customSkill:create",
-  CUSTOM_SKILL_UPDATE: "customSkill:update",
-  CUSTOM_SKILL_DELETE: "customSkill:delete",
-  CUSTOM_SKILL_RELOAD: "customSkill:reload",
-  CUSTOM_SKILL_OPEN_FOLDER: "customSkill:openFolder",
-  CUSTOM_SKILL_GET_SETTINGS: "customSkill:getSettings",
-  CUSTOM_SKILL_SET_EXTERNAL_DIRS: "customSkill:setExternalDirs",
-  CUSTOM_SKILL_OPEN_EXTERNAL_FOLDER: "customSkill:openExternalFolder",
-  // Skill Registry (SkillHub)
-  SKILL_REGISTRY_SEARCH: "skillRegistry:search",
-  SKILL_REGISTRY_CLAWHUB_SEARCH: "skillRegistry:clawhubSearch",
-  SKILL_REGISTRY_GET_DETAILS: "skillRegistry:getDetails",
-  SKILL_REGISTRY_INSTALL: "skillRegistry:install",
-  SKILL_REGISTRY_INSTALL_CLAWHUB: "skillRegistry:installClawHub",
-  SKILL_REGISTRY_INSTALL_URL: "skillRegistry:installUrl",
-  SKILL_REGISTRY_INSTALL_GIT: "skillRegistry:installGit",
-  SKILL_REGISTRY_UPDATE: "skillRegistry:update",
-  SKILL_REGISTRY_UPDATE_ALL: "skillRegistry:updateAll",
-  SKILL_REGISTRY_UNINSTALL: "skillRegistry:uninstall",
-  SKILL_REGISTRY_LIST_MANAGED: "skillRegistry:listManaged",
-  SKILL_REGISTRY_CHECK_UPDATES: "skillRegistry:checkUpdates",
-  SKILL_REGISTRY_GET_STATUS: "skillRegistry:getStatus",
-  SKILL_REGISTRY_GET_ELIGIBLE: "skillRegistry:getEligible",
-  // MCP (Model Context Protocol)
-  MCP_GET_SETTINGS: "mcp:getSettings",
-  MCP_SAVE_SETTINGS: "mcp:saveSettings",
-  MCP_ADD_SERVER: "mcp:addServer",
-  MCP_UPDATE_SERVER: "mcp:updateServer",
-  MCP_REMOVE_SERVER: "mcp:removeServer",
-  MCP_CONNECT_SERVER: "mcp:connectServer",
-  MCP_DISCONNECT_SERVER: "mcp:disconnectServer",
-  MCP_GET_SERVERS: "mcp:getServers",
-  MCP_GET_STATUS: "mcp:getStatus",
-  MCP_GET_SERVER_STATUS: "mcp:getServerStatus",
-  MCP_GET_ALL_TOOLS: "mcp:getAllTools",
-  MCP_GET_SERVER_TOOLS: "mcp:getServerTools",
-  MCP_TEST_SERVER: "mcp:testServer",
-  MCP_SERVER_STATUS_CHANGE: "mcp:serverStatusChange",
-  MCP_CONNECTOR_OAUTH_START: "mcp:connectorOAuthStart",
-  // MCP Registry
-  MCP_REGISTRY_FETCH: "mcp:registryFetch",
-  MCP_REGISTRY_SEARCH: "mcp:registrySearch",
-  MCP_REGISTRY_INSTALL: "mcp:registryInstall",
-  MCP_REGISTRY_UNINSTALL: "mcp:registryUninstall",
-  MCP_REGISTRY_CHECK_UPDATES: "mcp:registryCheckUpdates",
-  MCP_REGISTRY_UPDATE_SERVER: "mcp:registryUpdateServer",
-  // MCP Host
-  MCP_HOST_START: "mcp:hostStart",
-  MCP_HOST_STOP: "mcp:hostStop",
-  MCP_HOST_GET_STATUS: "mcp:hostGetStatus",
-  // Infrastructure
-  INFRA_GET_STATUS: "infra:getStatus",
-  INFRA_GET_SETTINGS: "infra:getSettings",
-  INFRA_SAVE_SETTINGS: "infra:saveSettings",
-  INFRA_SETUP: "infra:setup",
-  INFRA_GET_WALLET: "infra:getWallet",
-  INFRA_WALLET_RESTORE: "infra:walletRestore",
-  INFRA_WALLET_VERIFY: "infra:walletVerify",
-  INFRA_RESET: "infra:reset",
-  INFRA_STATUS_CHANGE: "infra:statusChange",
-  // Scraping (Scrapling)
-  SCRAPING_GET_SETTINGS: "scraping:getSettings",
-  SCRAPING_SAVE_SETTINGS: "scraping:saveSettings",
-  SCRAPING_GET_STATUS: "scraping:getStatus",
-  SCRAPING_RESET: "scraping:reset",
-  // Built-in Tools Settings
-  BUILTIN_TOOLS_GET_SETTINGS: "builtinTools:getSettings",
-  BUILTIN_TOOLS_SAVE_SETTINGS: "builtinTools:saveSettings",
-  BUILTIN_TOOLS_GET_CATEGORIES: "builtinTools:getCategories",
-  COMPUTER_USE_GET_STATUS: "computerUse:getStatus",
-  COMPUTER_USE_END_SESSION: "computerUse:endSession",
-  COMPUTER_USE_OPEN_ACCESSIBILITY: "computerUse:openAccessibility",
-  COMPUTER_USE_OPEN_SCREEN_RECORDING: "computerUse:openScreenRecording",
-  COMPUTER_USE_EVENT: "computerUse:event",
-  // Tray (Menu Bar)
-  TRAY_GET_SETTINGS: "tray:getSettings",
-  TRAY_SAVE_SETTINGS: "tray:saveSettings",
-  TRAY_NEW_TASK: "tray:newTask",
-  TRAY_SELECT_WORKSPACE: "tray:selectWorkspace",
-  TRAY_OPEN_SETTINGS: "tray:openSettings",
-  TRAY_OPEN_ABOUT: "tray:openAbout",
-  TRAY_CHECK_UPDATES: "tray:checkUpdates",
-  TRAY_QUICK_TASK: "tray:quick-task",
-  // Quick Input
-  QUICK_INPUT_SUBMIT: "quick-input:submit",
-  QUICK_INPUT_CLOSE: "quick-input:close",
-  // Cron (Scheduled Tasks)
-  CRON_GET_STATUS: "cron:getStatus",
-  CRON_LIST_JOBS: "cron:listJobs",
-  CRON_GET_JOB: "cron:getJob",
-  CRON_GET_RUN_HISTORY: "cron:getRunHistory",
-  CRON_CLEAR_RUN_HISTORY: "cron:clearRunHistory",
-  CRON_GET_WEBHOOK_STATUS: "cron:getWebhookStatus",
-  CRON_ADD_JOB: "cron:addJob",
-  CRON_UPDATE_JOB: "cron:updateJob",
-  CRON_REMOVE_JOB: "cron:removeJob",
-  CRON_RUN_JOB: "cron:runJob",
-  CRON_EVENT: "cron:event",
-  // R&D Council
-  COUNCIL_LIST: "council:list",
-  COUNCIL_GET: "council:get",
-  COUNCIL_CREATE: "council:create",
-  COUNCIL_UPDATE: "council:update",
-  COUNCIL_DELETE: "council:delete",
-  COUNCIL_RUN_NOW: "council:runNow",
-  COUNCIL_LIST_RUNS: "council:listRuns",
-  COUNCIL_GET_MEMO: "council:getMemo",
-  COUNCIL_SET_ENABLED: "council:setEnabled",
-  // Notifications
-  NOTIFICATION_LIST: "notification:list",
-  NOTIFICATION_ADD: "notification:add",
-  NOTIFICATION_UNREAD_COUNT: "notification:unreadCount",
-  NOTIFICATION_MARK_READ: "notification:markRead",
-  NOTIFICATION_MARK_ALL_READ: "notification:markAllRead",
-  NOTIFICATION_DELETE: "notification:delete",
-  NOTIFICATION_DELETE_ALL: "notification:deleteAll",
-  NOTIFICATION_EVENT: "notification:event",
-  NAVIGATE_TO_TASK: "navigate-to-task",
-  // Hooks (Webhooks & Gmail Pub/Sub)
-  HOOKS_GET_SETTINGS: "hooks:getSettings",
-  HOOKS_SAVE_SETTINGS: "hooks:saveSettings",
-  HOOKS_ENABLE: "hooks:enable",
-  HOOKS_DISABLE: "hooks:disable",
-  HOOKS_REGENERATE_TOKEN: "hooks:regenerateToken",
-  HOOKS_GET_STATUS: "hooks:getStatus",
-  HOOKS_ADD_MAPPING: "hooks:addMapping",
-  HOOKS_REMOVE_MAPPING: "hooks:removeMapping",
-  HOOKS_CONFIGURE_GMAIL: "hooks:configureGmail",
-  HOOKS_GET_GMAIL_STATUS: "hooks:getGmailStatus",
-  HOOKS_START_GMAIL_WATCHER: "hooks:startGmailWatcher",
-  HOOKS_STOP_GMAIL_WATCHER: "hooks:stopGmailWatcher",
-  HOOKS_EVENT: "hooks:event",
-  // Control Plane (WebSocket Gateway)
-  CONTROL_PLANE_GET_SETTINGS: "controlPlane:getSettings",
-  CONTROL_PLANE_SAVE_SETTINGS: "controlPlane:saveSettings",
-  CONTROL_PLANE_ENABLE: "controlPlane:enable",
-  CONTROL_PLANE_DISABLE: "controlPlane:disable",
-  CONTROL_PLANE_START: "controlPlane:start",
-  CONTROL_PLANE_STOP: "controlPlane:stop",
-  CONTROL_PLANE_GET_STATUS: "controlPlane:getStatus",
-  CONTROL_PLANE_GET_TOKEN: "controlPlane:getToken",
-  CONTROL_PLANE_REGENERATE_TOKEN: "controlPlane:regenerateToken",
-  CONTROL_PLANE_EVENT: "controlPlane:event",
-  // Tailscale
-  TAILSCALE_GET_STATUS: "tailscale:getStatus",
-  TAILSCALE_CHECK_AVAILABILITY: "tailscale:checkAvailability",
-  TAILSCALE_SET_MODE: "tailscale:setMode",
-  // Remote Gateway (connecting to external Control Plane)
-  REMOTE_GATEWAY_CONNECT: "remoteGateway:connect",
-  REMOTE_GATEWAY_DISCONNECT: "remoteGateway:disconnect",
-  REMOTE_GATEWAY_GET_STATUS: "remoteGateway:getStatus",
-  REMOTE_GATEWAY_SAVE_CONFIG: "remoteGateway:saveConfig",
-  REMOTE_GATEWAY_TEST_CONNECTION: "remoteGateway:testConnection",
-  REMOTE_GATEWAY_EVENT: "remoteGateway:event",
-  // SSH Tunnel (for Remote Gateway connection)
-  SSH_TUNNEL_CONNECT: "sshTunnel:connect",
-  SSH_TUNNEL_DISCONNECT: "sshTunnel:disconnect",
-  SSH_TUNNEL_GET_STATUS: "sshTunnel:getStatus",
-  SSH_TUNNEL_SAVE_CONFIG: "sshTunnel:saveConfig",
-  SSH_TUNNEL_TEST_CONNECTION: "sshTunnel:testConnection",
-  SSH_TUNNEL_EVENT: "sshTunnel:event",
-  // Live Canvas (Agent-driven visual workspace)
-  CANVAS_CREATE: "canvas:create",
-  CANVAS_GET_SESSION: "canvas:getSession",
-  CANVAS_LIST_SESSIONS: "canvas:listSessions",
-  CANVAS_SHOW: "canvas:show",
-  CANVAS_HIDE: "canvas:hide",
-  CANVAS_CLOSE: "canvas:close",
-  CANVAS_PUSH: "canvas:push",
-  CANVAS_EVAL: "canvas:eval",
-  CANVAS_SNAPSHOT: "canvas:snapshot",
-  CANVAS_A2UI_ACTION: "canvas:a2uiAction",
-  CANVAS_EVENT: "canvas:event",
-  CANVAS_EXPORT_HTML: "canvas:exportHTML",
-  CANVAS_EXPORT_TO_FOLDER: "canvas:exportToFolder",
-  CANVAS_OPEN_IN_BROWSER: "canvas:openInBrowser",
-  CANVAS_OPEN_URL: "canvas:openUrl",
-  CANVAS_GET_SESSION_DIR: "canvas:getSessionDir",
-  CANVAS_CHECKPOINT_SAVE: "canvas:checkpointSave",
-  CANVAS_CHECKPOINT_LIST: "canvas:checkpointList",
-  CANVAS_CHECKPOINT_RESTORE: "canvas:checkpointRestore",
-  CANVAS_CHECKPOINT_DELETE: "canvas:checkpointDelete",
-  CANVAS_GET_CONTENT: "canvas:getContent",
-  // Artifact Reputation
-  REPUTATION_GET_SETTINGS: "reputation:getSettings",
-  REPUTATION_SAVE_SETTINGS: "reputation:saveSettings",
-  REPUTATION_LIST_MCP: "reputation:listMcp",
-  REPUTATION_RESCAN_MCP: "reputation:rescanMcp",
-  // Mobile Companion Nodes
-  NODE_LIST: "node:list",
-  NODE_GET: "node:get",
-  NODE_INVOKE: "node:invoke",
-  NODE_EVENT: "node:event",
-  // Device Management
-  DEVICE_LIST_MANAGED: "device:listManaged",
-  DEVICE_GET_SUMMARY: "device:getSummary",
-  DEVICE_CONNECT: "device:connect",
-  DEVICE_DISCONNECT: "device:disconnect",
-  DEVICE_PROXY_REQUEST: "device:proxyRequest",
-  DEVICE_LIST_TASKS: "device:listTasks",
-  DEVICE_LIST_FILES: "device:listFiles",
-  DEVICE_LIST_REMOTE_WORKSPACES: "device:listRemoteWorkspaces",
-  DEVICE_ASSIGN_TASK: "device:assignTask",
-  DEVICE_GET_PROFILES: "device:getProfiles",
-  DEVICE_UPDATE_PROFILE: "device:updateProfile",
-  // Memory System
-  MEMORY_GET_SETTINGS: "memory:getSettings",
-  MEMORY_SAVE_SETTINGS: "memory:saveSettings",
-  MEMORY_SEARCH: "memory:search",
-  MEMORY_GET_TIMELINE: "memory:getTimeline",
-  MEMORY_GET_DETAILS: "memory:getDetails",
-  MEMORY_GET_RECENT: "memory:getRecent",
-  MEMORY_GET_STATS: "memory:getStats",
-  MEMORY_CLEAR: "memory:clear",
-  MEMORY_EVENT: "memory:event",
-  MEMORY_IMPORT_CHATGPT: "memory:importChatGPT",
-  MEMORY_IMPORT_CHATGPT_PROGRESS: "memory:importChatGPTProgress",
-  MEMORY_IMPORT_CHATGPT_CANCEL: "memory:importChatGPTCancel",
-  MEMORY_IMPORT_TEXT: "memory:importFromText",
-  MEMORY_GET_IMPORTED_STATS: "memory:getImportedStats",
-  MEMORY_FIND_IMPORTED: "memory:findImported",
-  MEMORY_DELETE_IMPORTED: "memory:deleteImported",
-  MEMORY_DELETE_IMPORTED_ENTRY: "memory:deleteImportedEntry",
-  MEMORY_SET_IMPORTED_RECALL_IGNORED: "memory:setImportedRecallIgnored",
-  MEMORY_GET_USER_PROFILE: "memory:getUserProfile",
-  MEMORY_ADD_USER_FACT: "memory:addUserFact",
-  MEMORY_UPDATE_USER_FACT: "memory:updateUserFact",
-  MEMORY_DELETE_USER_FACT: "memory:deleteUserFact",
-  MEMORY_RELATIONSHIP_LIST: "memory:relationshipList",
-  MEMORY_RELATIONSHIP_UPDATE: "memory:relationshipUpdate",
-  MEMORY_RELATIONSHIP_DELETE: "memory:relationshipDelete",
-  MEMORY_RELATIONSHIP_CLEANUP_RECURRING: "memory:relationshipCleanupRecurring",
-  MEMORY_COMMITMENTS_GET: "memory:commitmentsGet",
-  MEMORY_COMMITMENTS_DUE_SOON: "memory:commitmentsDueSoon",
-  AWARENESS_GET_CONFIG: "awareness:getConfig",
-  AWARENESS_SAVE_CONFIG: "awareness:saveConfig",
-  AWARENESS_LIST_BELIEFS: "awareness:listBeliefs",
-  AWARENESS_UPDATE_BELIEF: "awareness:updateBelief",
-  AWARENESS_DELETE_BELIEF: "awareness:deleteBelief",
-  AWARENESS_GET_SUMMARY: "awareness:getSummary",
-  AWARENESS_GET_SNAPSHOT: "awareness:getSnapshot",
-  AWARENESS_LIST_EVENTS: "awareness:listEvents",
-  AUTONOMY_GET_CONFIG: "autonomy:getConfig",
-  AUTONOMY_SAVE_CONFIG: "autonomy:saveConfig",
-  AUTONOMY_GET_STATE: "autonomy:getState",
-  AUTONOMY_LIST_DECISIONS: "autonomy:listDecisions",
-  AUTONOMY_LIST_ACTIONS: "autonomy:listActions",
-  AUTONOMY_UPDATE_DECISION: "autonomy:updateDecision",
-  AUTONOMY_TRIGGER_EVALUATION: "autonomy:triggerEvaluation",
-
-  // Memory Features (global toggles)
-  MEMORY_FEATURES_GET_SETTINGS: "memoryFeatures:getSettings",
-  MEMORY_FEATURES_SAVE_SETTINGS: "memoryFeatures:saveSettings",
-
-  // Self-improvement loop
-  IMPROVEMENT_GET_SETTINGS: "improvement:getSettings",
-  IMPROVEMENT_GET_ELIGIBILITY: "improvement:getEligibility",
-  IMPROVEMENT_SAVE_OWNER_ENROLLMENT: "improvement:saveOwnerEnrollment",
-  IMPROVEMENT_CLEAR_OWNER_ENROLLMENT: "improvement:clearOwnerEnrollment",
-  IMPROVEMENT_SAVE_SETTINGS: "improvement:saveSettings",
-  IMPROVEMENT_LIST_CANDIDATES: "improvement:listCandidates",
-  IMPROVEMENT_LIST_RUNS: "improvement:listRuns",
-  IMPROVEMENT_REFRESH: "improvement:refresh",
-  IMPROVEMENT_RUN_NEXT: "improvement:runNext",
-  IMPROVEMENT_RETRY_RUN: "improvement:retryRun",
-  IMPROVEMENT_DISMISS_CANDIDATE: "improvement:dismissCandidate",
-  IMPROVEMENT_REVIEW_RUN: "improvement:reviewRun",
-  IMPROVEMENT_RESET_HISTORY: "improvement:resetHistory",
-
-  // Subconscious loop
-  SUBCONSCIOUS_GET_SETTINGS: "subconscious:getSettings",
-  SUBCONSCIOUS_SAVE_SETTINGS: "subconscious:saveSettings",
-  SUBCONSCIOUS_GET_BRAIN: "subconscious:getBrain",
-  SUBCONSCIOUS_LIST_TARGETS: "subconscious:listTargets",
-  SUBCONSCIOUS_LIST_RUNS: "subconscious:listRuns",
-  SUBCONSCIOUS_GET_TARGET_DETAIL: "subconscious:getTargetDetail",
-  SUBCONSCIOUS_REFRESH: "subconscious:refresh",
-  SUBCONSCIOUS_RUN_NOW: "subconscious:runNow",
-  SUBCONSCIOUS_RETRY_RUN: "subconscious:retryRun",
-  SUBCONSCIOUS_REVIEW_RUN: "subconscious:reviewRun",
-  SUBCONSCIOUS_DISMISS_TARGET: "subconscious:dismissTarget",
-  SUBCONSCIOUS_RESET_HISTORY: "subconscious:resetHistory",
-  WHATSAPP_GET_INFO: "whatsapp:get-info",
-  WHATSAPP_LOGOUT: "whatsapp:logout",
-
-  // Workspace Kit (.cowork)
-  KIT_GET_STATUS: "kit:getStatus",
-  KIT_INIT: "kit:init",
-  KIT_PROJECT_CREATE: "kit:projectCreate",
-  KIT_OPEN_FILE: "kit:openFile",
-  KIT_RESET_ADAPTIVE_STYLE: "kit:resetAdaptiveStyle",
-  KIT_SUBMIT_MESSAGE_FEEDBACK: "kit:submitMessageFeedback",
-
-  // Migration Status (for showing one-time notifications after app rename)
-  MIGRATION_GET_STATUS: "migration:getStatus",
-  MIGRATION_DISMISS_NOTIFICATION: "migration:dismissNotification",
-
-  // Extensions / Plugins
-  EXTENSIONS_LIST: "extensions:list",
-  EXTENSIONS_GET: "extensions:get",
-  EXTENSIONS_ENABLE: "extensions:enable",
-  EXTENSIONS_DISABLE: "extensions:disable",
-  EXTENSIONS_RELOAD: "extensions:reload",
-  EXTENSIONS_GET_CONFIG: "extensions:getConfig",
-  EXTENSIONS_SET_CONFIG: "extensions:setConfig",
-  EXTENSIONS_DISCOVER: "extensions:discover",
-
-  // Webhook Tunnel
-  TUNNEL_GET_STATUS: "tunnel:getStatus",
-  TUNNEL_START: "tunnel:start",
-  TUNNEL_STOP: "tunnel:stop",
-  TUNNEL_GET_CONFIG: "tunnel:getConfig",
-  TUNNEL_SET_CONFIG: "tunnel:setConfig",
-  // Agent Roles (Agent Squad)
-  AGENT_ROLE_LIST: "agentRole:list",
-  AGENT_ROLE_GET: "agentRole:get",
-  AGENT_ROLE_CREATE: "agentRole:create",
-  AGENT_ROLE_UPDATE: "agentRole:update",
-  AGENT_ROLE_DELETE: "agentRole:delete",
-  AGENT_ROLE_ASSIGN_TO_TASK: "agentRole:assignToTask",
-  AGENT_ROLE_GET_DEFAULTS: "agentRole:getDefaults",
-  AGENT_ROLE_SEED_DEFAULTS: "agentRole:seedDefaults",
-  AGENT_ROLE_SYNC_DEFAULTS: "agentRole:syncDefaults",
-
-  // Agent Teams
-  TEAM_LIST: "team:list",
-  TEAM_GET: "team:get",
-  TEAM_CREATE: "team:create",
-  TEAM_UPDATE: "team:update",
-  TEAM_DELETE: "team:delete",
-  TEAM_MEMBER_LIST: "teamMember:list",
-  TEAM_MEMBER_ADD: "teamMember:add",
-  TEAM_MEMBER_UPDATE: "teamMember:update",
-  TEAM_MEMBER_REMOVE: "teamMember:remove",
-  TEAM_MEMBER_REORDER: "teamMember:reorder",
-  TEAM_RUN_LIST: "teamRun:list",
-  TEAM_RUN_GET: "teamRun:get",
-  TEAM_RUN_CREATE: "teamRun:create",
-  TEAM_RUN_RESUME: "teamRun:resume",
-  TEAM_RUN_PAUSE: "teamRun:pause",
-  TEAM_RUN_CANCEL: "teamRun:cancel",
-  TEAM_RUN_WRAP_UP: "teamRun:wrapUp",
-  TEAM_ITEM_LIST: "teamItem:list",
-  TEAM_ITEM_CREATE: "teamItem:create",
-  TEAM_ITEM_UPDATE: "teamItem:update",
-  TEAM_ITEM_DELETE: "teamItem:delete",
-  TEAM_ITEM_MOVE: "teamItem:move",
-  TEAM_RUN_EVENT: "teamRun:event",
-  // Collaborative Thoughts
-  TEAM_THOUGHT_LIST: "teamThought:list",
-  TEAM_THOUGHT_EVENT: "teamThought:event",
-  TEAM_RUN_FIND_BY_ROOT_TASK: "teamRun:findByRootTask",
-  // Persona Templates (Digital Twins)
-  PERSONA_TEMPLATE_LIST: "personaTemplate:list",
-  PERSONA_TEMPLATE_GET: "personaTemplate:get",
-  PERSONA_TEMPLATE_ACTIVATE: "personaTemplate:activate",
-  PERSONA_TEMPLATE_PREVIEW: "personaTemplate:preview",
-  PERSONA_TEMPLATE_GET_CATEGORIES: "personaTemplate:getCategories",
-  // Plugin Packs (Customize panel)
-  PLUGIN_PACK_LIST: "pluginPack:list",
-  PLUGIN_PACK_GET: "pluginPack:get",
-  PLUGIN_PACK_TOGGLE: "pluginPack:toggle",
-  PLUGIN_PACK_GET_CONTEXT: "pluginPack:getContext",
-  PLUGIN_PACK_TOGGLE_SKILL: "pluginPack:toggleSkill",
-  // Plugin Pack Distribution (scaffold, install, registry)
-  PLUGIN_PACK_SCAFFOLD: "pluginPack:scaffold",
-  PLUGIN_PACK_INSTALL_GIT: "pluginPack:installGit",
-  PLUGIN_PACK_INSTALL_URL: "pluginPack:installUrl",
-  PLUGIN_PACK_UNINSTALL: "pluginPack:uninstall",
-  PLUGIN_PACK_REGISTRY_SEARCH: "pluginPack:registrySearch",
-  PLUGIN_PACK_REGISTRY_DETAILS: "pluginPack:registryDetails",
-  PLUGIN_PACK_REGISTRY_CATEGORIES: "pluginPack:registryCategories",
-  PLUGIN_PACK_CHECK_UPDATES: "pluginPack:checkUpdates",
-  IMPORT_SECURITY_LIST_QUARANTINED: "importSecurity:listQuarantined",
-  IMPORT_SECURITY_GET_REPORT: "importSecurity:getReport",
-  IMPORT_SECURITY_RETRY_QUARANTINED: "importSecurity:retryQuarantined",
-  IMPORT_SECURITY_REMOVE_QUARANTINED: "importSecurity:removeQuarantined",
-  // Admin Policies
-  ADMIN_POLICIES_GET: "admin:policiesGet",
-  ADMIN_POLICIES_UPDATE: "admin:policiesUpdate",
-  ADMIN_POLICIES_CHECK_PACK: "admin:checkPack",
-  // Activity Feed
-  ACTIVITY_LIST: "activity:list",
-  ACTIVITY_CREATE: "activity:create",
-  ACTIVITY_MARK_READ: "activity:markRead",
-  ACTIVITY_MARK_ALL_READ: "activity:markAllRead",
-  ACTIVITY_PIN: "activity:pin",
-  ACTIVITY_DELETE: "activity:delete",
-  ACTIVITY_EVENT: "activity:event",
-  // @Mention System
-  MENTION_CREATE: "mention:create",
-  MENTION_LIST: "mention:list",
-  MENTION_ACKNOWLEDGE: "mention:acknowledge",
-  MENTION_COMPLETE: "mention:complete",
-  MENTION_DISMISS: "mention:dismiss",
-  MENTION_EVENT: "mention:event",
-  // Discord supervisor protocol
-  SUPERVISOR_EXCHANGE_LIST: "supervisorExchange:list",
-  SUPERVISOR_EXCHANGE_RESOLVE: "supervisorExchange:resolve",
-  SUPERVISOR_EXCHANGE_EVENT: "supervisorExchange:event",
-  // Task Board
-  TASK_MOVE_COLUMN: "task:moveColumn",
-  TASK_SET_PRIORITY: "task:setPriority",
-  TASK_SET_DUE_DATE: "task:setDueDate",
-  TASK_SET_ESTIMATE: "task:setEstimate",
-  TASK_ADD_LABEL: "task:addLabel",
-  TASK_REMOVE_LABEL: "task:removeLabel",
-  TASK_BOARD_EVENT: "taskBoard:event",
-  // Task Labels
-  TASK_LABEL_LIST: "taskLabel:list",
-  TASK_LABEL_CREATE: "taskLabel:create",
-  TASK_LABEL_UPDATE: "taskLabel:update",
-  TASK_LABEL_DELETE: "taskLabel:delete",
-  // Agent Working State
-  WORKING_STATE_GET: "workingState:get",
-  WORKING_STATE_GET_CURRENT: "workingState:getCurrent",
-  WORKING_STATE_UPDATE: "workingState:update",
-  WORKING_STATE_HISTORY: "workingState:history",
-  WORKING_STATE_RESTORE: "workingState:restore",
-  WORKING_STATE_DELETE: "workingState:delete",
-  WORKING_STATE_LIST_FOR_TASK: "workingState:listForTask",
-  // Context Policy (per-context security DM vs group)
-  CONTEXT_POLICY_GET: "contextPolicy:get",
-  CONTEXT_POLICY_GET_FOR_CHAT: "contextPolicy:getForChat",
-  CONTEXT_POLICY_LIST: "contextPolicy:list",
-  CONTEXT_POLICY_UPDATE: "contextPolicy:update",
-  CONTEXT_POLICY_DELETE: "contextPolicy:delete",
-  CONTEXT_POLICY_CREATE_DEFAULTS: "contextPolicy:createDefaults",
-  CONTEXT_POLICY_IS_TOOL_ALLOWED: "contextPolicy:isToolAllowed",
-  // Voice Mode
-  VOICE_GET_SETTINGS: "voice:getSettings",
-  VOICE_SAVE_SETTINGS: "voice:saveSettings",
-  VOICE_GET_STATE: "voice:getState",
-  VOICE_SPEAK: "voice:speak",
-  VOICE_STOP_SPEAKING: "voice:stopSpeaking",
-  VOICE_TRANSCRIBE: "voice:transcribe",
-  VOICE_GET_ELEVENLABS_VOICES: "voice:getElevenLabsVoices",
-  VOICE_TEST_ELEVENLABS: "voice:testElevenLabs",
-  VOICE_TEST_OPENAI: "voice:testOpenAI",
-  VOICE_TEST_AZURE: "voice:testAzure",
-  VOICE_EVENT: "voice:event",
-  // Mission Control - Heartbeat
-  HEARTBEAT_GET_CONFIG: "heartbeat:getConfig",
-  HEARTBEAT_UPDATE_CONFIG: "heartbeat:updateConfig",
-  HEARTBEAT_TRIGGER: "heartbeat:trigger",
-  HEARTBEAT_GET_STATUS: "heartbeat:getStatus",
-  HEARTBEAT_GET_ALL_STATUS: "heartbeat:getAllStatus",
-  HEARTBEAT_EVENT: "heartbeat:event",
-  AUTOMATION_PROFILE_LIST: "automationProfile:list",
-  AUTOMATION_PROFILE_GET: "automationProfile:get",
-  AUTOMATION_PROFILE_CREATE: "automationProfile:create",
-  AUTOMATION_PROFILE_UPDATE: "automationProfile:update",
-  AUTOMATION_PROFILE_DELETE: "automationProfile:delete",
-  AUTOMATION_PROFILE_ATTACH: "automationProfile:attach",
-  AUTOMATION_PROFILE_DETACH: "automationProfile:detach",
-  AUTOMATION_PROFILE_LIST_HEARTBEAT_RUNS: "automationProfile:listHeartbeatRuns",
-  AUTOMATION_PROFILE_LIST_SUBCONSCIOUS_RUNS: "automationProfile:listSubconsciousRuns",
-  CORE_TRACE_LIST: "coreTrace:list",
-  CORE_TRACE_GET: "coreTrace:get",
-  CORE_TRACE_LIST_BY_PROFILE: "coreTrace:listByProfile",
-  CORE_FAILURE_LIST: "coreFailure:list",
-  CORE_FAILURE_CLUSTER_LIST: "coreFailure:listClusters",
-  CORE_FAILURE_CLUSTER_REVIEW: "coreFailure:reviewCluster",
-  CORE_EVAL_CASE_LIST: "coreEval:listCases",
-  CORE_EVAL_CASE_REVIEW: "coreEval:reviewCase",
-  CORE_EXPERIMENT_LIST: "coreExperiment:list",
-  CORE_EXPERIMENT_RUN: "coreExperiment:run",
-  CORE_EXPERIMENT_REVIEW: "coreExperiment:review",
-  CORE_LEARNINGS_LIST: "coreLearnings:list",
-  CORE_MEMORY_LIST_CANDIDATES: "coreMemory:listCandidates",
-  CORE_MEMORY_REVIEW_CANDIDATE: "coreMemory:reviewCandidate",
-  CORE_MEMORY_LIST_DISTILL_RUNS: "coreMemory:listDistillRuns",
-  CORE_MEMORY_RUN_DISTILL_NOW: "coreMemory:runDistillNow",
-  // Mission Control - Task Subscriptions
-  SUBSCRIPTION_LIST: "subscription:list",
-  SUBSCRIPTION_ADD: "subscription:add",
-  SUBSCRIPTION_REMOVE: "subscription:remove",
-  SUBSCRIPTION_GET_SUBSCRIBERS: "subscription:getSubscribers",
-  SUBSCRIPTION_GET_FOR_AGENT: "subscription:getForAgent",
-  SUBSCRIPTION_EVENT: "subscription:event",
-  // Mission Control - Standup Reports
-  STANDUP_GENERATE: "standup:generate",
-  STANDUP_GET_LATEST: "standup:getLatest",
-  STANDUP_LIST: "standup:list",
-  STANDUP_DELIVER: "standup:deliver",
-  // Mission Control - Company Ops / Planner
-  MC_COMPANY_LIST: "missionControl:companyList",
-  MC_COMPANY_GET: "missionControl:companyGet",
-  MC_COMPANY_CREATE: "missionControl:companyCreate",
-  MC_COMPANY_UPDATE: "missionControl:companyUpdate",
-  MC_COMPANY_PACKAGE_SOURCE_LIST: "missionControl:companyPackageSourceList",
-  MC_COMPANY_PACKAGE_PREVIEW_IMPORT: "missionControl:companyPackagePreviewImport",
-  MC_COMPANY_PACKAGE_IMPORT: "missionControl:companyPackageImport",
-  MC_COMPANY_GRAPH_GET: "missionControl:companyGraphGet",
-  MC_COMPANY_SYNC_LIST: "missionControl:companySyncList",
-  MC_COMPANY_ORG_LINK_ROLE: "missionControl:companyOrgLinkRole",
-  MC_COMMAND_CENTER_SUMMARY: "missionControl:commandCenterSummary",
-  MC_GOAL_LIST: "missionControl:goalList",
-  MC_GOAL_GET: "missionControl:goalGet",
-  MC_GOAL_CREATE: "missionControl:goalCreate",
-  MC_GOAL_UPDATE: "missionControl:goalUpdate",
-  MC_PROJECT_LIST: "missionControl:projectList",
-  MC_PROJECT_GET: "missionControl:projectGet",
-  MC_PROJECT_CREATE: "missionControl:projectCreate",
-  MC_PROJECT_UPDATE: "missionControl:projectUpdate",
-  MC_ISSUE_LIST: "missionControl:issueList",
-  MC_ISSUE_GET: "missionControl:issueGet",
-  MC_ISSUE_CREATE: "missionControl:issueCreate",
-  MC_ISSUE_UPDATE: "missionControl:issueUpdate",
-  MC_ISSUE_COMMENT_LIST: "missionControl:issueCommentList",
-  MC_RUN_LIST: "missionControl:runList",
-  MC_RUN_EVENT_LIST: "missionControl:runEventList",
-  MC_PLANNER_GET_CONFIG: "missionControl:plannerGetConfig",
-  MC_PLANNER_UPDATE_CONFIG: "missionControl:plannerUpdateConfig",
-  MC_PLANNER_RUN: "missionControl:plannerRun",
-  MC_PLANNER_LIST_RUNS: "missionControl:plannerListRuns",
-  // Mission Control - Agent Performance Reviews
-  REVIEW_GENERATE: "review:generate",
-  REVIEW_GET_LATEST: "review:getLatest",
-  REVIEW_LIST: "review:list",
-  REVIEW_DELETE: "review:delete",
-  EVAL_LIST_SUITES: "eval:listSuites",
-  EVAL_RUN_SUITE: "eval:runSuite",
-  EVAL_GET_RUN: "eval:getRun",
-  EVAL_GET_CASE: "eval:getCase",
-  EVAL_CREATE_CASE_FROM_TASK: "eval:createCaseFromTask",
-  // Git Worktree operations
-  WORKTREE_GET_INFO: "worktree:getInfo",
-  WORKTREE_LIST: "worktree:list",
-  WORKTREE_MERGE: "worktree:merge",
-  WORKTREE_CLEANUP: "worktree:cleanup",
-  WORKTREE_GET_DIFF: "worktree:getDiff",
-  WORKTREE_GET_SETTINGS: "worktree:getSettings",
-  WORKTREE_SAVE_SETTINGS: "worktree:saveSettings",
-  // Agent Comparison mode
-  COMPARISON_CREATE: "comparison:create",
-  COMPARISON_GET: "comparison:get",
-  COMPARISON_LIST: "comparison:list",
-  COMPARISON_CANCEL: "comparison:cancel",
-  COMPARISON_GET_RESULT: "comparison:getResult",
-  // Usage Insights
-  USAGE_INSIGHTS_GET: "usageInsights:get",
-  USAGE_INSIGHTS_EARLIEST: "usageInsights:earliest",
-  // Daily Briefing
-  DAILY_BRIEFING_GENERATE: "dailyBriefing:generate",
-  // Proactive Suggestions
-  SUGGESTIONS_LIST: "suggestions:list",
-  SUGGESTIONS_LIST_FOR_WORKSPACES: "suggestions:listForWorkspaces",
-  SUGGESTIONS_DISMISS: "suggestions:dismiss",
-  SUGGESTIONS_ACT: "suggestions:act",
-
-  // Citation Engine
-  CITATION_GET_FOR_TASK: "citation:getForTask",
-
-  // Event Triggers
-  TRIGGER_LIST: "trigger:list",
-  TRIGGER_ADD: "trigger:add",
-  TRIGGER_UPDATE: "trigger:update",
-  TRIGGER_REMOVE: "trigger:remove",
-  TRIGGER_HISTORY: "trigger:history",
-
-  // Daily Briefing (extended)
-  BRIEFING_GET_LATEST: "briefing:getLatest",
-  BRIEFING_GET_CONFIG: "briefing:getConfig",
-  BRIEFING_SAVE_CONFIG: "briefing:saveConfig",
-
-  // File Hub
-  FILEHUB_LIST: "filehub:list",
-  FILEHUB_SEARCH: "filehub:search",
-  FILEHUB_RECENT: "filehub:recent",
-  FILEHUB_SOURCES: "filehub:sources",
-
-  // Web Access
-  WEBACCESS_GET_SETTINGS: "webaccess:getSettings",
-  WEBACCESS_SAVE_SETTINGS: "webaccess:saveSettings",
-  WEBACCESS_GET_STATUS: "webaccess:getStatus",
-
-  // Playwright QA (Automated Visual Testing)
-  QA_GET_RUNS: "qa:getRuns",
-  QA_GET_RUN: "qa:getRun",
-  QA_START_RUN: "qa:startRun",
-  QA_STOP_RUN: "qa:stopRun",
-  QA_EVENT: "qa:event",
-} as const;
+const LEGACY_IPC_CHANNELS_MIRROR = IPC_CHANNELS;
 void LEGACY_IPC_CHANNELS_MIRROR;
 
 // Mobile Companion Node types (inlined for sandboxed preload)
@@ -2644,11 +1798,37 @@ interface ReadFileForViewerOptions {
   includePdfBase64?: boolean;
 }
 
+export interface LlmWikiVaultEntry {
+  path: string;
+  name: string;
+  section: "root" | "page" | "query" | "output" | "raw";
+  updatedAt: string;
+}
+
+export interface LlmWikiVaultSummary {
+  exists: boolean;
+  vaultPath: string;
+  displayPath: string;
+  counts: {
+    pages: number;
+    queries: number;
+    rawSources: number;
+    outputs: number;
+  };
+  rootFiles: LlmWikiVaultEntry[];
+  recentPages: LlmWikiVaultEntry[];
+  recentQueries: LlmWikiVaultEntry[];
+  recentOutputs: LlmWikiVaultEntry[];
+  recentRawSources: LlmWikiVaultEntry[];
+}
+
 // Expose protected methods that allow the renderer process to use ipcRenderer
 contextBridge.exposeInMainWorld("electronAPI", {
   // Dialog APIs
-  selectFolder: () => ipcRenderer.invoke(IPC_CHANNELS.DIALOG_SELECT_FOLDER),
-  selectFiles: () => ipcRenderer.invoke(IPC_CHANNELS.DIALOG_SELECT_FILES),
+  selectFolder: (defaultPath?: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.DIALOG_SELECT_FOLDER, defaultPath),
+  selectFiles: (defaultPath?: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.DIALOG_SELECT_FILES, defaultPath),
 
   // File APIs
   openFile: (filePath: string, workspacePath?: string) =>
@@ -2660,6 +1840,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     workspacePath?: string,
     options?: ReadFileForViewerOptions,
   ) => ipcRenderer.invoke(IPC_CHANNELS.FILE_READ_FOR_VIEWER, { filePath, workspacePath, ...options }),
+  getLlmWikiVaultSummary: (data: { workspacePath: string; vaultPath?: string }) =>
+    ipcRenderer.invoke(IPC_CHANNELS.LLM_WIKI_GET_VAULT_SUMMARY, data) as Promise<LlmWikiVaultSummary>,
   importFilesToWorkspace: (data: { workspaceId: string; files: string[] }) =>
     ipcRenderer.invoke(IPC_CHANNELS.FILE_IMPORT_TO_WORKSPACE, data),
   importDataToWorkspace: (data: {
@@ -2872,12 +2054,18 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getSemanticTimeline: (taskId: string) => ipcRenderer.invoke(IPC_CHANNELS.TASK_SEMANTIC_TIMELINE, taskId),
 
   // Send follow-up message to a task (optionally with image attachments)
-  sendMessage: (taskId: string, message: string, images?: ImageAttachment[]) => {
+  sendMessage: (
+    taskId: string,
+    message: string,
+    images?: ImageAttachment[],
+    quotedAssistantMessage?: QuotedAssistantMessage,
+  ) => {
     const validatedImages = validateSendMessageAttachments(images);
     return ipcRenderer.invoke(IPC_CHANNELS.TASK_SEND_MESSAGE, {
       taskId,
       message,
       images: validatedImages,
+      quotedAssistantMessage,
     });
   },
 
@@ -3759,6 +2947,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getMemoryFeaturesSettings: () => ipcRenderer.invoke(IPC_CHANNELS.MEMORY_FEATURES_GET_SETTINGS),
   saveMemoryFeaturesSettings: (settings: MemoryFeaturesSettings) =>
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_FEATURES_SAVE_SETTINGS, settings),
+  getMemoryLayerPreview: (workspaceId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_FEATURES_GET_LAYER_PREVIEW, workspaceId),
 
   // Self-improvement loop APIs
   getImprovementSettings: () =>
@@ -3833,6 +3023,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.invoke(IPC_CHANNELS.KIT_GET_STATUS, workspaceId) as Promise<WorkspaceKitStatus>,
   initWorkspaceKit: (request: WorkspaceKitInitRequest) =>
     ipcRenderer.invoke(IPC_CHANNELS.KIT_INIT, request) as Promise<WorkspaceKitStatus>,
+  applyOnboardingProfile: (request: ApplyOnboardingProfileRequest) =>
+    ipcRenderer.invoke(IPC_CHANNELS.KIT_APPLY_ONBOARDING_PROFILE, request) as Promise<ApplyOnboardingProfileResult>,
   createWorkspaceKitProject: (request: WorkspaceKitProjectCreateRequest) =>
     ipcRenderer.invoke(IPC_CHANNELS.KIT_PROJECT_CREATE, request) as Promise<{
       success: boolean;
@@ -4655,8 +3847,8 @@ export type {
 };
 
 export interface ElectronAPI {
-  selectFolder: () => Promise<string | null>;
-  selectFiles: () => Promise<
+  selectFolder: (defaultPath?: string) => Promise<string | null>;
+  selectFiles: (defaultPath?: string) => Promise<
     Array<{ path: string; name: string; size: number; mimeType?: string }>
   >;
   openFile: (filePath: string, workspacePath?: string) => Promise<string>;
@@ -4666,6 +3858,10 @@ export interface ElectronAPI {
     workspacePath?: string,
     options?: ReadFileForViewerOptions,
   ) => Promise<FileViewerResult>;
+  getLlmWikiVaultSummary: (data: {
+    workspacePath: string;
+    vaultPath?: string;
+  }) => Promise<LlmWikiVaultSummary>;
   importFilesToWorkspace: (data: {
     workspaceId: string;
     files: string[];
@@ -4838,7 +4034,12 @@ export interface ElectronAPI {
   /** Normalized semantic timeline projection for a task */
   getSemanticTimeline: (taskId: string) => Promise<UiTimelineEvent[]>;
   getTaskLearningProgress: (taskId: string) => Promise<TaskLearningProgress[]>;
-  sendMessage: (taskId: string, message: string, images?: ImageAttachment[]) => Promise<void>;
+  sendMessage: (
+    taskId: string,
+    message: string,
+    images?: ImageAttachment[],
+    quotedAssistantMessage?: QuotedAssistantMessage,
+  ) => Promise<void>;
   sendStepFeedback: (
     taskId: string,
     stepId: string,
@@ -6081,6 +5282,7 @@ export interface ElectronAPI {
   // Memory Features (global toggles)
   getMemoryFeaturesSettings: () => Promise<MemoryFeaturesSettings>;
   saveMemoryFeaturesSettings: (settings: MemoryFeaturesSettings) => Promise<{ success: boolean }>;
+  getMemoryLayerPreview: (workspaceId: string) => Promise<MemoryLayerPreviewPayload | null>;
 
   // Self-improvement loop
   getImprovementSettings: () => Promise<ImprovementLoopSettings>;
@@ -6120,6 +5322,7 @@ export interface ElectronAPI {
   // Workspace Kit (.cowork)
   getWorkspaceKitStatus: (workspaceId: string) => Promise<WorkspaceKitStatus>;
   initWorkspaceKit: (request: WorkspaceKitInitRequest) => Promise<WorkspaceKitStatus>;
+  applyOnboardingProfile: (request: ApplyOnboardingProfileRequest) => Promise<ApplyOnboardingProfileResult>;
   createWorkspaceKitProject: (
     request: WorkspaceKitProjectCreateRequest,
   ) => Promise<{ success: boolean; projectId: string }>;

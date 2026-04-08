@@ -6,7 +6,7 @@
 import os from "os";
 import path from "path";
 import * as fs from "fs/promises";
-import type { ImageAttachment } from "../../shared/types";
+import type { ImageAttachment, QuotedAssistantMessage } from "../../shared/types";
 import { ErrorCodes } from "./protocol";
 import { getUserDataDir } from "../utils/user-data-dir";
 import { z } from "zod";
@@ -24,6 +24,7 @@ export function sanitizeTaskMessageParams(params: unknown): {
   taskId: string;
   message: string;
   images?: ImageAttachment[];
+  quotedAssistantMessage?: QuotedAssistantMessage;
 } {
   const p = (params ?? {}) as Record<string, unknown>;
   const taskId = typeof p.taskId === "string" ? p.taskId.trim() : "";
@@ -42,7 +43,25 @@ export function sanitizeTaskMessageParams(params: unknown): {
     images = parsed.data as ImageAttachment[];
   }
 
-  return { taskId, message, images };
+  let quotedAssistantMessage: QuotedAssistantMessage | undefined;
+  if (p.quotedAssistantMessage && typeof p.quotedAssistantMessage === "object") {
+    const QuoteSchema = z
+      .object({
+        eventId: z.string().min(1).max(200).optional(),
+        taskId: z.string().uuid().optional(),
+        message: z.string().min(1).max(500000),
+        truncated: z.boolean().optional(),
+      })
+      .strict();
+    const parsed = QuoteSchema.safeParse(p.quotedAssistantMessage);
+    if (!parsed.success) {
+      const msg = parsed.error.issues.map((issue: { message: string }) => issue.message).join("; ");
+      throw { code: ErrorCodes.INVALID_PARAMS, message: `Invalid quoted assistant message: ${msg}` };
+    }
+    quotedAssistantMessage = parsed.data as QuotedAssistantMessage;
+  }
+
+  return { taskId, message, images, quotedAssistantMessage };
 }
 
 /**

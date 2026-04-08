@@ -166,6 +166,14 @@ CoWork OS is a **security-first personal AI assistant platform** with multi-chan
 - [x] Managed import scanning, persisted security reports, quarantine, and digest recheck for imported skill bundles
 - [x] Located: `~/Library/Application Support/cowork-os/skills/`
 
+#### Research Vault Workflow
+- [x] First-class bundled `llm-wiki` skill
+- [x] Workspace-local markdown vault structure with `SCHEMA.md`, `index.md`, `log.md`, `inbox.md`, and durable `raw/` captures
+- [x] Obsidian-friendly note/link conventions
+- [x] Deterministic vault analyzer for link health, bridge pages, surprising cross-section links, and suggested follow-up questions
+- [x] Desktop + gateway slash-command support with inline chaining
+- [x] Located: `resources/skills/llm-wiki.json` and `resources/skills/llm-wiki/`
+
 #### Personality System
 - [x] 6 personality styles (professional, friendly, concise, creative, technical, casual)
 - [x] 9 persona overlays (jarvis, friday, hal, computer, alfred, intern, sensei, pirate, noir)
@@ -367,6 +375,19 @@ Operations Requiring Approval:
 
 ## What's NOT Implemented (Planned)
 
+### Agent Integrity and Trap Defense
+- **Status**: Planned
+- **Spec**: `docs/agent-integrity-and-trap-defense-spec.md`
+- **Why it matters**:
+  - hardens CoWork OS against hidden-content prompt injection, semantic manipulation, poisoned memory, malicious delegation, and approval-fatigue attacks
+  - turns current non-blocking prompt-injection detection into a durable runtime integrity model spanning ingestion, memory, permissions, delegation, and operator review
+- **Planned phases**:
+  - Phase 1: content integrity records and task-level risk classification for web, browser, scraping, email, and imported documents
+  - Phase 2: trusted vs untrusted memory lanes and promotion gates for KG, playbooks, and skill proposals
+  - Phase 3: provenance-aware approvals and permission decisions for sensitive actions
+  - Phase 4: taint propagation and restrictions across agent teams, child tasks, and remote delegation
+  - Phase 5: integrity dashboard plus eval and red-team coverage for agent-trap scenarios
+
 ### VM Sandbox
 - **Status**: Stub implementation
 - **File**: `src/electron/agent/sandbox/runner.ts`
@@ -490,7 +511,7 @@ Expected behavior:
 - **Multi-Channel**: WhatsApp, Telegram, Discord, Slack, iMessage integration
 - **Multi-Provider**: 30+ LLM providers and compatible gateways, including Claude, GPT, Gemini, Bedrock, OpenRouter, and Ollama
 - **Local-First**: Your data stays on your machine, BYOK model
-- **Extensible**: MCP support (Client, Host, Registry), 137 built-in skills, and plugin packs
+- **Extensible**: MCP support (Client, Host, Registry), 138 built-in skills, and plugin packs
 
 ### Feature Highlights
 - Real Office document creation (Excel, Word, PDF, PowerPoint)
@@ -507,6 +528,7 @@ Expected behavior:
 - Remote access (Tailscale, SSH, WebSocket API)
 
 ### Planned
+- Agent Integrity and Trap Defense runtime across ingestion, memory, approvals, and delegation
 - VM sandbox using macOS Virtualization.framework
 - Network egress controls with proxy
 - Linux desktop support

@@ -3,6 +3,7 @@ import path from "path";
 import { DailyLogService } from "./DailyLogService";
 import { DailyLogSummarizer } from "./DailyLogSummarizer";
 import { MemoryService } from "./MemoryService";
+import { CuratedMemoryService } from "./CuratedMemoryService";
 import type { MemorySearchResult } from "../database/repositories";
 
 export interface LayeredMemoryTopicSnippet {
@@ -51,6 +52,19 @@ function slugify(value: string): string {
 function summarizeSnippet(value: unknown): string {
   if (typeof value !== "string") return "";
   return value.replace(/\s+/g, " ").trim().slice(0, 500);
+}
+
+function scoreTopicMatch(query: string, title: string, content: string): number {
+  const tokens = String(query || "")
+    .toLowerCase()
+    .match(/[a-z0-9]{3,}/g);
+  if (!tokens || tokens.length === 0) return 0;
+  const haystack = `${title}\n${content}`.toLowerCase();
+  let score = 0;
+  for (const token of tokens.slice(0, 12)) {
+    if (haystack.includes(token)) score += 1;
+  }
+  return score;
 }
 
 function topicTitleFromResult(entry: MemorySearchResult, fallback: string): string {
@@ -144,7 +158,17 @@ export class LayeredMemoryIndexService {
 
     const recentDays = await DailyLogService.listRecentDays(params.workspacePath, 5);
     const recentSummaryCount = DailyLogSummarizer.countRecentSummaries(params.workspacePath, 7);
-    const memoryContext = MemoryService.getContextForInjection(params.workspaceId, params.taskPrompt).trim();
+    const curatedContext = CuratedMemoryService.getPromptEntries(params.workspaceId, 5)
+      .map((entry) => `- [${entry.target}/${entry.kind}] ${entry.content}`)
+      .join("\n");
+    const archiveContext = MemoryService.searchForPromptRecall(
+      params.workspaceId,
+      params.taskPrompt,
+      3,
+    )
+      .map((entry) => `- [${entry.type}] ${entry.snippet}`)
+      .join("\n");
+    const memoryContext = [curatedContext, archiveContext].filter(Boolean).join("\n");
 
     const indexParts = [
       "# MEMORY",
@@ -191,12 +215,32 @@ export class LayeredMemoryIndexService {
     limit?: number;
   }): Promise<LayeredMemoryTopicSnippet[]> {
     const topicLimit = Math.max(1, params.limit ?? 3);
-    const snapshot = await this.refreshIndex({
-      workspaceId: params.workspaceId,
-      workspacePath: params.workspacePath,
-      taskPrompt: params.query,
-      topicLimit,
-    });
-    return snapshot.topics.slice(0, topicLimit);
+    await this.ensureLayout(params.workspacePath);
+    const names = await fs.readdir(topicsDir(params.workspacePath)).catch(() => []);
+    const topics: Array<LayeredMemoryTopicSnippet & { score: number }> = [];
+
+    for (const name of names) {
+      if (!name.endsWith(".md")) continue;
+      const topicPathAbs = path.join(topicsDir(params.workspacePath), name);
+      const raw = await fs.readFile(topicPathAbs, "utf8").catch(() => "");
+      if (!raw) continue;
+      const lines = raw.split("\n");
+      const title = lines.find((line) => line.startsWith("# "))?.replace(/^#\s+/, "").trim() || name;
+      const sourceLine = lines.find((line) => line.startsWith("source:")) || "";
+      const content = summarizeSnippet(raw.replace(/^# .*\n?/m, ""));
+      const score = scoreTopicMatch(params.query, title, content);
+      if (score <= 0) continue;
+      topics.push({
+        id: name,
+        title,
+        path: topicPathAbs,
+        content,
+        source: sourceLine.includes("markdown") ? "markdown" : "memory",
+        score,
+      });
+    }
+
+    topics.sort((a, b) => b.score - a.score || a.title.localeCompare(b.title));
+    return topics.slice(0, topicLimit).map(({ score: _score, ...topic }) => topic);
   }
 }

@@ -432,6 +432,9 @@ export class TaskStrategyService {
       if (typeof next.autonomousMode !== "boolean") {
         next.autonomousMode = true;
       }
+      if (!Array.isArray(next.autoApproveTypes)) {
+        next.autoApproveTypes = ["run_command"];
+      }
     }
     if (strategy.autoReportEnabled) {
       next.autoReportEnabled = true;
@@ -634,7 +637,11 @@ export class TaskStrategyService {
       "update_lore",
       // Memory
       "search_memories",
+      "search_sessions",
+      "memory_topics_load",
       "memory_save",
+      "memory_curate",
+      "memory_curated_read",
       // System
       "system_info",
       // Diagrams (lightweight UI-only, no side effects)

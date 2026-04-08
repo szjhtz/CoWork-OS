@@ -1,6 +1,8 @@
 import { AutomationProfileRepository } from "../agents/AutomationProfileRepository";
 import { MemoryService } from "../memory/MemoryService";
 import { LayeredMemoryIndexService } from "../memory/LayeredMemoryIndexService";
+import { CuratedMemoryService } from "../memory/CuratedMemoryService";
+import { MemoryFeaturesManager } from "../settings/memory-features-manager";
 import { WorkspaceRepository } from "../database/repositories";
 import type {
   CoreMemoryCandidate,
@@ -172,24 +174,34 @@ export class CoreMemoryDistiller {
     if (!workspaceId) return null;
     const type = this.mapCandidateToMemoryType(candidate);
     const content = `[core-trace:${candidate.traceId}] [scope:${candidate.scopeKind}:${candidate.scopeRef}] ${candidate.summary}${candidate.details ? `\n${candidate.details}` : ""}`;
-    return MemoryService.captureCoreMemory(
-      workspaceId,
-      undefined,
-      type,
-      content,
-      false,
-      {
-        origin: "system",
-        batchKey: `core-memory:${candidate.scopeKind}:${candidate.scopeRef}`,
-        priority: "high",
-        batchable: false,
-        profileId: candidate.profileId,
-        coreTraceId: candidate.traceId,
-        candidateId: candidate.id,
-        scopeKind: candidate.scopeKind,
-        scopeRef: candidate.scopeRef,
-      },
-    );
+    const archiveEntry = await MemoryService.captureCoreMemory(workspaceId, undefined, type, content, false, {
+      origin: "system",
+      batchKey: `core-memory:${candidate.scopeKind}:${candidate.scopeRef}`,
+      priority: "high",
+      batchable: false,
+      profileId: candidate.profileId,
+      coreTraceId: candidate.traceId,
+      candidateId: candidate.id,
+      scopeKind: candidate.scopeKind,
+      scopeRef: candidate.scopeRef,
+    });
+    const shouldPromoteToCurated =
+      MemoryFeaturesManager.loadSettings().autoPromoteToCuratedMemoryEnabled === true &&
+      (candidate.candidateType === "preference" ||
+        candidate.candidateType === "constraint" ||
+        candidate.candidateType === "pattern");
+    if (shouldPromoteToCurated) {
+      const curatedEntry = await CuratedMemoryService.upsertDistilledEntry({
+        workspaceId,
+        target: "workspace",
+        kind: this.mapCandidateToCuratedKind(candidate),
+        content: candidate.summary,
+        confidence: candidate.confidence,
+      });
+      return curatedEntry || archiveEntry;
+    }
+
+    return archiveEntry;
   }
 
   private mapCandidateToMemoryType(candidate: CoreMemoryCandidate) {
@@ -202,6 +214,19 @@ export class CoreMemoryDistiller {
         return "workflow_pattern" as const;
       default:
         return "observation" as const;
+    }
+  }
+
+  private mapCandidateToCuratedKind(candidate: CoreMemoryCandidate) {
+    switch (candidate.candidateType) {
+      case "preference":
+        return "preference" as const;
+      case "constraint":
+        return "constraint" as const;
+      case "pattern":
+        return "workflow_rule" as const;
+      default:
+        return "project_fact" as const;
     }
   }
 }

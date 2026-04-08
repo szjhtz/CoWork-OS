@@ -162,7 +162,7 @@ jobs:
             exit 1
           fi
 
-          node scripts/release-smoke-check.mjs
+          node "${repo_root}/scripts/release-smoke-check.mjs"
 
       - name: Validate npm tarball first-install flow (Windows)
         if: runner.os == 'Windows'
@@ -187,7 +187,7 @@ jobs:
             throw "Setup unexpectedly triggered dependency bootstrap fallback; electron should resolve from parent node_modules."
           }
 
-          node scripts/release-smoke-check.mjs
+          node (Join-Path $repoRoot "scripts/release-smoke-check.mjs")
 
       - name: Build application
         run: npm run build

@@ -52,4 +52,17 @@ describe("runtime tool definition metadata", () => {
     expect(listMetadata.readOnly).toBe(true);
     expect(listMetadata.approvalKind).toBe("none");
   });
+
+  it("treats vision export tools as non-read-only data exports", () => {
+    const imageMetadata = getDefaultRuntimeToolMetadata("analyze_image");
+    const pdfMetadata = getDefaultRuntimeToolMetadata("read_pdf_visual");
+
+    expect(imageMetadata.readOnly).toBe(false);
+    expect(imageMetadata.approvalKind).toBe("data_export");
+    expect(imageMetadata.sideEffectLevel).toBe("high");
+
+    expect(pdfMetadata.readOnly).toBe(false);
+    expect(pdfMetadata.approvalKind).toBe("data_export");
+    expect(pdfMetadata.sideEffectLevel).toBe("high");
+  });
 });

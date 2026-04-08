@@ -1595,6 +1595,28 @@ polite/formal register. Flag any strings that need cultural adaptation.
 
 ## Content Intelligence
 
+### Programmatic Technical Animation (Manim)
+
+Create deterministic technical explainer videos with local project files instead of relying on opaque text-to-video generation. This is useful when the output needs exact equations, algorithm state transitions, or architecture diagrams that are easier to validate as code.
+
+**What it handles:**
+- 3Blue1Brown-style math explainers
+- Equation derivations with `MathTex`
+- Algorithm walkthroughs with one scene per beat
+- Animated architecture diagrams and request flows
+- Data-story style visual comparisons
+- Draft-first local render workflow with explicit `render.sh` commands
+
+**Example prompt:**
+```
+Use the manim-video skill to create a 75-second Manim explainer for gradient descent aimed at software engineers.
+Scaffold the full project in this workspace, include a voiceover draft, and render draft quality only if local Manim prerequisites are satisfied.
+```
+
+**Powered by:** `manim-video` skill, local file tools, Manim CE helper scripts
+
+---
+
 ### YouTube & Video Analysis
 
 Analyze YouTube videos without watching them — extract transcripts, summarize content, identify key moments, and generate derivative content.

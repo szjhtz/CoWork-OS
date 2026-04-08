@@ -1,5 +1,18 @@
 import type { LLMSettingsData } from "../../shared/types";
 
+function mergeProviderSettings<T extends object>(
+  incoming?: T,
+  existing?: T,
+): T | undefined {
+  if (!incoming && !existing) return undefined;
+  if (!incoming) return existing;
+  if (!existing) return incoming;
+  return {
+    ...existing,
+    ...incoming,
+  };
+}
+
 function normalizeAzureSettings(
   incoming?: LLMSettingsData["azure"],
   existing?: LLMSettingsData["azure"],
@@ -55,25 +68,39 @@ export function buildSavedLLMSettings(
   existingSettings: LLMSettingsData,
 ): LLMSettingsData {
   const existingOpenAISettings = existingSettings.openai;
-  let openaiSettings = validated.openai;
+  const incomingOpenAISettings = validated.openai;
+  let openaiSettings = mergeProviderSettings(
+    incomingOpenAISettings,
+    existingOpenAISettings,
+  );
   const shouldPreserveOpenAIOAuthTokens =
     existingOpenAISettings?.authMethod === "oauth" &&
     validated.openai?.authMethod !== "api_key";
+  if (validated.openai?.authMethod === "api_key" && openaiSettings) {
+    delete openaiSettings.accessToken;
+    delete openaiSettings.refreshToken;
+    delete openaiSettings.tokenExpiresAt;
+  }
   if (shouldPreserveOpenAIOAuthTokens && existingOpenAISettings) {
     openaiSettings = {
-      ...validated.openai,
+      ...openaiSettings,
       accessToken: existingOpenAISettings.accessToken,
       refreshToken: existingOpenAISettings.refreshToken,
       tokenExpiresAt: existingOpenAISettings.tokenExpiresAt,
       authMethod:
-        validated.openai?.authMethod || existingOpenAISettings.authMethod,
+        incomingOpenAISettings?.authMethod || existingOpenAISettings.authMethod,
     };
   }
 
   return {
     providerType: validated.providerType,
     modelKey: validated.modelKey,
-    fallbackProviders: validated.fallbackProviders,
+    fallbackProviders: Object.prototype.hasOwnProperty.call(
+      validated,
+      "fallbackProviders",
+    )
+      ? validated.fallbackProviders
+      : existingSettings.fallbackProviders,
     failoverPrimaryRetryCooldownSeconds: Object.prototype.hasOwnProperty.call(
       validated,
       "failoverPrimaryRetryCooldownSeconds",
@@ -81,21 +108,27 @@ export function buildSavedLLMSettings(
       ? validated.failoverPrimaryRetryCooldownSeconds
       : existingSettings.failoverPrimaryRetryCooldownSeconds,
     promptCaching: validated.promptCaching ?? existingSettings.promptCaching,
-    anthropic: validated.anthropic,
-    bedrock: validated.bedrock,
-    ollama: validated.ollama,
-    gemini: validated.gemini,
-    openrouter: validated.openrouter,
+    anthropic: mergeProviderSettings(validated.anthropic, existingSettings.anthropic),
+    bedrock: mergeProviderSettings(validated.bedrock, existingSettings.bedrock),
+    ollama: mergeProviderSettings(validated.ollama, existingSettings.ollama),
+    gemini: mergeProviderSettings(validated.gemini, existingSettings.gemini),
+    openrouter: mergeProviderSettings(
+      validated.openrouter,
+      existingSettings.openrouter,
+    ),
     openai: openaiSettings,
     azure: normalizeAzureSettings(validated.azure, existingSettings.azure),
     azureAnthropic: normalizeAzureAnthropicSettings(
       validated.azureAnthropic,
       existingSettings.azureAnthropic,
     ),
-    groq: validated.groq,
-    xai: validated.xai,
-    kimi: validated.kimi,
-    openaiCompatible: validated.openaiCompatible,
+    groq: mergeProviderSettings(validated.groq, existingSettings.groq),
+    xai: mergeProviderSettings(validated.xai, existingSettings.xai),
+    kimi: mergeProviderSettings(validated.kimi, existingSettings.kimi),
+    openaiCompatible: mergeProviderSettings(
+      validated.openaiCompatible,
+      existingSettings.openaiCompatible,
+    ),
     customProviders: validated.customProviders ?? existingSettings.customProviders,
     imageGeneration: validated.imageGeneration ?? existingSettings.imageGeneration,
     videoGeneration: validated.videoGeneration ?? existingSettings.videoGeneration,

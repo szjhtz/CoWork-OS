@@ -75,6 +75,7 @@ export default defineConfig({
           { text: 'Channel Comparison', link: '/channel-comparison' },
           { text: 'Inbox Agent', link: '/inbox-agent' },
           { text: 'Skill Store & External Skills', link: '/skill-store-and-external-skills' },
+          { text: 'manim-video skill', link: '/skills/manim-video' },
           { text: 'Release Notes 0.5.19', link: '/release-notes-0.5.19' },
           { text: 'Release Notes 0.5.17', link: '/release-notes-0.5.17' },
           { text: 'Release Notes 0.5.16', link: '/release-notes-0.5.16' },

@@ -200,9 +200,12 @@ export class OutputFilter {
     const contentTools = [
       "browser_get_content",
       "read_file",
+      "parse_document",
       "web_search",
       "web_fetch",
       "search_files",
+      "channel_history",
+      "channel_fetch_discord_messages",
     ];
 
     if (!contentTools.includes(toolName)) {
@@ -217,6 +220,8 @@ export class OutputFilter {
       /\/\/\s*(?:AI|ASSISTANT)\s*:.*/gi,
       /#\s*(?:AI|ASSISTANT)\s*:.*/gi,
       /\[(?:IGNORE|OVERRIDE|NEW)\s*(?:PREVIOUS|SYSTEM|INSTRUCTIONS?)\]/gi,
+      /\bignore\s+(?:all|any|the)\s+(?:previous|prior)\s+instructions\b/gi,
+      /\b(?:post|upload|send|export|exfiltrat(?:e|ion))\b.{0,80}\b(?:file|contents?|secrets?|tokens?|credentials?)\b/gi,
     ];
 
     let sanitized = result;

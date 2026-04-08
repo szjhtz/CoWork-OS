@@ -8,6 +8,7 @@ import type {
   AwarenessConfig,
   AwarenessSource,
   AwarenessSummary,
+  MemoryLayerPreviewPayload,
   MemoryFeaturesSettings,
   Workspace,
   WorkspaceKitStatus,
@@ -17,6 +18,10 @@ import { MemorySettings } from "./MemorySettings";
 const DEFAULT_FEATURES: MemoryFeaturesSettings = {
   contextPackInjectionEnabled: true,
   heartbeatMaintenanceEnabled: true,
+  checkpointCaptureEnabled: true,
+  verbatimRecallEnabled: true,
+  wakeUpLayersEnabled: true,
+  temporalKnowledgeEnabled: true,
 };
 
 type BadgeTone = "neutral" | "success" | "warning" | "error";
@@ -60,6 +65,7 @@ export function MemoryHubSettings(props?: {
   const [kitBusy, setKitBusy] = useState(false);
   const [kitPreset, setKitPreset] = useState<"default" | "venture_operator">("default");
   const [newProjectId, setNewProjectId] = useState("");
+  const [layerPreview, setLayerPreview] = useState<MemoryLayerPreviewPayload | null>(null);
   const [awarenessConfig, setAwarenessConfig] = useState<AwarenessConfig | null>(null);
   const [awarenessBeliefs, setAwarenessBeliefs] = useState<AwarenessBelief[]>([]);
   const [awarenessSummary, setAwarenessSummary] = useState<AwarenessSummary | null>(null);
@@ -90,6 +96,7 @@ export function MemoryHubSettings(props?: {
   useEffect(() => {
     if (!selectedWorkspaceId) {
       setKitStatus(null);
+      setLayerPreview(null);
       setAwarenessBeliefs([]);
       setAwarenessSummary(null);
       setAutonomyState(null);
@@ -98,9 +105,19 @@ export function MemoryHubSettings(props?: {
       return;
     }
     void refreshKit();
+    void refreshLayerPreview();
     void refreshAwareness();
     void refreshAutonomy();
   }, [selectedWorkspaceId]);
+
+  useEffect(() => {
+    if (!selectedWorkspaceId) return;
+    void refreshLayerPreview();
+  }, [
+    selectedWorkspaceId,
+    features?.wakeUpLayersEnabled,
+    features?.contextPackInjectionEnabled,
+  ]);
 
   const loadAll = async () => {
     try {
@@ -151,6 +168,17 @@ export function MemoryHubSettings(props?: {
       setKitStatus(null);
     } finally {
       setKitLoading(false);
+    }
+  };
+
+  const refreshLayerPreview = async () => {
+    if (!selectedWorkspaceId) return;
+    try {
+      const preview = await window.electronAPI.getMemoryLayerPreview(selectedWorkspaceId);
+      setLayerPreview(preview);
+    } catch (error) {
+      console.error("Failed to load memory layer preview:", error);
+      setLayerPreview(null);
     }
   };
 
@@ -381,7 +409,199 @@ export function MemoryHubSettings(props?: {
             </label>
           </div>
         </div>
+
+        <div className="settings-form-group">
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "flex-start",
+              gap: "12px",
+            }}
+          >
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div style={{ fontWeight: 500, color: "var(--color-text-primary)" }}>
+                Enable Checkpoint Capture
+              </div>
+              <p className="settings-form-hint" style={{ marginTop: "4px", marginBottom: 0 }}>
+                Writes structured summaries plus verbatim evidence packets on snapshots, periodic
+                exchange checkpoints, and meaningful task completions.
+              </p>
+            </div>
+            <label className="settings-toggle" style={{ flexShrink: 0, marginTop: "2px" }}>
+              <input
+                type="checkbox"
+                checked={features.checkpointCaptureEnabled !== false}
+                onChange={(e) => saveFeatures({ checkpointCaptureEnabled: e.target.checked })}
+                disabled={saving}
+              />
+              <span className="toggle-slider" />
+            </label>
+          </div>
+        </div>
+
+        <div className="settings-form-group">
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "flex-start",
+              gap: "12px",
+            }}
+          >
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div style={{ fontWeight: 500, color: "var(--color-text-primary)" }}>
+                Enable Verbatim Recall
+              </div>
+              <p className="settings-form-hint" style={{ marginTop: "4px", marginBottom: 0 }}>
+                Exposes the quote-first recall lane so the agent can retrieve exact wording instead
+                of summarized memory when precision matters.
+              </p>
+            </div>
+            <label className="settings-toggle" style={{ flexShrink: 0, marginTop: "2px" }}>
+              <input
+                type="checkbox"
+                checked={features.verbatimRecallEnabled !== false}
+                onChange={(e) => saveFeatures({ verbatimRecallEnabled: e.target.checked })}
+                disabled={saving}
+              />
+              <span className="toggle-slider" />
+            </label>
+          </div>
+        </div>
+
+        <div className="settings-form-group">
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "flex-start",
+              gap: "12px",
+            }}
+          >
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div style={{ fontWeight: 500, color: "var(--color-text-primary)" }}>
+                Enable Wake-Up Layers
+              </div>
+              <p className="settings-form-hint" style={{ marginTop: "4px", marginBottom: 0 }}>
+                Makes prompt-visible memory explicit: inject only L0 Identity and L1 Essential
+                Story by default, while keeping L2 Topic Packs and L3 Deep Recall tool-driven.
+              </p>
+            </div>
+            <label className="settings-toggle" style={{ flexShrink: 0, marginTop: "2px" }}>
+              <input
+                type="checkbox"
+                checked={features.wakeUpLayersEnabled !== false}
+                onChange={(e) => saveFeatures({ wakeUpLayersEnabled: e.target.checked })}
+                disabled={saving}
+              />
+              <span className="toggle-slider" />
+            </label>
+          </div>
+        </div>
+
+        <div className="settings-form-group">
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "flex-start",
+              gap: "12px",
+            }}
+          >
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div style={{ fontWeight: 500, color: "var(--color-text-primary)" }}>
+                Enable Temporal Knowledge
+              </div>
+              <p className="settings-form-hint" style={{ marginTop: "4px", marginBottom: 0 }}>
+                Tracks start and end validity on KG edges so current context ignores stale facts
+                while historical lookups can still recover past truths.
+              </p>
+            </div>
+            <label className="settings-toggle" style={{ flexShrink: 0, marginTop: "2px" }}>
+              <input
+                type="checkbox"
+                checked={features.temporalKnowledgeEnabled !== false}
+                onChange={(e) => saveFeatures({ temporalKnowledgeEnabled: e.target.checked })}
+                disabled={saving}
+              />
+              <span className="toggle-slider" />
+            </label>
+          </div>
+        </div>
       </div>
+
+      {layerPreview && (
+        <div className="settings-subsection">
+          <h3>Wake-Up Layers</h3>
+          <p className="settings-form-hint">
+            Preview of the current L0/L1 payload and the tool-driven layers kept out of default
+            prompt injection.
+          </p>
+
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+              gap: "12px",
+            }}
+          >
+            {layerPreview.layers.map((layer) => (
+              <div key={layer.layer} className="settings-card">
+                <div style={{ display: "flex", justifyContent: "space-between", gap: "8px" }}>
+                  <div style={{ fontWeight: 600, color: "var(--color-text-primary)" }}>
+                    {layer.title}
+                  </div>
+                  <span className={badgeClass(layer.injectedByDefault ? "success" : "neutral")}>
+                    {layer.injectedByDefault ? "Injected" : "Tool-driven"}
+                  </span>
+                </div>
+                <p className="settings-form-hint" style={{ marginTop: "6px" }}>
+                  {layer.description}
+                </p>
+                <div style={{ fontSize: "11px", color: "var(--color-text-secondary)" }}>
+                  {layer.budget.usedTokens} tokens used
+                  {layer.budget.excludedCount > 0
+                    ? ` • ${layer.budget.excludedCount} fragment${layer.budget.excludedCount === 1 ? "" : "s"} excluded by budget`
+                    : ""}
+                </div>
+                {layer.includedText ? (
+                  <pre
+                    style={{
+                      marginTop: "10px",
+                      whiteSpace: "pre-wrap",
+                      fontSize: "12px",
+                      color: "var(--color-text-primary)",
+                      background: "var(--color-surface-secondary)",
+                      borderRadius: "10px",
+                      padding: "10px",
+                      maxHeight: "240px",
+                      overflow: "auto",
+                    }}
+                  >
+                    {layer.includedText}
+                  </pre>
+                ) : (
+                  <div className="settings-empty" style={{ marginTop: "10px" }}>
+                    No inline payload.
+                  </div>
+                )}
+                {layer.excludedText && (
+                  <div
+                    style={{
+                      marginTop: "10px",
+                      fontSize: "12px",
+                      color: "var(--color-text-secondary)",
+                    }}
+                  >
+                    {layer.excludedText}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {awarenessConfig && (
         <div className="settings-subsection">

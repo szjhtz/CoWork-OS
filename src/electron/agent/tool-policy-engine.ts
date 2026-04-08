@@ -159,7 +159,12 @@ const ALWAYS_VISIBLE_TOOLS = new Set([
   "scratchpad_write",
   "scratchpad_read",
   "search_memories",
+  "search_quotes",
+  "search_sessions",
+  "memory_topics_load",
   "memory_save",
+  "memory_curate",
+  "memory_curated_read",
   "system_info",
   "Skill",
 ]);
@@ -176,6 +181,8 @@ const BROWSER_INTENT_PATTERN =
   /\b(browser|website|web page|web app|page|dom|click|button|form|login|navigate|url|screenshot|visual|render|preview|open in browser)\b/i;
 const ARTIFACT_INTENT_PATTERN =
   /\b(docx|pdf|document|report|spreadsheet|excel|xlsx|presentation|slides?|powerpoint|diagram|flowchart|mermaid|chart|graph|erd|gantt|timeline|mindmap|image|visualization)\b/i;
+const PDF_VISUAL_INTENT_PATTERN =
+  /\b(pdf|document|page|pages)\b[\s\S]{0,80}\b(layout|visual|format(?:ting)?|design|style|appearance|colors?|font|typography|structure|scan(?:ned)?|ocr|image[- ]based|image[- ]only|handwrit(?:ing|ten)|look(?:s|ing)?)\b|\b(layout|visual|format(?:ting)?|design|style|appearance|colors?|font|typography|structure|scan(?:ned)?|ocr|image[- ]based|image[- ]only|handwrit(?:ing|ten))\b[\s\S]{0,80}\b(pdf|document|page|pages)\b/i;
 /** Matches prompts that request AI image generation (draw, picture, create image, etc.) */
 const IMAGE_CREATION_INTENT_PATTERN =
   /\b(draw|picture|photo|paint|illustrate|render|sketch)\b|create\s+(?:an?\s+)?(?:image|picture|photo|illustration)|generate\s+(?:an?\s+)?(?:image|picture|photo)|make\s+(?:an?\s+)?(?:image|picture|photo|illustration)/i;
@@ -208,6 +215,10 @@ function normalizeTaskText(taskText?: string): string {
 
 function hasBrowserSurfaceIntent(taskText: string): boolean {
   return WEB_SURFACE_PATTERN.test(taskText);
+}
+
+export function hasPdfVisualIntent(taskText: string): boolean {
+  return PDF_VISUAL_INTENT_PATTERN.test(taskText);
 }
 
 export function hasNativeDesktopGuiIntent(taskText: string): boolean {
@@ -284,7 +295,16 @@ function inferToolExposureMetadata(
             : undefined;
     return { lane: "artifact", exposure: "conditional", overlapGroup };
   }
-  if (toolName === "search_memories" || toolName === "memory_save" || toolName.startsWith("scratchpad_")) {
+  if (
+    toolName === "search_memories" ||
+    toolName === "search_quotes" ||
+    toolName === "search_sessions" ||
+    toolName === "memory_topics_load" ||
+    toolName === "memory_save" ||
+    toolName === "memory_curate" ||
+    toolName === "memory_curated_read" ||
+    toolName.startsWith("scratchpad_")
+  ) {
     return { lane: "memory", exposure: "always", overlapGroup: "memory" };
   }
   if (CONDITIONAL_SYSTEM_TOOLS.has(toolName)) {
@@ -333,6 +353,12 @@ export function evaluateToolAvailability(
   const taskText = normalizeTaskText(ctx.taskText);
   if (!taskText) {
     return { decision: "defer", reason: `hidden_without_task_signal:${metadata.lane}`, metadata };
+  }
+
+  if (normalizedToolName === "read_pdf_visual") {
+    return hasPdfVisualIntent(taskText)
+      ? { decision: "allow", metadata }
+      : { decision: "defer", reason: "pdf_visual_intent_missing", metadata };
   }
 
   switch (metadata.lane) {

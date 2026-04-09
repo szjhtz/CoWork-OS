@@ -643,6 +643,11 @@ export class ToolRegistry {
       dropbox: DropboxTools.isEnabled(),
       sharePoint: SharePointTools.isEnabled(),
       scraping: ScrapingTools.isEnabled(),
+      supermemory: SupermemoryTools.isEnabled(),
+      voiceCall: VoiceCallTools.isEnabled(),
+      imageGen: ImageTools.isAvailable(),
+      videoGen: VideoTools.isAvailable(),
+      knowledgeGraph: KnowledgeGraphTools.isEnabled(),
       emailImap: Boolean(this.emailImapTools?.isAvailable?.()),
       channelHistory: Boolean(this.channelTools),
     };
@@ -1140,8 +1145,10 @@ export class ToolRegistry {
       allTools.push(...this.getSharePointToolDefinitions());
     }
 
-    // Voice call tools (outbound phone calls)
-    allTools.push(...this.getVoiceCallToolDefinitions());
+    // Voice call tools (outbound phone calls) — only when voice is enabled in settings
+    if (VoiceCallTools.isEnabled()) {
+      allTools.push(...this.getVoiceCallToolDefinitions());
+    }
 
     // Only add shell tool if workspace has shell permission
     if (this.workspace.permissions.shell) {
@@ -1150,11 +1157,15 @@ export class ToolRegistry {
       allTools.push(...GitTools.getToolDefinitions());
     }
 
-    // Always add image tools; they will surface setup guidance if API keys are missing
-    allTools.push(...ImageTools.getToolDefinitions());
+    // Image tools — only when at least one image provider is configured
+    if (ImageTools.isAvailable()) {
+      allTools.push(...ImageTools.getToolDefinitions());
+    }
 
-    // Always add video tools; they will surface setup guidance if video providers are not configured
-    allTools.push(...VideoTools.getToolDefinitions());
+    // Video tools — only when at least one video provider is configured
+    if (VideoTools.isAvailable()) {
+      allTools.push(...VideoTools.getToolDefinitions());
+    }
 
     // Vision tools (image understanding); may surface setup guidance if API keys are missing
     allTools.push(...VisionTools.getToolDefinitions());
@@ -1165,8 +1176,10 @@ export class ToolRegistry {
     // Computer use tools (native mouse/keyboard/screenshot — macOS only, not headless)
     allTools.push(...ComputerUseTools.getToolDefinitions({ headless }));
 
-    // Batch image processing tools
-    allTools.push(...BatchImageTools.getToolDefinitions());
+    // Batch image processing tools — only when image generation is available
+    if (ImageTools.isAvailable()) {
+      allTools.push(...BatchImageTools.getToolDefinitions());
+    }
 
     // Always add cron/scheduling tools (enables task scheduling)
     allTools.push(...CronTools.getToolDefinitions());
@@ -1188,12 +1201,16 @@ export class ToolRegistry {
       allTools.push(...VisualTools.getToolDefinitions());
     }
 
-    // Knowledge graph tools (entity/relationship management)
-    allTools.push(...KnowledgeGraphTools.getToolDefinitions());
+    // Knowledge graph tools (entity/relationship management) — only when initialized
+    if (KnowledgeGraphTools.isEnabled()) {
+      allTools.push(...KnowledgeGraphTools.getToolDefinitions());
+    }
 
     // Memory tools (explicit save during task execution)
     allTools.push(...MemoryTools.getToolDefinitions());
-    allTools.push(...SupermemoryTools.getToolDefinitions());
+    if (SupermemoryTools.isEnabled()) {
+      allTools.push(...SupermemoryTools.getToolDefinitions());
+    }
 
     // Scraping tools (Scrapling integration - anti-bot, stealth, structured extraction)
     // Only add when scraping is enabled in settings
@@ -1727,10 +1744,12 @@ export class ToolRegistry {
     register("memory_save", async ({ request }) => this.memoryTools.save(request.input));
     register("memory_curate", async ({ request }) => this.memoryTools.curate(request.input), exclusiveSchedulerSpec);
     register("memory_curated_read", async ({ request }) => this.memoryTools.readCurated(request.input), readParallelSchedulerSpec);
-    register("supermemory_profile", async ({ request }) => this.supermemoryTools.profile(request.input), readParallelSchedulerSpec);
-    register("supermemory_search", async ({ request }) => this.supermemoryTools.search(request.input), readParallelSchedulerSpec);
-    register("supermemory_remember", async ({ request }) => this.supermemoryTools.remember(request.input), exclusiveSchedulerSpec);
-    register("supermemory_forget", async ({ request }) => this.supermemoryTools.forget(request.input), exclusiveSchedulerSpec);
+    if (SupermemoryTools.isEnabled()) {
+      register("supermemory_profile", async ({ request }) => this.supermemoryTools.profile(request.input), readParallelSchedulerSpec);
+      register("supermemory_search", async ({ request }) => this.supermemoryTools.search(request.input), readParallelSchedulerSpec);
+      register("supermemory_remember", async ({ request }) => this.supermemoryTools.remember(request.input), exclusiveSchedulerSpec);
+      register("supermemory_forget", async ({ request }) => this.supermemoryTools.forget(request.input), exclusiveSchedulerSpec);
+    }
     register("scratchpad_write", async ({ request }) => this.scratchpadTools.write(request.input));
     register("scratchpad_read", async ({ request }) => this.scratchpadTools.read(request.input));
     register("read_clipboard", async () => this.systemTools.readClipboard());
@@ -2831,10 +2850,17 @@ System Tools:
 - memory_save: Save an observation, decision, insight, or error to workspace memory for future recall
 - memory_curate: Add, replace, or remove curated hot-memory facts that should stay prompt-visible
 - memory_curated_read: Inspect the current curated hot-memory entries
-- supermemory_profile: Load the workspace-scoped external Supermemory profile and relevant facts
+${hasAnyVisibleTools(
+  "supermemory_profile",
+  "supermemory_search",
+  "supermemory_remember",
+  "supermemory_forget",
+)
+  ? `- supermemory_profile: Load the workspace-scoped external Supermemory profile and relevant facts
 - supermemory_search: Search external Supermemory memories for this workspace or approved container
 - supermemory_remember: Persist a high-signal fact into external Supermemory
-- supermemory_forget: Remove an outdated external Supermemory entry by ID or exact content
+- supermemory_forget: Remove an outdated external Supermemory entry by ID or exact content`
+  : ""}
 ${hasAnyVisibleTools(
   "computer_screenshot",
   "computer_click",
@@ -3241,10 +3267,10 @@ ${skillDescriptions}`;
     if (name === "memory_save") return await this.memoryTools.save(input);
     if (name === "memory_curate") return await this.memoryTools.curate(input);
     if (name === "memory_curated_read") return await this.memoryTools.readCurated(input);
-    if (name === "supermemory_profile") return await this.supermemoryTools.profile(input);
-    if (name === "supermemory_search") return await this.supermemoryTools.search(input);
-    if (name === "supermemory_remember") return await this.supermemoryTools.remember(input);
-    if (name === "supermemory_forget") return await this.supermemoryTools.forget(input);
+    if (name === "supermemory_profile" && SupermemoryTools.isEnabled()) return await this.supermemoryTools.profile(input);
+    if (name === "supermemory_search" && SupermemoryTools.isEnabled()) return await this.supermemoryTools.search(input);
+    if (name === "supermemory_remember" && SupermemoryTools.isEnabled()) return await this.supermemoryTools.remember(input);
+    if (name === "supermemory_forget" && SupermemoryTools.isEnabled()) return await this.supermemoryTools.forget(input);
     if (name === "scratchpad_write") return this.scratchpadTools.write(input);
     if (name === "scratchpad_read") return this.scratchpadTools.read(input);
     if (name === "read_clipboard") return await this.systemTools.readClipboard();

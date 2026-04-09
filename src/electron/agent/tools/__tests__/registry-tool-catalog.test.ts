@@ -29,6 +29,8 @@ const mockBuiltinSettings = {
   version: "1.0.0",
 };
 
+const supermemoryIsConfiguredMock = vi.fn(() => false);
+
 const isToolEnabledMock = vi.fn((toolName: string) => {
   const override = mockBuiltinSettings.toolOverrides[toolName];
   return override ? override.enabled : true;
@@ -118,6 +120,12 @@ vi.mock("../../../infra/infra-settings", () => ({
   },
 }));
 
+vi.mock("../../../memory/SupermemoryService", () => ({
+  SupermemoryService: {
+    isConfigured: vi.fn(() => supermemoryIsConfiguredMock()),
+  },
+}));
+
 import { ToolRegistry } from "../registry";
 
 function createWorkspace(): Any {
@@ -157,6 +165,7 @@ describe("ToolRegistry tool catalog versioning", () => {
       return override ? override.enabled : true;
     });
     getToolPriorityMock.mockReturnValue("normal");
+    supermemoryIsConfiguredMock.mockReturnValue(false);
   });
 
   it("invalidates cached tool definitions when the MCP catalog changes", () => {
@@ -229,6 +238,27 @@ describe("ToolRegistry tool catalog versioning", () => {
     expect(readFile?.runtime?.concurrencyClass).toBe("read_parallel");
     expect(readFile?.runtime?.readOnly).toBe(true);
     expect(skill?.runtime?.approvalKind).toBe("none");
+  });
+
+  it("keeps Supermemory tools hidden by default", () => {
+    const registry = new ToolRegistry(createWorkspace(), createDaemon(), "task-supermemory-default-off");
+
+    const toolNames = registry.getTools().map((tool) => tool.name);
+    expect(toolNames).not.toContain("supermemory_profile");
+    expect(toolNames).not.toContain("supermemory_search");
+    expect(toolNames).not.toContain("supermemory_remember");
+    expect(toolNames).not.toContain("supermemory_forget");
+  });
+
+  it("exposes Supermemory tools only when the integration is configured", () => {
+    supermemoryIsConfiguredMock.mockReturnValue(true);
+    const registry = new ToolRegistry(createWorkspace(), createDaemon(), "task-supermemory-enabled");
+
+    const toolNames = registry.getTools().map((tool) => tool.name);
+    expect(toolNames).toContain("supermemory_profile");
+    expect(toolNames).toContain("supermemory_search");
+    expect(toolNames).toContain("supermemory_remember");
+    expect(toolNames).toContain("supermemory_forget");
   });
 
   it("does not classify Skill as an external-service approval type", () => {

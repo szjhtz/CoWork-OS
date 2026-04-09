@@ -41,6 +41,10 @@ export class VoiceCallTools {
     this.workspace = workspace;
   }
 
+  static isEnabled(): boolean {
+    return VoiceSettingsManager.loadSettings().enabled;
+  }
+
   /**
    * Tool results are persisted in task logs for debugging and memory capture.
    * Redact secret-looking fields defensively in case upstream APIs echo tokens.

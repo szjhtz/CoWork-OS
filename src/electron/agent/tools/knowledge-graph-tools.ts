@@ -14,6 +14,10 @@ export class KnowledgeGraphTools {
     this.workspace = workspace;
   }
 
+  static isEnabled(): boolean {
+    return KnowledgeGraphService.isInitialized();
+  }
+
   static getToolDefinitions(): LLMTool[] {
     return [
       {

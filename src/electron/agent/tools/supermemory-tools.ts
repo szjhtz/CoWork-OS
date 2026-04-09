@@ -14,6 +14,10 @@ export class SupermemoryTools {
     this.workspace = workspace;
   }
 
+  static isEnabled(): boolean {
+    return SupermemoryService.isConfigured();
+  }
+
   static getToolDefinitions(): LLMTool[] {
     return [
       {
@@ -121,7 +125,7 @@ export class SupermemoryTools {
               description: "Optional reason for forgetting the memory.",
             },
           },
-          anyOf: [{ required: ["memoryId"] }, { required: ["content"] }],
+          required: [],
         },
       },
     ];

@@ -31,6 +31,7 @@
 
 - **Ideas Panel**: Curated launch panel accessible from the sidebar above Sessions. Pre-written prompts organized by category let you start common workflows in one click. See [Ideas Panel: Supported Capabilities](ideas-capabilities.md) for the full list of tools each prompt uses and their graceful fallbacks.
 - **Task-Based Workflow**: Multi-step execution with plan-execute-observe loops
+- **Managed Agents**: versioned managed agents, reusable local environments, and durable managed sessions exposed through the control plane, with backing tasks and team runs still visible in the normal app surfaces. See [Managed Agents](managed-agents.md).
 - **Runtime Orchestration**: SessionRuntime owns task-session state, session checklists, resume snapshots, recovery state, and task projection while the turn kernel handles each individual step, follow-up, or text turn; metadata-driven tool scheduling, graph-backed delegation, typed worker roles, verifier verdicts, semantic tool-batch summaries, and terminal-state reconciliation keep delegated work coherent across tasks, follow-ups, teams, and ACP runs.
 - **Prompt-Aware Tooling**: visible tools receive concise prompt-local guidance after policy filtering, and planning plus execution share the same render source for compact tool text and provider-facing tool descriptions.
 - **Sectioned Prompt Stack**: execution and follow-up prompts are built from named session- and turn-scoped sections with explicit budgets, memoization of stable sections, provider-aware prompt caching, and truncation/drop reporting when token pressure rises.
@@ -45,7 +46,7 @@
 - **Chat Mode**: Direct LLM chat with no tools, no step timeline, same-session follow-ups, chat-only streaming for supported providers, and a fixed high output budget for explicit `executionMode: "chat"` sessions. See [Chat Mode](chat-mode.md).
 - **Document Creation**: Excel, Word, PDF, PowerPoint with professional formatting
 - **Document Editing Sessions**: Inline PDF region editing and DOCX block replacement. Open a document from the Files panel or task artifact surface to enter an editing session with version browsing and document-aware controls.
-- **Persistent Memory**: Cross-session context with curated hot memory, searchable archive recall, session transcript recall, topic packs, and privacy-aware observation capture
+- **Persistent Memory**: Cross-session context with curated hot memory, searchable archive recall, session transcript recall, topic packs, privacy-aware observation capture, and an optional Supermemory external provider lane
 - **Knowledge Graph**: SQLite-backed entity/relationship memory with FTS5 search, graph traversal, and auto-extraction
 - **Workspace Kit**: `.cowork/` project kit + markdown indexing with context injection
 - **Agent Teams**: Multi-agent collaboration with shared checklists, graph-backed coordinated runs, and team management UI
@@ -413,6 +414,7 @@ Configure in **Settings** > **Voice**.
 | **Verbatim Quote Recall** | `search_quotes` returns exact spans with provenance from transcripts, task messages, imported memories, and indexed workspace markdown when the agent needs “what was actually said?” |
 | **Topic Packs** | `memory_topics_load` loads focused packs from `.cowork/memory/topics`, and `refresh: false` performs a true read-only lookup over existing topic files |
 | **Memory Hub Preview** | Memory Hub shows the current `L0/L1` payload and the `L2/L3` layers excluded from default injection, including budget-driven exclusions |
+| **Supermemory Provider** | Optional external provider lane with prompt-time profile injection, explicit `supermemory_profile` / `supermemory_search` / `supermemory_remember` / `supermemory_forget` tools, and optional mirroring of non-private `MemoryService.capture(...)` writes |
 | **Privacy Protection** | Auto-detects sensitive patterns (API keys, passwords, tokens) |
 | **Unified Search** | `search_memories` searches archive memory plus indexed `.cowork/` markdown with hybrid semantic + BM25 ranking |
 | **LLM Compression** | Summarizes observations for ~10x token efficiency |
@@ -420,10 +422,13 @@ Configure in **Settings** > **Voice**.
 | **Temporal Knowledge Graph** | Relationships can carry `valid_from` / `valid_to`, `kg_invalidate_edge` closes an active fact without deleting history, and historical reads can opt into `as_of` |
 | **ChatGPT History Import** | Import your full ChatGPT conversation history — eliminates cold start. All data stored locally and encrypted. [Details below](#chatgpt-history-import) |
 | **Per-Workspace Settings** | Enable/disable, privacy modes, retention policies |
+| **Optional External Memory Provider** | Supermemory can be enabled from Memory Hub for prompt-time profile injection, explicit external memory tools, and optional mirroring of non-private local memory captures. [Guide](supermemory.md) |
 
 **Privacy Modes:** Normal (auto-detect sensitive data), Strict (all private), Disabled (no capture).
 
-Configure in **Settings** > **Memory**.
+Supermemory is additive, not a replacement for local memory. CoWork still keeps the workspace kit, curated hot memory, archive memory, transcript recall, and knowledge graph locally. The current integration mirrors local memory captures only when you opt in; it does not yet stream every chat turn into Supermemory conversations. See [Supermemory Integration](supermemory.md).
+
+Configure in **Settings** > **Memory Hub**.
 
 ---
 
@@ -434,7 +439,7 @@ Import your full ChatGPT conversation history into CoWork OS's memory system. In
 ### How It Works
 
 1. **Export from ChatGPT**: Go to [ChatGPT Settings > Data Controls > Export Data](https://chat.openai.com/#settings/DataControls). OpenAI emails you a `.zip` file containing `conversations.json`.
-2. **Import in CoWork OS**: Go to **Settings > Memory > Import ChatGPT History** and select the exported `.zip` or `conversations.json` file.
+2. **Import in CoWork OS**: Go to **Settings > Memory Hub > Import ChatGPT History** and select the exported `.zip` or `conversations.json` file.
 3. **Processing**: Conversations are parsed, deduplicated, and stored as memory entries with full-text search indexing. User messages are captured as context; assistant responses are summarized for token efficiency.
 
 ### What Gets Imported
@@ -452,7 +457,7 @@ Import your full ChatGPT conversation history into CoWork OS's memory system. In
 - **Encrypted at rest** — The database is protected by the same AES-256 encryption and OS keychain integration used for all CoWork OS data.
 - **Privacy filtering** — The same auto-detection that filters API keys, passwords, and tokens from regular memories applies to imported history.
 - **No provider access** — Imported memories are injected into prompts locally. Your ChatGPT history is never sent back to OpenAI or any other provider — only the relevant snippets are included in task context.
-- **Deletable** — You can clear all imported memories at any time from Settings > Memory.
+- **Deletable** — You can clear all imported memories at any time from Settings > Memory Hub.
 
 ### Why This Matters
 

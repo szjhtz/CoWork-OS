@@ -24,6 +24,9 @@ hero:
       text: Session Runtime
       link: /session-runtime
     - theme: alt
+      text: Managed Agents
+      link: /managed-agents
+    - theme: alt
       text: Execution Runtime
       link: /execution-runtime-model
     - theme: alt
@@ -38,6 +41,9 @@ hero:
     - theme: alt
       text: LLM Wiki
       link: /llm-wiki
+    - theme: alt
+      text: Supermemory
+      link: /supermemory
     - theme: alt
       text: Release Notes 0.5.34
       link: /release-notes-0.5.34
@@ -68,8 +74,12 @@ features:
     details: Direct LLM chat with no tools, same-session follow-ups, and chat-only streaming for supported providers.
   - title: Runtime Visibility
     details: Visible learning progression after each task, unified recall across tasks/messages/files, persistent shell sessions, and live provider routing/fallback status.
+  - title: Optional Supermemory
+    details: Add Supermemory as an external memory lane with prompt-time profile injection, explicit external memory tools, and optional mirroring of non-private local memory captures, while keeping CoWork's local memory system primary.
   - title: Runtime Orchestration
     details: SessionRuntime owns task-session state, session checklists, visible-tool render caching, prompt-cache state, resume snapshots, and task projection while the turn kernel handles each active turn; sectioned prompts, stable-prefix prompt caching, graph-backed delegation, typed worker roles, semantic batch summaries, and terminal-state-safe resume logic keep execution, verification, and follow-up work coherent.
+  - title: Managed Agents
+    details: Versioned managed agents, reusable local environments, and durable managed sessions now sit on top of the existing task runtime through the control plane, while Mission Control and task surfaces observe the same backing tasks and team runs.
   - title: Latest Release 0.5.34
     details: Includes the new core automation and continual-learning layer, Karpathy-inspired `LLM Wiki` vaults, the bundled `manim-video` skill, expanded memory and recall services, and the latest runtime, security, and release-hardening updates.
   - title: Inbox Agent

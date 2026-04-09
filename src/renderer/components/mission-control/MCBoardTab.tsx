@@ -2,10 +2,12 @@ import { useMemo, useState } from "react";
 import {
   AlertTriangle,
   ArrowRight,
+  ArrowUpRight,
   Calendar,
   Clock3,
   Eye,
   Flag,
+  Plus,
   Search,
   User,
   Zap,
@@ -17,12 +19,15 @@ interface MCBoardTabProps {
   data: MissionControlData;
 }
 
+const NEW_TASK_ID_PREFIX = "__new__:";
+const LINK_TASK_ID_PREFIX = "__link__:";
+
 export function MCBoardTab({ data }: MCBoardTabProps) {
   const {
     agents, tasks, taskLabels, workspaces,
     getAgent, getAgentStatus, detailPanel, setDetailPanel,
     handleMoveTask, dragOverColumn, setDragOverColumn,
-    handleTriggerHeartbeat, handleSetTaskPriority, handleSetTaskDueDate,
+    handleTriggerHeartbeat, handleSetTaskPriority,
     formatRelativeTime, formatTaskEstimate, getTaskDueInfo, getTaskPriorityMeta,
     getMissionColumnForTask, getTaskLabels, getTaskAttentionReason,
     getTaskNextMissionColumn, isTaskTerminal, isTaskStale, isTaskAttentionRequired,
@@ -37,7 +42,7 @@ export function MCBoardTab({ data }: MCBoardTabProps) {
   const [statusFilter, setStatusFilter] = useState("all");
   const [workspaceFilter, setWorkspaceFilter] = useState("all");
   const [sortMode, setSortMode] = useState<"urgency" | "updated" | "due" | "priority">("urgency");
-  const [hideEmptyColumns, setHideEmptyColumns] = useState(true);
+  const [hideEmptyColumns, setHideEmptyColumns] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
 
   const selectedTaskId = detailPanel?.kind === "task" ? detailPanel.taskId : null;
@@ -273,10 +278,10 @@ export function MCBoardTab({ data }: MCBoardTabProps) {
               <option value="priority">Sort: priority</option>
             </select>
             <button
-              className={`mc-v2-filter-btn ${hideEmptyColumns ? "active" : ""}`}
+              className={`mc-v2-filter-btn ${!hideEmptyColumns ? "active" : ""}`}
               onClick={() => setHideEmptyColumns((value) => !value)}
             >
-              {hideEmptyColumns ? "Hide empty" : "Show empty"}
+              Show empty
             </button>
           </div>
         </div>
@@ -292,9 +297,6 @@ export function MCBoardTab({ data }: MCBoardTabProps) {
           const attentionCount = columnTasks.filter((task) => isTaskAttentionRequired(task)).length;
           const overdueCount = columnTasks.filter((task) => Boolean(getTaskDueInfo(task.dueDate)?.isOverdue)).length;
           const staleCount = columnTasks.filter((task) => isTaskStale(task)).length;
-          const oldestTask = [...columnTasks].sort(
-            (a, b) => (a.updatedAt || a.createdAt) - (b.updatedAt || b.createdAt),
-          )[0];
           const wipLimit = column.id === "assigned" ? 8 : column.id === "in_progress" ? 5 : column.id === "review" ? 4 : null;
           const overLimit = wipLimit !== null && columnTasks.length > wipLimit;
 
@@ -317,19 +319,15 @@ export function MCBoardTab({ data }: MCBoardTabProps) {
                   <span className="mc-v2-column-label">{column.label}</span>
                   <span className={`mc-v2-column-count ${overLimit ? "over-limit" : ""}`}>
                     {columnTasks.length}
-                    {wipLimit !== null ? `/${wipLimit}` : ""}
                   </span>
                 </div>
-                <div className="mc-v2-column-signals">
-                  {attentionCount > 0 && <span className="mc-v2-column-signal attention">{attentionCount} attention</span>}
-                  {overdueCount > 0 && <span className="mc-v2-column-signal overdue">{overdueCount} overdue</span>}
-                  {staleCount > 0 && <span className="mc-v2-column-signal stale">{staleCount} stale</span>}
-                  {oldestTask && (
-                    <span className="mc-v2-column-signal">
-                      oldest {formatRelativeTime(oldestTask.updatedAt || oldestTask.createdAt)}
-                    </span>
-                  )}
-                </div>
+                {(attentionCount > 0 || overdueCount > 0 || staleCount > 0) && (
+                  <div className="mc-v2-column-signals">
+                    {attentionCount > 0 && <span className="mc-v2-column-signal attention">{attentionCount} attention</span>}
+                    {overdueCount > 0 && <span className="mc-v2-column-signal overdue">{overdueCount} overdue</span>}
+                    {staleCount > 0 && <span className="mc-v2-column-signal stale">{staleCount} stale</span>}
+                  </div>
+                )}
               </div>
               <div className="mc-v2-column-tasks">
                 {columnTasks.map((task) => {
@@ -341,6 +339,8 @@ export function MCBoardTab({ data }: MCBoardTabProps) {
                   const stale = isTaskStale(task);
                   const estimate = formatTaskEstimate(task.estimatedMinutes);
                   const agentStatus = assignedAgent ? getAgentStatus(assignedAgent.id) : "offline";
+                  const hasBadges = Boolean(task.priority) || labels.length > 0;
+                  const taskUpdatedAt = formatRelativeTime(task.updatedAt || task.createdAt);
 
                   return (
                     <div
@@ -361,23 +361,27 @@ export function MCBoardTab({ data }: MCBoardTabProps) {
                       }}
                     >
                       <div className="mc-v2-task-card-top">
-                        <div className="mc-v2-task-card-badges">
-                          {task.priority ? (
-                            <span className="mc-v2-priority-pill" style={{ backgroundColor: priority.color }}>
-                              {priority.shortLabel}
-                            </span>
-                          ) : null}
-                          {labels.slice(0, 2).map((label) => (
-                            <span
-                              key={label.id}
-                              className="mc-v2-label-pill"
-                              style={{ backgroundColor: `${label.color}22`, borderColor: `${label.color}44`, color: label.color }}
-                            >
-                              {label.name}
-                            </span>
-                          ))}
-                          {labels.length > 2 && <span className="mc-v2-label-pill muted">+{labels.length - 2}</span>}
-                        </div>
+                        {hasBadges ? (
+                          <div className="mc-v2-task-card-badges">
+                            {task.priority ? (
+                              <span className="mc-v2-priority-pill" style={{ backgroundColor: priority.color }}>
+                                {priority.shortLabel}
+                              </span>
+                            ) : null}
+                            {labels.slice(0, 2).map((label) => (
+                              <span
+                                key={label.id}
+                                className="mc-v2-label-pill"
+                                style={{ backgroundColor: `${label.color}22`, borderColor: `${label.color}44`, color: label.color }}
+                              >
+                                {label.name}
+                              </span>
+                            ))}
+                            {labels.length > 2 && <span className="mc-v2-label-pill muted">+{labels.length - 2}</span>}
+                          </div>
+                        ) : (
+                          <div />
+                        )}
                         <div className="mc-v2-task-card-actions">
                           <button
                             className="mc-v2-task-action-btn"
@@ -426,43 +430,28 @@ export function MCBoardTab({ data }: MCBoardTabProps) {
                         </div>
                       </div>
                       <div className="mc-v2-task-title">{task.title}</div>
+                      <div className="mc-v2-task-meta">
+                        <span className={`mc-v2-status-pill status-${task.status}`}>{task.status}</span>
+                        {taskUpdatedAt && <span className="mc-v2-task-time">Updated {taskUpdatedAt}</span>}
+                      </div>
                       {attentionReason && <div className="mc-v2-task-reason">{attentionReason}</div>}
                       {isAllWorkspacesSelected && (
                         <div className="mc-v2-task-workspace">{getWorkspaceName(task.workspaceId)}</div>
                       )}
-                      <div className="mc-v2-task-assignee">
-                        {assignedAgent ? (
-                          <>
-                            <span className="mc-v2-task-assignee-avatar" style={{ backgroundColor: assignedAgent.color }}>
-                              {assignedAgent.icon}
-                            </span>
-                            <span className="mc-v2-task-assignee-name">{assignedAgent.displayName}</span>
-                            <span className={`mc-v2-status-dot ${agentStatus}`}></span>
-                          </>
-                        ) : (
-                          <span className="mc-v2-task-unassigned">Unassigned</span>
-                        )}
-                      </div>
-                      <div className="mc-v2-task-meta">
-                        <span className={`mc-v2-status-pill status-${task.status}`}>{task.status.replace("_", " ")}</span>
-                        {dueInfo && <span className={`mc-v2-inline-chip ${dueInfo.tone}`}>{dueInfo.label}</span>}
-                        {estimate && <span className="mc-v2-inline-chip">{estimate}</span>}
-                        {stale && <span className="mc-v2-inline-chip stale">Stale</span>}
-                        <span className="mc-v2-task-time">{formatRelativeTime(task.updatedAt)}</span>
-                      </div>
-                      {!task.dueDate && !isTaskTerminal(task) && (
-                        <div className="mc-v2-task-footer-actions">
-                          <button
-                            className="mc-v2-task-secondary-btn"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              const dueDate = new Date();
-                              dueDate.setHours(23, 59, 59, 999);
-                              void handleSetTaskDueDate(task.id, dueDate.getTime());
-                            }}
-                          >
-                            Due today
-                          </button>
+                      {assignedAgent && (
+                        <div className="mc-v2-task-assignee">
+                          <span className="mc-v2-task-assignee-avatar" style={{ backgroundColor: assignedAgent.color }}>
+                            {assignedAgent.icon}
+                          </span>
+                          <span className="mc-v2-task-assignee-name">{assignedAgent.displayName}</span>
+                          <span className={`mc-v2-status-dot ${agentStatus}`}></span>
+                        </div>
+                      )}
+                      {(dueInfo || estimate || stale) && (
+                        <div className="mc-v2-task-meta">
+                          {dueInfo && <span className={`mc-v2-inline-chip ${dueInfo.tone}`}>{dueInfo.label}</span>}
+                          {estimate && <span className="mc-v2-inline-chip">{estimate}</span>}
+                          {stale && <span className="mc-v2-inline-chip stale">Stale</span>}
                         </div>
                       )}
                     </div>
@@ -471,11 +460,31 @@ export function MCBoardTab({ data }: MCBoardTabProps) {
                 {columnTasks.length === 0 && (
                   <div className="mc-v2-column-empty">
                     {viewMode === "attention"
-                      ? "No tasks in this lane need intervention."
+                      ? "No tasks need attention"
                       : agentContext.getUiCopy("mcColumnEmpty")}
                   </div>
                 )}
               </div>
+              {column.id !== "done" && (
+                <div className="mc-v2-column-footer">
+                  <button
+                    className="mc-v2-column-footer-btn"
+                    onClick={() => {
+                      setDetailPanel({ kind: "task", taskId: `${NEW_TASK_ID_PREFIX}${column.id}` });
+                    }}
+                  >
+                    <Plus size={14} /> New task
+                  </button>
+                  <button
+                    className="mc-v2-column-footer-btn"
+                    onClick={() => {
+                      setDetailPanel({ kind: "task", taskId: `${LINK_TASK_ID_PREFIX}${column.id}` });
+                    }}
+                  >
+                    <ArrowUpRight size={13} /> Link existing
+                  </button>
+                </div>
+              )}
             </div>
           );
         })}

@@ -1,3 +1,5 @@
+import type { UiTimelineEvent } from "./timeline-events";
+
 // Core types shared between main and renderer processes
 
 // Theme and Appearance types
@@ -76,6 +78,42 @@ export interface MemoryFeaturesSettings {
   defaultArchiveInjectionEnabled?: boolean;
   /** Promote only explicit/high-signal facts into curated memory. */
   autoPromoteToCuratedMemoryEnabled?: boolean;
+}
+
+export type SupermemorySearchMode = "hybrid" | "memories";
+
+export interface SupermemoryCustomContainer {
+  tag: string;
+  description?: string;
+}
+
+export interface SupermemorySettings {
+  enabled: boolean;
+  apiKey?: string;
+  baseUrl?: string;
+  containerTagTemplate?: string;
+  includeProfileInPrompt?: boolean;
+  mirrorMemoryWrites?: boolean;
+  searchMode?: SupermemorySearchMode;
+  rerank?: boolean;
+  threshold?: number;
+  customContainers?: SupermemoryCustomContainer[];
+}
+
+export interface SupermemoryConfigStatus {
+  enabled: boolean;
+  apiKeyConfigured: boolean;
+  baseUrl: string;
+  containerTagTemplate: string;
+  includeProfileInPrompt: boolean;
+  mirrorMemoryWrites: boolean;
+  searchMode: SupermemorySearchMode;
+  rerank: boolean;
+  threshold: number;
+  customContainers: SupermemoryCustomContainer[];
+  circuitBreakerUntil?: number | null;
+  lastError?: string | null;
+  isConfigured: boolean;
 }
 
 export type MemoryWakeUpLayerId = "L0" | "L1" | "L2" | "L3";
@@ -1326,6 +1364,10 @@ export type ToolType =
   | "memory_save"
   | "memory_curate"
   | "memory_curated_read"
+  | "supermemory_profile"
+  | "supermemory_search"
+  | "supermemory_remember"
+  | "supermemory_forget"
   | "search_sessions"
   | "memory_topics_load"
   // Scratchpad tools (session-scoped agent notes)
@@ -1513,6 +1555,10 @@ export const TOOL_GROUPS = {
     "memory_save",
     "memory_curate",
     "memory_curated_read",
+    "supermemory_profile",
+    "supermemory_search",
+    "supermemory_remember",
+    "supermemory_forget",
     "search_sessions",
     "memory_topics_load",
   ],
@@ -1612,6 +1658,10 @@ export const TOOL_RISK_LEVELS: Record<ToolType, ToolRiskLevel> = {
   memory_save: "write",
   memory_curate: "write",
   memory_curated_read: "read",
+  supermemory_profile: "network",
+  supermemory_search: "network",
+  supermemory_remember: "network",
+  supermemory_forget: "network",
   search_sessions: "read",
   memory_topics_load: "read",
   // Scratchpad
@@ -1805,6 +1855,8 @@ export interface AgentConfig {
   bypassQueue?: boolean;
   /** Whether this task may pause and wait for user input (default: true) */
   allowUserInput?: boolean;
+  /** Allow shell tools for this task via an in-memory workspace permission override. */
+  shellAccess?: boolean;
   /** Require git worktree isolation for this task and fail fast if unavailable. */
   requireWorktree?: boolean;
   /**
@@ -2741,6 +2793,110 @@ export interface TaskTimelineEventV2 extends TaskEvent {
   status: TimelineEventStatus;
   stepId: string;
   actor: TimelineEventActor;
+}
+
+export interface TaskTraceRunSibling {
+  taskId: string;
+  title: string;
+  status: TaskStatus;
+  createdAt: number;
+  updatedAt: number;
+  completedAt?: number;
+  continuationWindow?: number;
+  branchLabel?: string;
+}
+
+export interface TaskTraceRunSummary {
+  sessionId: string;
+  taskId: string;
+  title: string;
+  workspaceId: string;
+  status: TaskStatus;
+  createdAt: number;
+  updatedAt: number;
+  completedAt?: number;
+  runCount: number;
+  continuationWindow?: number;
+  branchLabel?: string;
+  siblingRuns: TaskTraceRunSibling[];
+}
+
+export interface TaskTraceMetrics {
+  startedAt: number;
+  updatedAt: number;
+  completedAt?: number;
+  runtimeMs: number;
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens: number;
+  toolCallCount: number;
+  eventCount: number;
+}
+
+export interface ListTaskTraceRunsRequest {
+  workspaceId?: string;
+  status?: TaskStatus | "all";
+  query?: string;
+  limit?: number;
+}
+
+export type TaskTraceTab = "transcript" | "debug";
+export type TaskTraceRowActor =
+  | "user"
+  | "agent"
+  | "tool"
+  | "model"
+  | "result"
+  | "system";
+export type TaskTraceBadgeTone =
+  | "neutral"
+  | "active"
+  | "success"
+  | "warning"
+  | "error";
+
+export interface TaskTraceBadge {
+  label: string;
+  tone?: TaskTraceBadgeTone;
+}
+
+export interface TaskTraceInspectorField {
+  label: string;
+  value: string;
+  language?: "text" | "json";
+}
+
+export interface TaskTraceInspectorPayload {
+  title: string;
+  subtitle?: string;
+  content?: string;
+  rawEventIds: string[];
+  fields: TaskTraceInspectorField[];
+  json?: unknown;
+}
+
+export interface TaskTraceRow {
+  id: string;
+  tab: TaskTraceTab;
+  actor: TaskTraceRowActor;
+  label: string;
+  title: string;
+  body?: string;
+  timestamp: number;
+  durationMs?: number;
+  status?: string;
+  badges: TaskTraceBadge[];
+  rawEventIds: string[];
+  inspector: TaskTraceInspectorPayload;
+}
+
+export interface TaskTraceRunDetail {
+  sessionId: string;
+  task: Task;
+  siblingRuns: TaskTraceRunSibling[];
+  metrics: TaskTraceMetrics;
+  rawEvents: TaskEvent[];
+  semanticTimeline: UiTimelineEvent[];
 }
 
 /**
@@ -4277,6 +4433,148 @@ export interface UpdateAgentTeamItemRequest {
   sortOrder?: number;
 }
 
+// ============ Managed Agents (Managed Sessions) ============
+
+export type ManagedAgentStatus = "active" | "archived";
+export type ManagedAgentExecutionMode = "solo" | "team";
+
+export interface ManagedAgentModelConfig {
+  providerType?: LLMProviderType;
+  modelKey?: string;
+  llmProfile?: LlmProfile;
+}
+
+export interface ManagedAgentTeamTemplate {
+  leadAgentRoleId?: string;
+  memberAgentRoleIds?: string[];
+  maxParallelAgents?: number;
+  collaborativeMode?: boolean;
+  multiLlmMode?: boolean;
+}
+
+export interface ManagedAgentRuntimeDefaults {
+  autonomousMode?: boolean;
+  requireWorktree?: boolean;
+  allowUserInput?: boolean;
+  allowedTools?: string[];
+  toolRestrictions?: string[];
+  maxTurns?: number;
+  webSearchMode?: string;
+}
+
+export interface ManagedAgent {
+  id: string;
+  name: string;
+  description?: string;
+  status: ManagedAgentStatus;
+  currentVersion: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ManagedAgentVersion {
+  agentId: string;
+  version: number;
+  model?: ManagedAgentModelConfig;
+  systemPrompt: string;
+  executionMode: ManagedAgentExecutionMode;
+  runtimeDefaults?: ManagedAgentRuntimeDefaults;
+  skills?: string[];
+  mcpServers?: string[];
+  teamTemplate?: ManagedAgentTeamTemplate;
+  metadata?: Record<string, unknown>;
+  createdAt: number;
+}
+
+export type ManagedEnvironmentKind = "cowork_local";
+export type ManagedEnvironmentStatus = "active" | "archived";
+
+export interface ManagedEnvironmentConfig {
+  workspaceId: string;
+  requireWorktree?: boolean;
+  enableShell?: boolean;
+  enableBrowser?: boolean;
+  enableComputerUse?: boolean;
+  allowedMcpServerIds?: string[];
+  skillPackIds?: string[];
+  credentialRefs?: string[];
+  managedAccountRefs?: string[];
+}
+
+export interface ManagedEnvironment {
+  id: string;
+  name: string;
+  kind: ManagedEnvironmentKind;
+  revision: number;
+  status: ManagedEnvironmentStatus;
+  config: ManagedEnvironmentConfig;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type ManagedSessionStatus =
+  | "pending"
+  | "running"
+  | "awaiting_input"
+  | "interrupted"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export interface ManagedSession {
+  id: string;
+  agentId: string;
+  agentVersion: number;
+  environmentId: string;
+  title: string;
+  status: ManagedSessionStatus;
+  workspaceId: string;
+  backingTaskId?: string;
+  backingTeamRunId?: string;
+  resumedFromSessionId?: string;
+  latestSummary?: string;
+  createdAt: number;
+  updatedAt: number;
+  startedAt?: number;
+  completedAt?: number;
+}
+
+export type ManagedSessionInputContent =
+  | { type: "text"; text: string }
+  | { type: "file"; artifactId: string };
+
+export interface ManagedSessionCreateInput {
+  agentId: string;
+  environmentId: string;
+  title: string;
+  initialEvent?: {
+    type: "user.message";
+    content: ManagedSessionInputContent[];
+  };
+}
+
+export type ManagedSessionEventType =
+  | "session.created"
+  | "user.message"
+  | "assistant.message"
+  | "tool.call"
+  | "tool.result"
+  | "task.event.bridge"
+  | "status.changed"
+  | "input.requested"
+  | "input.received"
+  | "session.completed"
+  | "session.failed";
+
+export interface ManagedSessionEvent {
+  id: string;
+  sessionId: string;
+  seq: number;
+  timestamp: number;
+  type: ManagedSessionEventType;
+  payload: Record<string, unknown>;
+}
+
 // ============ Collaborative Thoughts (Team Multi-Agent Thinking) ============
 
 export type ThoughtPhase = "dispatch" | "analysis" | "synthesis";
@@ -5763,6 +6061,8 @@ export const IPC_CHANNELS = {
   TASK_EVENT: "task:event",
   TASK_EVENTS: "task:events",
   TASK_SEMANTIC_TIMELINE: "task:semanticTimeline",
+  TASK_TRACE_LIST: "taskTrace:list",
+  TASK_TRACE_GET: "taskTrace:get",
   TASK_LEARNING_PROGRESS: "task:learningProgress",
   TASK_LEARNING_EVENT: "task:learningEvent",
   TASK_SEND_MESSAGE: "task:sendMessage",
@@ -6242,6 +6542,10 @@ export const IPC_CHANNELS = {
   MEMORY_FEATURES_GET_SETTINGS: "memoryFeatures:getSettings",
   MEMORY_FEATURES_SAVE_SETTINGS: "memoryFeatures:saveSettings",
   MEMORY_FEATURES_GET_LAYER_PREVIEW: "memoryFeatures:getLayerPreview",
+  SUPERMEMORY_GET_SETTINGS: "supermemory:getSettings",
+  SUPERMEMORY_SAVE_SETTINGS: "supermemory:saveSettings",
+  SUPERMEMORY_TEST_CONNECTION: "supermemory:testConnection",
+  SUPERMEMORY_GET_STATUS: "supermemory:getStatus",
 
   // Migration Status (for showing one-time notifications after app rename)
   MIGRATION_GET_STATUS: "migration:getStatus",
@@ -6467,6 +6771,8 @@ export interface CustomProviderConfig {
   model?: string;
   baseUrl?: string;
   cachedModels?: CachedModelInfo[];
+  fallbackProviders?: LLMProviderFallbackConfig[];
+  failoverPrimaryRetryCooldownSeconds?: number;
   profileRoutingEnabled?: boolean;
   strongModelKey?: string;
   cheapModelKey?: string;
@@ -6474,7 +6780,15 @@ export interface CustomProviderConfig {
   preferStrongForVerification?: boolean;
 }
 
+export interface ProviderFailoverSettings {
+  fallbackProviders?: LLMProviderFallbackConfig[];
+  failoverPrimaryRetryCooldownSeconds?: number;
+}
+
 export interface ProviderRoutingSettings {
+  // Failover settings are per-provider as well so primary routes can diverge.
+  fallbackProviders?: LLMProviderFallbackConfig[];
+  failoverPrimaryRetryCooldownSeconds?: number;
   profileRoutingEnabled?: boolean;
   strongModelKey?: string;
   cheapModelKey?: string;

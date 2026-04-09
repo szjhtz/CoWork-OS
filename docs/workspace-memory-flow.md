@@ -9,6 +9,8 @@ The foundation is still the hybrid memory system, but the runtime now makes it e
 - **Session recall**: recent transcript/checkpoint history for “what happened in that run?”
 - **Topic packs**: focused `.cowork/memory/topics/*.md` files loaded explicitly for topical work
 
+An optional external provider lane can also sit beside that local stack. Today that provider is Supermemory, and it is additive rather than authoritative.
+
 Those lanes map into runtime layers as:
 
 - **L0 Identity**: curated user/workspace memory + `USER.md` essentials
@@ -31,6 +33,10 @@ User messages / task events / accepted distill candidates
         ├─→ MemoryService
         │     └─→ memories + embeddings + summaries (archive lane)
         │
+        ├─→ SupermemoryService (optional)
+        │     ├─→ prompt-time profile/search context
+        │     └─→ mirrored non-private memory captures
+        │
         ├─→ TranscriptStore
         │     └─→ .cowork/memory/transcripts/*
         │
@@ -51,7 +57,11 @@ Explicit recall tools
         ├─→ search_quotes
         ├─→ memory_topics_load
         ├─→ memory_curate
-        └─→ memory_curated_read
+        ├─→ memory_curated_read
+        ├─→ supermemory_profile
+        ├─→ supermemory_search
+        ├─→ supermemory_remember
+        └─→ supermemory_forget
 ```
 
 ---
@@ -113,6 +123,55 @@ This lane still uses hybrid lexical + local semantic retrieval, but it is **not 
 - `search_memories` searches archive memory plus indexed `.cowork/` markdown
 - archive recall can still be injected when explicitly enabled for a workspace/runtime
 - `MemoryTierService` still tracks reference counts and promotes/evicts archive entries over time
+
+---
+
+## Optional External Lane — Supermemory
+
+**Service:** `src/electron/memory/SupermemoryService.ts`  
+**Surface:** `Settings → Memory Hub → Supermemory`
+
+Supermemory is an optional external memory provider that runs alongside CoWork's local memory system.
+
+What it adds:
+
+- scoped profile fetches for prompt construction
+- explicit external recall and write tools
+- optional mirroring of non-private local memory captures
+- workspace-scoped container tags derived from a template such as `cowork:{workspaceId}`
+
+What it does not replace:
+
+- curated hot memory
+- archive memory
+- transcript/session recall
+- workspace kit files
+- knowledge graph state
+
+### Retrieval and write path
+
+- `supermemory_profile` fetches a scoped profile plus relevant external context
+- `supermemory_search` performs explicit search against the resolved or overridden `containerTag`
+- `supermemory_remember` creates a durable external memory directly in Supermemory
+- `supermemory_forget` removes an external memory by ID or exact content
+
+### Prompt behavior
+
+If prompt injection is enabled in Memory Hub, CoWork appends a Supermemory profile block during chat, execution, and follow-up prompt construction. This block is treated as soft context and should lose to fresher or conflicting user instructions in the active conversation.
+
+### Mirroring behavior
+
+If mirroring is enabled in Memory Hub, `MemoryService.capture(...)` best-effort mirrors non-private memory entries into Supermemory with workspace/task metadata.
+
+Current boundary:
+
+- private or strict-mode entries are not mirrored
+- workspace kit files remain local
+- full conversation turn-by-turn sync is not implemented yet
+
+### Failure handling
+
+Supermemory requests are guarded with timeouts, best-effort behavior, and a temporary circuit breaker after repeated failures. When the provider is unavailable, CoWork continues with local memory only.
 
 ---
 
@@ -213,6 +272,7 @@ Prompt synthesis now builds separate sections instead of one monolithic synthesi
 
 - `<cowork_hot_memory>` — `L0 Identity`: curated hot memory + user/profile + active relationship items
 - `<cowork_structured_memory>` — `L1 Essential Story`: playbook, daily summaries, active commitments, and current KG context
+- optional Supermemory profile block — external profile/search context appended only when enabled
 
 `L2 Topic Packs` and `L3 Deep Recall` are not injected into the live prompt by default. They stay explicit and tool-driven.
 
@@ -230,6 +290,7 @@ Workspace kit context is still injected separately and placed before the memory 
 - `L0 Identity`: **on**
 - `L1 Essential Story`: **on**
 - archive memory: **off by default**
+- Supermemory profile injection: **optional**
 - `L2 Topic Packs`: **tool-driven**
 - `L3 Deep Recall` (`search_quotes`, `search_sessions`, `search_memories`): **tool-driven**
 
@@ -275,3 +336,4 @@ Feedback reason values: `incorrect`, `too_verbose`, `ignored_instructions`, `wro
 - [Execution Runtime Model](execution-runtime-model.md)
 - [Features](features.md)
 - [Integration Setup, Skill Proposals, and Bootstrap Lifecycle](integration-skill-bootstrap-lifecycle.md)
+- [Supermemory Integration](supermemory.md)

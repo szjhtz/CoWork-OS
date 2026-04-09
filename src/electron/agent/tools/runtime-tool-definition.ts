@@ -42,6 +42,8 @@ const READ_PARALLEL_TOOLS = new Set([
   "search_sessions",
   "memory_topics_load",
   "memory_curated_read",
+  "supermemory_profile",
+  "supermemory_search",
   "scratchpad_read",
   "browser_get_content",
   "browser_get_text",
@@ -97,6 +99,10 @@ const ALWAYS_EXPOSE_TOOLS = new Set([
   "memory_save",
   "memory_curate",
   "memory_curated_read",
+  "supermemory_profile",
+  "supermemory_search",
+  "supermemory_remember",
+  "supermemory_forget",
 ]);
 
 function inferCapabilityTags(toolName: string): RuntimeToolCapabilityTag[] {

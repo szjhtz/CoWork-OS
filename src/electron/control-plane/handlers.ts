@@ -9,6 +9,7 @@ import { randomUUID } from "crypto";
 import * as fs from "fs/promises";
 import os from "os";
 import path from "path";
+import { z } from "zod";
 import {
   IPC_CHANNELS,
   isTempWorkspaceId,
@@ -81,10 +82,12 @@ import {
   shutdownFleetConnectionManager,
 } from "./fleet-manager";
 import { ManagedAccountManager } from "../accounts/managed-account-manager";
+import { ManagedSessionService } from "../managed/ManagedSessionService";
 import {
   normalizeImagesForRemote,
   sanitizeTaskMessageParams,
 } from "./sanitize";
+import { AgentConfigSchema, validateInput } from "../utils/validation";
 
 // Server instance
 let controlPlaneServer: ControlPlaneServer | null = null;
@@ -100,6 +103,14 @@ export interface ControlPlaneMethodDeps {
 
 let controlPlaneDeps: ControlPlaneMethodDeps | null = null;
 let detachAgentDaemonBridge: (() => void) | null = null;
+let managedSessionService: ManagedSessionService | null = null;
+
+function getManagedSessionService(deps: ControlPlaneMethodDeps): ManagedSessionService {
+  if (!managedSessionService) {
+    managedSessionService = new ManagedSessionService(deps.dbManager.getDatabase(), deps.agentDaemon);
+  }
+  return managedSessionService;
+}
 
 function toNodePlatform(platform?: string): "ios" | "android" | "macos" | "linux" | "windows" {
   switch (platform) {
@@ -149,6 +160,20 @@ function requireScope(client: any, scope: "admin" | "read" | "write" | "operator
   if (!client?.hasScope?.(scope)) {
     throw { code: ErrorCodes.UNAUTHORIZED, message: `Missing required scope: ${scope}` };
   }
+}
+
+export function redactManagedEnvironmentForRead(environment: any) {
+  if (!environment) return environment;
+  return {
+    ...environment,
+    config: environment?.config
+      ? {
+          ...environment.config,
+          credentialRefs: undefined,
+          managedAccountRefs: undefined,
+        }
+      : environment?.config,
+  };
 }
 
 const ACTIVE_TASK_STATUSES = new Set([
@@ -1476,7 +1501,11 @@ function sanitizeTaskCreateParams(params: unknown): {
 
   const agentConfig: AgentConfig | undefined = (() => {
     if (!p.agentConfig || typeof p.agentConfig !== "object") return undefined;
-    return p.agentConfig as AgentConfig;
+    const parsed = AgentConfigSchema.safeParse(p.agentConfig);
+    if (!parsed.success) {
+      throw { code: ErrorCodes.INVALID_PARAMS, message: "agentConfig is invalid" };
+    }
+    return parsed.data;
   })();
 
   if (!title) throw { code: ErrorCodes.INVALID_PARAMS, message: "title is required" };
@@ -1558,6 +1587,231 @@ function sanitizeWorkspaceIdParams(params: unknown): { workspaceId: string } {
   const workspaceId = typeof p.workspaceId === "string" ? p.workspaceId.trim() : "";
   if (!workspaceId) throw { code: ErrorCodes.INVALID_PARAMS, message: "workspaceId is required" };
   return { workspaceId };
+}
+
+const ManagedAgentModelSchema = z.object({
+  providerType: z.string().trim().min(1).max(120).optional(),
+  modelKey: z.string().trim().min(1).max(200).optional(),
+  llmProfile: z.enum(["strong", "cheap"]).optional(),
+}).strict();
+
+const ManagedAgentRuntimeDefaultsSchema = z.object({
+  autonomousMode: z.boolean().optional(),
+  requireWorktree: z.boolean().optional(),
+  allowUserInput: z.boolean().optional(),
+  allowedTools: z.array(z.string().trim().min(1).max(200)).max(120).optional(),
+  toolRestrictions: z.array(z.string().trim().min(1).max(200)).max(50).optional(),
+  maxTurns: z.number().int().min(1).max(250).optional(),
+  webSearchMode: z.enum(["disabled", "cached", "live"]).optional(),
+}).strict();
+
+const ManagedAgentTeamTemplateSchema = z.object({
+  leadAgentRoleId: z.string().trim().min(1).max(200).optional(),
+  memberAgentRoleIds: z.array(z.string().trim().min(1).max(200)).max(25).optional(),
+  maxParallelAgents: z.number().int().min(1).max(25).optional(),
+  collaborativeMode: z.boolean().optional(),
+  multiLlmMode: z.boolean().optional(),
+}).strict();
+
+const ManagedAgentBaseSchema = z.object({
+  name: z.string().trim().min(1).max(200),
+  description: z.string().trim().max(2000).optional(),
+  systemPrompt: z.string().trim().min(1).max(100_000),
+  executionMode: z.enum(["solo", "team"]).default("solo"),
+  model: ManagedAgentModelSchema.optional(),
+  runtimeDefaults: ManagedAgentRuntimeDefaultsSchema.optional(),
+  skills: z.array(z.string().trim().min(1).max(200)).max(100).optional(),
+  mcpServers: z.array(z.string().trim().min(1).max(200)).max(100).optional(),
+  teamTemplate: ManagedAgentTeamTemplateSchema.optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+}).strict();
+
+const ManagedEnvironmentConfigSchema = z.object({
+  workspaceId: z.string().trim().min(1).max(200),
+  requireWorktree: z.boolean().optional(),
+  enableShell: z.boolean().optional(),
+  enableBrowser: z.boolean().optional(),
+  enableComputerUse: z.boolean().optional(),
+  allowedMcpServerIds: z.array(z.string().trim().min(1).max(200)).max(100).optional(),
+  skillPackIds: z.array(z.string().trim().min(1).max(200)).max(100).optional(),
+  credentialRefs: z.array(z.string().trim().min(1).max(200)).max(100).optional(),
+  managedAccountRefs: z.array(z.string().trim().min(1).max(200)).max(100).optional(),
+}).strict();
+
+const ManagedEnvironmentPatchSchema = ManagedEnvironmentConfigSchema.partial().extend({
+  workspaceId: z.string().trim().min(1).max(200).optional(),
+}).strict();
+
+const ManagedSessionInitialEventSchema = z.object({
+  type: z.literal("user.message"),
+  content: z.array(z.union([
+    z.object({
+      type: z.literal("text"),
+      text: z.string().trim().min(1).max(50_000),
+    }).strict(),
+    z.object({
+      type: z.literal("file"),
+      artifactId: z.string().trim().min(1).max(200),
+    }).strict(),
+  ])).min(1).max(20),
+}).strict();
+
+function sanitizeManagedAgentCreateParams(params: unknown): Any {
+  return validateInput(ManagedAgentBaseSchema, params, "managed agent");
+}
+
+function sanitizeManagedAgentUpdateParams(params: unknown): Any {
+  const parsed = validateInput(
+    z.object({
+      agentId: z.string().trim().min(1).max(200),
+      name: z.string().trim().min(1).max(200).optional(),
+      description: z.string().trim().max(2000).optional(),
+      systemPrompt: z.string().trim().min(1).max(100_000).optional(),
+      executionMode: z.enum(["solo", "team"]).optional(),
+      model: ManagedAgentModelSchema.optional(),
+      runtimeDefaults: ManagedAgentRuntimeDefaultsSchema.optional(),
+      skills: z.array(z.string().trim().min(1).max(200)).max(100).optional(),
+      mcpServers: z.array(z.string().trim().min(1).max(200)).max(100).optional(),
+      teamTemplate: ManagedAgentTeamTemplateSchema.optional(),
+      metadata: z.record(z.string(), z.unknown()).optional(),
+    }).strict(),
+    params,
+    "managed agent update",
+  );
+  return parsed;
+}
+
+function sanitizeManagedAgentIdParams(params: unknown): { agentId: string } {
+  const p = (params ?? {}) as Any;
+  const agentId = typeof p.agentId === "string" ? p.agentId.trim() : "";
+  if (!agentId) throw { code: ErrorCodes.INVALID_PARAMS, message: "agentId is required" };
+  return { agentId };
+}
+
+function sanitizeManagedAgentVersionParams(params: unknown): { agentId: string; version: number } {
+  const p = (params ?? {}) as Any;
+  const { agentId } = sanitizeManagedAgentIdParams(params);
+  const version =
+    typeof p.version === "number" && Number.isFinite(p.version) ? Math.max(1, Math.floor(p.version)) : 0;
+  if (!version) throw { code: ErrorCodes.INVALID_PARAMS, message: "version is required" };
+  return { agentId, version };
+}
+
+function sanitizeManagedEnvironmentCreateParams(params: unknown): Any {
+  return validateInput(
+    z.object({
+      name: z.string().trim().min(1).max(200),
+      kind: z.literal("cowork_local").default("cowork_local"),
+      config: ManagedEnvironmentConfigSchema,
+    }).strict(),
+    params,
+    "managed environment",
+  );
+}
+
+function sanitizeManagedEnvironmentUpdateParams(params: unknown): Any {
+  return validateInput(
+    z.object({
+      environmentId: z.string().trim().min(1).max(200),
+      name: z.string().trim().min(1).max(200).optional(),
+      config: ManagedEnvironmentPatchSchema.optional(),
+    }).strict(),
+    params,
+    "managed environment update",
+  );
+}
+
+function sanitizeManagedEnvironmentIdParams(params: unknown): { environmentId: string } {
+  const p = (params ?? {}) as Any;
+  const environmentId = typeof p.environmentId === "string" ? p.environmentId.trim() : "";
+  if (!environmentId) {
+    throw { code: ErrorCodes.INVALID_PARAMS, message: "environmentId is required" };
+  }
+  return { environmentId };
+}
+
+function sanitizeManagedSessionCreateParams(params: unknown): Any {
+  return validateInput(
+    z.object({
+      agentId: z.string().trim().min(1).max(200),
+      environmentId: z.string().trim().min(1).max(200),
+      title: z.string().trim().min(1).max(500),
+      initialEvent: ManagedSessionInitialEventSchema.optional(),
+    }).strict(),
+    params,
+    "managed session",
+  );
+}
+
+function sanitizeManagedSessionIdParams(params: unknown): { sessionId: string } {
+  const p = (params ?? {}) as Any;
+  const sessionId = typeof p.sessionId === "string" ? p.sessionId.trim() : "";
+  if (!sessionId) throw { code: ErrorCodes.INVALID_PARAMS, message: "sessionId is required" };
+  return { sessionId };
+}
+
+function sanitizeManagedSessionListParams(params: unknown): Any {
+  const p = (params ?? {}) as Any;
+  const rawLimit =
+    typeof p.limit === "number" && Number.isFinite(p.limit) ? Math.floor(p.limit) : 100;
+  const rawOffset =
+    typeof p.offset === "number" && Number.isFinite(p.offset) ? Math.floor(p.offset) : 0;
+  return {
+    limit: Math.min(Math.max(rawLimit, 1), 500),
+    offset: Math.max(rawOffset, 0),
+    workspaceId: typeof p.workspaceId === "string" ? p.workspaceId.trim() || undefined : undefined,
+    status: typeof p.status === "string" ? p.status.trim() || undefined : undefined,
+  };
+}
+
+function sanitizeManagedSessionEventsParams(params: unknown): { sessionId: string; limit: number } {
+  const p = (params ?? {}) as Any;
+  const { sessionId } = sanitizeManagedSessionIdParams(params);
+  const rawLimit =
+    typeof p.limit === "number" && Number.isFinite(p.limit) ? Math.floor(p.limit) : 500;
+  return { sessionId, limit: Math.min(Math.max(rawLimit, 1), 5000) };
+}
+
+function sanitizeManagedSessionSendEventParams(params: unknown): Any {
+  const p = (params ?? {}) as Any;
+  const { sessionId } = sanitizeManagedSessionIdParams(params);
+  const event = p.event;
+  if (!event || typeof event !== "object") {
+    throw { code: ErrorCodes.INVALID_PARAMS, message: "event is required" };
+  }
+  const type = (event as Any).type;
+  if (type === "user.message") {
+    return {
+      sessionId,
+      event: {
+        type,
+        content: Array.isArray((event as Any).content) ? (event as Any).content : [],
+      },
+    };
+  }
+  if (type === "input.received") {
+    const requestId =
+      typeof (event as Any).requestId === "string" ? (event as Any).requestId.trim() : "";
+    if (!requestId) {
+      throw { code: ErrorCodes.INVALID_PARAMS, message: "event.requestId is required" };
+    }
+    return {
+      sessionId,
+      event: {
+        type,
+        requestId,
+        answers:
+          (event as Any).answers && typeof (event as Any).answers === "object"
+            ? (event as Any).answers
+            : undefined,
+        status:
+          (event as Any).status === "dismissed" || (event as Any).status === "submitted"
+            ? (event as Any).status
+            : "submitted",
+      },
+    };
+  }
+  throw { code: ErrorCodes.INVALID_PARAMS, message: "Unsupported managed session event type" };
 }
 
 function sanitizeWorkspaceCreateParams(params: unknown): { name: string; path: string } {
@@ -1769,7 +2023,11 @@ function sanitizeForBroadcast(value: unknown, depth = 0, key?: string): unknown 
   }
 }
 
-function attachAgentDaemonTaskBridge(server: ControlPlaneServer, daemon: AgentDaemon): () => void {
+function attachAgentDaemonTaskBridge(
+  server: ControlPlaneServer,
+  daemon: AgentDaemon,
+  managedSessions?: ManagedSessionService,
+): () => void {
   const allowlist = TASK_EVENT_BRIDGE_ALLOWLIST;
 
   const unsubscribes: Array<() => void> = [];
@@ -1833,6 +2091,42 @@ function attachAgentDaemonTaskBridge(server: ControlPlaneServer, daemon: AgentDa
           groupId: typeof evt?.groupId === "string" ? evt.groupId : undefined,
           actor: typeof evt?.actor === "string" ? evt.actor : undefined,
         });
+
+        if (managedSessions) {
+          const bridged = managedSessions.bridgeTaskEventNotification(taskId, {
+            eventId: typeof evt?.eventId === "string" ? evt.eventId : undefined,
+            timestamp:
+              typeof evt?.timestamp === "number" && Number.isFinite(evt.timestamp)
+                ? evt.timestamp
+                : Date.now(),
+            type: eventType,
+            payload: sanitizedPayload,
+            status: typeof evt?.status === "string" ? evt.status : undefined,
+          });
+          if (bridged.session) {
+            server.broadcastToOperators(Events.MANAGED_SESSION_UPDATED, {
+              sessionId: bridged.session.id,
+              session: bridged.session,
+            });
+            if (bridged.appended) {
+              server.broadcastToOperators(Events.MANAGED_SESSION_EVENT, {
+                sessionId: bridged.session.id,
+                event: bridged.appended,
+              });
+            }
+            if (bridged.session.status === "completed") {
+              server.broadcastToOperators(Events.MANAGED_SESSION_COMPLETED, {
+                sessionId: bridged.session.id,
+                session: bridged.session,
+              });
+            } else if (bridged.session.status === "failed") {
+              server.broadcastToOperators(Events.MANAGED_SESSION_FAILED, {
+                sessionId: bridged.session.id,
+                session: bridged.session,
+              });
+            }
+          }
+        }
       } catch (error) {
         console.error("[ControlPlane] Failed to broadcast task event:", error);
       }
@@ -1950,6 +2244,7 @@ export async function startControlPlaneFromSettings(
           detachAgentDaemonBridge = attachAgentDaemonTaskBridge(
             server,
             controlPlaneDeps.agentDaemon,
+            getManagedSessionService(controlPlaneDeps),
           );
         } else {
           console.warn("[ControlPlane] No deps provided; task/workspace methods are disabled");
@@ -2302,6 +2597,7 @@ function registerTaskAndWorkspaceMethods(
   const workspaceRepo = new WorkspaceRepository(db);
   const approvalRepo = new ApprovalRepository(db);
   const eventRepo = new TaskEventRepository(db);
+  const managedSessions = getManagedSessionService(deps);
   const agentDaemon = deps.agentDaemon;
   const channelGateway = deps.channelGateway;
   const isAdminClient = (client: any) => !!client?.hasScope?.("admin");
@@ -2442,6 +2738,179 @@ function registerTaskAndWorkspaceMethods(
         message: error?.message || `Failed to list directory: ${relativePath}`,
       };
     }
+  });
+
+  server.registerMethod(Methods.MANAGED_AGENT_LIST, async (client, params) => {
+    requireScope(client, "read");
+    const p = sanitizeManagedSessionListParams(params);
+    return {
+      agents: managedSessions.listAgents({
+        limit: p.limit,
+        offset: p.offset,
+        status: p.status,
+      }),
+    };
+  });
+
+  server.registerMethod(Methods.MANAGED_AGENT_GET, async (client, params) => {
+    requireScope(client, "read");
+    const { agentId } = sanitizeManagedAgentIdParams(params);
+    const result = managedSessions.getAgent(agentId);
+    if (!result) {
+      throw { code: ErrorCodes.INVALID_PARAMS, message: `Managed agent not found: ${agentId}` };
+    }
+    return result;
+  });
+
+  server.registerMethod(Methods.MANAGED_AGENT_CREATE, async (client, params) => {
+    requireScope(client, "admin");
+    return managedSessions.createAgent(sanitizeManagedAgentCreateParams(params));
+  });
+
+  server.registerMethod(Methods.MANAGED_AGENT_UPDATE, async (client, params) => {
+    requireScope(client, "admin");
+    const validated = sanitizeManagedAgentUpdateParams(params);
+    return managedSessions.updateAgent(validated.agentId, validated);
+  });
+
+  server.registerMethod(Methods.MANAGED_AGENT_ARCHIVE, async (client, params) => {
+    requireScope(client, "admin");
+    const { agentId } = sanitizeManagedAgentIdParams(params);
+    return { agent: managedSessions.archiveAgent(agentId) || null };
+  });
+
+  server.registerMethod(Methods.MANAGED_AGENT_VERSION_LIST, async (client, params) => {
+    requireScope(client, "read");
+    const { agentId } = sanitizeManagedAgentIdParams(params);
+    return { versions: managedSessions.listAgentVersions(agentId) };
+  });
+
+  server.registerMethod(Methods.MANAGED_AGENT_VERSION_GET, async (client, params) => {
+    requireScope(client, "read");
+    const { agentId, version } = sanitizeManagedAgentVersionParams(params);
+    return { version: managedSessions.getAgentVersion(agentId, version) || null };
+  });
+
+  server.registerMethod(Methods.MANAGED_ENVIRONMENT_LIST, async (client, params) => {
+    requireScope(client, "read");
+    const p = sanitizeManagedSessionListParams(params);
+    return {
+      environments: managedSessions.listEnvironments({
+        limit: p.limit,
+        offset: p.offset,
+        status: p.status,
+      }).map(redactManagedEnvironmentForRead),
+    };
+  });
+
+  server.registerMethod(Methods.MANAGED_ENVIRONMENT_GET, async (client, params) => {
+    requireScope(client, "read");
+    const { environmentId } = sanitizeManagedEnvironmentIdParams(params);
+    const environment = managedSessions.getEnvironment(environmentId);
+    if (!environment) {
+      throw {
+        code: ErrorCodes.INVALID_PARAMS,
+        message: `Managed environment not found: ${environmentId}`,
+      };
+    }
+    return { environment: redactManagedEnvironmentForRead(environment) };
+  });
+
+  server.registerMethod(Methods.MANAGED_ENVIRONMENT_CREATE, async (client, params) => {
+    requireScope(client, "admin");
+    return {
+      environment: redactManagedEnvironmentForRead(
+        managedSessions.createEnvironment(sanitizeManagedEnvironmentCreateParams(params)),
+      ),
+    };
+  });
+
+  server.registerMethod(Methods.MANAGED_ENVIRONMENT_UPDATE, async (client, params) => {
+    requireScope(client, "admin");
+    const validated = sanitizeManagedEnvironmentUpdateParams(params);
+    return {
+      environment: redactManagedEnvironmentForRead(
+        managedSessions.updateEnvironment(validated.environmentId, validated) || null,
+      ),
+    };
+  });
+
+  server.registerMethod(Methods.MANAGED_ENVIRONMENT_ARCHIVE, async (client, params) => {
+    requireScope(client, "admin");
+    const { environmentId } = sanitizeManagedEnvironmentIdParams(params);
+    return {
+      environment: redactManagedEnvironmentForRead(
+        managedSessions.archiveEnvironment(environmentId) || null,
+      ),
+    };
+  });
+
+  server.registerMethod(Methods.MANAGED_SESSION_LIST, async (client, params) => {
+    requireScope(client, "read");
+    return { sessions: managedSessions.listSessions(sanitizeManagedSessionListParams(params)) };
+  });
+
+  server.registerMethod(Methods.MANAGED_SESSION_GET, async (client, params) => {
+    requireScope(client, "read");
+    const { sessionId } = sanitizeManagedSessionIdParams(params);
+    const session = managedSessions.getSession(sessionId);
+    if (!session) {
+      throw {
+        code: ErrorCodes.INVALID_PARAMS,
+        message: `Managed session not found: ${sessionId}`,
+      };
+    }
+    return { session };
+  });
+
+  server.registerMethod(Methods.MANAGED_SESSION_CREATE, async (client, params) => {
+    requireScope(client, "admin");
+    const session = await managedSessions.createSession(sanitizeManagedSessionCreateParams(params));
+    server.broadcastToOperators(Events.MANAGED_SESSION_CREATED, { sessionId: session.id, session });
+    return { session };
+  });
+
+  server.registerMethod(Methods.MANAGED_SESSION_CANCEL, async (client, params) => {
+    requireScope(client, "admin");
+    const { sessionId } = sanitizeManagedSessionIdParams(params);
+    const session = await managedSessions.cancelSession(sessionId);
+    server.broadcastToOperators(Events.MANAGED_SESSION_UPDATED, { sessionId, session });
+    return { session: session || null };
+  });
+
+  server.registerMethod(Methods.MANAGED_SESSION_RESUME, async (client, params) => {
+    requireScope(client, "admin");
+    const { sessionId } = sanitizeManagedSessionIdParams(params);
+    const result = await managedSessions.resumeSession(sessionId);
+    if (result.session) {
+      server.broadcastToOperators(Events.MANAGED_SESSION_UPDATED, {
+        sessionId,
+        session: result.session,
+      });
+    }
+    return result;
+  });
+
+  server.registerMethod(Methods.MANAGED_SESSION_SEND_EVENT, async (client, params) => {
+    requireScope(client, "admin");
+    const validated = sanitizeManagedSessionSendEventParams(params);
+    const session = await managedSessions.sendEvent(validated.sessionId, validated.event);
+    server.broadcastToOperators(Events.MANAGED_SESSION_UPDATED, {
+      sessionId: validated.sessionId,
+      session,
+    });
+    return { session: session || null };
+  });
+
+  server.registerMethod(Methods.MANAGED_SESSION_EVENTS_LIST, async (client, params) => {
+    requireScope(client, "read");
+    const { sessionId, limit } = sanitizeManagedSessionEventsParams(params);
+    return {
+      events: managedSessions.listSessionEvents(sessionId, limit).map((event) => ({
+        ...event,
+        payload: sanitizeForBroadcast(event.payload),
+      })),
+    };
   });
 
   // Tasks
@@ -3140,6 +3609,7 @@ export function setupControlPlaneHandlers(
             detachAgentDaemonBridge = attachAgentDaemonTaskBridge(
               server,
               controlPlaneDeps.agentDaemon,
+              getManagedSessionService(controlPlaneDeps),
             );
           } else {
             console.warn("[ControlPlane] No deps provided; task/workspace methods are disabled");
@@ -3308,6 +3778,7 @@ export function setupControlPlaneHandlers(
             detachAgentDaemonBridge = attachAgentDaemonTaskBridge(
               controlPlaneServer,
               controlPlaneDeps.agentDaemon,
+              getManagedSessionService(controlPlaneDeps),
             );
           }
           registerCanvasMethods(controlPlaneServer);
@@ -3382,6 +3853,7 @@ export function setupControlPlaneHandlers(
             detachAgentDaemonBridge = attachAgentDaemonTaskBridge(
               controlPlaneServer,
               controlPlaneDeps.agentDaemon,
+              getManagedSessionService(controlPlaneDeps),
             );
           }
           registerCanvasMethods(controlPlaneServer);

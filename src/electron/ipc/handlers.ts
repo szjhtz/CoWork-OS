@@ -34,6 +34,7 @@ import {
   WorkspaceRepository,
   TaskRepository,
   TaskEventRepository,
+  TaskTraceRepository,
   ArtifactRepository,
   SkillRepository,
   LLMModelRepository,
@@ -201,6 +202,7 @@ import {
   startGoogleWorkspaceOAuth,
   startGoogleWorkspaceOAuthGetLink,
 } from "../utils/google-workspace-oauth";
+import { setupTaskTraceHandlers } from "./task-trace-handlers";
 
 import { XSettingsManager } from "../settings/x-manager";
 import { testXConnection, checkBirdInstalled } from "../utils/x-cli";
@@ -255,6 +257,7 @@ import {
 import { initializeHookAgentIngress } from "../hooks/agent-ingress";
 import { MemoryService } from "../memory/MemoryService";
 import { MemorySynthesizer } from "../memory/MemorySynthesizer";
+import { SupermemoryService } from "../memory/SupermemoryService";
 import { UserProfileService } from "../memory/UserProfileService";
 import { WORKSPACE_KIT_CONTRACTS } from "../context/kit-contracts";
 import {
@@ -305,6 +308,38 @@ type FileViewerRequestOptions = {
 type MacSystemSettingsTarget = "microphone" | "dictation";
 
 const execFileAsync = promisify(execFile);
+const SupermemorySettingsInputSchema = z.object({
+  enabled: z.boolean(),
+  apiKey: z.string().trim().max(500).optional(),
+  baseUrl: z
+    .string()
+    .trim()
+    .url()
+    .refine((value) => {
+      try {
+        const parsed = new URL(value);
+        return parsed.protocol === "https:" && parsed.hostname === "api.supermemory.ai";
+      } catch {
+        return false;
+      }
+    }, "Supermemory base URL must be https://api.supermemory.ai")
+    .optional(),
+  containerTagTemplate: z.string().trim().min(1).max(200).optional(),
+  includeProfileInPrompt: z.boolean().optional(),
+  mirrorMemoryWrites: z.boolean().optional(),
+  searchMode: z.enum(["hybrid", "memories"]).optional(),
+  rerank: z.boolean().optional(),
+  threshold: z.number().min(0).max(1).optional(),
+  customContainers: z
+    .array(
+      z.object({
+        tag: z.string().trim().min(1).max(100),
+        description: z.string().trim().max(240).optional(),
+      }).strict(),
+    )
+    .max(50)
+    .optional(),
+}).strict();
 const logger = createLogger("IPC");
 const ProfileNameSchema = z.string().trim().min(1).max(80);
 const VIDEO_PREVIEW_CACHE_DIR = path.join(
@@ -967,6 +1002,7 @@ export async function setupIpcHandlers(
   const workspaceRepo = new WorkspaceRepository(db);
   const taskRepo = new TaskRepository(db);
   const taskEventRepo = new TaskEventRepository(db);
+  const taskTraceRepo = new TaskTraceRepository(taskRepo, taskEventRepo);
   const artifactRepo = new ArtifactRepository(db);
   const skillRepo = new SkillRepository(db);
   const llmModelRepo = new LLMModelRepository(db);
@@ -1030,6 +1066,7 @@ export async function setupIpcHandlers(
 
   // Seed default agent roles if none exist
   agentRoleRepo.seedDefaults();
+  setupTaskTraceHandlers({ taskTraceRepo });
 
   // Helper to validate path is within workspace (prevent path traversal attacks)
   const isPathWithinWorkspace = (
@@ -10530,6 +10567,52 @@ function setupMemoryHandlers(): void {
       }
     },
   );
+
+  ipcMain.handle(IPC_CHANNELS.SUPERMEMORY_GET_SETTINGS, async () => {
+    try {
+      return SupermemoryService.getSettingsView();
+    } catch (error) {
+      logger.error("[Supermemory] Failed to get settings:", error);
+      throw error;
+    }
+  });
+
+  ipcMain.handle(IPC_CHANNELS.SUPERMEMORY_GET_STATUS, async () => {
+    try {
+      return SupermemoryService.getConfigStatus();
+    } catch (error) {
+      logger.error("[Supermemory] Failed to get status:", error);
+      throw error;
+    }
+  });
+
+  ipcMain.handle(IPC_CHANNELS.SUPERMEMORY_SAVE_SETTINGS, async (_event, settings: Any) => {
+    checkRateLimit(IPC_CHANNELS.SUPERMEMORY_SAVE_SETTINGS, RATE_LIMIT_CONFIGS.limited);
+    try {
+      const validated = validateInput(
+        SupermemorySettingsInputSchema,
+        settings,
+        "supermemory settings",
+      );
+      SupermemoryService.saveSettings(validated);
+      return { success: true };
+    } catch (error) {
+      logger.error("[Supermemory] Failed to save settings:", error);
+      throw error;
+    }
+  });
+
+  ipcMain.handle(IPC_CHANNELS.SUPERMEMORY_TEST_CONNECTION, async () => {
+    try {
+      return await SupermemoryService.testConnection();
+    } catch (error) {
+      logger.error("[Supermemory] Failed to test connection:", error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : "Failed to reach Supermemory",
+      };
+    }
+  });
 
   // Search memories
   ipcMain.handle(

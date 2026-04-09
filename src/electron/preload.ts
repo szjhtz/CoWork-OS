@@ -42,11 +42,15 @@ import type {
   CoreMemoryCandidate,
   CoreMemoryDistillRun,
   CoreTrace,
+  TaskTraceRunDetail,
+  TaskTraceRunSummary,
   GetCoreTraceResult,
   ImageAttachment,
   LLMProviderType,
   MemoryFeaturesSettings,
   MemoryLayerPreviewPayload,
+  SupermemoryConfigStatus,
+  SupermemorySettings,
   WorkspaceKitInitRequest,
   WorkspaceKitProjectCreateRequest,
   WorkspaceKitStatus,
@@ -2052,6 +2056,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
 
   // Semantic timeline projection (normalised UiTimelineEvent[] derived from task_events)
   getSemanticTimeline: (taskId: string) => ipcRenderer.invoke(IPC_CHANNELS.TASK_SEMANTIC_TIMELINE, taskId),
+  listTaskTraceRuns: (request?: import("../shared/types").ListTaskTraceRunsRequest) =>
+    ipcRenderer.invoke(IPC_CHANNELS.TASK_TRACE_LIST, request) as Promise<TaskTraceRunSummary[]>,
+  getTaskTraceRun: (taskId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.TASK_TRACE_GET, taskId) as Promise<TaskTraceRunDetail | undefined>,
 
   // Send follow-up message to a task (optionally with image attachments)
   sendMessage: (
@@ -2949,6 +2957,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_FEATURES_SAVE_SETTINGS, settings),
   getMemoryLayerPreview: (workspaceId: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_FEATURES_GET_LAYER_PREVIEW, workspaceId),
+  getSupermemorySettings: () => ipcRenderer.invoke(IPC_CHANNELS.SUPERMEMORY_GET_SETTINGS),
+  saveSupermemorySettings: (settings: SupermemorySettings) =>
+    ipcRenderer.invoke(IPC_CHANNELS.SUPERMEMORY_SAVE_SETTINGS, settings),
+  testSupermemoryConnection: () => ipcRenderer.invoke(IPC_CHANNELS.SUPERMEMORY_TEST_CONNECTION),
+  getSupermemoryStatus: () => ipcRenderer.invoke(IPC_CHANNELS.SUPERMEMORY_GET_STATUS),
 
   // Self-improvement loop APIs
   getImprovementSettings: () =>
@@ -5283,6 +5296,10 @@ export interface ElectronAPI {
   getMemoryFeaturesSettings: () => Promise<MemoryFeaturesSettings>;
   saveMemoryFeaturesSettings: (settings: MemoryFeaturesSettings) => Promise<{ success: boolean }>;
   getMemoryLayerPreview: (workspaceId: string) => Promise<MemoryLayerPreviewPayload | null>;
+  getSupermemorySettings: () => Promise<SupermemoryConfigStatus>;
+  saveSupermemorySettings: (settings: SupermemorySettings) => Promise<{ success: boolean }>;
+  testSupermemoryConnection: () => Promise<{ success: boolean; error?: string }>;
+  getSupermemoryStatus: () => Promise<SupermemoryConfigStatus>;
 
   // Self-improvement loop
   getImprovementSettings: () => Promise<ImprovementLoopSettings>;
@@ -5796,6 +5813,10 @@ export interface ElectronAPI {
   ) => Promise<CoreTrace[]>;
   getCoreTrace: (id: string) => Promise<GetCoreTraceResult | undefined>;
   listCoreTracesForAutomationProfile: (profileId: string, limit?: number) => Promise<CoreTrace[]>;
+  listTaskTraceRuns: (
+    request?: import("../shared/types").ListTaskTraceRunsRequest,
+  ) => Promise<TaskTraceRunSummary[]>;
+  getTaskTraceRun: (taskId: string) => Promise<TaskTraceRunDetail | undefined>;
   listCoreFailureRecords: (
     request?: import("../shared/types").ListCoreFailureRecordsRequest,
   ) => Promise<CoreFailureRecord[]>;

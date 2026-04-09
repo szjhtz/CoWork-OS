@@ -25,6 +25,13 @@ import {
 } from "../../shared/types";
 import { GuardrailSettings } from "../../shared/types";
 
+const NETWORK_PERMISSION_ONLY_TOOLS = new Set([
+  "supermemory_profile",
+  "supermemory_search",
+  "supermemory_remember",
+  "supermemory_forget",
+]);
+
 /**
  * Result of a policy check
  */
@@ -208,6 +215,13 @@ export class SecurityPolicyManager {
     return TOOL_RISK_LEVELS[toolName as ToolType];
   }
 
+  static requiresNetworkPermission(toolName: string): boolean {
+    return (
+      SecurityPolicyManager.isToolInGroup(toolName, "group:network") ||
+      NETWORK_PERMISSION_ONLY_TOOLS.has(toolName)
+    );
+  }
+
   // Private methods
 
   /**
@@ -343,7 +357,7 @@ export class SecurityPolicyManager {
     }
 
     // Check network permission
-    if (SecurityPolicyManager.isToolInGroup(toolName, "group:network")) {
+    if (SecurityPolicyManager.requiresNetworkPermission(toolName)) {
       if (!permissions.network) {
         return {
           layer: "workspace_permissions",
@@ -528,7 +542,7 @@ export function isToolAllowedQuick(
   if (toolName === "run_command" && !permissions.shell) {
     return false;
   }
-  if (SecurityPolicyManager.isToolInGroup(toolName, "group:network") && !permissions.network) {
+  if (SecurityPolicyManager.requiresNetworkPermission(toolName) && !permissions.network) {
     return false;
   }
 

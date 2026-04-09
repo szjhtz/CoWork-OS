@@ -61,7 +61,7 @@ function run(cmd, args) {
     process.stderr.write(`[package:mac] ${r.error.message}\n`);
     process.exit(1);
   }
-  process.exit(r.status ?? 1);
+  return r.status ?? 1;
 }
 
 loadDotEnvMac();
@@ -76,4 +76,16 @@ if (build.status !== 0) {
 }
 
 log("Running electron-builder --mac --publish never …");
-run("npx", ["electron-builder", "--mac", "--publish", "never"]);
+const packageStatus = run(process.execPath, ["scripts/run_electron_builder.mjs", "--mac", "--publish", "never"]);
+if (packageStatus !== 0) {
+  process.exit(packageStatus);
+}
+
+log("Aligning updater artifact names …");
+const alignStatus = run(process.execPath, ["scripts/release-artifact-names.mjs"]);
+if (alignStatus !== 0) {
+  process.exit(alignStatus);
+}
+
+const verifyStatus = run(process.execPath, ["scripts/release-artifact-names.mjs", "--check"]);
+process.exit(verifyStatus);

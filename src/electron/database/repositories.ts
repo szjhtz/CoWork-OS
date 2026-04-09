@@ -3,6 +3,8 @@ import { v4 as uuidv4 } from "uuid";
 import {
   Task,
   TaskEvent,
+  TaskTraceRunDetail,
+  TaskTraceRunSummary,
   EventType,
   Artifact,
   Workspace,
@@ -24,6 +26,13 @@ import {
 } from "../../shared/types";
 import { isActiveTaskStatus, normalizeTaskLifecycleState } from "../../shared/task-status";
 import { isTimelineEventType, normalizeTaskEventToTimelineV2 } from "../../shared/timeline-v2";
+import { normalizeTaskEvents } from "../agent/timeline/timeline-normalizer";
+import {
+  buildTaskTraceMetrics,
+  buildTaskTraceRunSummaries,
+  buildTaskTraceSiblingRuns,
+  getTaskTraceSessionId,
+} from "./task-trace-projection";
 import { UsageInsightsProjector } from "../reports/UsageInsightsProjector";
 import { getSafeStorage } from "../utils/safe-storage";
 import { createLogger } from "../utils/logger";
@@ -45,6 +54,8 @@ function safeJsonParse<T>(jsonString: string, defaultValue: T, context?: string)
     return defaultValue;
   }
 }
+
+const taskRepositoryLogger = createLogger("TaskRepository");
 
 export class WorkspaceRepository {
   constructor(private db: Database.Database) {}
@@ -184,6 +195,71 @@ export class WorkspaceRepository {
 }
 
 export class TaskRepository {
+  private static readonly UPDATE_FIELD_TO_COLUMN: Partial<Record<keyof Task, string>> = {
+    prompt: "prompt",
+    rawPrompt: "raw_prompt",
+    userPrompt: "user_prompt",
+    title: "title",
+    status: "status",
+    workspaceId: "workspace_id",
+    budgetTokens: "budget_tokens",
+    budgetCost: "budget_cost",
+    successCriteria: "success_criteria",
+    maxAttempts: "max_attempts",
+    currentAttempt: "current_attempt",
+    parentTaskId: "parent_task_id",
+    agentType: "agent_type",
+    agentConfig: "agent_config",
+    depth: "depth",
+    resultSummary: "result_summary",
+    completedAt: "completed_at",
+    error: "error",
+    pinned: "is_pinned",
+    labels: "labels",
+    mentionedAgentRoleIds: "mentioned_agent_role_ids",
+    strategyLock: "strategy_lock",
+    budgetProfile: "budget_profile",
+    terminalStatus: "terminal_status",
+    failureClass: "failure_class",
+    verificationVerdict: "verification_verdict",
+    verificationReport: "verification_report",
+    bestKnownOutcome: "best_known_outcome",
+    budgetUsage: "budget_usage",
+    continuationCount: "continuation_count",
+    continuationWindow: "continuation_window",
+    lifetimeTurnsUsed: "lifetime_turns_used",
+    lastProgressScore: "last_progress_score",
+    autoContinueBlockReason: "auto_continue_block_reason",
+    compactionCount: "compaction_count",
+    lastCompactionAt: "last_compaction_at",
+    lastCompactionTokensBefore: "last_compaction_tokens_before",
+    lastCompactionTokensAfter: "last_compaction_tokens_after",
+    noProgressStreak: "no_progress_streak",
+    lastLoopFingerprint: "last_loop_fingerprint",
+    riskLevel: "risk_level",
+    evalCaseId: "eval_case_id",
+    evalRunId: "eval_run_id",
+    issueId: "issue_id",
+    heartbeatRunId: "heartbeat_run_id",
+    companyId: "company_id",
+    goalId: "goal_id",
+    projectId: "project_id",
+    requestDepth: "request_depth",
+    billingCode: "billing_code",
+    semanticSummary: "semantic_summary",
+    targetNodeId: "target_node_id",
+    worktreePath: "worktree_path",
+    worktreeBranch: "worktree_branch",
+    worktreeStatus: "worktree_status",
+    comparisonSessionId: "comparison_session_id",
+    sessionId: "session_id",
+    branchFromTaskId: "branch_from_task_id",
+    branchFromEventId: "branch_from_event_id",
+    branchLabel: "branch_label",
+    resumeStrategy: "resume_strategy",
+    source: "source",
+  };
+
   constructor(private db: Database.Database) {}
 
   private static normalizePromptFields(
@@ -376,13 +452,14 @@ export class TaskRepository {
     Object.entries(normalizedUpdates).forEach(([key, value]) => {
       // Validate field name against whitelist
       if (!TaskRepository.ALLOWED_UPDATE_FIELDS.has(key)) {
-        console.warn(`Ignoring unknown field in task update: ${key}`);
+        taskRepositoryLogger.warn(`Ignoring unknown field in task update: ${key}`);
         return;
       }
-      const dbKey =
-        key === "pinned"
-          ? "is_pinned"
-          : key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
+      const dbKey = TaskRepository.UPDATE_FIELD_TO_COLUMN[key as keyof Task];
+      if (!dbKey) {
+        taskRepositoryLogger.warn(`No database column mapping found for task field: ${key}`);
+        return;
+      }
       fields.push(`${dbKey} = ?`);
 
       // JSON serialize object/array fields
@@ -494,6 +571,31 @@ export class TaskRepository {
       ORDER BY created_at DESC
     `);
     const rows = stmt.all(workspaceId) as Any[];
+    return rows.map((row) => this.mapRowToTask(row));
+  }
+
+  findBySessionId(sessionId: string, limit?: number, offset?: number): Task[] {
+    const normalizedSessionId = String(sessionId || "").trim();
+    if (!normalizedSessionId) return [];
+
+    if (typeof limit === "number" && Number.isFinite(limit)) {
+      const safeLimit = Math.max(1, Math.floor(limit));
+      const safeOffset =
+        typeof offset === "number" && Number.isFinite(offset) ? Math.max(0, Math.floor(offset)) : 0;
+      const rows = this.db.prepare(`
+        SELECT * FROM tasks
+        WHERE session_id = ?
+        ORDER BY created_at ASC
+        LIMIT ? OFFSET ?
+      `).all(normalizedSessionId, safeLimit, safeOffset) as Any[];
+      return rows.map((row) => this.mapRowToTask(row));
+    }
+
+    const rows = this.db.prepare(`
+      SELECT * FROM tasks
+      WHERE session_id = ?
+      ORDER BY created_at ASC
+    `).all(normalizedSessionId) as Any[];
     return rows.map((row) => this.mapRowToTask(row));
   }
 
@@ -1366,6 +1468,60 @@ export class TaskEventRepository {
         `[TaskEventRepository] Pruned ${idsToDelete.length} old snapshot(s) for task ${taskId}`,
       );
     }
+  }
+}
+
+export class TaskTraceRepository {
+  constructor(
+    private readonly taskRepo: TaskRepository,
+    private readonly taskEventRepo: TaskEventRepository,
+  ) {}
+
+  listTaskTraceRuns(
+    request: import("../../shared/types").ListTaskTraceRunsRequest = {},
+  ): TaskTraceRunSummary[] {
+    const limit =
+      typeof request.limit === "number" && Number.isFinite(request.limit)
+        ? Math.max(1, Math.min(200, Math.floor(request.limit)))
+        : 50;
+    const scanLimit = Math.max(limit * 20, 500);
+    const workspaceId =
+      typeof request.workspaceId === "string" && request.workspaceId.trim().length > 0
+        ? request.workspaceId.trim()
+        : "";
+
+    const tasks = workspaceId
+      ? this.taskRepo.findByWorkspace(workspaceId, scanLimit, 0)
+      : this.taskRepo.findAll(scanLimit, 0);
+
+    return buildTaskTraceRunSummaries(tasks, { ...request, limit });
+  }
+
+  getTaskTraceRun(taskId: string): TaskTraceRunDetail | undefined {
+    const task = this.taskRepo.findById(taskId);
+    if (!task) return undefined;
+
+    const sessionId = getTaskTraceSessionId(task);
+    const siblingTasks = this.listSessionTasks(task);
+    const rawEvents = this.taskEventRepo.findByTaskId(taskId);
+
+    return {
+      sessionId,
+      task,
+      siblingRuns: buildTaskTraceSiblingRuns(siblingTasks),
+      metrics: buildTaskTraceMetrics(task, rawEvents),
+      rawEvents,
+      semanticTimeline: normalizeTaskEvents([...rawEvents].sort((a, b) => a.timestamp - b.timestamp)),
+    };
+  }
+
+  private listSessionTasks(task: Task): Task[] {
+    if (!(typeof task.sessionId === "string" && task.sessionId.trim().length > 0)) {
+      return [task];
+    }
+
+    const sessionId = task.sessionId.trim();
+    return this.taskRepo.findBySessionId(sessionId, 5000, 0);
   }
 }
 

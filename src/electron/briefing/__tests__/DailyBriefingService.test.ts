@@ -71,6 +71,31 @@ describe("DailyBriefingService", () => {
     expect(prioritySection!.items[0].label).toBe("Ship feature A");
   });
 
+  it("compresses low-immediacy priorities behind action-ready work", async () => {
+    const deps = makeDeps({
+      getPriorities: () =>
+        [
+          "# Priorities",
+          "## Current",
+          "- Marketplace — launch a curated marketplace for community plugin packs",
+          "- Fix all known P0/P1 bugs",
+          "- Review onboarding copy",
+          "- Mobile companion — lightweight mobile app or PWA",
+          "- Publish launch checklist",
+          "- Sustainability — establish a sponsorship program",
+        ].join("\n"),
+    });
+    const svc = new DailyBriefingService(deps);
+
+    const briefing = await svc.generateBriefing("ws-1");
+    const prioritySection = briefing.sections.find((s) => s.type === "priority_review");
+
+    expect(prioritySection).toBeDefined();
+    expect(prioritySection!.title).toBe("Strategic Priorities");
+    expect(prioritySection!.items[0].label).toBe("Fix all known P0/P1 bugs");
+    expect(prioritySection!.items.some((item) => item.label.includes("lower-immediacy priorities hidden"))).toBe(true);
+  });
+
   // ── Task summary section ──────────────────────────────────────
 
   it("builds task summary from recent tasks", async () => {
@@ -92,6 +117,26 @@ describe("DailyBriefingService", () => {
     // Should have summary counts + individual task entries
     expect(taskSection!.items.some((i) => i.label.includes("2 completed"))).toBe(true);
     expect(taskSection!.items.some((i) => i.label.includes("1 failed"))).toBe(true);
+  });
+
+  it("rolls background automation into counts instead of headline task rows", async () => {
+    const deps = makeDeps({
+      getRecentTasks: () => [
+        { id: "t1", title: "Ship macOS packaging fix", status: "completed" },
+        { id: "t2", title: "Subconscious: Project Manager", status: "completed" },
+        { id: "t3", title: "Step completed: Review Recent Heartbeat Outcomes", status: "completed" },
+      ],
+    });
+    const svc = new DailyBriefingService(deps);
+
+    const briefing = await svc.generateBriefing("ws-1");
+    const taskSection = briefing.sections.find((s) => s.type === "task_summary");
+
+    expect(taskSection).toBeDefined();
+    expect(taskSection!.title).toBe("Executive Summary");
+    expect(taskSection!.items.some((item) => item.label === "Ship macOS packaging fix")).toBe(true);
+    expect(taskSection!.items.some((item) => item.label.includes("background automation tasks completed"))).toBe(true);
+    expect(taskSection!.items.some((item) => item.label.includes("Subconscious: Project Manager"))).toBe(false);
   });
 
   // ── Memory highlights section ──────────────────────────────────
@@ -133,8 +178,9 @@ describe("DailyBriefingService", () => {
     const sugSection = briefing.sections.find((s) => s.type === "active_suggestions");
 
     expect(sugSection).toBeDefined();
+    expect(sugSection!.title).toBe("Recommended Next Actions");
     expect(sugSection!.items[0].label).toBe("Optimize CI");
-    expect(sugSection!.items[0].detail).toContain("Delivery: inbox");
+    expect(sugSection!.items[0].detail).toContain("CI takes 8 minutes");
   });
 
   // ── Upcoming jobs section ──────────────────────────────────────
@@ -181,9 +227,9 @@ describe("DailyBriefingService", () => {
             id: "focus-1",
             title: "Editing executor.ts",
             detail: "Recent context shifted into implementation work.",
-            source: "apps",
+            source: "tasks",
             score: 0.8,
-            tags: ["focus"],
+            tags: ["workflow"],
             requiresHeartbeat: true,
           },
         ],
@@ -208,9 +254,7 @@ describe("DailyBriefingService", () => {
     const awarenessSection = briefing.sections.find((s) => s.type === "awareness_digest");
 
     expect(awarenessSection).toBeDefined();
-    expect(awarenessSection!.items.some((item) => item.label.includes("Editing executor.ts"))).toBe(
-      true,
-    );
+    expect(awarenessSection!.title).toBe("Needs Attention Today");
     expect(
       awarenessSection!.items.some((item) => item.label.includes("Review launch checklist")),
     ).toBe(true);
@@ -248,8 +292,8 @@ describe("DailyBriefingService", () => {
       getAutonomyDecisions: async () => [
         {
           id: "decision-1",
-          title: "Organize next work session",
-          description: "Turn current coding context into a concrete next-step plan.",
+          title: "Review launch blockers",
+          description: "Check the remaining blocker list before shipping the redesign.",
           priority: "normal",
         },
       ],
@@ -260,15 +304,58 @@ describe("DailyBriefingService", () => {
     const awarenessSection = briefing.sections.find((s) => s.type === "awareness_digest");
 
     expect(awarenessSection).toBeDefined();
+    expect(awarenessSection!.title).toBe("Needs Attention Today");
     expect(
-      awarenessSection!.items.some((item) => item.label.includes("Goal: Ship onboarding redesign")),
+      awarenessSection!.items.some((item) => item.label.includes("Active goal: Ship onboarding redesign")),
     ).toBe(true);
     expect(
-      awarenessSection!.items.some((item) => item.label.includes("Routine: editor startup")),
+      awarenessSection!.items.some((item) => item.label.includes("Decision needed: Review launch blockers")),
     ).toBe(true);
-    expect(
-      awarenessSection!.items.some((item) => item.label.includes("Next action: Organize next work session")),
-    ).toBe(true);
+  });
+
+  it("filters generic app telemetry out of the awareness digest", async () => {
+    const deps = makeDeps({
+      getAwarenessSummary: async () => ({
+        generatedAt: Date.now(),
+        workspaceId: "ws-1",
+        currentFocus: "All workspaces",
+        whatChanged: [],
+        whatMattersNow: [
+          {
+            id: "focus-1",
+            title: "Electron",
+            detail: "Electron — CoWork OS",
+            source: "apps",
+            score: 0.8,
+            tags: ["focus"],
+          },
+          {
+            id: "focus-2",
+            title: "Regression in launch flow",
+            detail: "Startup logs still show a native bridge timeout.",
+            source: "tasks",
+            score: 0.92,
+            tags: ["workflow"],
+          },
+        ],
+        dueSoon: [],
+        beliefs: [],
+        wakeReasons: ["focus_shift"],
+      }),
+      getAutonomyState: async () => ({
+        goals: [],
+        routines: [],
+      }),
+      getAutonomyDecisions: async () => [],
+    });
+    const svc = new DailyBriefingService(deps);
+
+    const briefing = await svc.generateBriefing("ws-1");
+    const awarenessSection = briefing.sections.find((s) => s.type === "awareness_digest");
+
+    expect(awarenessSection).toBeDefined();
+    expect(awarenessSection!.items.some((item) => item.label.includes("Electron"))).toBe(false);
+    expect(awarenessSection!.items.some((item) => item.label.includes("Regression in launch flow"))).toBe(true);
   });
 
   // ── Config management ─────────────────────────────────────────
@@ -307,7 +394,7 @@ describe("DailyBriefingService", () => {
       getRecentTasks: () => {
         throw new Error("DB connection failed");
       },
-      searchMemory: () => [{ summary: "Still works" }],
+      searchMemory: () => [{ summary: "Still works", type: "workflow_pattern" }],
     });
     const svc = new DailyBriefingService(deps);
 

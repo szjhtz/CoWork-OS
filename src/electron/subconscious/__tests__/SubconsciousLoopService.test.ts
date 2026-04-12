@@ -270,6 +270,42 @@ describeWithSqlite("SubconsciousLoopService", () => {
     ).toBe(true);
   });
 
+  it("deduplicates repeated open backlog items during target refresh", async () => {
+    const workspace = insertWorkspace("backlog-dedupe");
+    const targetKey = `workspace:${workspace.id}`;
+    const now = Date.now();
+
+    for (const id of ["backlog-1", "backlog-2"]) {
+      db.prepare(
+        `INSERT INTO subconscious_backlog_items (
+          id, target_key, title, summary, status, priority, executor_kind, source_run_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        id,
+        targetKey,
+        "Keep the winner durable",
+        "Track the repeated lesson without creating another duplicate.",
+        "open",
+        90,
+        "task",
+        `run-${id}`,
+        now,
+        now,
+      );
+    }
+
+    const { SubconsciousLoopService } = await import("../SubconsciousLoopService");
+    const service = new SubconsciousLoopService(db, { getGlobalRoot: () => workspace.path });
+
+    await service.refreshTargets();
+
+    const row = db.prepare(
+      "SELECT COUNT(*) AS count FROM subconscious_backlog_items WHERE target_key = ? AND status = 'open'",
+    ).get(targetKey) as Any;
+    expect(Number(row.count)).toBe(1);
+    expect(service.listTargets().find((target) => target.key === targetKey)?.backlogCount).toBe(1);
+  });
+
   it("does not recreate missing workspace roots when refreshing stale workspace targets", async () => {
     const workspace = insertWorkspace("stale-root");
     fs.rmSync(workspace.path, { recursive: true, force: true });
@@ -457,6 +493,51 @@ describeWithSqlite("SubconsciousLoopService", () => {
     expect(detail?.journal.some((entry) => entry.kind === "sleep")).toBe(true);
   });
 
+  it("advances next eligibility when an unchanged target is deduplicated", async () => {
+    const workspace = insertWorkspace("dedupe-window");
+    const targetKey = `workspace:${workspace.id}`;
+    const now = Date.now();
+
+    db.prepare(
+      `INSERT INTO tasks (id, title, prompt, status, workspace_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run("task-dedupe", "Follow up with customer", "Investigate", "completed", workspace.id, now, now);
+
+    const { SubconsciousLoopService } = await import("../SubconsciousLoopService");
+    const service = new SubconsciousLoopService(db, { getGlobalRoot: () => workspace.path });
+    service.saveSettings({
+      ...DEFAULT_SUBCONSCIOUS_SETTINGS,
+      enabled: true,
+      autoRun: false,
+    });
+
+    await service.refreshTargets();
+    const firstRun = await service.runNow(targetKey);
+    expect(firstRun).not.toBeNull();
+
+    db.prepare("UPDATE subconscious_targets SET next_eligible_at = ? WHERE target_key = ?").run(now - 1000, targetKey);
+    const before = Number(
+      (
+        db.prepare("SELECT next_eligible_at AS next_eligible_at FROM subconscious_targets WHERE target_key = ?").get(
+          targetKey,
+        ) as Any
+      ).next_eligible_at || 0,
+    );
+
+    const secondRun = await service.runNow(targetKey);
+    const after = Number(
+      (
+        db.prepare("SELECT next_eligible_at AS next_eligible_at FROM subconscious_targets WHERE target_key = ?").get(
+          targetKey,
+        ) as Any
+      ).next_eligible_at || 0,
+    );
+
+    expect(secondRun?.id).toBe(firstRun?.id);
+    expect(after).toBeGreaterThan(before);
+    expect(after).toBeGreaterThan(Date.now());
+  });
+
   it("clears session-only target state on restart while preserving durable targets", async () => {
     const workspace = insertWorkspace("delta");
     const now = Date.now();
@@ -494,6 +575,87 @@ describeWithSqlite("SubconsciousLoopService", () => {
     expect(mailbox?.persistence).toBe("sessionOnly");
     expect(workspaceTarget?.persistence).toBe("durable");
     second.stop();
+  });
+
+  it("prefers fresh evidence over stale backlog-only targets", async () => {
+    const staleWorkspace = insertWorkspace("stale-target");
+    const freshWorkspace = insertWorkspace("fresh-target");
+    const staleTargetKey = `workspace:${staleWorkspace.id}`;
+    const old = Date.now() - 5 * 24 * 60 * 60 * 1000;
+    const now = Date.now();
+
+    db.prepare(
+      `INSERT INTO subconscious_backlog_items (
+        id, target_key, title, summary, status, priority, executor_kind, source_run_id, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "stale-backlog",
+      staleTargetKey,
+      "Keep the winner durable",
+      "This backlog is old and should not outrank fresh work.",
+      "open",
+      90,
+      "task",
+      "stale-run",
+      old,
+      old,
+    );
+
+    db.prepare(
+      `INSERT INTO subconscious_targets (
+        target_key, kind, workspace_id, ref_json, health, state, persistence, missed_run_policy,
+        next_eligible_at, last_observed_at, last_action_at, expires_at, jitter_ms, last_meaningful_outcome,
+        last_winner, last_run_at, last_evidence_at, backlog_count, evidence_fingerprint,
+        last_dispatch_kind, last_dispatch_status, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      staleTargetKey,
+      "workspace",
+      staleWorkspace.id,
+      JSON.stringify({
+        key: staleTargetKey,
+        kind: "workspace",
+        workspaceId: staleWorkspace.id,
+        label: staleWorkspace.name,
+      }),
+      "watch",
+      "idle",
+      "durable",
+      "catchUp",
+      old,
+      old,
+      old,
+      null,
+      0,
+      "defer",
+      null,
+      old,
+      old,
+      1,
+      "stale-fingerprint",
+      null,
+      null,
+      old,
+      old,
+    );
+
+    db.prepare(
+      `INSERT INTO tasks (id, title, prompt, status, workspace_id, created_at, updated_at, failure_class)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run("fresh-task", "Investigate a new failure", "Investigate", "failed", freshWorkspace.id, now, now, "verification_failed");
+
+    const { SubconsciousLoopService } = await import("../SubconsciousLoopService");
+    const service = new SubconsciousLoopService(db, { getGlobalRoot: () => freshWorkspace.path });
+    service.saveSettings({
+      ...DEFAULT_SUBCONSCIOUS_SETTINGS,
+      enabled: true,
+      autoRun: false,
+    });
+
+    await service.refreshTargets();
+    const run = await service.runNow();
+
+    expect(run?.targetKey).toBe(`workspace:${freshWorkspace.id}`);
   });
 
   it("distills journal entries into dream artifacts and memory index", async () => {

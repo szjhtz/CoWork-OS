@@ -25,6 +25,41 @@ export class DailyBriefingService {
   private latestBriefings: Map<string, Briefing> = new Map();
   private db: Any;
 
+  private static readonly LOW_SIGNAL_PATTERNS = [
+    /^step (completed|failed):/i,
+    /^tool result for /i,
+    /^subconscious:/i,
+    /^review recent heartbeat outcomes$/i,
+    /^i found prior references/i,
+    /^current focus suggests/i,
+    /^this open loop is active/i,
+    /^routine:/i,
+    /\b(run_command|get_file_info|read_file|grep)\b/i,
+  ];
+
+  private static readonly BACKGROUND_TASK_PATTERNS = [
+    /^subconscious:/i,
+    /^heartbeat/i,
+    /^verify:/i,
+    /^review recent heartbeat outcomes$/i,
+    /^step (completed|failed):/i,
+    /^tool result for /i,
+  ];
+
+  private static readonly GENERIC_FOCUS_PATTERNS = [
+    /\b(electron|codex|cursor|vs code|visual studio code|utm|chrome|edge|safari|terminal)\b/i,
+    /\bco-?work os\b/i,
+  ];
+
+  private static readonly META_ACTION_PATTERNS = [
+    /^prepare routine context/i,
+    /^assemble a chief-of-staff briefing/i,
+    /^capture current focus/i,
+    /^organize next work session/i,
+    /^prepare .*context/i,
+    /\b(browser context|active app|current focus)\b/i,
+  ];
+
   constructor(deps: DailyBriefingServiceDeps, db?: Any) {
     this.deps = deps;
     this.db = db;
@@ -48,13 +83,13 @@ export class DailyBriefingService {
 
     const sectionGenerators: Record<BriefingSectionType, () => BriefingSection | Promise<BriefingSection>> = {
       task_summary: () => this.buildTaskSummary(workspaceId),
-      memory_highlights: () => this.buildMemoryHighlights(workspaceId),
+      awareness_digest: () => this.buildAwarenessDigest(workspaceId),
       active_suggestions: () => this.buildSuggestions(workspaceId),
       priority_review: () => this.buildPriorities(workspaceId),
+      memory_highlights: () => this.buildMemoryHighlights(workspaceId),
       upcoming_jobs: () => this.buildUpcomingJobs(workspaceId),
       open_loops: () => this.buildOpenLoops(workspaceId),
       mailbox_summary: () => this.buildMailboxSummary(workspaceId),
-      awareness_digest: () => this.buildAwarenessDigest(workspaceId),
       evolution_metrics: () => this.buildEvolutionMetrics(workspaceId),
     };
 
@@ -142,6 +177,176 @@ export class DailyBriefingService {
     return labels.size > 0 ? [...labels].join(", ") : undefined;
   }
 
+  private cleanLabel(text: string | undefined): string {
+    return String(text || "")
+      .replace(/\s+/g, " ")
+      .replace(/\s+—\s+$/, "")
+      .trim();
+  }
+
+  private stripMarkdownFormatting(text: string | undefined): string {
+    return String(text || "")
+      .replace(/\*\*(.*?)\*\*/g, "$1")
+      .replace(/__(.*?)__/g, "$1")
+      .replace(/`([^`]+)`/g, "$1");
+  }
+
+  private normalizeSemanticText(text: string | undefined): string {
+    return this.cleanLabel(this.stripMarkdownFormatting(text))
+      .replace(/(^|:\s*)\[[^\]]+\]\s*/g, "$1")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  private isLowSignalText(text: string | undefined): boolean {
+    const normalized = this.cleanLabel(text);
+    if (!normalized) return true;
+    return DailyBriefingService.LOW_SIGNAL_PATTERNS.some((pattern) => pattern.test(normalized));
+  }
+
+  private isBackgroundTask(title: string | undefined): boolean {
+    const normalized = this.cleanLabel(this.stripWorkspacePrefix(title || ""));
+    if (!normalized) return true;
+    return DailyBriefingService.BACKGROUND_TASK_PATTERNS.some((pattern) => pattern.test(normalized));
+  }
+
+  private isGenericFocus(text: string | undefined): boolean {
+    const normalized = this.cleanLabel(text);
+    if (!normalized) return true;
+    if (/^all workspaces$/i.test(normalized)) return true;
+    return DailyBriefingService.GENERIC_FOCUS_PATTERNS.some((pattern) => pattern.test(normalized));
+  }
+
+  private isMetaActionText(text: string | undefined): boolean {
+    const normalized = this.normalizeSemanticText(text);
+    if (!normalized) return true;
+    return DailyBriefingService.META_ACTION_PATTERNS.some((pattern) => pattern.test(normalized));
+  }
+
+  private parsePriorityLines(raw: string): string[] {
+    const lines = raw.split(/\r?\n/);
+    const currentHeadingIndex = lines.findIndex((line) => /^##\s+current\s*$/i.test(line.trim()));
+    const selected: string[] = [];
+    if (currentHeadingIndex >= 0) {
+      for (const line of lines.slice(currentHeadingIndex + 1)) {
+        if (/^##\s+/.test(line.trim())) break;
+        selected.push(line);
+      }
+    } else {
+      selected.push(...lines);
+    }
+    return selected
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith("#"))
+      .map((line) => this.stripMarkdownFormatting(line.replace(/^[-*\d.]+\s*/, "").trim()))
+      .filter(Boolean);
+  }
+
+  private priorityScore(text: string, originalIndex: number): number {
+    const normalized = text.toLowerCase();
+    let score = 30 - originalIndex;
+    if (
+      /\b(today|this week|now|urgent|block|blocked|release|ship|fix|test|docs|review|follow up|resolve|publish|launch|cleanup|stability|polish)\b/.test(
+        normalized,
+      )
+    ) {
+      score += 8;
+    }
+    if (/^(fix|ship|review|resolve|publish|launch|document|test|clean|organize|follow up|finish)\b/.test(normalized)) {
+      score += 4;
+    }
+    if (
+      /\b(marketplace|ecosystem|sustainability|enterprise|partnership|mobile companion|licensing|multi-tenant)\b/.test(
+        normalized,
+      )
+    ) {
+      score -= 8;
+    }
+    if (text.length > 120) score -= 3;
+    if (text.length <= 72) score += 2;
+    return score;
+  }
+
+  private isUsefulAwarenessItem(item: Any): boolean {
+    const title = this.normalizeSemanticText(this.stripWorkspacePrefix(item?.title || item?.label || ""));
+    const detail = this.cleanLabel(item?.detail || item?.description || "");
+    if (!title) return false;
+    if (this.isLowSignalText(title)) return false;
+    if (detail && this.isLowSignalText(detail)) return false;
+    if (this.isMetaActionText(title) || this.isMetaActionText(detail)) return false;
+    const source = String(item?.source || "").toLowerCase();
+    const tags = Array.isArray(item?.tags) ? item.tags.map((tag: unknown) => String(tag).toLowerCase()) : [];
+    if ((source === "apps" || source === "browser") && this.isGenericFocus(`${title} ${detail}`)) {
+      return false;
+    }
+    if (source === "apps" || source === "browser") {
+      return tags.includes("deadline") || tags.includes("workflow") || tags.includes("context");
+    }
+    return true;
+  }
+
+  private isUsefulSuggestion(item: Any): boolean {
+    const title = this.normalizeSemanticText(item?.title || item?.label || item?.description || "");
+    const detail = this.normalizeSemanticText(item?.description || item?.detail || "");
+    if (!title) return false;
+    if (this.isLowSignalText(title)) return false;
+    if (detail && this.isLowSignalText(detail)) return false;
+    if (this.isMetaActionText(title) || this.isMetaActionText(detail)) return false;
+    if (this.isGenericFocus(`${title} ${detail}`)) return false;
+    return /^(review|fix|ship|follow up|resolve|publish|finish|check|update|triage|prepare|draft|test|clean|optimize)/i.test(title);
+  }
+
+  private decisionScore(decision: Any): number {
+    const title = this.normalizeSemanticText(this.stripWorkspacePrefix(decision?.title || ""));
+    const detail = this.normalizeSemanticText(this.stripWorkspacePrefix(decision?.description || ""));
+    let score = 0;
+    if (!title || this.isLowSignalText(title)) return -100;
+    if (detail && this.isLowSignalText(detail)) return -100;
+    if (this.isMetaActionText(title) || this.isMetaActionText(detail)) return -100;
+    if (decision?.priority === "high") score += 10;
+    if (/\b(block|blocked|urgent|risk|deadline|security|follow up|review|finish|ship|fix)\b/i.test(`${title} ${detail}`)) {
+      score += 6;
+    }
+    if (title.length <= 96) score += 2;
+    return score;
+  }
+
+  private outcomeScore(task: Any): number {
+    const title = this.normalizeSemanticText(task?.title || "");
+    let score = 0;
+    if (!title || this.isBackgroundTask(title) || this.isLowSignalText(title)) return -100;
+    if (/^(fix|ship|release|publish|deploy|build|implement|refactor|document|add|remove|resolve|launch|clean)/i.test(title)) {
+      score += 8;
+    }
+    if (task?.workspaceName) score += 1;
+    if (title.length <= 90) score += 2;
+    return score;
+  }
+
+  private goalScore(goal: Any): number {
+    const title = this.normalizeSemanticText(goal?.title || "");
+    if (!title || this.isLowSignalText(title)) return -100;
+    if (this.isMetaActionText(title)) return -100;
+    let score = 0;
+    if (goal?.status === "blocked") score += 10;
+    if (goal?.status === "active") score += 3;
+    score += Math.round((goal?.confidence || 0) * 5);
+    if (title.length <= 110) score += 2;
+    return score;
+  }
+
+  private evolutionHasEnoughSignal(snapshot: Any): boolean {
+    const byId = new Map<string, { value?: number }>(
+      (snapshot?.metrics || []).map((metric: Any) => [String(metric?.id || ""), metric as { value?: number }]),
+    );
+    return (
+      Number(byId.get("knowledge_growth")?.value || 0) > 0 ||
+      Number(byId.get("task_success_rate")?.value || 0) > 0 ||
+      Number(byId.get("adaptation_velocity")?.value || 0) > 0 ||
+      Number(byId.get("correction_rate")?.value || 0) > 0
+    );
+  }
+
   private dedupeBriefingItems(
     items: Any[],
     keyFn: (item: Any) => string,
@@ -185,10 +390,18 @@ export class DailyBriefingService {
     const failed = tasks.filter((t: Any) => t.status === "failed");
     const pending = tasks.filter((t: Any) => t.status === "pending" || t.status === "queued");
     const running = tasks.filter((t: Any) => t.status === "running" || t.status === "executing");
+    const notableFailed = failed.filter((task: Any) => !this.isBackgroundTask(task.title));
+    const backgroundFailedCount = failed.length - notableFailed.length;
+    const workspaceCount = new Set(
+      tasks.map((task: Any) => this.formatWorkspaceLabel(task)).filter(Boolean),
+    ).size;
 
     const items: BriefingItem[] = [];
     if (completed.length > 0)
-      items.push({ label: `${completed.length} completed`, status: "completed" });
+      items.push({
+        label: `${completed.length} completed${workspaceCount > 1 ? ` across ${workspaceCount} workspaces` : ""}`,
+        status: "completed",
+      });
     if (running.length > 0)
       items.push({ label: `${running.length} in progress`, status: "running" });
     if (pending.length > 0) items.push({ label: `${pending.length} pending`, status: "pending" });
@@ -196,14 +409,24 @@ export class DailyBriefingService {
       items.push({
         label: `${failed.length} failed`,
         status: "failed",
-        detail: failed.map((t: Any) => t.title).join(", "),
+        detail: [
+          notableFailed.length > 0 ? notableFailed.map((t: Any) => t.title).join(", ") : null,
+          backgroundFailedCount > 0
+            ? `${backgroundFailedCount} background automation failure${backgroundFailedCount === 1 ? "" : "s"}`
+            : null,
+        ]
+          .filter(Boolean)
+          .join(" · ") || undefined,
       });
 
-    // Top 5 recent completions
+    const notableCompleted = completed
+      .filter((task: Any) => !this.isBackgroundTask(task.title))
+      .sort((a: Any, b: Any) => this.outcomeScore(b) - this.outcomeScore(a));
+    const backgroundCompletedCount = completed.length - notableCompleted.length;
     for (const t of this.dedupeBriefingItems(
-      completed.slice(0, 20),
+      notableCompleted.slice(0, 20),
       (item) => this.stripWorkspacePrefix(item.title || ""),
-      5,
+      3,
     )) {
       items.push({
         label: this.prefixWorkspace(t, t.title),
@@ -211,16 +434,31 @@ export class DailyBriefingService {
         link: { taskId: t.id },
       });
     }
+    if (backgroundCompletedCount > 0) {
+      items.push({
+        label: `${backgroundCompletedCount} background automation task${backgroundCompletedCount === 1 ? "" : "s"} completed`,
+        status: "info",
+      });
+    }
 
-    return { type: "task_summary", title: "Task Summary (24h)", items, enabled: true };
+    return { type: "task_summary", title: "Executive Summary", items, enabled: true };
   }
 
   private buildMemoryHighlights(workspaceId: string): BriefingSection {
     const memories = this.dedupeBriefingItems(
       [
         ...this.deps.searchMemory(workspaceId, "recent learning insight", 5),
-        ...this.deps.searchMemory(workspaceId, "preference correction workflow timing", 5),
-      ],
+        ...this.deps.searchMemory(workspaceId, "workflow pattern", 5),
+        ...this.deps.searchMemory(workspaceId, "preference correction", 5),
+        ...this.deps.searchMemory(workspaceId, "constraint", 5),
+      ].filter((memory: Any) => {
+        const type = String(memory?.type || "");
+        if (!["preference", "constraint", "timing_preference", "workflow_pattern", "correction_rule"].includes(type)) {
+          return false;
+        }
+        const text = memory?.summary || memory?.content || memory?.snippet || "";
+        return !this.isLowSignalText(text);
+      }),
       (item) =>
         `${item.id || ""}::${this.stripWorkspacePrefix(item.summary || item.content || item.snippet || "")}`,
       6,
@@ -239,7 +477,7 @@ export class DailyBriefingService {
         .join(" · ") || undefined,
       status: "info" as const,
     }));
-    return { type: "memory_highlights", title: "Memory Highlights", items, enabled: true };
+    return { type: "memory_highlights", title: "Durable Changes", items, enabled: true };
   }
 
   private buildSuggestions(workspaceId: string): BriefingSection {
@@ -253,28 +491,29 @@ export class DailyBriefingService {
       return combinedB - combinedA;
     });
     const items: BriefingItem[] = this.dedupeBriefingItems(
-      suggestions.slice(0, 20).map((s: Any) => ({
+      suggestions
+        .filter((s: Any) => this.isUsefulSuggestion(s))
+        .slice(0, 20)
+        .map((s: Any) => ({
         ...s,
         label: this.prefixWorkspace(s, s.title || s.description),
       })),
       (item) =>
-        `${this.stripWorkspacePrefix(item.label || item.title || "")}::${this.stripWorkspacePrefix(
+        `${this.normalizeSemanticText(item.label || item.title || "")}::${this.normalizeSemanticText(
           item.detail || item.description || "",
         )}`,
-      5,
+      3,
     ).map((s: Any) => ({
-      label: s.label,
+      label: this.stripMarkdownFormatting(s.label),
       detail: [
         s.description || "",
-        s.recommendedDelivery ? `Delivery: ${s.recommendedDelivery}` : null,
-        typeof s.confidence === "number" ? `Confidence: ${Math.round(s.confidence * 100)}%` : null,
         s.workspaceName ? `Workspaces: ${s.workspaceName}` : null,
       ]
         .filter(Boolean)
         .join(" · "),
       status: "info" as const,
     }));
-    return { type: "active_suggestions", title: "Active Suggestions", items, enabled: true };
+    return { type: "active_suggestions", title: "Recommended Next Actions", items, enabled: true };
   }
 
   private describeMemoryType(type: string | undefined): string {
@@ -314,19 +553,30 @@ export class DailyBriefingService {
   private buildPriorities(workspaceId: string): BriefingSection {
     const raw = this.deps.getPriorities(workspaceId);
     if (!raw) return { type: "priority_review", title: "Priorities", items: [], enabled: true };
-    const lines = raw.split("\n").filter((l) => l.trim() && !l.startsWith("#"));
+    const lines = this.parsePriorityLines(raw);
+    const ranked = lines
+      .map((line: string, index: number) => ({ line, index, score: this.priorityScore(line, index) }))
+      .sort((a, b) => b.score - a.score || a.index - b.index);
     const items: BriefingItem[] = this.dedupeBriefingItems(
-      lines.slice(0, 20).map((line: string) => ({
+      ranked.slice(0, 12).map(({ line }: { line: string }) => ({
         label: line.replace(/^[-*\d.]+\s*/, "").trim(),
       })),
       (item) => this.stripWorkspacePrefix(item.label || ""),
-      10,
+      5,
     ).map((item: Any) => ({
       label: item.label,
       detail: item.workspaceName ? `Workspaces: ${item.workspaceName}` : undefined,
       status: "info" as const,
     }));
-    return { type: "priority_review", title: "Priorities", items, enabled: true };
+    const hiddenCount = Math.max(0, lines.length - items.length);
+    if (hiddenCount > 0) {
+      items.push({
+        label: `${hiddenCount} lower-immediacy priorities hidden`,
+        detail: "Showing the most action-ready priorities first.",
+        status: "info",
+      });
+    }
+    return { type: "priority_review", title: "Strategic Priorities", items, enabled: true };
   }
 
   private async buildUpcomingJobs(workspaceId: string): Promise<BriefingSection> {
@@ -412,14 +662,19 @@ export class DailyBriefingService {
       }
 
       const items: BriefingItem[] = [];
-      if (summary.currentFocus) {
-        items.push({
-          label: `Current focus: ${summary.currentFocus}`,
-          status: "running",
-        });
-      }
-
-      for (const entry of summary.whatMattersNow?.slice(0, 4) || []) {
+      const riskSignals = (summary.whatMattersNow || [])
+        .filter((item: Any) => this.isUsefulAwarenessItem(item))
+        .filter((item: Any) => {
+          const tags = Array.isArray(item?.tags) ? item.tags.map((tag: unknown) => String(tag).toLowerCase()) : [];
+          const text = `${item?.title || ""} ${item?.detail || ""}`;
+          return (
+            tags.includes("deadline") ||
+            tags.includes("due_soon") ||
+            /\b(block|blocked|risk|failure|failing|timeout|urgent|deadline|error)\b/i.test(text)
+          );
+        })
+        .slice(0, 3);
+      for (const entry of riskSignals) {
         items.push({
           label: entry.title,
           detail: entry.detail,
@@ -428,6 +683,7 @@ export class DailyBriefingService {
       }
 
       for (const entry of summary.dueSoon?.slice(0, 3) || []) {
+        if (!this.isUsefulAwarenessItem(entry)) continue;
         items.push({
           label: entry.title,
           detail: entry.detail,
@@ -435,43 +691,54 @@ export class DailyBriefingService {
         });
       }
 
-      for (const goal of autonomyState?.goals?.slice(0, 3) || []) {
+      const usefulGoals = (autonomyState?.goals || [])
+        .map((goal: Any) => ({ ...goal, _score: this.goalScore(goal) }))
+        .filter((goal: Any) => goal._score > 0)
+        .sort((a: Any, b: Any) => b._score - a._score)
+        .slice(0, 2);
+      for (const goal of usefulGoals) {
         items.push({
-          label: `Goal: ${goal.title}`,
+          label: `${goal.status === "blocked" ? "Blocked goal" : "Active goal"}: ${this.normalizeSemanticText(goal.title)}`,
           detail: `Status ${goal.status}, confidence ${Math.round((goal.confidence || 0) * 100)}%`,
           status: goal.status === "blocked" ? "failed" : "info",
         });
       }
 
-      for (const routine of autonomyState?.routines?.slice(0, 2) || []) {
-        items.push({
-          label: `Routine: ${routine.title}`,
-          detail: routine.description,
-          status: "info",
-        });
-      }
-
-      for (const decision of autonomyDecisions.slice(0, 3)) {
-        items.push({
-          label: `Next action: ${decision.title}`,
-          detail: decision.description,
-          status: decision.priority === "high" ? "pending" : "info",
-        });
-      }
-
       const deduped = this.dedupeBriefingItems(
         items,
-        (item) => `${this.stripWorkspacePrefix(item.label || "")}::${this.stripWorkspacePrefix(item.detail || "")}`,
-        10,
+        (item) => `${this.normalizeSemanticText(item.label || "")}::${this.normalizeSemanticText(item.detail || "")}`,
+        4,
       ).map((item: Any) => ({
-        label: item.label,
+        label: this.stripMarkdownFormatting(item.label),
         detail:
           item.detail ||
           (item.workspaceName ? `Workspaces: ${item.workspaceName}` : undefined),
         status: item.status,
       }));
 
-      return { type: "awareness_digest", title: "Awareness Digest", items: deduped, enabled: true };
+      const usefulDecisions = autonomyDecisions
+        .map((decision: Any) => ({ ...decision, _score: this.decisionScore(decision) }))
+        .filter((decision: Any) => decision._score > 0)
+        .sort((a: Any, b: Any) => b._score - a._score)
+        .slice(0, 2);
+      for (const decision of usefulDecisions) {
+        deduped.push({
+          label: `Decision needed: ${this.normalizeSemanticText(decision.title)}`,
+          detail: this.normalizeSemanticText(decision.description),
+          status: decision.priority === "high" ? "pending" : "info",
+        });
+      }
+
+      return {
+        type: "awareness_digest",
+        title: "Needs Attention Today",
+        items: this.dedupeBriefingItems(
+          deduped,
+          (item) => `${this.normalizeSemanticText(item.label || "")}::${this.normalizeSemanticText(item.detail || "")}`,
+          4,
+        ),
+        enabled: true,
+      };
     } catch (error) {
       this.log("[DailyBriefing] buildAwarenessDigest skipped:", error);
       return { type: "awareness_digest", title: "Awareness Digest", items: [], enabled: true };
@@ -496,6 +763,9 @@ export class DailyBriefingService {
         EvolutionMetricsService.computeSnapshot(workspaceId),
         timeoutPromise,
       ]);
+      if (!this.evolutionHasEnoughSignal(snapshot)) {
+        return { type: "evolution_metrics", title: "Agent Evolution", items: [], enabled: true };
+      }
 
       const items: BriefingItem[] = snapshot.metrics.map((m) => ({
         label: `${m.label}: ${m.value}${m.unit}`,

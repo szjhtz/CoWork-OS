@@ -548,6 +548,13 @@ export class SubconsciousDecisionRepository {
 export class SubconsciousBacklogRepository {
   constructor(private readonly db: Database.Database) {}
 
+  private static normalizeDuplicateKeyPart(value: string | undefined): string {
+    return String(value || "")
+      .trim()
+      .replace(/\s+/g, " ")
+      .toLowerCase();
+  }
+
   create(
     input: Omit<SubconsciousBacklogItem, "id" | "createdAt" | "updatedAt"> & {
       id?: string;
@@ -582,6 +589,36 @@ export class SubconsciousBacklogRepository {
     return item;
   }
 
+  createOrRefreshOpen(
+    input: Omit<SubconsciousBacklogItem, "id" | "createdAt" | "updatedAt"> & {
+      id?: string;
+      createdAt?: number;
+      updatedAt?: number;
+    },
+  ): SubconsciousBacklogItem {
+    const duplicate = this.findOpenDuplicate(
+      input.targetKey,
+      input.title,
+      input.summary,
+      input.executorKind,
+    );
+    if (!duplicate) {
+      return this.create(input);
+    }
+    this.update(duplicate.id, {
+      title: input.title,
+      summary: input.summary,
+      status: "open",
+      priority: Math.max(duplicate.priority, input.priority),
+      executorKind: input.executorKind,
+      sourceRunId: input.sourceRunId || duplicate.sourceRunId,
+    });
+    const refreshed = this.db
+      .prepare("SELECT * FROM subconscious_backlog_items WHERE id = ?")
+      .get(duplicate.id) as Any;
+    return refreshed ? this.mapRow(refreshed) : duplicate;
+  }
+
   listByTarget(targetKey: string, limit?: number): SubconsciousBacklogItem[] {
     const limitSql = limit ? `LIMIT ${Math.max(1, limit)}` : "";
     const rows = this.db
@@ -612,6 +649,34 @@ export class SubconsciousBacklogRepository {
       )
       .run(targetKey);
     return Number(result.changes || 0);
+  }
+
+  dedupeOpenByTarget(targetKey: string): number {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM subconscious_backlog_items
+         WHERE target_key = ? AND status = 'open'
+         ORDER BY updated_at DESC, created_at DESC, priority DESC`,
+      )
+      .all(targetKey) as Any[];
+    const seen = new Map<string, SubconsciousBacklogItem>();
+    let deleted = 0;
+    for (const row of rows) {
+      const item = this.mapRow(row);
+      const key = this.toDuplicateKey(item.targetKey, item.title, item.summary, item.executorKind);
+      const existing = seen.get(key);
+      if (!existing) {
+        seen.set(key, item);
+        continue;
+      }
+      this.update(existing.id, {
+        priority: Math.max(existing.priority, item.priority),
+        sourceRunId: existing.sourceRunId || item.sourceRunId,
+      });
+      this.db.prepare("DELETE FROM subconscious_backlog_items WHERE id = ?").run(item.id);
+      deleted += 1;
+    }
+    return deleted;
   }
 
   update(id: string, updates: Partial<SubconsciousBacklogItem>): void {
@@ -655,6 +720,41 @@ export class SubconsciousBacklogRepository {
       createdAt: Number(row.created_at || Date.now()),
       updatedAt: Number(row.updated_at || Date.now()),
     };
+  }
+
+  private findOpenDuplicate(
+    targetKey: string,
+    title: string,
+    summary: string,
+    executorKind?: SubconsciousBacklogItem["executorKind"],
+  ): SubconsciousBacklogItem | undefined {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM subconscious_backlog_items
+         WHERE target_key = ? AND status = 'open'
+         ORDER BY updated_at DESC, created_at DESC`,
+      )
+      .all(targetKey) as Any[];
+    const duplicateKey = this.toDuplicateKey(targetKey, title, summary, executorKind);
+    const row = rows.find((candidate) => {
+      const item = this.mapRow(candidate);
+      return this.toDuplicateKey(item.targetKey, item.title, item.summary, item.executorKind) === duplicateKey;
+    });
+    return row ? this.mapRow(row) : undefined;
+  }
+
+  private toDuplicateKey(
+    targetKey: string,
+    title: string,
+    summary: string,
+    executorKind?: SubconsciousBacklogItem["executorKind"],
+  ): string {
+    return [
+      SubconsciousBacklogRepository.normalizeDuplicateKeyPart(targetKey),
+      SubconsciousBacklogRepository.normalizeDuplicateKeyPart(title),
+      SubconsciousBacklogRepository.normalizeDuplicateKeyPart(summary),
+      SubconsciousBacklogRepository.normalizeDuplicateKeyPart(executorKind),
+    ].join("::");
   }
 }
 

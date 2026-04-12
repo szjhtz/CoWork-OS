@@ -344,6 +344,7 @@ export class SubconsciousLoopService {
       if (data.target.kind === "code_workspace") {
         this.backlogRepo.deleteLegacyNoiseByTarget(targetKey);
       }
+      this.backlogRepo.dedupeOpenByTarget(targetKey);
       const evidence = data.evidence
         .sort((a, b) => b.createdAt - a.createdAt)
         .filter((item, index, items) => items.findIndex((other) => other.fingerprint === item.fingerprint) === index);
@@ -393,6 +394,11 @@ export class SubconsciousLoopService {
         deduped.outcome || "",
       )
     ) {
+      this.targetRepo.update(target.key, {
+        nextEligibleAt: this.computeNextEligibleAt(target, now()),
+        lastActionAt: now(),
+        backlogCount: this.backlogRepo.countOpenByTarget(target.key),
+      });
       logger.info("Run deduplicated", {
         targetKey: target.key,
         runId: deduped.id,
@@ -965,6 +971,13 @@ export class SubconsciousLoopService {
 
   private computeNextEligibleAt(target: SubconsciousTargetSummary, completedAt: number): number {
     return completedAt + this.getSettings().cadenceMinutes * 60 * 1000 + (target.jitterMs || 0);
+  }
+
+  private hasFreshActionableEvidence(target: SubconsciousTargetSummary): boolean {
+    const latestEvidenceAt = (this.latestEvidenceByTarget.get(target.key) || [])[0]?.createdAt || target.lastEvidenceAt || 0;
+    if (!latestEvidenceAt) return false;
+    const freshnessWindowMs = Math.max(this.getSettings().cadenceMinutes * 60 * 1000, 12 * 60 * 60 * 1000);
+    return now() - latestEvidenceAt <= freshnessWindowMs;
   }
 
   private computeExpiryAt(latestEvidenceAt?: number): number | undefined {
@@ -1820,9 +1833,9 @@ export class SubconsciousLoopService {
 
   private isTargetActionable(target: SubconsciousTargetSummary): boolean {
     const evidenceCount = this.latestEvidenceByTarget.get(target.key)?.length || 0;
-    if (target.backlogCount > 0) return true;
     if (evidenceCount > 0) return true;
-    if (target.lastMeaningfulOutcome === "defer") return true;
+    if (target.backlogCount > 0) return this.hasFreshActionableEvidence(target);
+    if (target.lastMeaningfulOutcome === "defer") return this.hasFreshActionableEvidence(target);
     return false;
   }
 
@@ -1985,7 +1998,7 @@ export class SubconsciousLoopService {
     executorKind?: SubconsciousDispatchKind,
   ): SubconsciousBacklogItem[] {
     const items = decision.nextBacklog.map((entry, index) =>
-      this.backlogRepo.create({
+      this.backlogRepo.createOrRefreshOpen({
         targetKey,
         title: index === 0 ? "Keep the winner durable" : `Backlog step ${index + 1}`,
         summary: entry,

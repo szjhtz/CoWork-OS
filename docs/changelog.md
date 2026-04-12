@@ -7,9 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.35] - 2026-04-12
+
+### Added
+- **Release notes for 0.5.35**: see [Release Notes 0.5.35](release-notes-0.5.35.md).
+- **Managed Agents and Managed Sessions**: CoWork now includes versioned managed-agent definitions, durable managed-session runtime plumbing, and Mission Control/control-plane surfaces for operating longer-lived reusable agents.
+- **Optional Supermemory integration**: Supermemory can now act as an external memory lane with setup flows, tool exposure, runtime metadata, Memory Hub controls, and prompt-time profile context injection.
+- **Task Trace Debugger**: a new debugger surface exposes trace requests, projections, formatting helpers, and renderer tabs for inspecting task execution traces directly in the app.
+- **Bundled `novelist` skill and CoWork School guide**: the shipped skill set now includes a novelist workflow, and the docs now include a beginner-oriented `cowork-school` guide.
+
 ### Changed
-- **Claude-style turn budgets**: main interactive tasks no longer receive implicit strategy-derived `maxTurns` windows. `maxTurns` and `windowTurnCap` are now explicit-only caps, while uncapped tasks rely on lifetime limits, emergency fuses, and existing recovery safeguards.
-- **Runtime telemetry and docs**: turn-budget events and documentation now distinguish explicit capped runs from default-unbounded main-task execution.
+- **Explicit-only turn budgets**: main interactive tasks no longer receive implicit strategy-derived `maxTurns` windows. `maxTurns` and `windowTurnCap` are now explicit-only caps, while uncapped tasks rely on lifetime limits, emergency fuses, and existing recovery safeguards.
+- **Runtime telemetry and docs**: turn-budget events, runtime docs, and session/runtime ownership docs now distinguish explicit capped runs from default-unbounded main-task execution more clearly.
+- **Renderer task-event playback**: renderer event handling now batches, throttles, and derives UI state more aggressively so larger task histories replay more smoothly.
+- **Mission Control, Memory Hub, and provider settings**: the UI now surfaces Supermemory controls, trace-debugger controls, provider-specific failover chains, updated lane actions, and more consistent board-card/task summaries.
+- **Daily briefings and context quality**: briefing generation now favors higher-signal context and filters low-signal background automation noise more aggressively.
+- **Release and packaging guidance**: docs and packaging scripts now better enforce artifact-name consistency and local release validation.
+
+### Fixed
+- **Release smoke installs**: restored the Electron runtime as an installed dependency so `npm run release:smoke` no longer falls back into dependency bootstrap on clean consumer installs.
+- **Chat MCP discovery**: fixed MCP tool discovery inside chat sessions.
+- **Workspace path recovery**: stale absolute file paths can now be remapped into the active workspace more reliably during file reads.
+- **Executor/runtime edge cases**: completion evidence checks, pending skill-parameter handling, iCloud execution routing, and extra JSON Schema keys in tool definitions are handled more safely.
+- **Remote/task data cleanup**: remote shadow-task pruning now deletes only rows covered by the fetched remote window.
 
 ## [0.5.34] - 2026-04-08
 
@@ -918,7 +938,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | 0.1.0 | 2025-01-24 | First public release with core features |
 | 0.0.1 | 2025-01-20 | Initial development setup |
 
-[Unreleased]: https://github.com/CoWork-OS/CoWork-OS/compare/v0.5.34...HEAD
+[Unreleased]: https://github.com/CoWork-OS/CoWork-OS/compare/v0.5.35...HEAD
+[0.5.35]: https://github.com/CoWork-OS/CoWork-OS/releases/tag/v0.5.35
 [0.5.34]: https://github.com/CoWork-OS/CoWork-OS/releases/tag/v0.5.34
 [0.5.23]: https://github.com/CoWork-OS/CoWork-OS/releases/tag/v0.5.23
 [0.5.19]: https://github.com/CoWork-OS/CoWork-OS/releases/tag/v0.5.19

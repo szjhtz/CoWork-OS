@@ -45,8 +45,8 @@ hero:
       text: Supermemory
       link: /supermemory
     - theme: alt
-      text: Release Notes 0.5.34
-      link: /release-notes-0.5.34
+      text: Release Notes 0.5.35
+      link: /release-notes-0.5.35
     - theme: alt
       text: Heartbeat v3
       link: /heartbeat-v3
@@ -80,8 +80,8 @@ features:
     details: SessionRuntime owns task-session state, session checklists, visible-tool render caching, prompt-cache state, resume snapshots, and task projection while the turn kernel handles each active turn; sectioned prompts, stable-prefix prompt caching, graph-backed delegation, typed worker roles, semantic batch summaries, and terminal-state-safe resume logic keep execution, verification, and follow-up work coherent.
   - title: Managed Agents
     details: Versioned managed agents, reusable local environments, and durable managed sessions now sit on top of the existing task runtime through the control plane, while Mission Control and task surfaces observe the same backing tasks and team runs.
-  - title: Latest Release 0.5.34
-    details: Includes the new core automation and continual-learning layer, Karpathy-inspired `LLM Wiki` vaults, the bundled `manim-video` skill, expanded memory and recall services, and the latest runtime, security, and release-hardening updates.
+  - title: Latest Release 0.5.35
+    details: Includes Managed Agents and Managed Sessions, optional Supermemory integration, the Task Trace Debugger, the bundled `novelist` skill, explicit-only turn-budget controls, and the latest renderer, briefing, and release-hardening updates.
   - title: Inbox Agent
     details: Local-first email triage with AI classification, action-needed and commitment queues, draft review, and resync-safe background sync.
   - title: Managed Devices

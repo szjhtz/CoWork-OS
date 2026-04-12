@@ -22,7 +22,7 @@
 <p align="center">
   <a href="docs/getting-started.md">Getting Started</a> &middot;
   <a href="docs/showcase.md">Use Cases</a> &middot;
-  <a href="docs/release-notes-0.5.34.md">Release Notes 0.5.34</a> &middot;
+  <a href="docs/release-notes-0.5.35.md">Release Notes 0.5.35</a> &middot;
   <a href="docs/integration-skill-bootstrap-lifecycle.md">Platform Updates</a> &middot;
   <a href="docs/">Documentation</a> &middot;
   <a href="CHANGELOG.md">Changelog</a> &middot;
@@ -82,7 +82,7 @@ See [Core Automation](docs/core-automation.md), [I Gave CoWork OS A Subconscious
 
 ### Latest Release
 
-**`0.5.34`** packages the new core automation and continual-learning layer, Karpathy-inspired `LLM Wiki` vaults, the bundled `manim-video` skill, expanded memory and recall services, and the latest runtime, security, and release-hardening updates into a publishable release. Start with [Release Notes 0.5.34](docs/release-notes-0.5.34.md), then [Features](docs/features.md), [Getting Started](docs/getting-started.md), [Channels](docs/channels.md), and the [Changelog](CHANGELOG.md).
+**`0.5.35`** packages Managed Agents and Managed Sessions, optional Supermemory integration, the Task Trace Debugger, the bundled `novelist` skill, explicit-only main-task turn budgets, and the latest renderer, briefing, and release-hardening updates into the latest release. Start with [Release Notes 0.5.35](docs/release-notes-0.5.35.md), then [Features](docs/features.md), [Getting Started](docs/getting-started.md), [Channels](docs/channels.md), and the [Changelog](CHANGELOG.md).
 
 ## Quick Start
 

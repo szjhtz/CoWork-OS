@@ -2784,6 +2784,97 @@ const FOCUSED_CARD_POOL: FocusedCard[] = [
     },
     category: "task",
   },
+  {
+    id: "morning-brief",
+    emoji: "☀️",
+    iconName: "calendar",
+    title: "Create a daily brief",
+    desc: "Inbox, calendar, tasks, and top priorities",
+    action: {
+      type: "prompt",
+      prompt:
+        "Create a daily brief for me. Use my calendar, inbox, tasks, and workspace context if they are connected. Include today's schedule, urgent messages, open commitments, and the top 3 actions to take next.",
+    },
+    category: "task",
+  },
+  {
+    id: "inbox-triage",
+    emoji: "📬",
+    iconName: "message",
+    title: "Triage my inbox",
+    desc: "Find urgent mail, drafts, and follow-ups",
+    action: {
+      type: "prompt",
+      prompt:
+        "Triage my inbox. If Gmail or another mailbox is connected, identify messages that need a reply, urgent decisions, follow-ups, waiting items, and safe archive candidates. Ask before taking any action.",
+    },
+    category: "task",
+  },
+  {
+    id: "slide-deck",
+    emoji: "🖥️",
+    iconName: "filetext",
+    title: "Make a slide deck",
+    desc: "Turn notes into a polished presentation",
+    action: {
+      type: "prompt",
+      prompt:
+        "Create a slide deck from material I provide. Ask for the audience and goal first, then build a clear outline, slide copy, speaker notes, and a polished deck artifact.",
+    },
+    category: "task",
+  },
+  {
+    id: "spreadsheet-model",
+    emoji: "📈",
+    iconName: "chart",
+    title: "Build a spreadsheet",
+    desc: "Create models, trackers, and summaries",
+    action: {
+      type: "prompt",
+      prompt:
+        "Build a spreadsheet for a workflow I describe. Ask for the inputs and decisions it needs to support, then create a structured workbook with formulas, summaries, and clear tabs.",
+    },
+    category: "task",
+  },
+  {
+    id: "transcribe-audio",
+    emoji: "🎧",
+    iconName: "filetext",
+    title: "Transcribe audio",
+    desc: "Extract notes, decisions, and action items",
+    action: {
+      type: "prompt",
+      prompt:
+        "Transcribe an audio or video file for me. After I share it, produce a clean transcript, key points, decisions, and action items.",
+    },
+    category: "task",
+  },
+  {
+    id: "build-automation",
+    emoji: "🔁",
+    iconName: "zap",
+    title: "Automate a workflow",
+    desc: "Turn repeated work into a routine",
+    action: {
+      type: "prompt",
+      prompt:
+        "Help me automate a repeated workflow. Ask what triggers it, what information it needs, what actions it should take, and where approval is required before anything sensitive happens.",
+    },
+    category: "task",
+  },
+  {
+    id: "decision-memo",
+    emoji: "⚖️",
+    iconName: "clipboard",
+    title: "Compare options",
+    desc: "Tradeoffs, risks, and a recommendation",
+    action: {
+      type: "prompt",
+      prompt:
+        "Help me compare options. I'll describe the decision, constraints, and candidates. Build a decision memo with tradeoffs, risks, unknowns, and a recommendation.",
+    },
+    category: "task",
+  },
 
   // --- Setup & integration suggestions ---
   {
@@ -2811,6 +2902,42 @@ const FOCUSED_CARD_POOL: FocusedCard[] = [
     title: "Connect Slack",
     desc: "Bring your AI into your team workspace",
     action: { type: "settings", tab: "slack" },
+    category: "setup",
+  },
+  {
+    id: "setup-google-workspace",
+    emoji: "📎",
+    iconName: "folder",
+    title: "Connect Google Workspace",
+    desc: "Use Gmail, Calendar, Drive, and Docs",
+    action: { type: "settings", tab: "integrations" },
+    category: "setup",
+  },
+  {
+    id: "setup-web-search",
+    emoji: "🌐",
+    iconName: "globe",
+    title: "Enable web search",
+    desc: "Let tasks fetch live information",
+    action: { type: "settings", tab: "search" },
+    category: "setup",
+  },
+  {
+    id: "setup-more-channels",
+    emoji: "💬",
+    iconName: "message",
+    title: "Connect more channels",
+    desc: "Add Teams, email, Signal, or Google Chat",
+    action: { type: "settings", tab: "morechannels" },
+    category: "setup",
+  },
+  {
+    id: "setup-connectors",
+    emoji: "🧰",
+    iconName: "sliders",
+    title: "Add app connectors",
+    desc: "Connect GitHub, Figma, Vercel, and more",
+    action: { type: "settings", tab: "integrations" },
     category: "setup",
   },
   {
@@ -2956,6 +3083,66 @@ const FOCUSED_CARD_POOL: FocusedCard[] = [
     category: "discover",
   },
   {
+    id: "discover-documents",
+    emoji: "📑",
+    iconName: "filetext",
+    title: "I can make files",
+    desc: "Docs, PDFs, slides, and spreadsheets",
+    action: {
+      type: "prompt",
+      prompt:
+        "Show me what kinds of documents, PDFs, slide decks, and spreadsheets you can create in this workspace.",
+    },
+    category: "discover",
+  },
+  {
+    id: "discover-images",
+    emoji: "🖼️",
+    iconName: "search",
+    title: "I can inspect images",
+    desc: "Upload screenshots, mockups, or photos",
+    action: {
+      type: "prompt",
+      prompt:
+        "I want to analyze an image or screenshot. Tell me what you can inspect and what details are useful to include when I upload it.",
+    },
+    category: "discover",
+  },
+  {
+    id: "discover-tests",
+    emoji: "✅",
+    iconName: "code",
+    title: "I can run checks",
+    desc: "Build, lint, test, and explain failures",
+    action: {
+      type: "prompt",
+      prompt:
+        "Check this project for quality issues. Inspect the available scripts, recommend the right build, lint, or test commands, and run the safest targeted checks.",
+    },
+    category: "discover",
+  },
+  {
+    id: "discover-automations",
+    emoji: "⏳",
+    iconName: "calendar",
+    title: "I can follow up",
+    desc: "Create scheduled and recurring work",
+    action: { type: "settings", tab: "scheduled" },
+    category: "discover",
+  },
+  {
+    id: "discover-vault",
+    emoji: "🗂️",
+    iconName: "book",
+    title: "I can grow a vault",
+    desc: "Save research, sources, and durable notes",
+    action: {
+      type: "prompt",
+      prompt: LLM_WIKI_EXPLORE_GUI_PROMPT,
+    },
+    category: "discover",
+  },
+  {
     id: "discover-multimodel",
     emoji: "🔄",
     iconName: "sliders",
@@ -2966,7 +3153,7 @@ const FOCUSED_CARD_POOL: FocusedCard[] = [
   },
 ];
 
-const CARDS_TO_SHOW = 6;
+const CARDS_TO_SHOW = 3;
 
 function shuffleArray<T>(arr: T[]): T[] {
   const shuffled = [...arr];
@@ -2978,15 +3165,12 @@ function shuffleArray<T>(arr: T[]): T[] {
 }
 
 function pickFocusedCards(pool: FocusedCard[], count: number): FocusedCard[] {
-  // Ensure a good mix: at least 3 tasks, 1-2 setup, 1 discover
+  // Ensure a good mix while respecting the requested card count.
   const tasks = shuffleArray(pool.filter((c) => c.category === "task"));
   const setup = shuffleArray(pool.filter((c) => c.category === "setup"));
   const discover = shuffleArray(pool.filter((c) => c.category === "discover"));
-  const picked: FocusedCard[] = [
-    ...tasks.slice(0, 3),
-    ...setup.slice(0, 1),
-    ...discover.slice(0, 1),
-  ];
+  const categoryPicks = [tasks[0], setup[0], discover[0]].filter(Boolean) as FocusedCard[];
+  const picked = categoryPicks.slice(0, count);
   // Fill remaining from the rest
   const usedIds = new Set(picked.map((c) => c.id));
   const remaining = shuffleArray(pool.filter((c) => !usedIds.has(c.id)));
@@ -5589,7 +5773,7 @@ function MainContentComponent({
   const [slashQuery, setSlashQuery] = useState("");
   const [slashTarget, setSlashTarget] = useState<{ start: number; end: number } | null>(null);
   const [slashSelectedIndex, setSlashSelectedIndex] = useState(0);
-  // Focused mode card pool - pick random 6 on mount
+  // Focused mode card pool - pick random cards on mount
   const focusedCards = useMemo(() => pickFocusedCards(FOCUSED_CARD_POOL, CARDS_TO_SHOW), []);
 
   // ── Rotating placeholder prompts (persona-aware engine) ──────────────

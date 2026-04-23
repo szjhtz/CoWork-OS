@@ -11601,11 +11601,15 @@ ${transcript}
   }
 
   private getDefaultPermissionMode(): PermissionMode {
-    const configuredDefault = PermissionSettingsManager.loadSettings().defaultMode;
     const executionMode = this.task?.agentConfig?.executionMode;
     if (executionMode === "plan" || executionMode === "analyze") {
       return "plan";
     }
+    const taskPermissionMode = this.task?.agentConfig?.permissionMode;
+    if (taskPermissionMode) {
+      return taskPermissionMode;
+    }
+    const configuredDefault = PermissionSettingsManager.loadSettings().defaultMode;
     return configuredDefault || "default";
   }
 

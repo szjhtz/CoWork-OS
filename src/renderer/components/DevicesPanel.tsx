@@ -982,7 +982,7 @@ export function DevicesPanel({
                     role="menuitem"
                   >
                     <span>/</span>
-                    <span>Custom Skills</span>
+                    <span>Skills</span>
                     <Zap size={14} className="dp-overflow-zap" />
                   </button>
                 </div>

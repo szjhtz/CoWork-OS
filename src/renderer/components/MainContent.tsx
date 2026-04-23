@@ -33,6 +33,7 @@ import {
   TaskDomain,
   InputRequest,
   QuotedAssistantMessage,
+  PermissionMode,
 } from "../../shared/types";
 import { parseLeadingSkillSlashCommand } from "../../shared/skill-slash-commands";
 import {
@@ -104,11 +105,14 @@ import {
 } from "../utils/task-event-derived";
 import {
   Check as CheckIcon,
+  ChevronDown,
   Loader2,
   MessageCircle,
   Play,
+  Plus,
   ListTodo,
   Search,
+  ShieldAlert,
   ShieldCheck,
   Bug,
   Sparkles,
@@ -2528,6 +2532,8 @@ function StructuredInputPromptCard({ request, onSubmit, onDismiss }: StructuredI
 
 interface CreateTaskOptions {
   autonomousMode?: boolean;
+  permissionMode?: PermissionMode;
+  shellAccess?: boolean;
   collaborativeMode?: boolean;
   multiLlmMode?: boolean;
   multiLlmConfig?: import("../../shared/types").MultiLlmConfig;
@@ -5764,6 +5770,7 @@ function MainContentComponent({
   const [multiLlmModeEnabled, setMultiLlmModeEnabled] = useState(false);
   const [chronicleEnabledForTask, setChronicleEnabledForTask] = useState(true);
   const [executionMode, setExecutionMode] = useState<ExecutionMode>("execute");
+  const [permissionAccessMode, setPermissionAccessMode] = useState<"default" | "full">("default");
   const [modeSuggestions, setModeSuggestions] = useState<ModeSuggestion[]>([]);
   const [suggestionsDismissed, setSuggestionsDismissed] = useState(false);
   const modeSuggestionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -6047,8 +6054,10 @@ function MainContentComponent({
   const lastSpokenMessageRef = useRef<string | null>(null);
   const skillsMenuRef = useRef<HTMLDivElement>(null);
   const workspaceDropdownRef = useRef<HTMLDivElement>(null);
+  const permissionDropdownRef = useRef<HTMLDivElement>(null);
   // Overflow menu state (welcome view only - no task)
   const [showOverflowMenu, setShowOverflowMenu] = useState(false);
+  const [showPermissionDropdown, setShowPermissionDropdown] = useState(false);
   const [overflowSubmenu, setOverflowSubmenu] = useState<"mode" | "domain" | null>(null);
   const overflowMenuRef = useRef<HTMLDivElement>(null);
   const overflowToggleBtnRef = useRef<HTMLButtonElement>(null);
@@ -7023,6 +7032,22 @@ function MainContentComponent({
     }
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [showWorkspaceDropdown]);
+
+  // Close permission dropdown on click outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (
+        permissionDropdownRef.current &&
+        !permissionDropdownRef.current.contains(e.target as Node)
+      ) {
+        setShowPermissionDropdown(false);
+      }
+    };
+    if (showPermissionDropdown) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [showPermissionDropdown]);
 
   // Close mode dropdown on click outside
   useEffect(() => {
@@ -8016,6 +8041,9 @@ function MainContentComponent({
           taskDomain,
           chronicleMode: chronicleEnabledForTask ? "inherit" : "disabled",
           videoGenerationMode: taskDomain === "media" ? true : undefined,
+          ...(permissionAccessMode === "full"
+            ? { permissionMode: "bypass_permissions", shellAccess: true }
+            : {}),
         };
         const baseOptions: CreateTaskOptions =
           multiLlmModeEnabled && multiLlmConfig
@@ -8034,6 +8062,7 @@ function MainContentComponent({
         setCollaborativeModeEnabled(false);
         setMultiLlmModeEnabled(false);
         setChronicleEnabledForTask(true);
+        setPermissionAccessMode("default");
         setMultiLlmConfig(null);
         setVerificationAgentEnabled(false);
       } else {
@@ -9179,21 +9208,76 @@ function MainContentComponent({
                     className="attachment-btn attachment-btn-left"
                     onClick={handleAttachFiles}
                     disabled={isUploadingAttachments}
-                    title="Attach files"
+                    title="Add files"
+                    aria-label="Add files"
                   >
-                    <svg
-                      width="18"
-                      height="18"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" />
-                    </svg>
+                    <Plus size={24} aria-hidden="true" />
                   </button>
+                  <div className="permission-dropdown-container" ref={permissionDropdownRef}>
+                    <button
+                      type="button"
+                      className={`permission-access-btn ${
+                        permissionAccessMode === "full" ? "full" : ""
+                      }`}
+                      onClick={() => setShowPermissionDropdown((open) => !open)}
+                      aria-haspopup="menu"
+                      aria-expanded={showPermissionDropdown}
+                      aria-label="Permission access mode"
+                      title={
+                        permissionAccessMode === "full"
+                          ? "Full access"
+                          : "Default permissions"
+                      }
+                    >
+                      {permissionAccessMode === "full" ? (
+                        <ShieldAlert size={18} aria-hidden="true" />
+                      ) : (
+                        <ShieldCheck size={18} aria-hidden="true" />
+                      )}
+                      <span>
+                        {permissionAccessMode === "full" ? "Full access" : "Default permissions"}
+                      </span>
+                      <ChevronDown size={16} aria-hidden="true" />
+                    </button>
+                    {showPermissionDropdown && (
+                      <div
+                        className="permission-access-dropdown"
+                        role="menu"
+                        aria-label="Permission access mode"
+                      >
+                        <button
+                          type="button"
+                          className={`permission-access-option ${
+                            permissionAccessMode === "default" ? "active" : ""
+                          }`}
+                          onClick={() => {
+                            setPermissionAccessMode("default");
+                            setShowPermissionDropdown(false);
+                          }}
+                          role="menuitemradio"
+                          aria-checked={permissionAccessMode === "default"}
+                        >
+                          <ShieldCheck size={16} aria-hidden="true" />
+                          <span>Default permissions</span>
+                        </button>
+                        <button
+                          type="button"
+                          className={`permission-access-option danger ${
+                            permissionAccessMode === "full" ? "active" : ""
+                          }`}
+                          onClick={() => {
+                            setPermissionAccessMode("full");
+                            setShowPermissionDropdown(false);
+                          }}
+                          role="menuitemradio"
+                          aria-checked={permissionAccessMode === "full"}
+                        >
+                          <ShieldAlert size={16} aria-hidden="true" />
+                          <span>Full access</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
                   {uiDensity === "focused" ? null : (
                     <>
                       <div className="workspace-dropdown-container" ref={workspaceDropdownRef}>
@@ -9612,7 +9696,7 @@ function MainContentComponent({
                         <button
                           className={`skills-menu-btn ${showSkillsMenu ? "active" : ""}`}
                           onClick={() => setShowSkillsMenu(!showSkillsMenu)}
-                          title="Custom Skills"
+                          title="Skills"
                         >
                           <span>/</span>
                         </button>
@@ -10002,10 +10086,10 @@ function MainContentComponent({
                     <button
                       className={`input-status-skills ${showSkillsMenu ? "active" : ""}`}
                       onClick={() => setShowSkillsMenu(!showSkillsMenu)}
-                      title="Custom Skills"
+                      title="Skills"
                     >
                       <span>/</span>
-                      <span>Custom Skills</span>
+                      <span>Skills</span>
                     </button>
                     {showSkillsMenu && (
                       <div className="skills-dropdown">

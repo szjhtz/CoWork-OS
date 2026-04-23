@@ -1922,6 +1922,8 @@ export interface AgentConfig {
   taskDomain?: TaskDomain;
   /** Whether to run with reduced friction in autonomous mode (auto-approve approval-gated tools) */
   autonomousMode?: boolean;
+  /** Optional per-task permission mode override. */
+  permissionMode?: PermissionMode;
   /**
    * Optional response quality loop for final text outputs:
    * - 1: draft only (default)

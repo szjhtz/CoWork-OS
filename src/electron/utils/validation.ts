@@ -180,6 +180,7 @@ export const AgentConfigSchema = z
       ])
       .optional(),
     autonomousMode: z.boolean().optional(),
+    permissionMode: PermissionModeSchema.optional(),
     qualityPasses: z
       .union([z.literal(1), z.literal(2), z.literal(3)])
       .optional(),

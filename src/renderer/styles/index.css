@@ -8224,6 +8224,10 @@ a,
   color: var(--color-text);
 }
 
+.input-status-shell svg {
+  display: none;
+}
+
 .input-status-shell.enabled {
   color: var(--color-text);
 }
@@ -11662,7 +11666,7 @@ button {
 .cli-input-wrapper {
   display: flex;
   align-items: center;
-  padding: 14px 16px;
+  padding: 6px 16px;
   gap: 10px;
   position: relative;
 }
@@ -11690,6 +11694,10 @@ button {
   flex: 1;
   padding: 0 !important;
   font-family: var(--font-mono) !important;
+}
+
+.cli-input-container .welcome-input {
+  min-height: 38px;
 }
 
 /* ── Active Mode Badge (footer indicator) ── */
@@ -11894,8 +11902,8 @@ button {
 
 /* CLI Input Footer */
 .cli-input-container .welcome-input-footer {
-  background: rgba(0, 0, 0, 0.2);
-  border-top: 1px solid var(--color-border-subtle);
+  background: transparent;
+  border-top: none;
 }
 
 .cli-input-container .folder-selector {
@@ -11938,18 +11946,17 @@ button {
 /* Welcome Input */
 .welcome-input-container {
   background: var(--color-bg-primary);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 20px;
+  padding: 5px 6px;
   transition:
     border-color 0.25s ease,
     box-shadow 0.25s ease;
 }
 
 .welcome-input-container:focus-within {
-  border-color: var(--color-accent);
-  box-shadow:
-    0 0 0 3px var(--color-accent-subtle),
-    0 2px 12px rgba(0, 0, 0, 0.1);
+  border-color: var(--color-border);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.04);
 }
 
 .welcome-input-container.drag-over {
@@ -11959,12 +11966,13 @@ button {
 
 .welcome-input {
   width: 100%;
-  padding: 14px 16px;
+  padding: 18px 20px 12px;
   background: transparent;
   border: none;
   color: var(--color-text);
   font-size: 14px;
   outline: none;
+  min-height: 56px;
 }
 
 .welcome-input::placeholder {
@@ -11975,14 +11983,160 @@ button {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 12px;
-  border-top: 1px solid var(--color-border-subtle);
+  padding: 3px 10px;
+  border-top: none;
 }
 
 .input-left-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
+}
+
+.permission-dropdown-container {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.permission-access-btn {
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 8px 0 4px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+
+.permission-access-btn:hover,
+.permission-access-btn[aria-expanded="true"] {
+  background: var(--color-bg-hover);
+  color: var(--color-text);
+}
+
+.permission-access-btn.full {
+  color: #e64a00;
+}
+
+.permission-access-btn.full:hover,
+.permission-access-btn.full[aria-expanded="true"] {
+  color: #e64a00;
+  background: rgba(230, 74, 0, 0.08);
+}
+
+.permission-access-btn svg {
+  flex-shrink: 0;
+}
+
+.cli-input-container .attachment-btn,
+.cli-input-container .permission-access-btn,
+.cli-input-container .model-selector,
+.cli-input-container .voice-input-btn,
+.cli-input-container .model-label-subtle {
+  border: none;
+  background: transparent;
+  box-shadow: none;
+}
+
+.cli-input-container .attachment-btn,
+.cli-input-container .voice-input-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 0;
+  color: var(--color-text-muted);
+}
+
+.cli-input-container .attachment-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.cli-input-container .attachment-btn:hover,
+.cli-input-container .voice-input-btn:hover:not(:disabled) {
+  background: transparent;
+  color: var(--color-text);
+}
+
+.cli-input-container .permission-access-btn:hover,
+.cli-input-container .permission-access-btn[aria-expanded="true"],
+.cli-input-container .model-selector:hover,
+.cli-input-container .model-label-subtle:hover {
+  background: transparent;
+  color: var(--color-text);
+}
+
+.cli-input-container .permission-access-btn.full:hover,
+.cli-input-container .permission-access-btn.full[aria-expanded="true"] {
+  background: transparent;
+  color: #e64a00;
+}
+
+.permission-access-dropdown {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 120;
+  min-width: 210px;
+  padding: 5px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-lg);
+}
+
+.permission-access-option {
+  width: 100%;
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 9px;
+  padding: 7px 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+
+.permission-access-option span {
+  flex: 0 1 auto;
+  text-align: left;
+}
+
+.permission-access-option:hover,
+.permission-access-option.active {
+  background: var(--color-bg-hover);
+  color: var(--color-text);
+}
+
+.permission-access-option.danger {
+  color: #e64a00;
+}
+
+.permission-access-option.danger:hover,
+.permission-access-option.danger.active {
+  background: rgba(230, 74, 0, 0.08);
+  color: #e64a00;
+}
+
+.permission-access-option svg {
+  flex-shrink: 0;
 }
 
 .input-right-actions {
@@ -12196,6 +12350,7 @@ button {
 }
 
 .shell-toggle svg {
+  display: none;
   opacity: 0.7;
 }
 
@@ -33859,7 +34014,7 @@ button {
 .visual-oblivion .cli-input-container .welcome-input-footer,
 .visual-oblivion .welcome-input-footer {
   background: var(--color-bg-primary);
-  border-top-color: var(--color-border);
+  border-top: none;
 }
 
 .visual-oblivion .attachment-btn,

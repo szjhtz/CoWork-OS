@@ -59,6 +59,7 @@ import {
   ExecutionMode,
   TaskDomain,
   LlmProfile,
+  PermissionMode,
 } from "../shared/types";
 import { TASK_EVENT_STATUS_MAP } from "../shared/task-event-status-map";
 import { applyPersistedLanguage } from "./i18n";
@@ -2316,6 +2317,8 @@ export function App() {
     prompt: string,
     options?: {
       autonomousMode?: boolean;
+      permissionMode?: PermissionMode;
+      shellAccess?: boolean;
       collaborativeMode?: boolean;
       multiLlmMode?: boolean;
       multiLlmConfig?: MultiLlmConfig;
@@ -2371,6 +2374,8 @@ export function App() {
     const taskDomain = options?.taskDomain;
     const chronicleMode = options?.chronicleMode;
     const videoGenerationMode = options?.videoGenerationMode === true;
+    const permissionMode = options?.permissionMode;
+    const shellAccess = options?.shellAccess === true;
     const llmProfile = options?.llmProfile;
     const llmProfileForced = options?.llmProfileForced;
     const trimmedSessionModelOverride = sessionModelOverride.trim();
@@ -2389,6 +2394,8 @@ export function App() {
       taskDomain ||
       chronicleMode ||
       videoGenerationMode ||
+      permissionMode ||
+      shellAccess ||
       effectiveLlmProfile
         ? {
             ...(effectiveSessionModelOverride ? { modelKey: effectiveSessionModelOverride } : {}),
@@ -2402,6 +2409,8 @@ export function App() {
             ...(taskDomain ? { taskDomain } : {}),
             ...(chronicleMode ? { chronicleMode } : {}),
             ...(videoGenerationMode ? { videoGenerationMode: true } : {}),
+            ...(permissionMode ? { permissionMode } : {}),
+            ...(shellAccess ? { shellAccess: true } : {}),
             ...(effectiveLlmProfile ? { llmProfile: effectiveLlmProfile } : {}),
             ...(effectiveLlmProfileForced ? { llmProfileForced: true } : {}),
           }

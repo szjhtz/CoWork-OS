@@ -2666,6 +2666,9 @@ export class AgentDaemon extends EventEmitter {
     if (task?.agentConfig?.executionMode === "plan" || task?.agentConfig?.executionMode === "analyze") {
       return "plan";
     }
+    if (task?.agentConfig?.permissionMode) {
+      return task.agentConfig.permissionMode;
+    }
     return PermissionSettingsManager.loadSettings().defaultMode || "default";
   }
 

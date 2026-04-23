@@ -1,11 +1,16 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import { createRequire } from "node:module";
 import net from "node:net";
+import path from "node:path";
 
 const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
 const DEFAULT_PORT = 5173;
 const MAX_PORT_SCAN_ATTEMPTS = 25;
 const REACT_READY_TIMEOUT_MS = 30_000;
+const cwdRequire = createRequire(path.join(process.cwd(), "package.json"));
 
 function parsePort(value, fallback = DEFAULT_PORT) {
   const parsed = Number.parseInt(String(value || ""), 10);
@@ -54,6 +59,51 @@ function pipePrefixedOutput(child, label) {
   child.stderr?.on("data", (chunk) => write(process.stderr, chunk));
 }
 
+function getElectronBinaryStatus() {
+  try {
+    const electronPkgJson = cwdRequire.resolve("electron/package.json");
+    const electronDir = path.dirname(electronPkgJson);
+    if (!fs.existsSync(electronDir)) {
+      return { installed: false, ready: false };
+    }
+  } catch {
+    return { installed: false, ready: false };
+  }
+
+  try {
+    const electronBinary = cwdRequire("electron");
+    return {
+      installed: true,
+      ready: typeof electronBinary === "string" && electronBinary.length > 0 && fs.existsSync(electronBinary),
+    };
+  } catch {
+    return { installed: true, ready: false };
+  }
+}
+
+function repairElectronInstall(env) {
+  process.stdout.write(
+    "[dev-start] Electron package is present but its binary is missing. Running native setup repair.\n",
+  );
+
+  const result = spawnSync(process.execPath, ["scripts/setup_native_driver.mjs"], {
+    cwd: process.cwd(),
+    env,
+    stdio: "inherit",
+  });
+
+  if ((result.status ?? 1) !== 0) {
+    throw new Error(`Native setup repair failed with exit code ${result.status ?? 1}.`);
+  }
+
+  const repairedStatus = getElectronBinaryStatus();
+  if (!repairedStatus.ready) {
+    throw new Error(
+      "Electron repair finished but the Electron binary is still missing. Run `npm run setup` and retry.",
+    );
+  }
+}
+
 async function waitForPort(port, timeoutMs) {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
@@ -84,6 +134,16 @@ const childEnv = {
   COWORK_DEV_SERVER_URL: devServerUrl,
 };
 delete childEnv.ELECTRON_RUN_AS_NODE;
+
+const electronStatus = getElectronBinaryStatus();
+if (electronStatus.installed && !electronStatus.ready) {
+  try {
+    repairElectronInstall(childEnv);
+  } catch (error) {
+    process.stderr.write(`[dev-start] ${error instanceof Error ? error.message : String(error)}\n`);
+    process.exit(1);
+  }
+}
 
 if (selectedPort !== requestedPort) {
   process.stdout.write(

@@ -131,4 +131,60 @@ export const STARTER_MISSIONS: StarterMission[] = [
     icon: "🎯",
     category: "planning",
   },
+  {
+    id: "daily-brief",
+    title: "Create a daily brief",
+    prompt:
+      "Create a daily brief for me. Use my calendar, inbox, tasks, and workspace context if they are connected. Include today's schedule, urgent messages, open commitments, and the top 3 actions to take next.",
+    icon: "☀️",
+    category: "productivity",
+  },
+  {
+    id: "inbox-triage",
+    title: "Triage my inbox",
+    prompt:
+      "Triage my inbox. If Gmail or another mailbox is connected, identify messages that need a reply, urgent decisions, follow-ups, waiting items, and safe archive candidates. Ask before taking any action.",
+    icon: "📬",
+    category: "productivity",
+  },
+  {
+    id: "slide-deck",
+    title: "Make a slide deck",
+    prompt:
+      "Create a slide deck from material I provide. Ask for the audience and goal first, then build a clear outline, slide copy, speaker notes, and a polished deck artifact.",
+    icon: "🖥️",
+    category: "writing",
+  },
+  {
+    id: "spreadsheet-model",
+    title: "Build a spreadsheet",
+    prompt:
+      "Build a spreadsheet for a workflow I describe. Ask for the inputs and decisions it needs to support, then create a structured workbook with formulas, summaries, and clear tabs.",
+    icon: "📈",
+    category: "planning",
+  },
+  {
+    id: "transcribe-audio",
+    title: "Transcribe audio",
+    prompt:
+      "Transcribe an audio or video file for me. After I share it, produce a clean transcript, key points, decisions, and action items.",
+    icon: "🎧",
+    category: "writing",
+  },
+  {
+    id: "build-automation",
+    title: "Automate a workflow",
+    prompt:
+      "Help me automate a repeated workflow. Ask what triggers it, what information it needs, what actions it should take, and where approval is required before anything sensitive happens.",
+    icon: "🔁",
+    category: "productivity",
+  },
+  {
+    id: "decision-memo",
+    title: "Compare options",
+    prompt:
+      "Help me compare options. I'll describe the decision, constraints, and candidates. Build a decision memo with tradeoffs, risks, unknowns, and a recommendation.",
+    icon: "⚖️",
+    category: "planning",
+  },
 ];

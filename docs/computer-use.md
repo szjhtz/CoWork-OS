@@ -17,14 +17,16 @@ Use computer use when the task clearly requires **a desktop GUI** that is not ex
 - **MCP connectors and APIs** for SaaS and internal systems
 - **`browser_*` tools** for web surfaces (even if the user says “browser” in passing)
 - **`run_command` / scripts** for file, git, and CLI workflows
-- **`open_application`** to launch an app; pair with `computer_*` only when the agent must then interact with that app’s UI
+- **`open_application`** to launch an app; pair with `screenshot`/`click`/`type_text` only when the agent must then interact with that app’s UI
 
-The planner and tool policy treat `computer_*` as a **controlled, last-resort lane**: tools stay deferred unless the task signals **native desktop GUI intent** (for example Calculator, System Settings, or “click the OK button in the native dialog”). That keeps routine coding and web work from accidentally taking the desktop-control path.
+The planner and tool policy treat the computer-use lane as a **controlled, last-resort path**: tools stay deferred unless the task signals **native desktop GUI intent** (for example Calculator, System Settings, or “click the OK button in the native dialog”). That keeps routine coding and web work from accidentally taking the desktop-control path.
+
+> If the task is not asking CoWork to click or type, but instead to understand a vague on-screen reference like `what is this`, `what's on the right side`, or `why is this failing`, see [Chronicle](chronicle.md). Chronicle shares the same Screen Recording prerequisite but resolves local screen context rather than driving the mouse and keyboard.
 
 ## Platform requirements
 
-- **macOS only** today. The `computer_*` family is not available on Windows or Linux builds in the same form.
-- **CoWork OS must be the app receiving OS permissions** (see below). Permissions are per-app; granting them to Terminal or another helper does not substitute.
+- **macOS only** today. The computer-use tool family is not available on Windows or Linux builds in the same form.
+- **The bundled helper binary receives macOS permissions** (see below). Granting Accessibility or Screen Recording to Terminal or another helper does not substitute.
 
 ## macOS permissions
 
@@ -32,13 +34,13 @@ Two system permissions gate computer use:
 
 | Permission | Why it matters |
 |------------|----------------|
-| **Accessibility** | Synthetic mouse and keyboard events and many automation paths require the app to be trusted for accessibility control. |
-| **Screen Recording** | Capturing the desktop for `computer_screenshot` and related flows uses Electron’s screen capture APIs, which macOS treats as screen recording. |
+| **Accessibility** | AX-first focus, press, and value-setting require the helper to be trusted for accessibility control. |
+| **Screen Recording** | Capturing the controlled window for `screenshot()` and follow-up action refreshes uses the helper’s ScreenCaptureKit path, which macOS treats as screen recording. |
 
 **Where to enable in the product**
 
-1. Open **Settings → Tools** (or the dedicated **Computer use** panel when present).
-2. Use the shortcuts into **System Settings** to enable **Accessibility** and **Screen Recording** for CoWork OS.
+1. Open **Settings → Tools → Computer use**.
+2. Use the shortcuts into **System Settings** to enable **Accessibility** and **Screen Recording** for the computer-use helper binary shown in settings.
 3. After changing **Screen Recording**, **quit and restart CoWork OS** if capture still fails—macOS sometimes caches the old state until restart.
 
 If a tool returns an error mentioning screen capture timeout or permission, re-check Screen Recording for this app and restart.
@@ -48,46 +50,36 @@ If a tool returns an error mentioning screen capture timeout or permission, re-c
 Computer use runs under a **single global session** on the machine:
 
 - Only **one** computer-use session is active at a time; starting control for a new task coordinates with the session manager.
-- When a session is active, a **translucent safety overlay** makes it obvious the agent is controlling the desktop.
 - **Esc** aborts the active computer-use session so you can interrupt quickly without hunting in the UI.
-- **Window isolation** and **shortcut guard** reduce the chance of stray clicks affecting the wrong surface or global hotkeys firing at the wrong time during automation.
+- **Sequential execution** and a **shortcut guard** reduce the chance of overlapping actions or global hotkeys firing at the wrong time during automation.
 
 The session is torn down when the task finishes or the session ends cleanly after abort.
 
-## Per-app consent (not per click)
-
-High-risk desktop automation uses **per-app session consent** instead of approving every single pointer or key event:
-
-- The first time the agent needs to affect a given **application** in a session, you may see a **consent dialog** with the app name and a suggested access tier.
-- **Consent is scoped to the current computer-use session** (and the app in question), not stored as unlimited forever-access without context.
-- You can choose a tier that matches risk:
-
-| Tier | Typical use |
-|------|-------------|
-| **`view_only`** | Screenshots and mouse movement only—no clicks or typing into that app. |
-| **`click_only`** | `computer_screenshot`, `computer_move_mouse`, and `computer_click` only—no `computer_type` or `computer_key`. |
-| **`full_control`** | Clicks, keys, and screenshots as needed for the flow—use only when you trust the task and the app. |
-| **`denied`** | Block automation for that app for the session. |
-
-The product may show **classifier-driven warnings** for sensitive surfaces (for example browsers, terminals/IDEs, Finder, or System Settings). Treat those as intentional friction: those apps amplify blast radius if mis-automated.
-
-## Built-in tools (`computer_*`)
+## Built-in tools
 
 All of these are part of the **`computer_use` built-in tool family**. They are registered together and can be enabled or prioritized alongside other built-in categories in **Settings → Tools → Built-in tools**.
 
 | Tool | Role |
 |------|------|
-| `computer_screenshot` | Capture the current desktop (or relevant surface) for vision-backed planning and verification. |
-| `computer_move_mouse` | Move the cursor without clicking—useful for hover states and safe positioning. |
-| `computer_click` | Click (including multi-click variants where supported). |
-| `computer_type` | Type text into the focused element. |
-| `computer_key` | Emit key chords or special keys; dangerous combinations are blocklisted at the tool layer. |
+| `screenshot` | Select or refresh the current controlled window and return a fresh screenshot plus `captureId`. |
+| `click` / `double_click` | Click inside the current controlled window using screenshot-relative coordinates. |
+| `move_mouse` | Move the pointer without clicking. |
+| `drag` | Drag through a screenshot-relative path in the controlled window. |
+| `scroll` | Scroll at a screenshot-relative point in the controlled window. |
+| `type_text` | Type or set text into the currently focused control. |
+| `keypress` | Emit key chords or special keys; dangerous combinations are blocklisted at the tool layer. |
+| `wait` | Pause briefly, then refresh the controlled-window screenshot. |
 
-Timeouts and error messages are designed to surface permission or capture issues clearly rather than failing silently.
+Key contract details:
+
+- Call `screenshot()` first.
+- All action coordinates are relative to the latest screenshot, not the whole desktop.
+- Successful actions return a new screenshot and `captureId`.
+- Passing a stale `captureId` fails with a refresh instruction.
 
 ## Related tools: `open_application`
 
-`open_application` can launch macOS apps by name or bundle id. For **native GUI workflows**, policy may allow `open_application` in the same steps as `computer_*` so the agent can start the target app before driving it. That is separate from **shell**-based AppleScript or one-off scripts: when the goal is **GUI interaction**, the product steers toward **`computer_*`** (and `open_application` when needed) rather than `run_applescript` as a first choice.
+`open_application` can launch macOS apps by name or bundle id. For **native GUI workflows**, policy may allow `open_application` in the same steps as `screenshot`/`click`/`type_text` so the agent can start the target app before driving it. That is separate from **shell**-based AppleScript or one-off scripts: when the goal is **GUI interaction**, the product steers toward the dedicated computer-use tools (and `open_application` when needed) rather than `run_applescript` as a first choice.
 
 ## Routing and planner behavior (operator mental model)
 
@@ -97,23 +89,24 @@ Rough order the stack encourages:
 2. **Browser tools** for web UIs.
 3. **Shell and file tools** for repo and CLI work.
 4. **`open_application`** when the missing piece is “the app is not running.”
-5. **`computer_*`** when the task still requires **native GUI** interaction.
+5. **`screenshot` + follow-up computer-use actions** when the task still requires **native GUI** interaction.
 
 **Native desktop GUI intent** is detected from the **user goal and step text** (not only from generic words like “browser” in strategy headers). Explicit mentions of native apps, windows, dialogs, or on-screen UI tend to unlock the computer-use lane; purely web or repo tasks should not.
 
 ## Settings checklist
 
 1. **Built-in tools**: Confirm the `computer_use` category is enabled if you want the agent to use this lane at all.
-2. **Permissions**: Accessibility + Screen Recording granted for CoWork OS; restart after Screen Recording changes if needed.
-3. **Risk tolerance**: Prefer **`view_only`** or **`click_only`** when full keyboard control is unnecessary.
+2. **Permissions**: Accessibility + Screen Recording granted for the helper binary; restart after Screen Recording changes if needed.
+3. **Operational model**: Expect a foreground-first controlled-window loop centered on `screenshot()` and the latest `captureId`.
+4. **Chronicle**: If your goal is contextual screen understanding rather than GUI control, enable **Settings > Memory Hub > Chronicle**, keep the dedicated **Chronicle** built-in tool category enabled, and test `screen_context_resolve` before forcing a computer-use flow.
 
 ## Security and abuse considerations
 
 Computer use is **high trust**: a mistaken or malicious task could operate any UI your user can reach. Mitigations include:
 
-- Session-wide overlay, Esc abort, and isolation/guard layers
-- Per-app tiers and warnings on sensitive app classes
-- Policy that keeps `computer_*` off the default path unless GUI intent is clear
+- Esc abort and single-session sequential execution
+- Helper-targeted permissions with inline bootstrap
+- Policy that keeps the computer-use lane off the default path unless GUI intent is clear
 - Blocklisted key combinations that could disrupt the session or OS
 
 For how this fits the wider tool-risk model, see [Security guide → Computer use](security-guide.md#computer-use-macos-security).
@@ -122,10 +115,11 @@ For how this fits the wider tool-risk model, see [Security guide → Computer us
 
 | Symptom | Things to check |
 |---------|------------------|
-| Screenshot or capture errors / timeouts | Screen Recording for CoWork OS; restart app after granting. |
-| Clicks or keys do nothing | Accessibility trust for CoWork OS; no other app stealing focus unexpectedly. |
+| Screenshot or capture errors / timeouts | Screen Recording for the helper path shown in settings; restart app after granting. |
+| Clicks or keys do nothing | Accessibility trust for the helper path shown in settings; no other app stealing focus unexpectedly. |
 | Agent uses shell or browser instead of desktop | Task may not read as native GUI; rephrase with explicit app/window/dialog language, or ensure built-in `computer_use` is enabled. |
-| Constant consent prompts | Expected when crossing **app** boundaries or escalating tier; not every click should prompt—that is by design. |
+| Agent asks for a screenshot when the task is really “what is this on screen?” | This may be a Chronicle case rather than a computer-use case; enable Chronicle and test `screen_context_resolve` with a clear on-screen prompt first. |
+| Permission bootstrap repeats | Re-check that both Accessibility and Screen Recording are granted to the helper binary, not just to CoWork OS or Terminal. |
 | Session feels “stuck” | Use **Esc** to abort the computer-use session, then cancel or adjust the task. |
 
 ## Implementation map (for contributors)
@@ -133,12 +127,11 @@ For how this fits the wider tool-risk model, see [Security guide → Computer us
 | Area | Location |
 |------|----------|
 | Tool definitions and execution | `src/electron/agent/tools/computer-use-tools.ts` |
-| Session lifecycle, overlay integration | `src/electron/computer-use/session-manager.ts`, `safety-overlay.ts`, `window-isolation.ts`, `shortcut-guard.ts` |
-| macOS permission helpers | `src/electron/computer-use/computer-use-permissions.ts` |
-| Per-app consent | `src/electron/security/app-permission-manager.ts`, renderer approval UI |
+| Helper runtime + permissions | `src/electron/computer-use/helper-runtime.ts`, `resources/computer-use/bridge.swift` |
+| Session lifecycle | `src/electron/computer-use/session-manager.ts`, `shortcut-guard.ts` |
 | Policy / routing | `src/electron/agent/tool-policy-engine.ts`, `src/electron/agent/executor.ts` |
-| Settings / IPC | `src/renderer/components/ComputerUseSettings.tsx`, `ComputerUseApprovalDialog.tsx`, IPC handlers |
+| Settings / IPC | `src/renderer/components/ComputerUseSettings.tsx`, IPC handlers |
 
 ---
 
-**See also:** [Architecture](architecture.md), [Features](features.md), [Security guide](security-guide.md), [Operator runtime visibility](operator-runtime-visibility.md).
+**See also:** [Chronicle](chronicle.md), [Architecture](architecture.md), [Features](features.md), [Security guide](security-guide.md), [Operator runtime visibility](operator-runtime-visibility.md).

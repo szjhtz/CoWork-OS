@@ -7,7 +7,7 @@
  *
  * Limitation: Electron's globalShortcut cannot intercept all macOS system
  * shortcuts (e.g. Cmd+Tab, Cmd+Space are handled by the OS before Electron
- * sees them). For those, the ComputerUseTools blocklist in computer_key
+ * sees them). For those, the ComputerUseTools blocklist in keypress
  * provides a secondary safety net.
  */
 

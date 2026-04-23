@@ -71,10 +71,10 @@ describe("BuiltinToolsSettingsManager - webfetch category", () => {
       expect(defaults.categories.search.priority).toBe("normal");
     });
 
-    it("should default to per-command run_command approval mode", () => {
+    it("should default to single-bundle run_command approval mode", () => {
       const defaults = BuiltinToolsSettingsManager.getDefaultSettings();
-      expect(defaults.runCommandApprovalMode).toBe("per_command");
-      expect(BuiltinToolsSettingsManager.getRunCommandApprovalMode()).toBe("per_command");
+      expect(defaults.runCommandApprovalMode).toBe("single_bundle");
+      expect(BuiltinToolsSettingsManager.getRunCommandApprovalMode()).toBe("single_bundle");
     });
 
     it("should default Codex runtime mode to native", () => {
@@ -154,18 +154,30 @@ describe("BuiltinToolsSettingsManager - webfetch category", () => {
       expect(toolsByCategory.search).toContain("web_search");
     });
 
-    it("should include computer_* tools in computer_use category", () => {
+    it("should include Pi-style computer-use tools in computer_use category", () => {
       const toolsByCategory = BuiltinToolsSettingsManager.getToolsByCategory();
 
       expect(toolsByCategory.computer_use).toBeDefined();
-      expect(toolsByCategory.computer_use).toContain("computer_screenshot");
-      expect(toolsByCategory.computer_use).toContain("computer_click");
-      expect(toolsByCategory.computer_use).toContain("computer_type");
+      expect(toolsByCategory.computer_use).toContain("screenshot");
+      expect(toolsByCategory.computer_use).toContain("click");
+      expect(toolsByCategory.computer_use).toContain("type_text");
+    });
+
+    it("should include screen_context_resolve in chronicle category", () => {
+      const toolsByCategory = BuiltinToolsSettingsManager.getToolsByCategory();
+
+      expect(toolsByCategory.chronicle).toBeDefined();
+      expect(toolsByCategory.chronicle).toContain("screen_context_resolve");
     });
 
     it("should default-enable computer_use category", () => {
       const defaults = BuiltinToolsSettingsManager.getDefaultSettings();
       expect(defaults.categories.computer_use.enabled).toBe(true);
+    });
+
+    it("should default-enable chronicle category", () => {
+      const defaults = BuiltinToolsSettingsManager.getDefaultSettings();
+      expect(defaults.categories.chronicle.enabled).toBe(true);
     });
   });
 

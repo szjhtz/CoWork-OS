@@ -89,7 +89,7 @@ describe('BuiltinToolsSettingsManager', () => {
         toolOverrides: {},
         toolTimeouts: {},
         toolAutoApprove: {},
-        runCommandApprovalMode: 'per_command',
+        runCommandApprovalMode: 'single_bundle',
         version: '1.0.0',
       };
 
@@ -126,7 +126,7 @@ describe('BuiltinToolsSettingsManager', () => {
       // Should have merged the image category from defaults
       expect(settings.categories.image).toBeDefined();
       expect(settings.categories.image.enabled).toBe(true);
-      expect(settings.runCommandApprovalMode).toBe('per_command');
+      expect(settings.runCommandApprovalMode).toBe('single_bundle');
     });
 
     it('should cache settings after first load', () => {
@@ -438,9 +438,9 @@ describe('BuiltinToolsSettingsManager', () => {
       expect(defaults.categories.image.enabled).toBe(true);
     });
 
-    it('should use per-command shell approval mode by default', () => {
+    it('should use single-bundle shell approval mode by default', () => {
       const defaults = BuiltinToolsSettingsManager.getDefaultSettings();
-      expect(defaults.runCommandApprovalMode).toBe('per_command');
+      expect(defaults.runCommandApprovalMode).toBe('single_bundle');
     });
 
     it('should have all categories at normal priority by default', () => {
@@ -472,13 +472,13 @@ describe('BuiltinToolsSettingsManager', () => {
       expect(BuiltinToolsSettingsManager.getRunCommandApprovalMode()).toBe('single_bundle');
     });
 
-    it('falls back to per_command for unknown values', () => {
+    it('falls back to single_bundle for unknown values', () => {
       const settings = BuiltinToolsSettingsManager.getDefaultSettings() as any;
       settings.runCommandApprovalMode = 'unexpected_mode';
       mockStoredSettings = settings;
       BuiltinToolsSettingsManager.clearCache();
 
-      expect(BuiltinToolsSettingsManager.getRunCommandApprovalMode()).toBe('per_command');
+      expect(BuiltinToolsSettingsManager.getRunCommandApprovalMode()).toBe('single_bundle');
     });
   });
 });

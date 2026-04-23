@@ -65,4 +65,11 @@ describe("runtime tool definition metadata", () => {
     expect(pdfMetadata.approvalKind).toBe("data_export");
     expect(pdfMetadata.sideEffectLevel).toBe("high");
   });
+
+  it("treats screen_context_resolve as a read-parallel local screen lookup", () => {
+    const metadata = getDefaultRuntimeToolMetadata("screen_context_resolve");
+    expect(metadata.readOnly).toBe(true);
+    expect(metadata.concurrencyClass).toBe("read_parallel");
+    expect(metadata.approvalKind).toBe("none");
+  });
 });

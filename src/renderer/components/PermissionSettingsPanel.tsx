@@ -6,6 +6,7 @@ import type {
   PermissionSettingsData,
   PersistedPermissionRule,
 } from "../../shared/types";
+import type { BuiltinToolsSettings as BuiltinToolsSettingsData } from "../../electron/agent/tools/builtin-settings";
 
 type RuleDraft = {
   effect: "allow" | "deny" | "ask";
@@ -17,9 +18,11 @@ type RuleDraft = {
   serverName: string;
 };
 
+type ApprovalExperiencePreset = "standard" | "fewer_prompts" | "custom";
+
 const DEFAULT_SETTINGS: PermissionSettingsData = {
   version: 1,
-  defaultMode: "default",
+  defaultMode: "dangerous_only",
   rules: [],
 };
 
@@ -82,8 +85,66 @@ export function buildScope(draft: RuleDraft): PermissionRuleScope {
   }
 }
 
+export function applyFewerApprovalPromptsPreset<T extends BuiltinToolsSettingsData>(
+  permissionSettings: PermissionSettingsData,
+  builtinSettings: T,
+): {
+  permissionSettings: PermissionSettingsData;
+  builtinSettings: T;
+} {
+  return {
+    permissionSettings: {
+      ...permissionSettings,
+      defaultMode: "dangerous_only",
+    },
+    builtinSettings: {
+      ...builtinSettings,
+      runCommandApprovalMode: "single_bundle",
+    },
+  };
+}
+
+export function applyStandardApprovalPromptsPreset<T extends BuiltinToolsSettingsData>(
+  permissionSettings: PermissionSettingsData,
+  builtinSettings: T,
+): {
+  permissionSettings: PermissionSettingsData;
+  builtinSettings: T;
+} {
+  return {
+    permissionSettings: {
+      ...permissionSettings,
+      defaultMode: "default",
+    },
+    builtinSettings: {
+      ...builtinSettings,
+      runCommandApprovalMode: "per_command",
+    },
+  };
+}
+
+export function detectApprovalExperiencePreset(
+  permissionSettings: PermissionSettingsData,
+  builtinSettings: Pick<BuiltinToolsSettingsData, "runCommandApprovalMode">,
+): ApprovalExperiencePreset {
+  if (
+    permissionSettings.defaultMode === "dangerous_only" &&
+    builtinSettings.runCommandApprovalMode === "single_bundle"
+  ) {
+    return "fewer_prompts";
+  }
+  if (
+    permissionSettings.defaultMode === "default" &&
+    builtinSettings.runCommandApprovalMode === "per_command"
+  ) {
+    return "standard";
+  }
+  return "custom";
+}
+
 export function PermissionSettingsPanel({ workspaceId }: PermissionSettingsPanelProps) {
   const [settings, setSettings] = useState<PermissionSettingsData>(DEFAULT_SETTINGS);
+  const [builtinSettings, setBuiltinSettings] = useState<BuiltinToolsSettingsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [ruleDraft, setRuleDraft] = useState<RuleDraft>(DEFAULT_RULE_DRAFT);
@@ -94,6 +155,10 @@ export function PermissionSettingsPanel({ workspaceId }: PermissionSettingsPanel
 
   useEffect(() => {
     void loadSettings();
+  }, []);
+
+  useEffect(() => {
+    void loadBuiltinSettings();
   }, []);
 
   useEffect(() => {
@@ -113,6 +178,16 @@ export function PermissionSettingsPanel({ workspaceId }: PermissionSettingsPanel
     }
   };
 
+  const loadBuiltinSettings = async () => {
+    try {
+      const loaded = await window.electronAPI.getBuiltinToolsSettings();
+      setBuiltinSettings(loaded);
+    } catch (error) {
+      console.error("Failed to load built-in tools settings:", error);
+      setBuiltinSettings(null);
+    }
+  };
+
   const saveSettings = async (next: PermissionSettingsData) => {
     try {
       setSaving(true);
@@ -122,6 +197,43 @@ export function PermissionSettingsPanel({ workspaceId }: PermissionSettingsPanel
     } catch (error) {
       console.error("Failed to save permission settings:", error);
       setStatusMessage("Failed to save permission settings.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const approvalPreset = useMemo(() => {
+    if (!builtinSettings) return "custom";
+    return detectApprovalExperiencePreset(settings, builtinSettings);
+  }, [builtinSettings, settings]);
+
+  const applyApprovalPreset = async (preset: Exclude<ApprovalExperiencePreset, "custom">) => {
+    if (!builtinSettings) {
+      setStatusMessage("Built-in tools settings are unavailable right now.");
+      return;
+    }
+
+    const next =
+      preset === "fewer_prompts"
+        ? applyFewerApprovalPromptsPreset(settings, builtinSettings)
+        : applyStandardApprovalPromptsPreset(settings, builtinSettings);
+
+    try {
+      setSaving(true);
+      await Promise.all([
+        window.electronAPI.savePermissionSettings(next.permissionSettings),
+        window.electronAPI.saveBuiltinToolsSettings(next.builtinSettings),
+      ]);
+      setSettings(next.permissionSettings);
+      setBuiltinSettings(next.builtinSettings);
+      setStatusMessage(
+        preset === "fewer_prompts"
+          ? "Fewer approval prompts enabled."
+          : "Standard approval prompts restored.",
+      );
+    } catch (error) {
+      console.error("Failed to apply approval preset:", error);
+      setStatusMessage("Failed to update approval settings.");
     } finally {
       setSaving(false);
     }
@@ -229,6 +341,38 @@ export function PermissionSettingsPanel({ workspaceId }: PermissionSettingsPanel
       </p>
 
       <div className="settings-subsection">
+        <h4 style={{ margin: "0 0 8px" }}>Approval experience</h4>
+        <p className="settings-hint">
+          Fewer prompts keeps approvals for deletes, risky shell commands, browser/system actions,
+          and external side effects, while letting routine repo work proceed with less friction.
+        </p>
+        <p className="settings-hint" style={{ marginTop: "6px" }}>
+          Current:{" "}
+          {approvalPreset === "fewer_prompts"
+            ? "Fewer prompts"
+            : approvalPreset === "standard"
+              ? "Standard prompts"
+              : "Custom"}
+        </p>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", marginTop: "10px" }}>
+          <button
+            className="button-small button-secondary"
+            onClick={() => void applyApprovalPreset("fewer_prompts")}
+            disabled={saving || !builtinSettings}
+          >
+            Use fewer prompts
+          </button>
+          <button
+            className="button-small button-secondary"
+            onClick={() => void applyApprovalPreset("standard")}
+            disabled={saving || !builtinSettings}
+          >
+            Restore standard prompts
+          </button>
+        </div>
+      </div>
+
+      <div className="settings-subsection">
         <label className="settings-label">Default permission mode</label>
         <select
           className="settings-select"
@@ -248,7 +392,8 @@ export function PermissionSettingsPanel({ workspaceId }: PermissionSettingsPanel
           <option value="bypass_permissions">Bypass permissions</option>
         </select>
         <p className="settings-hint">
-          This mode applies when no explicit permission rule matches.
+          This mode applies when no explicit permission rule matches. For everyday repo work,
+          `dangerous_only` is the lower-noise option.
         </p>
       </div>
 

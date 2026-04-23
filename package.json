@@ -242,6 +242,10 @@
         ]
       },
       {
+        "from": "resources/computer-use",
+        "to": "computer-use"
+      },
+      {
         "from": "build/healthkit-bridge",
         "to": "healthkit-bridge"
       }

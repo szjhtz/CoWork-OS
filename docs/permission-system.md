@@ -120,6 +120,8 @@ Current examples:
 - `analyze_image` is treated as export because image bytes are sent to an external vision model
 - `read_pdf_visual` is treated as export because PDF page images are sent to an external vision model
 
+By contrast, Chronicle's `screen_context_resolve` is a **local screen-context lookup**. It can read from the local passive Chronicle buffer and optionally capture a fresh local screenshot, but it does not itself export screenshot bytes to an external provider. If the task later sends an image to a provider through `analyze_image` or another export-sensitive path, that later step still enters the normal `data_export` approval lane.
+
 This is separate from the coarse workspace `network` capability:
 
 - `network: false` still blocks all network-capable and export-capable tools at the workspace boundary

@@ -13,7 +13,7 @@ export interface PermissionSettings {
 
 const DEFAULT_SETTINGS: PermissionSettings = {
   version: 1,
-  defaultMode: "default",
+  defaultMode: "dangerous_only",
   rules: [],
 };
 
@@ -79,7 +79,7 @@ export class PermissionSettingsManager {
   private static normalizeSettings(settings: PermissionSettings): PermissionSettings {
     return {
       version: 1,
-      defaultMode: settings?.defaultMode || "default",
+      defaultMode: settings?.defaultMode || "dangerous_only",
       rules: Array.isArray(settings?.rules)
         ? settings.rules
             .filter((rule): rule is PermissionRule => !!rule && typeof rule === "object")

@@ -44,6 +44,7 @@ export interface BuiltinToolsSettings {
     skill: ToolCategoryConfig;
     shell: ToolCategoryConfig;
     image: ToolCategoryConfig;
+    chronicle: ToolCategoryConfig;
     computer_use: ToolCategoryConfig;
   };
   // Individual tool overrides (tool name -> override)
@@ -108,7 +109,12 @@ const DEFAULT_SETTINGS: BuiltinToolsSettings = {
     image: {
       enabled: true,
       priority: "normal",
-      description: "AI image generation (requires Gemini API)",
+      description: "AI image generation (Gemini, OpenAI, OpenAI OAuth, Azure, OpenRouter)",
+    },
+    chronicle: {
+      enabled: true,
+      priority: "normal",
+      description: "Chronicle screen-context tools (local passive screen recall and disambiguation)",
     },
     computer_use: {
       enabled: true,
@@ -119,7 +125,7 @@ const DEFAULT_SETTINGS: BuiltinToolsSettings = {
   toolOverrides: {},
   toolTimeouts: {},
   toolAutoApprove: {},
-  runCommandApprovalMode: "per_command",
+  runCommandApprovalMode: "single_bundle",
   codexRuntimeMode: "native",
   version: "1.0.0",
 };
@@ -186,11 +192,16 @@ const TOOL_CATEGORIES: Record<string, keyof BuiltinToolsSettings["categories"]> 
   get_app_paths: "system",
   run_applescript: "system",
   // Computer use tools
-  computer_screenshot: "computer_use",
-  computer_click: "computer_use",
-  computer_type: "computer_use",
-  computer_key: "computer_use",
-  computer_move_mouse: "computer_use",
+  screen_context_resolve: "chronicle",
+  screenshot: "computer_use",
+  click: "computer_use",
+  double_click: "computer_use",
+  move_mouse: "computer_use",
+  drag: "computer_use",
+  scroll: "computer_use",
+  type_text: "computer_use",
+  keypress: "computer_use",
+  wait: "computer_use",
   batch_image_process: "computer_use",
   // File tools
   read_file: "file",
@@ -209,6 +220,7 @@ const TOOL_CATEGORIES: Record<string, keyof BuiltinToolsSettings["categories"]> 
   generate_spreadsheet: "skill",
   create_document: "skill",
   generate_document: "skill",
+  compile_latex: "skill",
   edit_document: "skill",
   edit_pdf_region: "skill",
   create_presentation: "skill",
@@ -359,7 +371,9 @@ export class BuiltinToolsSettingsManager {
       toolTimeouts: settings.toolTimeouts || {},
       toolAutoApprove: settings.toolAutoApprove || {},
       runCommandApprovalMode:
-        settings.runCommandApprovalMode === "single_bundle" ? "single_bundle" : "per_command",
+        settings.runCommandApprovalMode === "per_command"
+          ? "per_command"
+          : defaults.runCommandApprovalMode,
       codexRuntimeMode: settings.codexRuntimeMode === "acpx" ? "acpx" : "native",
       version: settings.version || defaults.version,
     };
@@ -438,7 +452,9 @@ export class BuiltinToolsSettingsManager {
    */
   static getRunCommandApprovalMode(): RunCommandApprovalMode {
     const settings = this.loadSettings();
-    return settings.runCommandApprovalMode === "single_bundle" ? "single_bundle" : "per_command";
+    return settings.runCommandApprovalMode === "per_command"
+      ? "per_command"
+      : this.getDefaultSettings().runCommandApprovalMode;
   }
 
   /**

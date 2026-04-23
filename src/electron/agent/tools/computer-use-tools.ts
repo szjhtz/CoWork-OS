@@ -1,29 +1,24 @@
-import { exec } from "child_process";
-import { promisify } from "util";
-import * as os from "os";
 import * as crypto from "crypto";
 import { Workspace } from "../../../shared/types";
 import { AgentDaemon } from "../daemon";
 import { LLMTool } from "../llm/types";
-import type { AppAccessLevel } from "../../security/app-permission-manager";
 import { ComputerUseSessionManager } from "../../computer-use/session-manager";
 import {
-  getMacScreenCaptureAccessStatus,
-  checkAccessibilityTrusted,
-} from "../../computer-use/computer-use-permissions";
+  ComputerUseHelperRuntime,
+  type ComputerUseHelperApp,
+  type ComputerUseHelperKeypressSpec,
+  type ComputerUseHelperMouseButton,
+  type ComputerUseHelperFramePoints,
+  type ComputerUseHelperWindow,
+  isRecoverableScreenshotError,
+} from "../../computer-use/helper-runtime";
 
-type Any = any; // oxlint-disable-line typescript-eslint(no-explicit-any)
+const CUA_CAPTURE_REFRESH_WAIT_MS = 150;
+const CUA_SCREENSHOT_RETRY_WAIT_MS = 250;
+const DEFAULT_WAIT_MS = 1_000;
+const MAX_WAIT_MS = 30_000;
+const CONTROLLED_WINDOW_ERROR = "No controlled window is selected. Call screenshot() first.";
 
-const execAsync = promisify(exec);
-
-const CUA_ACTION_TIMEOUT_MS = 15_000;
-const SCREENSHOT_MAX_DIMENSION = 2560;
-const DESKTOP_CAPTURER_TIMEOUT_MS = 12_000;
-
-/**
- * Blocked key combinations that must never be emitted during computer use.
- * These are OS-level shortcuts that could disrupt the session or compromise safety.
- */
 const BLOCKED_KEY_COMBOS = new Set([
   "cmd+tab",
   "command+tab",
@@ -40,782 +35,1184 @@ function normalizeKeysForBlocklist(keys: string[]): string {
   return keys.map((k) => k.toLowerCase().trim()).sort().join("+");
 }
 
-function getElectronScreen(): Any {
-  try {
-    // oxlint-disable-next-line typescript-eslint(no-require-imports)
-    const electron = require("electron") as Any;
-    return electron?.screen;
-  } catch {
-    return undefined;
-  }
+export type ComputerUseMouseButton = "left" | "right" | "wheel" | "back" | "forward";
+
+interface ComputerUseTargetState {
+  appName: string;
+  bundleId?: string;
+  pid: number;
+  windowId: number;
+  windowTitle: string;
+  framePoints: ComputerUseHelperFramePoints;
+  scaleFactor: number;
+  isMinimized: boolean;
+  isOnscreen: boolean;
+  isMain: boolean;
+  isFocused: boolean;
 }
 
-function getElectronDesktopCapturer(): Any {
-  try {
-    // oxlint-disable-next-line typescript-eslint(no-require-imports)
-    const electron = require("electron") as Any;
-    return electron?.desktopCapturer;
-  } catch {
-    return undefined;
-  }
-}
-
-export type CUAClickButton = "left" | "right" | "middle";
-export type CUAClickType = "single" | "double" | "triple";
-
-export interface CUAScreenshotResult {
-  base64: string;
+interface ComputerUseCaptureState {
+  id: string;
+  windowId: number;
   width: number;
   height: number;
+  scaleFactor: number;
+  imageBase64: string;
   hash: string;
+  createdAt: number;
 }
 
-async function getDesktopSourcesWithTimeout(
-  desktopCapturer: Any,
-  opts: { types: string[]; thumbnailSize: { width: number; height: number } },
-  timeoutMs: number,
-): Promise<Any[]> {
-  const promise = desktopCapturer.getSources(opts);
-  const timeout = new Promise<never>((_, reject) => {
-    setTimeout(() => {
-      reject(
-        new Error(
-          "Screen capture timed out. Grant Screen Recording for CoWork OS in System Settings > Privacy & Security > Screen Recording, then restart the app if needed.",
-        ),
-      );
-    }, timeoutMs);
+interface PersistedComputerUseState {
+  currentTarget: ComputerUseTargetState | null;
+  currentCapture: ComputerUseCaptureState | null;
+}
+
+export interface ComputerUseToolResult {
+  captureId: string;
+  imageBase64: string;
+  mediaType: "image/png";
+  width: number;
+  height: number;
+  scaleFactor: number;
+  createdAt: number;
+  target: {
+    appName: string;
+    bundleId?: string;
+    pid: number;
+    windowId: number;
+    windowTitle: string;
+    framePoints: ComputerUseHelperFramePoints;
+  };
+  action?: string;
+  note?: string;
+}
+
+interface ScreenshotSelection {
+  app?: string;
+  windowTitle?: string;
+}
+
+interface ActionPreparationResult {
+  target: ComputerUseTargetState;
+  capture: ComputerUseCaptureState;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
   });
-  return (await Promise.race([promise, timeout])) as Any[];
+}
+
+function normalizeQuery(value: string | undefined): string {
+  return String(value || "").trim().toLowerCase();
+}
+
+function formatWindowChoice(appName: string, windowTitle: string): string {
+  return windowTitle.trim() ? `${appName} — ${windowTitle}` : `${appName} — <untitled window>`;
+}
+
+function exactOrContainsScore(value: string | undefined, query: string): number {
+  const normalizedValue = normalizeQuery(value);
+  if (!query) return 0;
+  if (!normalizedValue) return 0;
+  if (normalizedValue === query) return 100;
+  if (normalizedValue.startsWith(query)) return 70;
+  if (normalizedValue.includes(query)) return 50;
+  return 0;
+}
+
+function scoreWindow(window: ComputerUseHelperWindow): number {
+  let score = 0;
+  if (window.isFocused) score += 100;
+  if (window.isMain) score += 80;
+  if (!window.isMinimized) score += 40;
+  if (window.isOnscreen) score += 20;
+  if (typeof window.windowId === "number") score += 10;
+  if (window.title.trim()) score += 5;
+  return score;
+}
+
+function requireFiniteCoordinate(label: string, value: number): number {
+  if (!Number.isFinite(value)) {
+    throw new Error(`${label} must be a finite number.`);
+  }
+  return value;
+}
+
+function requireIntegerInRange(label: string, value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) {
+    throw new Error(`${label} must be a finite number.`);
+  }
+  const rounded = Math.trunc(value);
+  if (rounded < min || rounded > max) {
+    throw new Error(`${label} must be between ${min} and ${max}.`);
+  }
+  return rounded;
+}
+
+function validatePointInCapture(
+  x: number,
+  y: number,
+  capture: ComputerUseCaptureState,
+  errorPrefix = "Coordinates",
+): void {
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    throw new Error(`${errorPrefix} must be finite numbers.`);
+  }
+  if (x < 0 || y < 0 || x >= capture.width || y >= capture.height) {
+    throw new Error(
+      `${errorPrefix} (${Math.round(x)},${Math.round(y)}) are outside the latest screenshot bounds (${capture.width}x${capture.height}). Call screenshot() again and retry.`,
+    );
+  }
+}
+
+function frameDistanceScore(
+  current: ComputerUseHelperFramePoints,
+  previous: ComputerUseHelperFramePoints,
+): number {
+  const dx = Math.abs(current.x - previous.x);
+  const dy = Math.abs(current.y - previous.y);
+  const dw = Math.abs(current.w - previous.w);
+  const dh = Math.abs(current.h - previous.h);
+  return dx + dy + dw + dh;
+}
+
+const MAC_VIRTUAL_KEY_CODES: Record<string, number> = {
+  a: 0,
+  s: 1,
+  d: 2,
+  f: 3,
+  h: 4,
+  g: 5,
+  z: 6,
+  x: 7,
+  c: 8,
+  v: 9,
+  b: 11,
+  q: 12,
+  w: 13,
+  e: 14,
+  r: 15,
+  y: 16,
+  t: 17,
+  "1": 18,
+  "2": 19,
+  "3": 20,
+  "4": 21,
+  "6": 22,
+  "5": 23,
+  "=": 24,
+  "9": 25,
+  "7": 26,
+  "-": 27,
+  "8": 28,
+  "0": 29,
+  "]": 30,
+  o: 31,
+  u: 32,
+  "[": 33,
+  i: 34,
+  p: 35,
+  l: 37,
+  j: 38,
+  "'": 39,
+  k: 40,
+  ";": 41,
+  "\\": 42,
+  ",": 43,
+  "/": 44,
+  n: 45,
+  m: 46,
+  ".": 47,
+  "`": 50,
+};
+
+function parseKeypressSpec(pid: number, keys: string[]): ComputerUseHelperKeypressSpec {
+  const modifiers: string[] = [];
+  let keyText: string | null = null;
+  let keyCode: number | null = null;
+
+  for (const key of keys) {
+    const trimmed = key.trim();
+    const lower = trimmed.toLowerCase();
+    if (lower === "cmd" || lower === "command") {
+      modifiers.push("command");
+      continue;
+    }
+    if (lower === "ctrl" || lower === "control") {
+      modifiers.push("control");
+      continue;
+    }
+    if (lower === "alt" || lower === "option") {
+      modifiers.push("option");
+      continue;
+    }
+    if (lower === "shift") {
+      modifiers.push("shift");
+      continue;
+    }
+
+    if (lower === "return" || lower === "enter") {
+      keyCode = 36;
+    } else if (lower === "escape" || lower === "esc") {
+      keyCode = 53;
+    } else if (lower === "tab") {
+      keyCode = 48;
+    } else if (lower === "space") {
+      keyCode = 49;
+    } else if (lower === "delete" || lower === "backspace") {
+      keyCode = 51;
+    } else if (lower === "up") {
+      keyCode = 126;
+    } else if (lower === "down") {
+      keyCode = 125;
+    } else if (lower === "left") {
+      keyCode = 123;
+    } else if (lower === "right") {
+      keyCode = 124;
+    } else if (lower === "home") {
+      keyCode = 115;
+    } else if (lower === "end") {
+      keyCode = 119;
+    } else if (lower === "pageup") {
+      keyCode = 116;
+    } else if (lower === "pagedown") {
+      keyCode = 121;
+    } else if (lower.startsWith("f") && /^f\d{1,2}$/.test(lower)) {
+      const fkeyMap: Record<string, number> = {
+        f1: 122,
+        f2: 120,
+        f3: 99,
+        f4: 118,
+        f5: 96,
+        f6: 97,
+        f7: 98,
+        f8: 100,
+        f9: 101,
+        f10: 109,
+        f11: 103,
+        f12: 111,
+      };
+      keyCode = fkeyMap[lower] ?? null;
+    } else if (lower in MAC_VIRTUAL_KEY_CODES) {
+      keyCode = MAC_VIRTUAL_KEY_CODES[lower];
+    } else if (trimmed.length === 1) {
+      keyText = trimmed;
+    } else {
+      keyText = trimmed;
+    }
+  }
+
+  if (keyCode === null && !keyText) {
+    throw new Error(`Could not resolve key combination: ${keys.join("+")}`);
+  }
+  if (modifiers.length > 0 && keyCode === null && keyText) {
+    const originalText = keyText;
+    const lowered = originalText.toLowerCase();
+    if (lowered in MAC_VIRTUAL_KEY_CODES) {
+      keyCode = MAC_VIRTUAL_KEY_CODES[lowered];
+      keyText = null;
+      if (originalText !== lowered && !modifiers.includes("shift")) {
+        modifiers.push("shift");
+      }
+    }
+  }
+
+  return {
+    pid,
+    ...(keyCode !== null ? { keyCode } : { keyText: keyText! }),
+    ...(modifiers.length > 0 ? { modifiers } : {}),
+  };
 }
 
 /**
- * ComputerUseTools provides native OS-level mouse, keyboard, and screenshot
- * control for computer use agent (CUA) workflows.
- *
- * On macOS this uses AppleScript / CoreGraphics via shell commands.
- * A single computer-use session per machine applies: per-app consent for the session,
- * safety overlay, and Esc to stop.
+ * Pi-style computer-use tools:
+ * - stateful target window chosen by screenshot()
+ * - helper-managed permissions and window capture
+ * - every successful action returns a fresh screenshot + captureId
  */
 export class ComputerUseTools {
-  private lastScreenshotHash: string | null = null;
+  private static persistedState = new Map<string, PersistedComputerUseState>();
+
+  private currentTarget: ComputerUseTargetState | null = null;
+  private currentCapture: ComputerUseCaptureState | null = null;
 
   constructor(
     private workspace: Workspace,
     private daemon: AgentDaemon,
     private taskId: string,
-  ) {}
+  ) {
+    const saved = ComputerUseTools.persistedState.get(taskId);
+    this.currentTarget = saved?.currentTarget ?? null;
+    this.currentCapture = saved?.currentCapture ?? null;
+  }
 
   setWorkspace(workspace: Workspace): void {
     this.workspace = workspace;
+  }
+
+  private helper(): ComputerUseHelperRuntime {
+    return ComputerUseHelperRuntime.getInstance();
   }
 
   private session(): ComputerUseSessionManager {
     return ComputerUseSessionManager.getInstance();
   }
 
-  private pm() {
-    return this.session().acquire(this.taskId, this.daemon);
+  private persistState(): void {
+    ComputerUseTools.persistedState.set(this.taskId, {
+      currentTarget: this.currentTarget,
+      currentCapture: this.currentCapture,
+    });
   }
 
-  // ───────────── Accessibility permission check ─────────────
-
-  /**
-   * Check (and optionally prompt) for macOS Accessibility permission.
-   * Returns true if granted.
-   */
-  async checkAccessibilityPermission(): Promise<boolean> {
-    if (os.platform() !== "darwin") {
-      return false;
+  private async ensureReady(): Promise<void> {
+    if (process.platform !== "darwin") {
+      throw new Error("Computer use is only supported on macOS.");
     }
-    return checkAccessibilityTrusted(true);
-  }
-
-  private async ensureAccessibility(): Promise<void> {
-    if (os.platform() !== "darwin") {
-      throw new Error("Computer use tools are currently only supported on macOS");
-    }
-    const granted = await this.checkAccessibilityPermission();
-    if (!granted) {
-      throw new Error(
-        "Accessibility permission is required for computer use. " +
-          "Please grant access in System Settings > Privacy & Security > Accessibility.",
-      );
-    }
-  }
-
-  private async ensureScreenCaptureAllowed(): Promise<void> {
-    if (os.platform() !== "darwin") return;
-    const status = getMacScreenCaptureAccessStatus();
-    if (status === "denied") {
-      throw new Error(
-        "Screen Recording is denied for CoWork OS. Enable it in System Settings > Privacy & Security > Screen Recording, then restart the app.",
-      );
-    }
-    // "not-determined" / "unknown" — still attempt capture (may prompt / register app)
-  }
-
-  private async ensureAppPermission(
-    toolName: string,
-    minimumLevel: AppAccessLevel,
-    reason: string,
-  ): Promise<{ name: string; bundleId: string }> {
+    this.session().acquire(this.taskId, this.daemon);
     this.session().checkNotAborted();
-    const pm = this.pm();
-    const app = await this.getFrontmostApp();
-    const existing = pm.getPermission(app.name, app.bundleId);
-    if (!existing || !pm.isToolAllowed(app.name, toolName, app.bundleId)) {
-      const granted = await pm.requestPermission(app.name, app.bundleId, minimumLevel, reason);
-      if (granted === "denied" || !pm.isToolAllowed(app.name, toolName, app.bundleId)) {
-        throw new Error(
-          `Computer use access for ${app.name} is not approved for this session (${minimumLevel}).`,
-        );
-      }
-      await this.session().onAppPermissionGranted();
-    }
-
-    return app;
+    await this.helper().ensureReadyWithInteractivePermissions();
   }
 
-  // ───────────── Mouse control ─────────────
+  private async bringTargetToFront(target: ComputerUseTargetState): Promise<void> {
+    await this.helper().unminimizeWindow(target.pid, target.windowId);
+    await this.helper().activateApp(target.pid);
+    await this.helper().raiseWindow(target.pid, target.windowId);
+    await sleep(CUA_CAPTURE_REFRESH_WAIT_MS);
+  }
 
-  async moveMouse(x: number, y: number): Promise<{ success: boolean; x: number; y: number }> {
-    await this.ensureAccessibility();
-    this.session().updateActionStatus("Moving pointer…");
-    const app = await this.ensureAppPermission(
-      "computer_move_mouse",
-      "view_only",
-      "Move the cursor in the frontmost application.",
-    );
+  private makeCaptureState(
+    target: ComputerUseTargetState,
+    payload: { pngBase64: string; width: number; height: number; scaleFactor: number },
+  ): ComputerUseCaptureState {
+    const imageBuffer = Buffer.from(payload.pngBase64, "base64");
+    const hash = crypto.createHash("sha256").update(imageBuffer).digest("hex").slice(0, 16);
+    return {
+      id: `cap_${Date.now()}_${hash}`,
+      windowId: target.windowId,
+      width: payload.width,
+      height: payload.height,
+      scaleFactor: payload.scaleFactor,
+      imageBase64: payload.pngBase64,
+      hash,
+      createdAt: Date.now(),
+    };
+  }
 
-    this.daemon.logEvent(this.taskId, "tool_call", {
-      tool: "computer_move_mouse",
-      appName: app.name,
+  private buildResult(action?: string, note?: string): ComputerUseToolResult {
+    if (!this.currentTarget || !this.currentCapture) {
+      throw new Error("Computer-use state is missing the current target screenshot.");
+    }
+    return {
+      captureId: this.currentCapture.id,
+      imageBase64: this.currentCapture.imageBase64,
+      mediaType: "image/png",
+      width: this.currentCapture.width,
+      height: this.currentCapture.height,
+      scaleFactor: this.currentCapture.scaleFactor,
+      createdAt: this.currentCapture.createdAt,
+      target: {
+        appName: this.currentTarget.appName,
+        bundleId: this.currentTarget.bundleId,
+        pid: this.currentTarget.pid,
+        windowId: this.currentTarget.windowId,
+        windowTitle: this.currentTarget.windowTitle,
+        framePoints: this.currentTarget.framePoints,
+      },
+      ...(action ? { action } : {}),
+      ...(note ? { note } : {}),
+    };
+  }
+
+  private async captureTarget(toolName: string, note?: string): Promise<ComputerUseToolResult> {
+    if (!this.currentTarget) {
+      throw new Error(CONTROLLED_WINDOW_ERROR);
+    }
+    let payload;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        payload = await this.helper().screenshot(this.currentTarget.windowId);
+        break;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (
+          attempt > 0 ||
+          (!isRecoverableScreenshotError(error) && !/audio\/video capture failure/i.test(message))
+        ) {
+          throw error;
+        }
+        this.currentTarget = await this.refreshCurrentTarget();
+        await this.bringTargetToFront(this.currentTarget);
+        await sleep(CUA_SCREENSHOT_RETRY_WAIT_MS);
+      }
+    }
+    if (!payload) {
+      throw new Error("Failed to capture the current controlled window.");
+    }
+    this.currentCapture = this.makeCaptureState(this.currentTarget, payload);
+    this.persistState();
+    this.daemon.logEvent(this.taskId, "tool_result", {
+      tool: toolName,
+      success: true,
+      captureId: this.currentCapture.id,
+      width: payload.width,
+      height: payload.height,
+      targetApp: this.currentTarget.appName,
+      windowId: this.currentTarget.windowId,
+      windowTitle: this.currentTarget.windowTitle,
+    });
+    return this.buildResult(toolName, note);
+  }
+
+  private toTargetState(app: ComputerUseHelperApp, window: ComputerUseHelperWindow): ComputerUseTargetState {
+    if (typeof window.windowId !== "number") {
+      throw new Error(
+        `The selected window in ${app.appName} cannot be controlled because macOS did not expose a stable window id.`,
+      );
+    }
+    return {
+      appName: app.appName,
       bundleId: app.bundleId,
-      x,
-      y,
+      pid: app.pid,
+      windowId: window.windowId,
+      windowTitle: window.title,
+      framePoints: window.framePoints,
+      scaleFactor: window.scaleFactor,
+      isMinimized: window.isMinimized,
+      isOnscreen: window.isOnscreen,
+      isMain: window.isMain,
+      isFocused: window.isFocused,
+    };
+  }
+
+  private async resolveFrontmostTarget(): Promise<ComputerUseTargetState> {
+    const frontmost = await this.helper().getFrontmost();
+    const frontmostApp: ComputerUseHelperApp = {
+      appName: frontmost.appName,
+      bundleId: frontmost.bundleId,
+      pid: frontmost.pid,
+      isFrontmost: true,
+    };
+    const windows = await this.helper().listWindows(frontmost.pid);
+    if (windows.length === 0) {
+      throw new Error(`No controllable windows were found for ${frontmost.appName}.`);
+    }
+    const preferredWindow =
+      windows.find((entry) => entry.windowId === frontmost.windowId) ||
+      windows.sort((a, b) => scoreWindow(b) - scoreWindow(a))[0];
+    return this.toTargetState(frontmostApp, preferredWindow);
+  }
+
+  private chooseRefreshFallbackWindow(
+    windows: ComputerUseHelperWindow[],
+    previous: ComputerUseTargetState,
+  ): ComputerUseHelperWindow | null {
+    const controllable = windows.filter((entry) => typeof entry.windowId === "number");
+    if (controllable.length === 0) {
+      return null;
+    }
+
+    const visible = controllable.filter((entry) => !entry.isMinimized && entry.isOnscreen);
+    if (visible.length === 1) {
+      return visible[0];
+    }
+
+    const ranked = (visible.length > 0 ? visible : controllable)
+      .map((entry) => ({
+        entry,
+        score:
+          (entry.isFocused ? 120 : 0) +
+          (entry.isMain ? 80 : 0) +
+          (!entry.isMinimized ? 30 : 0) +
+          (entry.isOnscreen ? 20 : 0) -
+          frameDistanceScore(entry.framePoints, previous.framePoints) / 20,
+      }))
+      .sort((a, b) => b.score - a.score);
+
+    if (ranked.length === 1) {
+      return ranked[0].entry;
+    }
+    if (ranked.length > 1 && ranked[0].score >= ranked[1].score + 25) {
+      return ranked[0].entry;
+    }
+    return null;
+  }
+
+  private async findRetargetedApp(previous: ComputerUseTargetState): Promise<ComputerUseHelperApp | null> {
+    const previousAppName = normalizeQuery(previous.appName);
+    const previousBundleId = normalizeQuery(previous.bundleId);
+    const candidates = (await this.helper().listApps())
+      .filter((app) => app.pid !== previous.pid)
+      .map((app) => {
+        const appName = normalizeQuery(app.appName);
+        const bundleId = normalizeQuery(app.bundleId);
+        const sameBundle = Boolean(previousBundleId) && bundleId === previousBundleId;
+        const sameAppName = Boolean(previousAppName) && appName === previousAppName;
+        if (!sameBundle && !sameAppName) {
+          return null;
+        }
+        return {
+          app,
+          score: (sameBundle ? 200 : 0) + (sameAppName ? 120 : 0) + (app.isFrontmost ? 40 : 0),
+        };
+      })
+      .filter((entry): entry is { app: ComputerUseHelperApp; score: number } => entry !== null)
+      .sort((a, b) => b.score - a.score);
+
+    return candidates[0]?.app ?? null;
+  }
+
+  private async refreshCurrentTarget(): Promise<ComputerUseTargetState> {
+    if (!this.currentTarget) {
+      throw new Error(CONTROLLED_WINDOW_ERROR);
+    }
+    let targetApp = {
+      appName: this.currentTarget.appName,
+      bundleId: this.currentTarget.bundleId,
+      pid: this.currentTarget.pid,
+    };
+    let windows = await this.helper().listWindows(targetApp.pid);
+    let refreshed =
+      windows.find((entry) => entry.windowId === this.currentTarget?.windowId) ||
+      windows.find((entry) => normalizeQuery(entry.title) === normalizeQuery(this.currentTarget?.windowTitle)) ||
+      this.chooseRefreshFallbackWindow(windows, this.currentTarget);
+
+    if (!refreshed) {
+      const retargetedApp = await this.findRetargetedApp(this.currentTarget);
+      if (retargetedApp) {
+        targetApp = {
+          appName: retargetedApp.appName,
+          bundleId: retargetedApp.bundleId,
+          pid: retargetedApp.pid,
+        };
+        windows = await this.helper().listWindows(targetApp.pid);
+        refreshed =
+          windows.find((entry) => normalizeQuery(entry.title) === normalizeQuery(this.currentTarget?.windowTitle)) ||
+          this.chooseRefreshFallbackWindow(windows, this.currentTarget);
+      }
+    }
+
+    if (!refreshed) {
+      throw new Error(
+        `The controlled window "${this.currentTarget.windowTitle || this.currentTarget.appName}" is no longer available. Call screenshot() to retarget.`,
+      );
+    }
+    this.currentTarget = {
+      ...this.currentTarget,
+      appName: targetApp.appName,
+      bundleId: targetApp.bundleId,
+      pid: targetApp.pid,
+      windowId: refreshed.windowId ?? this.currentTarget.windowId,
+      windowTitle: refreshed.title,
+      framePoints: refreshed.framePoints,
+      scaleFactor: refreshed.scaleFactor,
+      isMinimized: refreshed.isMinimized,
+      isOnscreen: refreshed.isOnscreen,
+      isMain: refreshed.isMain,
+      isFocused: refreshed.isFocused,
+    };
+    this.persistState();
+    return this.currentTarget;
+  }
+
+  private pickSingleMatch<T>(
+    entries: T[],
+    getLabel: (entry: T) => string,
+    getScore: (entry: T) => number,
+    emptyMessage: string,
+    ambiguousMessage: string,
+  ): T {
+    if (entries.length === 0) {
+      throw new Error(emptyMessage);
+    }
+    const ranked = [...entries]
+      .map((entry) => ({ entry, score: getScore(entry), label: getLabel(entry) }))
+      .filter((candidate) => candidate.score > 0)
+      .sort((a, b) => b.score - a.score || a.label.localeCompare(b.label));
+
+    if (ranked.length === 0) {
+      throw new Error(emptyMessage);
+    }
+    if (ranked.length > 1 && ranked[0].score === ranked[1].score) {
+      const choices = ranked
+        .slice(0, 5)
+        .map((candidate) => candidate.label)
+        .join(", ");
+      throw new Error(`${ambiguousMessage} Matching targets: ${choices}`);
+    }
+    return ranked[0].entry;
+  }
+
+  private async resolveTargetFromSelection(selection: ScreenshotSelection): Promise<ComputerUseTargetState> {
+    const appQuery = normalizeQuery(selection.app);
+    const windowQuery = normalizeQuery(selection.windowTitle);
+    if (!appQuery && !windowQuery) {
+      return await this.resolveFrontmostTarget();
+    }
+
+    const apps = await this.helper().listApps();
+    const candidateApps = appQuery
+      ? apps.filter((app) => {
+          const best = Math.max(
+            exactOrContainsScore(app.appName, appQuery),
+            exactOrContainsScore(app.bundleId, appQuery),
+          );
+          return best > 0;
+        })
+      : apps;
+
+    if (candidateApps.length === 0) {
+      throw new Error(`No running app matches "${selection.app}".`);
+    }
+
+    const scoredCandidates: Array<{
+      app: ComputerUseHelperApp;
+      window: ComputerUseHelperWindow;
+      score: number;
+    }> = [];
+
+    for (const app of candidateApps) {
+      const windows = await this.helper().listWindows(app.pid);
+      for (const window of windows) {
+        const appScore = appQuery
+          ? Math.max(
+              exactOrContainsScore(app.appName, appQuery),
+              exactOrContainsScore(app.bundleId, appQuery),
+            )
+          : app.isFrontmost
+            ? 5
+            : 0;
+        const windowScore = windowQuery
+          ? exactOrContainsScore(window.title, windowQuery)
+          : scoreWindow(window);
+        if (windowQuery && windowScore === 0) continue;
+        const score = appScore + windowScore + (window.isFocused ? 25 : 0) + (window.isMain ? 10 : 0);
+        if (score <= 0) continue;
+        scoredCandidates.push({ app, window, score });
+      }
+    }
+
+    if (scoredCandidates.length === 0) {
+      if (candidateApps.length === 1) {
+        const fallbackWindows = await this.helper().listWindows(candidateApps[0].pid);
+        const fallbackWindow = this.chooseRefreshFallbackWindow(fallbackWindows, {
+          appName: candidateApps[0].appName,
+          bundleId: candidateApps[0].bundleId,
+          pid: candidateApps[0].pid,
+          windowId: -1,
+          windowTitle: selection.windowTitle || "",
+          framePoints: { x: 0, y: 0, w: 0, h: 0 },
+          scaleFactor: 1,
+          isMinimized: false,
+          isOnscreen: true,
+          isMain: false,
+          isFocused: false,
+        });
+        if (fallbackWindow) {
+          return this.toTargetState(candidateApps[0], fallbackWindow);
+        }
+      }
+      const label = selection.windowTitle ? `window "${selection.windowTitle}"` : "a controllable window";
+      throw new Error(`Could not find ${label}${selection.app ? ` in ${selection.app}` : ""}.`);
+    }
+
+    const chosen = this.pickSingleMatch(
+      scoredCandidates,
+      (candidate) => formatWindowChoice(candidate.app.appName, candidate.window.title),
+      (candidate) => candidate.score,
+      `Could not find a controllable window for ${selection.app || "the requested target"}.`,
+      "Multiple windows match the requested target.",
+    );
+    return this.toTargetState(chosen.app, chosen.window);
+  }
+
+  private requireCurrentCapture(captureId?: string): ComputerUseCaptureState {
+    if (!this.currentTarget || !this.currentCapture) {
+      throw new Error(CONTROLLED_WINDOW_ERROR);
+    }
+    if (this.currentCapture.windowId !== this.currentTarget.windowId) {
+      throw new Error("The current capture no longer matches the controlled window. Call screenshot() to refresh.");
+    }
+    if (captureId && captureId !== this.currentCapture.id) {
+      throw new Error(`captureId ${captureId} is stale. Call screenshot() to refresh and use the newest capture.`);
+    }
+    return this.currentCapture;
+  }
+
+  private async prepareAction(toolName: string, captureId?: string): Promise<ActionPreparationResult> {
+    await this.ensureReady();
+    const target = await this.refreshCurrentTarget();
+    const capture = this.requireCurrentCapture(captureId);
+    this.daemon.logEvent(this.taskId, "tool_call", {
+      tool: toolName,
+      targetApp: target.appName,
+      bundleId: target.bundleId,
+      windowId: target.windowId,
+      captureId: capture.id,
+    });
+    await this.bringTargetToFront(target);
+    return { target, capture };
+  }
+
+  async screenshot(selection: ScreenshotSelection = {}): Promise<ComputerUseToolResult> {
+    await this.ensureReady();
+    this.daemon.logEvent(this.taskId, "tool_call", {
+      tool: "screenshot",
+      app: selection.app,
+      windowTitle: selection.windowTitle,
+      hadCurrentTarget: Boolean(this.currentTarget),
     });
 
-    try {
-      const script = `
-do shell script "python3 -c '
-import Quartz
-Quartz.CGEventPost(Quartz.kCGHIDEventTap, Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventMouseMoved, (${x}, ${y}), Quartz.kCGMouseButtonLeft))
-'"`;
-      await execAsync(`osascript -e '${script.replace(/'/g, "'\\''")}'`, {
-        timeout: CUA_ACTION_TIMEOUT_MS,
-      });
+    this.currentTarget =
+      selection.app || selection.windowTitle
+        ? await this.resolveTargetFromSelection(selection)
+        : this.currentTarget
+          ? await this.refreshCurrentTarget().catch(async () => await this.resolveFrontmostTarget())
+          : await this.resolveFrontmostTarget();
 
-      this.daemon.logEvent(this.taskId, "tool_result", {
-        tool: "computer_move_mouse",
-        success: true,
-      });
-
-      return { success: true, x, y };
-    } catch (error: Any) {
-      this.daemon.logEvent(this.taskId, "tool_error", {
-        tool: "computer_move_mouse",
-        error: error.message,
-      });
-      throw new Error(`Failed to move mouse: ${error.message}`);
-    }
+    this.persistState();
+    await this.bringTargetToFront(this.currentTarget);
+    return await this.captureTarget("screenshot");
   }
 
   async click(
     x: number,
     y: number,
-    button: CUAClickButton = "left",
-    clickType: CUAClickType = "single",
-  ): Promise<{ success: boolean; x: number; y: number }> {
-    await this.ensureAccessibility();
-    this.session().updateActionStatus("Clicking…");
-    const app = await this.ensureAppPermission(
-      "computer_click",
-      "click_only",
-      "Send a click to the frontmost application.",
-    );
-
-    this.daemon.logEvent(this.taskId, "tool_call", {
-      tool: "computer_click",
-      appName: app.name,
-      bundleId: app.bundleId,
-      x,
-      y,
-      button,
-      clickType,
-    });
-
+    button: ComputerUseMouseButton = "left",
+    captureId?: string,
+  ): Promise<ComputerUseToolResult> {
+    const { target, capture } = await this.prepareAction("click", captureId);
+    validatePointInCapture(x, y, capture);
     try {
-      const clickCount = clickType === "double" ? 2 : clickType === "triple" ? 3 : 1;
-      const mouseButton =
-        button === "right"
-          ? "Quartz.kCGMouseButtonRight"
-          : button === "middle"
-            ? "Quartz.kCGMouseButtonCenter"
-            : "Quartz.kCGMouseButtonLeft";
-      const downEvent =
-        button === "right" ? "Quartz.kCGEventRightMouseDown" : "Quartz.kCGEventLeftMouseDown";
-      const upEvent =
-        button === "right" ? "Quartz.kCGEventRightMouseUp" : "Quartz.kCGEventLeftMouseUp";
-
-      const pyScript = `
-import Quartz, time
-pos = (${x}, ${y})
-for i in range(${clickCount}):
-    down = Quartz.CGEventCreateMouseEvent(None, ${downEvent}, pos, ${mouseButton})
-    Quartz.CGEventSetIntegerValueField(down, Quartz.kCGMouseEventClickState, i + 1)
-    Quartz.CGEventPost(Quartz.kCGHIDEventTap, down)
-    up = Quartz.CGEventCreateMouseEvent(None, ${upEvent}, pos, ${mouseButton})
-    Quartz.CGEventSetIntegerValueField(up, Quartz.kCGMouseEventClickState, i + 1)
-    Quartz.CGEventPost(Quartz.kCGHIDEventTap, up)
-    if i < ${clickCount} - 1:
-        time.sleep(0.05)
-`;
-      await execAsync(`python3 -c ${JSON.stringify(pyScript)}`, {
-        timeout: CUA_ACTION_TIMEOUT_MS,
-      });
-
-      this.daemon.logEvent(this.taskId, "tool_result", {
-        tool: "computer_click",
-        success: true,
-      });
-
-      return { success: true, x, y };
-    } catch (error: Any) {
+      if (button === "left") {
+        const axResult = await this.helper().axPressAtPoint({
+          windowId: target.windowId,
+          pid: target.pid,
+          x,
+          y,
+          captureWidth: capture.width,
+          captureHeight: capture.height,
+        });
+        if (!axResult.pressed) {
+          const focusResult = await this.helper().axFocusAtPoint({
+            windowId: target.windowId,
+            pid: target.pid,
+            x,
+            y,
+            captureWidth: capture.width,
+            captureHeight: capture.height,
+          });
+          if (!focusResult.focused) {
+            await this.helper().mouseClick({
+              windowId: target.windowId,
+              pid: target.pid,
+              x,
+              y,
+              captureWidth: capture.width,
+              captureHeight: capture.height,
+              button: button as ComputerUseHelperMouseButton,
+              clickCount: 1,
+            });
+          }
+        }
+      } else {
+        await this.helper().mouseClick({
+          windowId: target.windowId,
+          pid: target.pid,
+          x,
+          y,
+          captureWidth: capture.width,
+          captureHeight: capture.height,
+          button: button as ComputerUseHelperMouseButton,
+          clickCount: 1,
+        });
+      }
+      return await this.captureTarget("click");
+    } catch (error) {
       this.daemon.logEvent(this.taskId, "tool_error", {
-        tool: "computer_click",
-        error: error.message,
+        tool: "click",
+        error: error instanceof Error ? error.message : String(error),
       });
-      throw new Error(`Failed to click: ${error.message}`);
+      throw error;
+    }
+  }
+
+  async doubleClick(x: number, y: number, captureId?: string): Promise<ComputerUseToolResult> {
+    const { target, capture } = await this.prepareAction("double_click", captureId);
+    validatePointInCapture(x, y, capture);
+    try {
+      await this.helper().mouseClick({
+        windowId: target.windowId,
+        pid: target.pid,
+        x,
+        y,
+        captureWidth: capture.width,
+        captureHeight: capture.height,
+        button: "left",
+        clickCount: 2,
+      });
+      return await this.captureTarget("double_click");
+    } catch (error) {
+      this.daemon.logEvent(this.taskId, "tool_error", {
+        tool: "double_click",
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+  }
+
+  async moveMouse(x: number, y: number, captureId?: string): Promise<ComputerUseToolResult> {
+    const { target, capture } = await this.prepareAction("move_mouse", captureId);
+    validatePointInCapture(x, y, capture);
+    try {
+      await this.helper().mouseMove({
+        windowId: target.windowId,
+        pid: target.pid,
+        x,
+        y,
+        captureWidth: capture.width,
+        captureHeight: capture.height,
+      });
+      return await this.captureTarget("move_mouse");
+    } catch (error) {
+      this.daemon.logEvent(this.taskId, "tool_error", {
+        tool: "move_mouse",
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
     }
   }
 
   async drag(
-    fromX: number,
-    fromY: number,
-    toX: number,
-    toY: number,
-  ): Promise<{ success: boolean }> {
-    await this.ensureAccessibility();
-    this.session().updateActionStatus("Dragging…");
-    const app = await this.ensureAppPermission(
-      "computer_click",
-      "click_only",
-      "Drag inside the frontmost application.",
-    );
-
-    this.daemon.logEvent(this.taskId, "tool_call", {
-      tool: "computer_click",
-      appName: app.name,
-      bundleId: app.bundleId,
-      action: "drag",
-      fromX,
-      fromY,
-      toX,
-      toY,
+    path: Array<{ x: number; y: number }>,
+    captureId?: string,
+  ): Promise<ComputerUseToolResult> {
+    if (!Array.isArray(path) || path.length < 2) {
+      throw new Error("drag requires a path with at least two points.");
+    }
+    const { target, capture } = await this.prepareAction("drag", captureId);
+    const normalizedPath = path.map((point, index) => {
+      const px = requireFiniteCoordinate(`path[${index}].x`, point.x);
+      const py = requireFiniteCoordinate(`path[${index}].y`, point.y);
+      validatePointInCapture(px, py, capture, `path[${index}]`);
+      return { x: px, y: py };
     });
-
     try {
-      const pyScript = `
-import Quartz, time
-start = (${fromX}, ${fromY})
-end = (${toX}, ${toY})
-down = Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventLeftMouseDown, start, Quartz.kCGMouseButtonLeft)
-Quartz.CGEventPost(Quartz.kCGHIDEventTap, down)
-time.sleep(0.1)
-steps = 20
-for i in range(1, steps + 1):
-    t = i / steps
-    cx = start[0] + (end[0] - start[0]) * t
-    cy = start[1] + (end[1] - start[1]) * t
-    drag = Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventLeftMouseDragged, (cx, cy), Quartz.kCGMouseButtonLeft)
-    Quartz.CGEventPost(Quartz.kCGHIDEventTap, drag)
-    time.sleep(0.01)
-up = Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventLeftMouseUp, end, Quartz.kCGMouseButtonLeft)
-Quartz.CGEventPost(Quartz.kCGHIDEventTap, up)
-`;
-      await execAsync(`python3 -c ${JSON.stringify(pyScript)}`, {
-        timeout: CUA_ACTION_TIMEOUT_MS,
+      await this.helper().mouseDrag({
+        windowId: target.windowId,
+        pid: target.pid,
+        path: normalizedPath,
+        captureWidth: capture.width,
+        captureHeight: capture.height,
       });
-
-      this.daemon.logEvent(this.taskId, "tool_result", {
-        tool: "computer_click",
-        action: "drag",
-        success: true,
-      });
-
-      return { success: true };
-    } catch (error: Any) {
+      return await this.captureTarget("drag");
+    } catch (error) {
       this.daemon.logEvent(this.taskId, "tool_error", {
-        tool: "computer_click",
-        action: "drag",
-        error: error.message,
+        tool: "drag",
+        error: error instanceof Error ? error.message : String(error),
       });
-      throw new Error(`Failed to drag: ${error.message}`);
-    }
-  }
-
-  async typeText(text: string): Promise<{ success: boolean; length: number }> {
-    if (!text || typeof text !== "string") {
-      throw new Error("Invalid text: must be a non-empty string");
-    }
-
-    await this.ensureAccessibility();
-    this.session().updateActionStatus("Typing…");
-    const app = await this.ensureAppPermission(
-      "computer_type",
-      "full_control",
-      "Type text into the frontmost application.",
-    );
-
-    this.daemon.logEvent(this.taskId, "tool_call", {
-      tool: "computer_type",
-      appName: app.name,
-      bundleId: app.bundleId,
-      textLength: text.length,
-    });
-
-    try {
-      const escaped = text.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-      const script = `tell application "System Events" to keystroke "${escaped}"`;
-      await execAsync(`osascript -e '${script.replace(/'/g, "'\\''")}'`, {
-        timeout: CUA_ACTION_TIMEOUT_MS,
-      });
-
-      this.daemon.logEvent(this.taskId, "tool_result", {
-        tool: "computer_type",
-        success: true,
-      });
-
-      return { success: true, length: text.length };
-    } catch (error: Any) {
-      this.daemon.logEvent(this.taskId, "tool_error", {
-        tool: "computer_type",
-        error: error.message,
-      });
-      throw new Error(`Failed to type text: ${error.message}`);
-    }
-  }
-
-  async pressKeys(keys: string[]): Promise<{ success: boolean; keys: string[] }> {
-    if (!Array.isArray(keys) || keys.length === 0) {
-      throw new Error("Invalid keys: must be a non-empty array of key names");
-    }
-
-    const normalized = normalizeKeysForBlocklist(keys);
-    if (BLOCKED_KEY_COMBOS.has(normalized)) {
-      throw new Error(
-        `Blocked key combination: ${keys.join("+")}. ` +
-          "This system shortcut is not allowed during computer use sessions.",
-      );
-    }
-
-    await this.ensureAccessibility();
-    this.session().updateActionStatus("Key input…");
-    const app = await this.ensureAppPermission(
-      "computer_key",
-      "full_control",
-      "Send keyboard input to the frontmost application.",
-    );
-
-    this.daemon.logEvent(this.taskId, "tool_call", {
-      tool: "computer_key",
-      appName: app.name,
-      bundleId: app.bundleId,
-      keys,
-    });
-
-    try {
-      const modifiers: string[] = [];
-      let keyChar: string | null = null;
-      let keyCode: number | null = null;
-
-      for (const k of keys) {
-        const lower = k.toLowerCase().trim();
-        if (lower === "cmd" || lower === "command") {
-          modifiers.push("command down");
-        } else if (lower === "ctrl" || lower === "control") {
-          modifiers.push("control down");
-        } else if (lower === "alt" || lower === "option") {
-          modifiers.push("option down");
-        } else if (lower === "shift") {
-          modifiers.push("shift down");
-        } else if (lower === "return" || lower === "enter") {
-          keyCode = 36;
-        } else if (lower === "escape" || lower === "esc") {
-          keyCode = 53;
-        } else if (lower === "tab") {
-          keyCode = 48;
-        } else if (lower === "space") {
-          keyCode = 49;
-        } else if (lower === "delete" || lower === "backspace") {
-          keyCode = 51;
-        } else if (lower === "up") {
-          keyCode = 126;
-        } else if (lower === "down") {
-          keyCode = 125;
-        } else if (lower === "left") {
-          keyCode = 123;
-        } else if (lower === "right") {
-          keyCode = 124;
-        } else if (lower.startsWith("f") && /^f\d{1,2}$/.test(lower)) {
-          const fkeyMap: Record<string, number> = {
-            f1: 122,
-            f2: 120,
-            f3: 99,
-            f4: 118,
-            f5: 96,
-            f6: 97,
-            f7: 98,
-            f8: 100,
-            f9: 101,
-            f10: 109,
-            f11: 103,
-            f12: 111,
-          };
-          keyCode = fkeyMap[lower] ?? null;
-        } else if (lower.length === 1) {
-          keyChar = lower;
-        } else {
-          keyChar = k;
-        }
-      }
-
-      const modString = modifiers.length > 0 ? ` using {${modifiers.join(", ")}}` : "";
-      let script: string;
-      if (keyCode !== null) {
-        script = `tell application "System Events" to key code ${keyCode}${modString}`;
-      } else if (keyChar !== null) {
-        const escaped = keyChar.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-        script = `tell application "System Events" to keystroke "${escaped}"${modString}`;
-      } else {
-        throw new Error(`Could not resolve key combination: ${keys.join("+")}`);
-      }
-
-      await execAsync(`osascript -e '${script.replace(/'/g, "'\\''")}'`, {
-        timeout: CUA_ACTION_TIMEOUT_MS,
-      });
-
-      this.daemon.logEvent(this.taskId, "tool_result", {
-        tool: "computer_key",
-        success: true,
-      });
-
-      return { success: true, keys };
-    } catch (error: Any) {
-      this.daemon.logEvent(this.taskId, "tool_error", {
-        tool: "computer_key",
-        error: error.message,
-      });
-      throw new Error(`Failed to press keys: ${error.message}`);
-    }
-  }
-
-  async takeScreenshot(): Promise<CUAScreenshotResult> {
-    await this.ensureScreenCaptureAllowed();
-    this.session().updateActionStatus("Capturing screen…");
-    const app = await this.ensureAppPermission(
-      "computer_screenshot",
-      "view_only",
-      "Capture a screenshot of the screen for the frontmost application context.",
-    );
-    this.daemon.logEvent(this.taskId, "tool_call", {
-      tool: "computer_screenshot",
-      appName: app.name,
-      bundleId: app.bundleId,
-    });
-
-    try {
-      const desktopCapturer = getElectronDesktopCapturer();
-      if (!desktopCapturer) {
-        throw new Error("Screenshot capture is only available in the desktop (Electron) runtime");
-      }
-
-      const electronScreen = getElectronScreen();
-      const display = electronScreen?.getPrimaryDisplay();
-      const scaleFactor = display?.scaleFactor ?? 2;
-      const workArea = display?.workAreaSize ?? { width: 1920, height: 1080 };
-
-      const captureWidth = Math.min(workArea.width * scaleFactor, SCREENSHOT_MAX_DIMENSION);
-      const captureHeight = Math.min(workArea.height * scaleFactor, SCREENSHOT_MAX_DIMENSION);
-
-      const sources = await getDesktopSourcesWithTimeout(
-        desktopCapturer,
-        {
-          types: ["screen"],
-          thumbnailSize: { width: captureWidth, height: captureHeight },
-        },
-        DESKTOP_CAPTURER_TIMEOUT_MS,
-      );
-
-      if (sources.length === 0) {
-        throw new Error("No screen sources available for capture");
-      }
-
-      const primaryId = display?.id;
-      let primaryScreen = sources[0];
-      if (primaryId !== undefined) {
-        const match = sources.find((s: Any) => String(s.display_id) === String(primaryId));
-        if (match) primaryScreen = match;
-      }
-
-      const image = primaryScreen.thumbnail;
-
-      if (image.isEmpty()) {
-        throw new Error(
-          "Failed to capture screenshot — image is empty. Check Screen Recording permission and restart CoWork OS after granting.",
-        );
-      }
-
-      const pngData = image.toPNG();
-      const base64 = pngData.toString("base64");
-      const hash = crypto.createHash("sha256").update(pngData).digest("hex").slice(0, 16);
-      const size = image.getSize();
-
-      this.lastScreenshotHash = hash;
-
-      this.daemon.logEvent(this.taskId, "tool_result", {
-        tool: "computer_screenshot",
-        success: true,
-        width: size.width,
-        height: size.height,
-      });
-
-      return {
-        base64,
-        width: size.width,
-        height: size.height,
-        hash,
-      };
-    } catch (error: Any) {
-      this.daemon.logEvent(this.taskId, "tool_error", {
-        tool: "computer_screenshot",
-        error: error.message,
-      });
-      throw new Error(`Failed to take screenshot: ${error.message}`);
-    }
-  }
-
-  async detectScreenChange(): Promise<{ changed: boolean; previousHash: string | null; currentHash: string }> {
-    const previousHash = this.lastScreenshotHash;
-    const fresh = await this.takeScreenshot();
-    return {
-      changed: previousHash !== null && fresh.hash !== previousHash,
-      previousHash,
-      currentHash: fresh.hash,
-    };
-  }
-
-  async getFrontmostApp(): Promise<{ name: string; bundleId: string }> {
-    if (os.platform() !== "darwin") {
-      throw new Error("Frontmost app detection is only supported on macOS");
-    }
-
-    try {
-      const { stdout: appName } = await execAsync(
-        `osascript -e 'tell application "System Events" to get name of first process whose frontmost is true'`,
-        { timeout: 5000 },
-      );
-      const { stdout: bundleId } = await execAsync(
-        `osascript -e 'tell application "System Events" to get bundle identifier of first process whose frontmost is true'`,
-        { timeout: 5000 },
-      );
-      return {
-        name: appName.trim(),
-        bundleId: bundleId.trim(),
-      };
-    } catch (error: Any) {
-      throw new Error(`Failed to detect frontmost app: ${error.message}`);
+      throw error;
     }
   }
 
   async scroll(
     x: number,
     y: number,
-    direction: "up" | "down" | "left" | "right",
-    amount: number = 3,
-  ): Promise<{ success: boolean }> {
-    await this.ensureAccessibility();
-    this.session().updateActionStatus("Scrolling…");
-    const app = await this.ensureAppPermission(
-      "computer_click",
-      "click_only",
-      "Scroll inside the frontmost application.",
-    );
-
-    this.daemon.logEvent(this.taskId, "tool_call", {
-      tool: "computer_click",
-      appName: app.name,
-      bundleId: app.bundleId,
-      action: "scroll",
-      x,
-      y,
-      direction,
-      amount,
-    });
-
+    scrollX: number,
+    scrollY: number,
+    captureId?: string,
+  ): Promise<ComputerUseToolResult> {
+    const { target, capture } = await this.prepareAction("scroll", captureId);
+    validatePointInCapture(x, y, capture);
+    const normalizedScrollX = requireIntegerInRange("scrollX", scrollX, -10_000, 10_000);
+    const normalizedScrollY = requireIntegerInRange("scrollY", scrollY, -10_000, 10_000);
     try {
-      const scrollY = direction === "up" ? amount : direction === "down" ? -amount : 0;
-      const scrollX = direction === "left" ? amount : direction === "right" ? -amount : 0;
-
-      const pyScript = `
-import Quartz
-move = Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventMouseMoved, (${x}, ${y}), Quartz.kCGMouseButtonLeft)
-Quartz.CGEventPost(Quartz.kCGHIDEventTap, move)
-scroll = Quartz.CGEventCreateScrollWheelEvent(None, Quartz.kCGScrollEventUnitLine, 2, ${scrollY}, ${scrollX})
-Quartz.CGEventPost(Quartz.kCGHIDEventTap, scroll)
-`;
-      await execAsync(`python3 -c ${JSON.stringify(pyScript)}`, {
-        timeout: CUA_ACTION_TIMEOUT_MS,
+      await this.helper().scrollAtPoint({
+        windowId: target.windowId,
+        pid: target.pid,
+        x,
+        y,
+        captureWidth: capture.width,
+        captureHeight: capture.height,
+        scrollX: normalizedScrollX,
+        scrollY: normalizedScrollY,
       });
-
-      this.daemon.logEvent(this.taskId, "tool_result", {
-        tool: "computer_click",
-        action: "scroll",
-        success: true,
-      });
-
-      return { success: true };
-    } catch (error: Any) {
+      return await this.captureTarget("scroll");
+    } catch (error) {
       this.daemon.logEvent(this.taskId, "tool_error", {
-        tool: "computer_click",
-        action: "scroll",
-        error: error.message,
+        tool: "scroll",
+        error: error instanceof Error ? error.message : String(error),
       });
-      throw new Error(`Failed to scroll: ${error.message}`);
+      throw error;
     }
   }
 
-  static getToolDefinitions(options?: { headless?: boolean }): LLMTool[] {
-    if (options?.headless) {
-      return [];
+  async typeText(text: string): Promise<ComputerUseToolResult> {
+    if (typeof text !== "string" || text.length === 0) {
+      throw new Error("type_text requires a non-empty text string.");
     }
+    await this.ensureReady();
+    const target = await this.refreshCurrentTarget();
+    this.daemon.logEvent(this.taskId, "tool_call", {
+      tool: "type_text",
+      targetApp: target.appName,
+      bundleId: target.bundleId,
+      windowId: target.windowId,
+      textLength: text.length,
+    });
+    await this.bringTargetToFront(target);
+    try {
+      const focused = await this.helper().focusedElement(target.pid);
+      if (focused.exists && focused.canSetValue && !focused.isSecure && focused.elementRef) {
+        await this.helper().setValue(focused.elementRef, text);
+      } else {
+        let focusedTextInput: Awaited<ReturnType<ComputerUseHelperRuntime["axFocusTextInput"]>>;
+        try {
+          focusedTextInput = await this.helper().axFocusTextInput({
+            pid: target.pid,
+            windowId: target.windowId,
+          });
+        } catch {
+          focusedTextInput = { focused: false };
+        }
+        if (
+          focusedTextInput.focused &&
+          focusedTextInput.canSetValue &&
+          !focusedTextInput.isSecure &&
+          focusedTextInput.elementRef
+        ) {
+          await this.helper().setValue(focusedTextInput.elementRef, text);
+        } else {
+          await this.helper().typeText(text, target.pid);
+        }
+      }
+      return await this.captureTarget("type_text");
+    } catch (error) {
+      this.daemon.logEvent(this.taskId, "tool_error", {
+        tool: "type_text",
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+  }
 
-    if (os.platform() !== "darwin") {
+  async pressKeys(keys: string[]): Promise<ComputerUseToolResult> {
+    if (!Array.isArray(keys) || keys.length === 0) {
+      throw new Error("keypress requires a non-empty keys array.");
+    }
+    const normalized = normalizeKeysForBlocklist(keys);
+    if (BLOCKED_KEY_COMBOS.has(normalized)) {
+      throw new Error(`Blocked key combination: ${keys.join("+")}.`);
+    }
+    await this.ensureReady();
+    const target = await this.refreshCurrentTarget();
+    this.daemon.logEvent(this.taskId, "tool_call", {
+      tool: "keypress",
+      targetApp: target.appName,
+      bundleId: target.bundleId,
+      windowId: target.windowId,
+      keys,
+    });
+    await this.bringTargetToFront(target);
+    try {
+      await this.helper().pressKeys(parseKeypressSpec(target.pid, keys));
+      return await this.captureTarget("keypress");
+    } catch (error) {
+      this.daemon.logEvent(this.taskId, "tool_error", {
+        tool: "keypress",
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+  }
+
+  async wait(ms?: number): Promise<ComputerUseToolResult> {
+    const delayMs = ms === undefined ? DEFAULT_WAIT_MS : requireIntegerInRange("ms", ms, 0, MAX_WAIT_MS);
+    await this.ensureReady();
+    await this.refreshCurrentTarget();
+    this.requireCurrentCapture();
+    this.daemon.logEvent(this.taskId, "tool_call", {
+      tool: "wait",
+      ms: delayMs,
+    });
+    await sleep(delayMs);
+    return await this.captureTarget("wait");
+  }
+
+  static getToolDefinitions(options?: { headless?: boolean }): LLMTool[] {
+    if (options?.headless || process.platform !== "darwin") {
       return [];
     }
 
     return [
       {
-        name: "computer_screenshot",
+        name: "screenshot",
         description:
-          "Take a screenshot of the current screen for visual analysis in native macOS apps. " +
-          "Preferred for desktop GUI tasks after open_application launches the app. " +
-          "Use this before computer_click / computer_type / computer_key so you can act on what is visible. Returns a base64-encoded PNG image.",
+          "Capture the current controlled window in a native macOS app. Call this first. " +
+          "Passing app and/or windowTitle retargets control to that window. Returns a fresh captureId and PNG image.",
         input_schema: {
           type: "object",
-          properties: {},
+          properties: {
+            app: {
+              type: "string",
+              description: "Optional app name or bundle id to retarget before capturing.",
+            },
+            windowTitle: {
+              type: "string",
+              description: "Optional window title filter to retarget before capturing.",
+            },
+          },
           required: [],
         },
       },
       {
-        name: "computer_click",
+        name: "click",
         description:
-          "Click at specific screen coordinates in native macOS apps. Preferred for normal GUI interaction in apps like Calculator, Notes, Finder, System Settings, Xcode, and Simulator. " +
-          "Use after taking a screenshot to interact with visible UI elements. Supports left/right/middle click, double-click, triple-click, drag, and scroll.",
+          "Click inside the current controlled window using screenshot-relative coordinates. " +
+          "Use the latest captureId to guard against stale state. Returns a fresh screenshot.",
         input_schema: {
           type: "object",
           properties: {
-            x: {
-              type: "number",
-              description: "X coordinate on screen (pixels from left edge)",
-            },
-            y: {
-              type: "number",
-              description: "Y coordinate on screen (pixels from top edge)",
-            },
+            x: { type: "number", description: "Window-relative X coordinate from the latest screenshot." },
+            y: { type: "number", description: "Window-relative Y coordinate from the latest screenshot." },
             button: {
               type: "string",
-              enum: ["left", "right", "middle"],
-              description: "Mouse button to click (default: left)",
+              enum: ["left", "right", "wheel", "back", "forward"],
+              description: "Mouse button to click. Defaults to left.",
             },
-            clickType: {
+            captureId: {
               type: "string",
-              enum: ["single", "double", "triple"],
-              description: "Click type (default: single)",
-            },
-            action: {
-              type: "string",
-              enum: ["click", "drag", "scroll"],
-              description: "Action type (default: click). For drag, provide toX/toY. For scroll, provide direction.",
-            },
-            toX: {
-              type: "number",
-              description: "Destination X for drag action",
-            },
-            toY: {
-              type: "number",
-              description: "Destination Y for drag action",
-            },
-            direction: {
-              type: "string",
-              enum: ["up", "down", "left", "right"],
-              description: "Scroll direction (for scroll action)",
-            },
-            amount: {
-              type: "number",
-              description: "Scroll amount in lines (default: 3, for scroll action)",
+              description: "Optional validation token from the latest screenshot().",
             },
           },
           required: ["x", "y"],
         },
       },
       {
-        name: "computer_type",
+        name: "double_click",
         description:
-          "Type text at the current cursor position using OS-level keyboard input in native macOS apps. " +
-          "Preferred over run_applescript for entering text into focused GUI fields. " +
-          "The text is typed character by character as real keyboard input.",
+          "Double-click inside the current controlled window using screenshot-relative coordinates. Returns a fresh screenshot.",
+        input_schema: {
+          type: "object",
+          properties: {
+            x: { type: "number", description: "Window-relative X coordinate from the latest screenshot." },
+            y: { type: "number", description: "Window-relative Y coordinate from the latest screenshot." },
+            captureId: {
+              type: "string",
+              description: "Optional validation token from the latest screenshot().",
+            },
+          },
+          required: ["x", "y"],
+        },
+      },
+      {
+        name: "move_mouse",
+        description:
+          "Move the pointer inside the current controlled window using screenshot-relative coordinates. Returns a fresh screenshot.",
+        input_schema: {
+          type: "object",
+          properties: {
+            x: { type: "number", description: "Window-relative X coordinate from the latest screenshot." },
+            y: { type: "number", description: "Window-relative Y coordinate from the latest screenshot." },
+            captureId: {
+              type: "string",
+              description: "Optional validation token from the latest screenshot().",
+            },
+          },
+          required: ["x", "y"],
+        },
+      },
+      {
+        name: "drag",
+        description:
+          "Drag through a series of screenshot-relative points inside the current controlled window. Returns a fresh screenshot.",
+        input_schema: {
+          type: "object",
+          properties: {
+            path: {
+              type: "array",
+              description: "Ordered drag path in screenshot-relative coordinates.",
+              items: {
+                type: "object",
+                properties: {
+                  x: { type: "number" },
+                  y: { type: "number" },
+                },
+                required: ["x", "y"],
+              },
+            },
+            captureId: {
+              type: "string",
+              description: "Optional validation token from the latest screenshot().",
+            },
+          },
+          required: ["path"],
+        },
+      },
+      {
+        name: "scroll",
+        description:
+          "Scroll at a screenshot-relative point inside the current controlled window. scrollX and scrollY are signed line deltas. Returns a fresh screenshot.",
+        input_schema: {
+          type: "object",
+          properties: {
+            x: { type: "number", description: "Window-relative X coordinate from the latest screenshot." },
+            y: { type: "number", description: "Window-relative Y coordinate from the latest screenshot." },
+            scrollX: { type: "number", description: "Signed horizontal scroll delta in lines." },
+            scrollY: { type: "number", description: "Signed vertical scroll delta in lines." },
+            captureId: {
+              type: "string",
+              description: "Optional validation token from the latest screenshot().",
+            },
+          },
+          required: ["x", "y", "scrollX", "scrollY"],
+        },
+      },
+      {
+        name: "type_text",
+        description:
+          "Type or set text into the currently focused control of the current controlled window. Returns a fresh screenshot.",
         input_schema: {
           type: "object",
           properties: {
             text: {
               type: "string",
-              description: "The text to type",
+              description: "The text to enter into the focused control.",
             },
           },
           required: ["text"],
         },
       },
       {
-        name: "computer_key",
+        name: "keypress",
         description:
-          "Press a key combination using OS-level keyboard input in native macOS apps. " +
-          "Preferred over run_applescript for shortcuts and non-text keys during GUI automation. " +
-          "Use this for keyboard shortcuts like Cmd+C, Cmd+V, Return, Escape, etc. Provide an array of key names to press simultaneously. " +
-          "Modifier keys: cmd/command, ctrl/control, alt/option, shift. " +
-          "Special keys: return, escape, tab, space, delete, up, down, left, right, f1-f12.",
+          "Send a key or key chord to the current controlled window. Modifier keys: cmd/command, ctrl/control, alt/option, shift. Returns a fresh screenshot.",
         input_schema: {
           type: "object",
           properties: {
             keys: {
               type: "array",
               items: { type: "string" },
-              description:
-                'Array of key names to press together, e.g. ["cmd", "c"] for Cmd+C, ' +
-                '["return"] for Enter, ["cmd", "shift", "s"] for Cmd+Shift+S',
+              description: 'Array of key names to press together, e.g. ["cmd", "c"] or ["return"].',
             },
           },
           required: ["keys"],
         },
       },
       {
-        name: "computer_move_mouse",
+        name: "wait",
         description:
-          "Move the mouse cursor to specific screen coordinates without clicking in native macOS apps. " +
-          "Use this to hover over elements or position the cursor before other computer_* actions.",
+          "Pause briefly and then refresh the current controlled window screenshot. Useful after async UI transitions.",
         input_schema: {
           type: "object",
           properties: {
-            x: {
+            ms: {
               type: "number",
-              description: "X coordinate on screen (pixels from left edge)",
-            },
-            y: {
-              type: "number",
-              description: "Y coordinate on screen (pixels from top edge)",
+              description: `Optional wait duration in milliseconds (default ${DEFAULT_WAIT_MS}).`,
             },
           },
-          required: ["x", "y"],
+          required: [],
         },
       },
     ];

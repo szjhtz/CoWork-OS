@@ -7,6 +7,7 @@ import type {
   RuntimeToolResultKind,
   RuntimeToolSideEffectLevel,
 } from "../../../shared/types";
+import { isComputerUseToolName } from "../../../shared/computer-use-contract";
 import type { LLMTool } from "../llm/types";
 import { getToolExposureMetadata } from "../tool-policy-engine";
 import {
@@ -49,6 +50,7 @@ const READ_PARALLEL_TOOLS = new Set([
   "browser_get_text",
   "browser_screenshot",
   "browser_wait",
+  "screen_context_resolve",
 ]);
 
 const EXCLUSIVE_TOOLS = new Set([
@@ -125,7 +127,7 @@ function inferConcurrencyClass(toolName: string): RuntimeToolConcurrencyClass {
   if (EXCLUSIVE_TOOLS.has(toolName)) return "exclusive";
   if (toolName.startsWith("browser_") || toolName.startsWith("canvas_")) return "serial_only";
   if (toolName.endsWith("_action")) return "serial_only";
-  if (toolName.startsWith("computer_")) return "serial_only";
+  if (isComputerUseToolName(toolName)) return "serial_only";
   if (isArtifactGenerationToolName(toolName) || isFileMutationToolName(toolName)) return "exclusive";
   if (
     toolName.startsWith("read_") ||
@@ -160,7 +162,7 @@ function inferReadOnly(toolName: string, concurrencyClass: RuntimeToolConcurrenc
 
 function inferInterruptBehavior(toolName: string, readOnly: boolean): RuntimeToolInterruptBehavior {
   if (toolName === "run_command") return "cancel";
-  if (toolName.startsWith("browser_") || toolName.startsWith("computer_")) return "cancel";
+  if (toolName.startsWith("browser_") || isComputerUseToolName(toolName)) return "cancel";
   return readOnly ? "cancel" : "block";
 }
 
@@ -183,7 +185,7 @@ function inferSideEffectLevel(toolName: string, readOnly: boolean): RuntimeToolS
   if (readOnly) return "none";
   if (toolName === "analyze_image" || toolName === "read_pdf_visual") return "high";
   if (toolName === "delete_file" || toolName.endsWith("_action")) return "high";
-  if (toolName === "run_command" || toolName.startsWith("browser_") || toolName.startsWith("computer_")) {
+  if (toolName === "run_command" || toolName.startsWith("browser_") || isComputerUseToolName(toolName)) {
     return "medium";
   }
   return "low";

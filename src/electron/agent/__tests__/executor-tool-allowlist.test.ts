@@ -114,11 +114,35 @@ describe("TaskExecutor tool allow-list semantics", () => {
     );
 
     expect(allowlist.has("open_application")).toBe(true);
-    expect(allowlist.has("computer_screenshot")).toBe(true);
-    expect(allowlist.has("computer_click")).toBe(true);
-    expect(allowlist.has("computer_type")).toBe(true);
-    expect(allowlist.has("computer_key")).toBe(true);
-    expect(allowlist.has("computer_move_mouse")).toBe(true);
+    expect(allowlist.has("screenshot")).toBe(true);
+    expect(allowlist.has("click")).toBe(true);
+    expect(allowlist.has("type_text")).toBe(true);
+    expect(allowlist.has("keypress")).toBe(true);
+    expect(allowlist.has("move_mouse")).toBe(true);
+    expect(allowlist.has("run_command")).toBe(false);
+    expect(allowlist.has("run_applescript")).toBe(false);
+  });
+
+  it("keeps run_command available for terminal-style native steps with explicit shell intent", () => {
+    const executor = Object.create(TaskExecutor.prototype) as Any;
+    executor.task = {
+      title: "Open Terminal",
+      prompt: "Open Terminal and run git status.",
+      agentConfig: {
+        taskIntent: "execution",
+      },
+    };
+    executor.getEffectiveExecutionMode = vi.fn().mockReturnValue("execute");
+
+    const allowlist = (TaskExecutor as Any).prototype.buildStepToolAllowlist.call(
+      executor,
+      { requiredTools: new Set<string>() },
+      "analysis",
+      "operations",
+      "Open Terminal and run git status in the current repo.",
+    );
+
+    expect(allowlist.has("run_command")).toBe(true);
   });
 
   it("includes parse_document but not read_pdf_visual for ordinary PDF reading steps", () => {

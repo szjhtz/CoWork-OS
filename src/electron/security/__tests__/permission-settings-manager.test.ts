@@ -52,6 +52,15 @@ describe("PermissionSettingsManager", () => {
     ]);
   });
 
+  it("falls back to dangerous_only when no settings are stored", () => {
+    repository.load.mockReturnValue(undefined);
+
+    const settings = PermissionSettingsManager.loadSettings();
+
+    expect(settings.defaultMode).toBe("dangerous_only");
+    expect(settings.rules).toEqual([]);
+  });
+
   it("appends deduplicated profile rules and persists them", () => {
     repository.load.mockReturnValue({
       version: 1,

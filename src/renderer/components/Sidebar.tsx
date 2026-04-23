@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo, useCallback, Fragment, useDeferredValue } from "react";
-import { ChevronDown, ChevronRight, SlidersHorizontal, Cpu, EyeOff, AppWindow, Bell, HardDrive, Rows3, Search, Server, Workflow, HeartPulse, Lightbulb, Inbox, Users, Bot } from "lucide-react";
+import { ChevronDown, ChevronRight, SlidersHorizontal, EyeOff, AppWindow, Bell, HardDrive, Rows3, Search, Server, Workflow, HeartPulse, Lightbulb, Inbox, Users, UsersRound, ListFilter } from "lucide-react";
 import { resolveTwinIcon } from "../utils/twin-icons";
 import { stripAllEmojis } from "../utils/emoji-replacer";
 import { Task, Workspace, UiDensity, InfraStatus } from "../../shared/types";
@@ -27,7 +27,12 @@ function formatRelativeShort(timestamp?: number): string {
   if (hours < 24) return `${hours}h`;
   const days = Math.round(hours / 24);
   if (days < 7) return `${days}d`;
-  return new Date(timestamp).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  const weeks = Math.round(days / 7);
+  if (weeks < 4) return `${weeks}w`;
+  const months = Math.round(days / 30);
+  if (months < 12) return `${Math.max(1, months)}m`;
+  const years = Math.round(days / 365);
+  return `${Math.max(1, years)}y`;
 }
 
 interface SidebarProps {
@@ -40,6 +45,7 @@ interface SidebarProps {
   isAgentsActive?: boolean;
   isMissionControlActive?: boolean;
   isHealthActive?: boolean;
+  isLoadingSessions?: boolean;
   completionAttentionTaskIds?: string[];
   onSelectTask: (id: string | null) => void;
   onOpenHome?: () => void;
@@ -297,6 +303,7 @@ export function Sidebar({
   isAgentsActive = false,
   isMissionControlActive = false,
   isHealthActive = false,
+  isLoadingSessions = false,
   completionAttentionTaskIds = [],
   onSelectTask,
   onOpenHome,
@@ -321,11 +328,15 @@ export function Sidebar({
   const [collapsedTasks, setCollapsedTasks] = useState<Set<string>>(new Set());
   const [agentRoles, setAgentRoles] = useState<Map<string, AgentRoleInfo>>(new Map());
   const [showFailedSessions, setShowFailedSessions] = useState(false);
+  const [showAutomatedSessions, setShowAutomatedSessions] = useState(false);
+  const [showSessionSearch, setShowSessionSearch] = useState(false);
+  const [showSessionFilters, setShowSessionFilters] = useState(false);
   const [pinActionError, setPinActionError] = useState<string | null>(null);
   const [archiveActionError, setArchiveActionError] = useState<string | null>(null);
   const [activeModeFilters, setActiveModeFilters] = useState<Set<SessionMode>>(new Set());
   const [showFilterBar] = useState(false);
   const [sessionsCollapsed, setSessionsCollapsed] = useState(false);
+  const [moreCollapsed, setMoreCollapsed] = useState(true);
   const [sessionSearch, setSessionSearch] = useState("");
   // Automated sessions folder is collapsed by default to keep the sidebar clean
   const [automatedFolderCollapsed, setAutomatedFolderCollapsed] = useState(true);
@@ -346,6 +357,8 @@ export function Sidebar({
     [deferredSessionSearch],
   );
   const hasSessionSearch = normalizedSessionSearch.length > 0;
+  const isMoreActive = isMissionControlActive || isHealthActive || isIdeasActive;
+  const isMoreExpanded = isMoreActive || !moreCollapsed;
 
   useEffect(() => {
     window.electronAPI
@@ -611,6 +624,10 @@ export function Sidebar({
     () => filterTaskTreeBySearch(automatedTaskTree, normalizedSessionSearch),
     [automatedTaskTree, normalizedSessionSearch],
   );
+  const visibleAutomatedTaskTree = useMemo(
+    () => (hasSessionSearch || showAutomatedSessions ? filteredAutomatedTaskTree : []),
+    [filteredAutomatedTaskTree, hasSessionSearch, showAutomatedSessions],
+  );
 
   const effectiveCollapsedTasks = useMemo(
     () => (hasSessionSearch ? new Set<string>() : collapsedTasks),
@@ -753,12 +770,12 @@ export function Sidebar({
 
     return () => window.cancelAnimationFrame(frame);
   }, [
-    filteredAutomatedTaskTree.length,
     filteredTaskTree.length,
     hasMoreTasks,
     onLoadMoreTasks,
     sessionsCollapsed,
     useVirtualizedTaskRows,
+    visibleAutomatedTaskTree.length,
   ]);
 
   // Close menu when clicking outside (use 'click' not 'mousedown' so moving from outside to menu still allows selection)
@@ -1148,7 +1165,7 @@ export function Sidebar({
 
     return (
       <div
-        className={`task-item cli-task-item ${selectedTaskId === task.id ? "task-item-selected" : ""} ${isSubAgent ? "task-item-subagent" : ""} ${node.synthetic ? "task-item-group-root" : ""} ${modeClass} ${hasChildren ? "task-item-has-children" : ""}`}
+        className={`task-item cli-task-item ${selectedTaskId === task.id ? "task-item-selected" : ""} ${isSubAgent ? "task-item-subagent" : ""} ${node.synthetic ? "task-item-group-root" : ""} ${modeClass} ${hasChildren ? "task-item-has-children" : ""} ${showCompletionAttention ? "task-completion-unread" : ""}`}
         onClick={() => {
           if (node.synthetic) return;
           if (renameTaskId === task.id) return;
@@ -1375,6 +1392,10 @@ export function Sidebar({
               )}
             </div>
           )}
+
+          {showCompletionAttention && (
+            <span className="task-completion-unread-dot" aria-hidden="true" />
+          )}
       </div>
     );
   };
@@ -1412,8 +1433,11 @@ export function Sidebar({
     <div className="sidebar cli-sidebar">
       {/* New Session Button */}
       <div className="sidebar-header">
-        <div className="cli-header-actions">
-          <button className="new-task-btn cli-new-task-btn cli-action-btn" onClick={handleNewTask}>
+        <div className="cli-header-actions sidebar-nav">
+          <button
+            className="new-task-btn cli-new-task-btn cli-action-btn sidebar-new-session-btn"
+            onClick={handleNewTask}
+          >
             <span className="terminal-only">
               <span className="cli-btn-bracket">[</span>
               <span className="cli-btn-plus">+</span>
@@ -1432,24 +1456,24 @@ export function Sidebar({
 
           <button
             type="button"
-            className={`new-task-btn cli-new-task-btn cli-action-btn sidebar-home-btn ${isHomeActive ? "active" : ""}`}
-            onClick={onOpenHome}
-            aria-pressed={isHomeActive}
-            title="Automations"
+            className={`new-task-btn cli-new-task-btn cli-action-btn sidebar-home-btn sidebar-nav-item ${isAgentsActive ? "active" : ""}`}
+            onClick={onOpenAgents}
+            aria-pressed={isAgentsActive}
+            title="Agents"
           >
             <span className="cli-btn-text">
-              <span className="terminal-only">automation</span>
+              <span className="terminal-only">agents</span>
               <span className="modern-only cli-new-task-modern-label">
-                <span className="sidebar-home-btn-icon" aria-hidden="true" style={{ display: 'flex' }}>
-                  <Cpu size={16} strokeWidth={2} style={{ display: 'block' }} />
+                <span className="sidebar-home-btn-icon" aria-hidden="true" style={{ display: "flex" }}>
+                  <UsersRound size={16} strokeWidth={2} style={{ display: "block" }} />
                 </span>
-                <span>Automations</span>
+                <span>Agents</span>
               </span>
             </span>
           </button>
 
           <button
-            className={`new-task-btn cli-new-task-btn cli-action-btn sidebar-devices-btn cli-devices-btn ${isDevicesActive ? "active" : ""}`}
+            className={`new-task-btn cli-new-task-btn cli-action-btn sidebar-devices-btn cli-devices-btn sidebar-nav-item ${isDevicesActive ? "active" : ""}`}
             onClick={onOpenDevices}
             title="Devices"
           >
@@ -1471,7 +1495,7 @@ export function Sidebar({
 
           <button
             type="button"
-            className={`new-task-btn cli-new-task-btn cli-action-btn sidebar-home-btn ${isInboxAgentActive ? "active" : ""}`}
+            className={`new-task-btn cli-new-task-btn cli-action-btn sidebar-home-btn sidebar-nav-item ${isInboxAgentActive ? "active" : ""}`}
             onClick={onOpenInboxAgent}
             aria-pressed={isInboxAgentActive}
             title={inboxNavLabel}
@@ -1490,57 +1514,95 @@ export function Sidebar({
 
           <button
             type="button"
-            className={`new-task-btn cli-new-task-btn cli-action-btn sidebar-home-btn ${isAgentsActive ? "active" : ""}`}
-            onClick={onOpenAgents}
-            aria-pressed={isAgentsActive}
-            title="Agents"
+            className={`new-task-btn cli-new-task-btn cli-action-btn sidebar-home-btn sidebar-nav-item ${isHomeActive ? "active" : ""}`}
+            onClick={onOpenHome}
+            aria-pressed={isHomeActive}
+            title="Automations"
           >
             <span className="cli-btn-text">
-              <span className="terminal-only">agents</span>
-              <span className="modern-only cli-new-task-modern-label">
-                <span className="sidebar-home-btn-icon" aria-hidden="true" style={{ display: "flex" }}>
-                  <Bot size={16} strokeWidth={2} style={{ display: "block" }} />
-                </span>
-                <span>Agents</span>
-              </span>
-            </span>
-          </button>
-
-          <button
-            type="button"
-            className={`new-task-btn cli-new-task-btn cli-action-btn sidebar-home-btn ${isMissionControlActive ? "active" : ""}`}
-            onClick={onOpenMissionControl}
-            aria-pressed={isMissionControlActive}
-            title="Mission Control"
-          >
-            <span className="cli-btn-text">
-              <span className="terminal-only">mission_control</span>
-              <span className="modern-only cli-new-task-modern-label">
-                <span className="sidebar-home-btn-icon" aria-hidden="true" style={{ display: "flex" }}>
-                  <Users size={16} strokeWidth={2} style={{ display: "block" }} />
-                </span>
-                <span>Mission Control</span>
-              </span>
-            </span>
-          </button>
-
-          <button
-            type="button"
-            className={`new-task-btn cli-new-task-btn cli-action-btn sidebar-home-btn ${isHealthActive ? "active" : ""}`}
-            onClick={onOpenHealth}
-            aria-pressed={isHealthActive}
-            title="Health"
-          >
-            <span className="cli-btn-text">
-              <span className="terminal-only">health</span>
+              <span className="terminal-only">automation</span>
               <span className="modern-only cli-new-task-modern-label">
                 <span className="sidebar-home-btn-icon" aria-hidden="true" style={{ display: 'flex' }}>
-                  <HeartPulse size={16} strokeWidth={2} style={{ display: 'block' }} />
+                  <Workflow size={16} strokeWidth={2} style={{ display: 'block' }} />
                 </span>
-                <span>Health</span>
+                <span>Automations</span>
               </span>
             </span>
           </button>
+
+          <button
+            type="button"
+            className="new-task-btn cli-new-task-btn cli-action-btn sidebar-home-btn sidebar-nav-item sidebar-more-toggle"
+            onClick={() => setMoreCollapsed((value) => !value)}
+            aria-expanded={isMoreExpanded}
+            title={isMoreExpanded ? "Collapse More" : "Expand More"}
+          >
+            <span className="cli-btn-text">
+              <span className="terminal-only">more</span>
+              <span className="modern-only cli-new-task-modern-label">
+                <span className="sidebar-home-btn-icon sidebar-more-dots" aria-hidden="true">•••</span>
+                <span>More</span>
+              </span>
+            </span>
+          </button>
+
+          {isMoreExpanded && (
+            <div className="sidebar-more-items">
+              <button
+                type="button"
+                className={`new-task-btn cli-new-task-btn cli-action-btn sidebar-home-btn sidebar-nav-item ${isMissionControlActive ? "active" : ""}`}
+                onClick={onOpenMissionControl}
+                aria-pressed={isMissionControlActive}
+                title="Mission Control"
+              >
+                <span className="cli-btn-text">
+                  <span className="terminal-only">mission_control</span>
+                  <span className="modern-only cli-new-task-modern-label">
+                    <span className="sidebar-home-btn-icon" aria-hidden="true" style={{ display: "flex" }}>
+                      <Users size={16} strokeWidth={2} style={{ display: "block" }} />
+                    </span>
+                    <span>Mission Control</span>
+                  </span>
+                </span>
+              </button>
+
+              <button
+                type="button"
+                className={`new-task-btn cli-new-task-btn cli-action-btn sidebar-home-btn sidebar-nav-item ${isHealthActive ? "active" : ""}`}
+                onClick={onOpenHealth}
+                aria-pressed={isHealthActive}
+                title="Health"
+              >
+                <span className="cli-btn-text">
+                  <span className="terminal-only">health</span>
+                  <span className="modern-only cli-new-task-modern-label">
+                    <span className="sidebar-home-btn-icon" aria-hidden="true" style={{ display: 'flex' }}>
+                      <HeartPulse size={16} strokeWidth={2} style={{ display: 'block' }} />
+                    </span>
+                    <span>Health</span>
+                  </span>
+                </span>
+              </button>
+
+              <button
+                type="button"
+                className={`new-task-btn cli-new-task-btn cli-action-btn sidebar-ideas-btn sidebar-nav-item ${isIdeasActive ? "active" : ""}`}
+                onClick={onOpenIdeas}
+                aria-pressed={isIdeasActive}
+                title="Ideas"
+              >
+                <span className="cli-btn-text">
+                  <span className="terminal-only">ideas</span>
+                  <span className="modern-only cli-new-task-modern-label">
+                    <span className="sidebar-home-btn-icon" aria-hidden="true" style={{ display: 'flex' }}>
+                      <Lightbulb size={16} strokeWidth={2} style={{ display: 'block' }} />
+                    </span>
+                    <span>Ideas</span>
+                  </span>
+                </span>
+              </button>
+            </div>
+          )}
 
         </div>
       </div>
@@ -1616,41 +1678,19 @@ export function Sidebar({
         </div>
       ) : (
         <>
-          {/* Ideas tab — above Sessions */}
-          <div className="sidebar-ideas-tab" style={{ padding: "0 12px", marginBottom: "6px" }}>
-            <button
-              type="button"
-              className={`new-task-btn cli-new-task-btn cli-action-btn sidebar-ideas-btn ${isIdeasActive ? "active" : ""}`}
-              onClick={onOpenIdeas}
-              aria-pressed={isIdeasActive}
-              title="Ideas"
-            >
-              <span className="cli-btn-text">
-                <span className="terminal-only">ideas</span>
-                <span className="modern-only cli-new-task-modern-label">
-                  <span className="sidebar-home-btn-icon" aria-hidden="true" style={{ display: 'flex' }}>
-                    <Lightbulb size={16} strokeWidth={2} style={{ display: 'block' }} />
-                  </span>
-                  <span>Ideas</span>
-                </span>
-              </span>
-            </button>
-          </div>
-
           {/* Sessions List Header */}
-          <div className="sidebar-header-sessions" style={{ padding: "0 12px", marginBottom: "6px" }}>
-                <div className="new-task-btn cli-new-task-btn cli-action-btn cli-sessions-header" style={{ margin: 0, display: 'flex', justifyContent: 'flex-start' }}>
+          <div className="sidebar-header-sessions">
+                <div className="new-task-btn cli-new-task-btn cli-action-btn cli-sessions-header">
                   <button
                     type="button"
                     className="cli-list-header-toggle"
                     onClick={() => setSessionsCollapsed((value) => !value)}
                     aria-expanded={!sessionsCollapsed}
                     title={sessionsCollapsed ? "Expand sessions" : "Collapse sessions"}
-                    style={{ display: 'flex', justifyContent: 'flex-start', textAlign: 'left' }}
                   >
                     <span className="cli-section-prompt terminal-only">{sessionsCollapsed ? "▸" : "▾"}</span>
                     <span className="terminal-only">SESSIONS</span>
-                    <span className="modern-only cli-new-task-modern-label" style={{ flex: 1, minWidth: 0, display: 'inline-flex', justifyContent: 'flex-start' }}>
+                    <span className="modern-only cli-new-task-modern-label">
                       <span className="sidebar-home-btn-icon cli-sessions-icon" aria-hidden="true">
                         <SlidersHorizontal size={16} strokeWidth={2} style={{ display: 'block' }} />
                       </span>
@@ -1665,16 +1705,33 @@ export function Sidebar({
                     </span>
                   </button>
                   <div className="cli-list-header-actions">
-                    {failedSessionCount > 0 && (
-                      <button
-                        type="button"
-                        className={`show-failed-toggle ${showFailedSessions ? "active" : ""}`}
-                        onClick={() => setShowFailedSessions(!showFailedSessions)}
-                        style={{ cursor: 'pointer', padding: '2px 4px' }}
-                      >
-                        {showFailedSessions ? "Hide" : "Show"} failed
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      className={`sidebar-session-action ${showSessionSearch ? "active" : ""}`}
+                      onClick={() => {
+                        setSessionsCollapsed(false);
+                        setShowSessionSearch((value) => {
+                          if (value) setSessionSearch("");
+                          return !value;
+                        });
+                      }}
+                      aria-pressed={showSessionSearch}
+                      title={showSessionSearch ? "Hide search" : "Search sessions"}
+                    >
+                      <Search size={16} strokeWidth={2} />
+                    </button>
+                    <button
+                      type="button"
+                      className={`sidebar-session-action ${showSessionFilters ? "active" : ""}`}
+                      onClick={() => {
+                        setSessionsCollapsed(false);
+                        setShowSessionFilters((value) => !value);
+                      }}
+                      aria-pressed={showSessionFilters}
+                      title={showSessionFilters ? "Hide filters" : "Filter sessions"}
+                    >
+                      <ListFilter size={16} strokeWidth={2} />
+                    </button>
                   </div>
                 </div>
 
@@ -1684,7 +1741,32 @@ export function Sidebar({
                   </div>
                 )}
 
-                {!sessionsCollapsed && (
+                {!sessionsCollapsed && showSessionFilters && (
+                  <div className="sidebar-session-filter-panel">
+                    <button
+                      type="button"
+                      className={`sidebar-session-filter-option ${showFailedSessions ? "active" : ""}`}
+                      onClick={() => setShowFailedSessions((value) => !value)}
+                      disabled={failedSessionCount === 0}
+                    >
+                      <span>Failed</span>
+                      {failedSessionCount > 0 && <span>{failedSessionCount}</span>}
+                    </button>
+                    <button
+                      type="button"
+                      className={`sidebar-session-filter-option ${showAutomatedSessions ? "active" : ""}`}
+                      onClick={() => {
+                        setShowAutomatedSessions((value) => !value);
+                        setAutomatedFolderCollapsed(false);
+                      }}
+                    >
+                      <span>Automated</span>
+                      {automatedTaskTree.length > 0 && <span>{automatedTaskTree.length}</span>}
+                    </button>
+                  </div>
+                )}
+
+                {!sessionsCollapsed && showSessionSearch && (
                   <label className="sidebar-sessions-search">
                     <Search size={14} />
                     <input
@@ -1741,7 +1823,7 @@ export function Sidebar({
             {!sessionsCollapsed && (
               <>
             {/* Automated sessions folder — collapsed by default, shown at top */}
-            {filteredAutomatedTaskTree.length > 0 && (
+            {visibleAutomatedTaskTree.length > 0 && (
               <div className="automated-sessions-folder">
                 <button
                   type="button"
@@ -1763,8 +1845,8 @@ export function Sidebar({
                       {hasSessionSearch || !automatedFolderCollapsed ? "▾" : "▸"}
                     </span>
                   </span>
-                  <span className="automated-folder-count">{filteredAutomatedTaskTree.length}</span>
-                  {filteredAutomatedTaskTree.some((n) => isActiveSessionStatus(n.task.status)) && (
+                  <span className="automated-folder-count">{visibleAutomatedTaskTree.length}</span>
+                  {visibleAutomatedTaskTree.some((n) => isActiveSessionStatus(n.task.status)) && (
                     <span
                       className="cli-session-indicator cli-session-indicator-active automated-folder-active"
                       aria-label="Has active session"
@@ -1773,16 +1855,22 @@ export function Sidebar({
                 </button>
                 {(hasSessionSearch || !automatedFolderCollapsed) && (
                   <div className="automated-folder-body">
-                    {filteredAutomatedTaskTree.map((node, index) =>
-                      renderTaskNode(node, index, 0, index === filteredAutomatedTaskTree.length - 1),
+                    {visibleAutomatedTaskTree.map((node, index) =>
+                      renderTaskNode(node, index, 0, index === visibleAutomatedTaskTree.length - 1),
                     )}
                   </div>
                 )}
               </div>
             )}
 
-            {filteredTaskTree.length === 0 && filteredAutomatedTaskTree.length === 0 ? (
-              hasSessionSearch ? (
+            {filteredTaskTree.length === 0 && visibleAutomatedTaskTree.length === 0 ? (
+              isLoadingSessions && !hasSessionSearch && activeModeFilters.size === 0 ? (
+                <div className="sidebar-session-skeleton" aria-label="Loading sessions">
+                  <span className="sidebar-session-skeleton-line" />
+                  <span className="sidebar-session-skeleton-line" />
+                  <span className="sidebar-session-skeleton-line" />
+                </div>
+              ) : hasSessionSearch ? (
                 <div
                   className={`sidebar-empty cli-empty ${uiDensity === "focused" ? "sidebar-empty-focused" : ""}`}
                 >

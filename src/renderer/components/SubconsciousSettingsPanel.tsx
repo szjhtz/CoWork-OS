@@ -20,6 +20,26 @@ function formatOutcome(value?: string): string {
   return value ? value.replace(/_/g, " ") : "none";
 }
 
+function isUsefulOutcome(value?: string): boolean {
+  return value === "dispatch" || value === "notify" || value === "suggest";
+}
+
+function formatPercent(value?: number): string {
+  if (typeof value !== "number") return "n/a";
+  return `${Math.round(value * 100)}%`;
+}
+
+function runImpactLabel(run?: SubconsciousRun): string {
+  if (!run) return "No runs yet";
+  if (run.dispatchStatus === "dispatched") return "Created follow-up work";
+  if (run.dispatchStatus === "completed") return "Delivered a visible outcome";
+  if (run.permissionDecision === "escalated") return "Waiting for your input";
+  if (run.outcome === "sleep") return "Correctly stayed quiet";
+  if (run.outcome === "failed") return "Needs attention";
+  if (isUsefulOutcome(run.outcome)) return "Produced a recommendation";
+  return "Recorded context only";
+}
+
 const mdPlugins = [remarkGfm, remarkBreaks];
 
 function Md({ text }: { text: string }) {
@@ -56,6 +76,34 @@ export function SubconsciousSettingsPanel(props?: {
       ) || [],
     [detail],
   );
+  const valueLedger = useMemo(() => {
+    const recentCutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    const recentTargets = targets.filter((target) => (target.lastRunAt || target.lastActionAt || 0) >= recentCutoff);
+    const dispatched = recentTargets.filter((target) => target.lastDispatchStatus === "dispatched").length;
+    const suggested = recentTargets.filter((target) => target.lastMeaningfulOutcome === "suggest").length;
+    const quiet = recentTargets.filter((target) => target.lastMeaningfulOutcome === "sleep").length;
+    const attention = targets.filter((target) => target.health === "blocked" || target.lastMeaningfulOutcome === "defer").length;
+    return {
+      dispatched,
+      suggested,
+      quiet,
+      attention,
+      useful: dispatched + suggested,
+    };
+  }, [targets]);
+  const selectedValue = useMemo(() => {
+    const latestRun = detail?.recentRuns[0];
+    const dispatch = detail?.dispatchHistory[0];
+    const topEvidence = detail?.latestEvidence.slice(0, 3).map((item) => item.summary) || [];
+    return {
+      latestRun,
+      dispatch,
+      topEvidence,
+      impact: runImpactLabel(latestRun),
+      confidence: formatPercent(latestRun?.confidence),
+      evidenceFreshness: formatPercent(latestRun?.evidenceFreshness),
+    };
+  }, [detail]);
 
   useEffect(() => {
     void load();
@@ -230,6 +278,29 @@ export function SubconsciousSettingsPanel(props?: {
           <div className="sc-status-label">Latest Run / Dream</div>
           <div className="sc-status-value" style={{ fontSize: 16 }}>{formatTimestamp(brain?.lastRunAt)}</div>
           <div className="sc-status-meta">Dream: {formatTimestamp(brain?.lastDreamAt)}</div>
+        </div>
+      </div>
+
+      <div>
+        <div className="sc-card-title">What Changed This Week</div>
+        <div className="sc-status-row">
+          <div className="sc-status-card">
+            <div className="sc-status-label">Useful Outputs</div>
+            <div className="sc-status-value">{valueLedger.useful}</div>
+            <div className="sc-status-meta">
+              {valueLedger.dispatched} task(s), {valueLedger.suggested} suggestion(s)
+            </div>
+          </div>
+          <div className="sc-status-card">
+            <div className="sc-status-label">Noise Avoided</div>
+            <div className="sc-status-value">{valueLedger.quiet}</div>
+            <div className="sc-status-meta">targets intentionally slept</div>
+          </div>
+          <div className="sc-status-card">
+            <div className="sc-status-label">Needs Attention</div>
+            <div className="sc-status-value">{valueLedger.attention}</div>
+            <div className="sc-status-meta">blocked or waiting targets</div>
+          </div>
         </div>
       </div>
 
@@ -527,6 +598,29 @@ export function SubconsciousSettingsPanel(props?: {
                   />
                   <span>Trusted for autonomous dispatch</span>
                 </label>
+                <div>
+                  <div className="sc-detail-section-title">Benefit summary</div>
+                  <div className="sc-detail-winner">
+                    <div className="sc-detail-winner-text">
+                      <Md text={`**${selectedValue.impact}**`} />
+                    </div>
+                    <div className="sc-detail-winner-rec">
+                      Confidence {selectedValue.confidence} | Freshness {selectedValue.evidenceFreshness} | Dispatch{" "}
+                      {selectedValue.dispatch?.status || "none"}
+                    </div>
+                    {selectedValue.topEvidence.length ? (
+                      <ul className="sc-detail-list">
+                        {selectedValue.topEvidence.map((item, index) => (
+                          <li key={`${index}-${item}`}>
+                            <Md text={item} />
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <div className="sc-detail-empty">No actionable evidence currently selected.</div>
+                    )}
+                  </div>
+                </div>
                 <div>
                   <div className="sc-detail-section-title">Latest evidence</div>
                   <ul className="sc-detail-list">

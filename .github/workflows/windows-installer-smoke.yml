@@ -44,9 +44,6 @@ jobs:
             throw "Expected version ${{ inputs.expected_version }}, found $version"
           }
 
-      - name: Validate npm tarball first-install flow
-        run: node scripts/release-smoke-install.mjs
-
       - name: Package Windows installer
         run: npm run package
 

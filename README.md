@@ -36,9 +36,9 @@
 
 ### Why CoWork OS?
 
-- **Inbox Agent** — local-first email triage with AI classification, action-needed / suggested-actions / commitments views, draft handling, follow-up creation, and background sync.
-- **Core Automation Runtime** — Always-on cognition is now a strict core made of Memory, Heartbeat, and Subconscious, owned by automation profiles for generic operator agents rather than by persona templates or device/trigger state.
-- **Digital Twin Personas** — Pre-built opt-in persona presets for every role. Twins stay visible and activatable, but they no longer own heartbeat, subconscious, or memory runtime state.
+- **Inbox Agent** — local-first email workspace with Classic and Today modes, AI triage, Mailbox Ask, manual reply/reply-all/forward, editable AI drafts, sender cleanup, commitments, and background sync.
+- **Workflow Intelligence** — Always-on cognition is now framed as one reviewable loop: Memory is the source of truth, Heartbeat schedules reflection, Reflection evaluates evidence internally, and Suggestions are the user-facing output.
+- **Digital Twin Personas** — Pre-built opt-in persona presets for every role. Twins stay visible and activatable, but they no longer own heartbeat, workflow-intelligence, or memory runtime state.
 - **Zero-Human Company Ops** — Configure CoWork OS as a founder-directed autonomous company shell with venture workspace kits, automation-profile-backed operator agents, strategic planner loops, and Mission Control ops monitoring.
 - **Managed Devices** — Run and inspect tasks across saved remote machines from a dedicated Devices tab with connection controls, summaries, remote task feeds, and remote file attachment picking.
 - **Automations Control Center** — A single Automations section now separates Core Automation, Triggered Work, Remote/Device Work, and optional Twin surfaces instead of blending them into one runtime.
@@ -82,7 +82,7 @@ Stable workflow entry points for the newest high-impact capabilities.
 - **Programmatic technical video** — bundled `manim-video` skill for Manim CE explainers, equation walkthroughs, algorithm visualizations, and animated architecture/data stories. [Learn more](docs/skills/manim-video.md)
 - **High-agency frontend design** — bundled `taste-skill` for stricter anti-slop frontend work with stronger layout variance, typography, motion, and implementation rules.
 
-See [Core Automation](docs/core-automation.md), [I Gave CoWork OS A Subconscious, And Now It Self-Improves 24/7 | Full Guide](docs/continual-learning-in-cowork.md), [Features](docs/features.md), [Heartbeat v3](docs/heartbeat-v3.md), [Providers](docs/providers.md), and [Plugin Packs](docs/plugin-packs.md) for current runtime details.
+See [Workflow Intelligence](docs/workflow-intelligence.md), [Core Automation](docs/core-automation.md), [I Gave CoWork OS Workflow Intelligence, And Now It Learns From Reviewable Work | Full Guide](docs/continual-learning-in-cowork.md), [Features](docs/features.md), [Heartbeat v3](docs/heartbeat-v3.md), [Providers](docs/providers.md), and [Plugin Packs](docs/plugin-packs.md) for current runtime details.
 
 ### Latest Release
 
@@ -173,7 +173,7 @@ It works in desktop and gateway channels, supports inline chaining, and writes i
 
 Operator Runtime Visibility makes the runtime's learning and routing visible: task detail surfaces now show the learning progression, unified recall spans tasks/messages/files/workspace notes/memory/KG, shell sessions preserve operator state, and live routing/fallback events are surfaced in Mission Control and the task UI. [Learn more](docs/operator-runtime-visibility.md)
 
-`Subconscious` runs now use the same runtime with stricter safeguards: they start only after memory services are initialized, write durable target-scoped artifacts under `.cowork/subconscious/`, auto-dispatch across mapped workflows, require isolated git worktrees for code-change dispatch by default, and skip non-git workspaces when isolation is required. See [Subconscious Reflective Loop](docs/subconscious-loop.md) and [Troubleshooting](docs/troubleshooting.md#subconscious-startup-warnings-in-development).
+Workflow Intelligence reflections now use the same runtime with stricter safeguards: they start only after memory services are initialized, write durable target-scoped artifacts under `.cowork/subconscious/` for compatibility, default to reviewable suggestions, learn from act/edit/snooze/dismiss/ignore feedback, require isolated git worktrees for trusted code-change auto-create paths, and skip non-git workspaces when isolation is required. See [Workflow Intelligence](docs/workflow-intelligence.md) and [Troubleshooting](docs/troubleshooting.md#workflow-intelligence-startup-warnings-in-development).
 
 ### Output Completion UX
 
@@ -208,7 +208,7 @@ The Devices tab turns CoWork OS into a multi-machine control surface. Save and r
 
 ### Automations
 
-Automations are now organized around a hard boundary: `Memory + Heartbeat + Subconscious` form the core runtime, while `Routines` are the main saved-automation product layered on top of lower-level execution surfaces. `Scheduled Tasks`, `Webhooks`, and `Event Triggers` still exist, but they now also serve as advanced or compiled backends for routines rather than competing first-class automation concepts. The home dashboard and routines panel surface recent automation runs so you can monitor background systems without hunting through tabs. [Learn more](docs/core-automation.md)
+Automations are now organized around a hard boundary: **Workflow Intelligence** is the always-on cognitive loop, while `Routines` are the main saved-automation product layered on top of lower-level execution surfaces. `Scheduled Tasks`, `Webhooks`, and `Event Triggers` still exist, but they now also serve as advanced or compiled backends for routines rather than competing first-class automation concepts. The home dashboard, welcome-screen Next actions, and routines panel surface recent automation suggestions/runs so you can monitor background systems without hunting through tabs. [Learn more](docs/core-automation.md)
 
 ### Zero-Human Company Ops
 
@@ -216,7 +216,7 @@ CoWork OS can be configured as a founder-operated autonomous company shell: vent
 
 ### Digital Twin Personas
 
-Role-specific AI twins that handle cognitive overhead as optional persona presets. Pick a template (Software Engineer, Engineering Manager, Product Manager, VP, Founder Office Operator, Company Planner, and more), customize it, and activate it as a role preset with recommended skills and prompt/personality defaults. Twins can be linked to a company for company-aware operations, but they no longer own heartbeat or subconscious policy directly. [Learn more](docs/digital-twins.md)
+Role-specific AI twins that handle cognitive overhead as optional persona presets. Pick a template (Software Engineer, Engineering Manager, Product Manager, VP, Founder Office Operator, Company Planner, and more), customize it, and activate it as a role preset with recommended skills and prompt/personality defaults. Twins can be linked to a company for company-aware operations, but they no longer own heartbeat or Workflow Intelligence policy directly. [Learn more](docs/digital-twins.md)
 
 ### Live Canvas & Build Mode
 
@@ -228,15 +228,18 @@ Unified AI gateway across 17 channels with security modes, rate limiting, ambien
 
 ### Inbox Agent
 
-Local-first inbox workspace that turns email into an action queue. It keeps cached mail visible on restart, syncs in the background, and surfaces the right next step for each thread: triage, draft, cleanup, commitment tracking, and scheduling. [Learn more](docs/inbox-agent.md)
+Local-first inbox workspace that turns email into an action queue while preserving normal email-client controls. It keeps cached mail visible on restart, syncs in the background, supports manual reply/reply-all/forward, and surfaces the right next step for each thread: triage, draft, cleanup, commitment tracking, and scheduling. [Learn more](docs/inbox-agent.md)
 
-- **Action cards**: Unread, Action Needed, Suggested Actions, Open Commitments
-- **Mailbox views**: Inbox, Sent, All, plus Recent/Priority sorting
-- **Workflow buttons**: Cleanup, Follow-up, Prep thread, Extract todos, Schedule, Refresh intel
+- **Classic + Today modes**: use the familiar three-pane inbox or the Today lanes for Needs action, Happening today, Good to know, and More to browse
+- **Action cards**: Unread, Needs reply, Suggested Actions, Open Commitments
+- **Mailbox views**: Inbox, Sent, All, plus Recent/Priority sorting, saved views, account filters, and practical domain filters
+- **Normal email actions**: manual Reply, Reply all, Forward, To/Cc/Bcc, editable subject/body, and provider-backed send
+- **AI draft handling**: generated replies are editable before send, and sent drafts disappear after successful send
+- **Mailbox Ask**: search local mailbox evidence and indexed attachment text, with LLM summaries when configured
+- **Workflow buttons**: Cleanup, Follow-up, Reply, Forward, Mark done, Prep thread, Extract todos, Schedule, Refresh intel
 - **Gmail auto-forwarding**: create forwarding automations from a Gmail thread with dry-run support, attachment filters, per-message dedupe, and thread-scoped execution
-- **Draft handling**: Send or discard generated replies before anything is posted externally
-- **Commitment tracking**: Accept commitments into real follow-up tasks, then mark them done or dismiss them
-- **Background sync**: Load from the local database immediately and refresh in the background without blanking the inbox on restart
+- **Commitment tracking**: accept commitments into real follow-up tasks, mark already-handled threads done, or dismiss items
+- **Background sync**: load from the local database immediately and refresh in the background without blanking the inbox on restart
 
 ### Infrastructure
 
@@ -457,7 +460,8 @@ See [CHANGELOG.md](CHANGELOG.md) for the full history of completed features.
 | [LLM Wiki](docs/llm-wiki.md) | First-class research vault workflow, slash syntax, vault layout, analyzer outputs, and Obsidian-friendly knowledge-base behavior |
 | [Kami Skill](docs/skills/kami.md) | Bundled editorial document workflow for resumes, one-pagers, white papers, diagrams, and slide decks |
 | [manim-video Skill](docs/skills/manim-video.md) | Bundled Manim CE workflow for technical animation, project scaffolding, and draft-to-production render flow |
-| [Core Automation](docs/core-automation.md) | Runtime boundary for Memory + Heartbeat + Subconscious, automation profiles, and the core harness |
+| [Workflow Intelligence](docs/workflow-intelligence.md) | Memory + Heartbeat + Reflection + Suggestions model, reviewable outputs, and feedback learning |
+| [Core Automation](docs/core-automation.md) | Runtime boundary for Workflow Intelligence, automation profiles, and the core harness |
 | [Heartbeat v3](docs/heartbeat-v3.md) | Default two-lane heartbeat architecture, signals, Pulse, Dispatch, and automation-profile-backed operator semantics |
 | [Security Guide](docs/security-guide.md) | Security model and best practices |
 | [Enterprise Connectors](docs/enterprise-connectors.md) | MCP connector development |
@@ -467,7 +471,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the full history of completed features.
 | [Knowledge Graph](docs/knowledge-graph.md) | Structured entity/relationship memory |
 | [Context Compaction](docs/context-compaction.md) | Proactive session compaction with structured summaries and chat-history summarization |
 | [Mission Control](docs/mission-control.md) | Agent orchestration dashboard |
-| [Subconscious Loop](docs/subconscious-loop.md) | Architecture and operating model for the core reflective evidence -> hypotheses -> critique -> winner -> backlog -> dispatch loop |
+| [Subconscious Loop](docs/subconscious-loop.md) | Compatibility redirect for the former name of Workflow Intelligence |
 | [Zero-Human Company Ops](docs/zero-human-company.md) | Founder-directed company planning, operators, and Mission Control ops workflows |
 | [Plugin Packs](docs/plugin-packs.md) | Plugin platform, Customize panel, and Plugin Store |
 | [Skill Store & External Skills](docs/skill-store-and-external-skills.md) | ClawHub support, external skill imports, and managed-skill install flows |

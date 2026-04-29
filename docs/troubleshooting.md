@@ -203,6 +203,30 @@ logs/dev-latest.log
 
 See [Web Page Artifacts](web-page-artifacts.md) for the expected sidebar/fullscreen behavior and the focused tests for this surface.
 
+## Browser workbench does not open for website testing
+
+Interactive browser-use prompts should open a visible browser workbench in the right sidebar. This is different from web page artifacts: generated `.html` files use the artifact iframe viewer, while live URLs use the browser workbench.
+
+If a task like "go to example.com and test the application as a normal user" does not open the sidebar browser:
+
+1. Confirm the task used a `browser_*` tool such as `browser_navigate`, not only `web_fetch`. `web_fetch` is still correct for static page reading.
+2. Confirm the task is selected in the main task view. The visible workbench is tied to the selected task and opens on demand through the renderer.
+3. If the task explicitly requested `force_headless`, `profile`, `browser_channel`, or `debugger_url`, the tool will use the Playwright/Chrome fallback path instead of the embedded workbench. The legacy `headless` flag alone should not bypass the visible workbench for normal site testing.
+4. If the site requires an existing signed-in Chrome session, use `browser_attach` explicitly. The embedded browser uses a persistent workspace profile and does not silently reuse system Chrome cookies.
+5. Capture a fresh dev log and check for `browserWorkbench:openRequest`, `browserWorkbench:register`, or browser tool errors if the sidebar never appears.
+
+For a fresh repro log:
+
+```bash
+npm run dev:log
+```
+
+Then inspect:
+
+```bash
+logs/dev-latest.log
+```
+
 ## Chronicle desktop screen context issues
 
 If Chronicle never seems to help with prompts like `what is this on the right side` or `why is this failing`, check these in order:

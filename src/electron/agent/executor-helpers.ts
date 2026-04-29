@@ -344,7 +344,8 @@ export function isAskingQuestion(text: string): boolean {
   if (looksLikeNonBlockingTail) return false;
 
   const blockingCuePatterns = [
-    /(?:need|required)\s+(?:your|a|the)\b/i,
+    /\bneed\s+your\s+(?:input|approval|confirmation|decision|choice|answer)\b/i,
+    /\brequired\s+(?:input|approval|confirmation|decision|file|path|value)\b/i,
     /before\s+i\s+can\s+(?:proceed|continue)\b/i,
     /i\s+can(?:not|'t)\s+(?:proceed|continue)\b/i,
     /\bawaiting\s+your\b/i,

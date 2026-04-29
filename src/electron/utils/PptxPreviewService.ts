@@ -3,6 +3,7 @@ import * as path from "path";
 import { createHash } from "crypto";
 import { execFile } from "child_process";
 import { promisify } from "util";
+import { resolveCodexArtifactToolRuntime } from "./codex-artifact-tool-runtime";
 import { getUserDataDir } from "./user-data-dir";
 import {
   extractPptxStructuredContentFromFile,
@@ -14,13 +15,15 @@ const execFileAsync = promisify(execFile);
 const DEFAULT_RENDER_TIMEOUT_MS = 45_000;
 const DEFAULT_MAX_RENDERED_SLIDES = 80;
 
-export type PptxPreviewRenderStatus = "rendered" | "text_only" | "failed";
+export type PptxPreviewRenderMode = "fast" | "full";
+export type PptxPreviewRenderStatus = "cached" | "rendering" | "rendered" | "text_only" | "failed";
 
 export interface PptxPreviewSlide {
   index: number;
   title?: string;
   text: string;
   notes?: string;
+  imageUrl?: string;
   imageDataUrl?: string;
 }
 
@@ -35,28 +38,48 @@ export interface PptxPresentationPreview {
 type CommandRunner = (
   command: string,
   args: string[],
-  options: { timeout: number; maxBuffer?: number },
+  options: { timeout: number; maxBuffer?: number; cwd?: string },
 ) => Promise<unknown>;
+
+type ArtifactToolRunner = (
+  input: {
+    sourcePath: string;
+    outputDir: string;
+    maxSlides: number;
+  },
+  options: { timeout: number },
+) => Promise<void>;
 
 interface PptxPreviewServiceOptions {
   cacheRoot?: string;
   commandRunner?: CommandRunner;
+  artifactToolRunner?: ArtifactToolRunner | null;
   renderTimeoutMs?: number;
   maxRenderedSlides?: number;
+  imageUrlFactory?: (imagePath: string) => string | Promise<string>;
 }
 
 interface CachedRenderManifest {
   sourcePath: string;
   sourceSize: number;
   sourceMtimeMs: number;
+  renderer?: "artifact_tool" | "libreoffice";
   imageFiles: Array<{ index: number; fileName: string }>;
 }
+
+type PreviewImage = {
+  imageUrl?: string;
+  imageDataUrl?: string;
+};
 
 export class PptxPreviewService {
   private readonly cacheRoot: string;
   private readonly commandRunner: CommandRunner;
+  private readonly artifactToolRunner: ArtifactToolRunner | null;
   private readonly renderTimeoutMs: number;
   private readonly maxRenderedSlides: number;
+  private readonly imageUrlFactory?: (imagePath: string) => string | Promise<string>;
+  private readonly inFlightRenders = new Map<string, Promise<{ images: Map<number, PreviewImage>; message?: string }>>();
 
   constructor(options: PptxPreviewServiceOptions = {}) {
     this.cacheRoot =
@@ -65,14 +88,21 @@ export class PptxPreviewService {
       options.commandRunner ??
       ((command, args, execOptions) =>
         execFileAsync(command, args, execOptions));
+    this.artifactToolRunner =
+      options.artifactToolRunner === undefined
+        ? (input, runnerOptions) =>
+            runArtifactToolPptxRenderer(this.commandRunner, input, runnerOptions)
+        : options.artifactToolRunner;
     this.renderTimeoutMs = options.renderTimeoutMs ?? DEFAULT_RENDER_TIMEOUT_MS;
     this.maxRenderedSlides =
       options.maxRenderedSlides ?? DEFAULT_MAX_RENDERED_SLIDES;
+    this.imageUrlFactory = options.imageUrlFactory;
   }
 
   async buildPreview(input: {
     filePath: string;
     workspaceRoot?: string;
+    renderMode?: PptxPreviewRenderMode;
   }): Promise<PptxPresentationPreview> {
     const resolvedPath = path.resolve(input.filePath);
     if (input.workspaceRoot && !isPathInside(resolvedPath, input.workspaceRoot)) {
@@ -84,7 +114,16 @@ export class PptxPreviewService {
     const cacheDir = this.getCacheDir(resolvedPath, stats);
     const cachedImages = await this.readCachedImages(cacheDir, resolvedPath, stats);
     if (cachedImages.size > 0) {
-      return this.toPreview(structured, cachedImages, "rendered");
+      return this.toPreview(structured, cachedImages, input.renderMode === "fast" ? "cached" : "rendered");
+    }
+
+    if (input.renderMode === "fast") {
+      return this.toPreview(
+        structured,
+        new Map(),
+        "rendering",
+        "Rendering slide previews...",
+      );
     }
 
     const renderResult = await this.renderSlideImages(resolvedPath, stats, cacheDir);
@@ -98,7 +137,7 @@ export class PptxPreviewService {
 
   private toPreview(
     structured: PptxStructuredExtract,
-    images: Map<number, string>,
+    images: Map<number, PreviewImage>,
     renderStatus: PptxPreviewRenderStatus,
     renderMessage?: string,
   ): PptxPresentationPreview {
@@ -118,7 +157,8 @@ export class PptxPreviewService {
         title: slide.title,
         text: slide.text,
         notes: slide.notes,
-        imageDataUrl: images.get(slide.index),
+        imageUrl: images.get(slide.index)?.imageUrl,
+        imageDataUrl: images.get(slide.index)?.imageDataUrl,
       })),
       renderStatus,
       renderMessage,
@@ -137,7 +177,7 @@ export class PptxPreviewService {
     cacheDir: string,
     resolvedPath: string,
     stats: { size: number; mtimeMs: number },
-  ): Promise<Map<number, string>> {
+  ): Promise<Map<number, PreviewImage>> {
     try {
       const manifestRaw = await fs.readFile(path.join(cacheDir, "manifest.json"), "utf-8");
       const manifest = JSON.parse(manifestRaw) as CachedRenderManifest;
@@ -149,12 +189,12 @@ export class PptxPreviewService {
         return new Map();
       }
 
-      const images = new Map<number, string>();
+      const images = new Map<number, PreviewImage>();
       for (const image of manifest.imageFiles) {
         if (!Number.isFinite(image.index) || !image.fileName) continue;
         const imagePath = path.join(cacheDir, image.fileName);
-        const dataUrl = await readPngDataUrl(imagePath);
-        if (dataUrl) images.set(image.index, dataUrl);
+        const previewImage = await this.readPreviewImage(imagePath);
+        if (previewImage) images.set(image.index, previewImage);
       }
       return images;
     } catch {
@@ -166,7 +206,103 @@ export class PptxPreviewService {
     resolvedPath: string,
     stats: { size: number; mtimeMs: number },
     cacheDir: string,
-  ): Promise<{ images: Map<number, string>; message?: string }> {
+  ): Promise<{ images: Map<number, PreviewImage>; message?: string }> {
+    const cacheKey = this.getCacheDir(resolvedPath, stats);
+    const inFlight = this.inFlightRenders.get(cacheKey);
+    if (inFlight) return inFlight;
+
+    const renderPromise = this.renderSlideImagesUncached(resolvedPath, stats, cacheDir)
+      .finally(() => {
+        this.inFlightRenders.delete(cacheKey);
+      });
+    this.inFlightRenders.set(cacheKey, renderPromise);
+    return renderPromise;
+  }
+
+  private async renderSlideImagesUncached(
+    resolvedPath: string,
+    stats: { size: number; mtimeMs: number },
+    cacheDir: string,
+  ): Promise<{ images: Map<number, PreviewImage>; message?: string }> {
+    const artifactResult = await this.renderSlideImagesWithArtifactTool(
+      resolvedPath,
+      stats,
+      cacheDir,
+    );
+    if (artifactResult.images.size > 0) {
+      return artifactResult;
+    }
+
+    const libreOfficeResult = await this.renderSlideImagesWithLibreOffice(
+      resolvedPath,
+      stats,
+      cacheDir,
+    );
+    if (libreOfficeResult.images.size > 0 || !artifactResult.message) {
+      return libreOfficeResult;
+    }
+
+    return {
+      images: new Map(),
+      message: libreOfficeResult.message
+        ? `${artifactResult.message} ${libreOfficeResult.message}`
+        : artifactResult.message,
+    };
+  }
+
+  private async renderSlideImagesWithArtifactTool(
+    resolvedPath: string,
+    stats: { size: number; mtimeMs: number },
+    cacheDir: string,
+  ): Promise<{ images: Map<number, PreviewImage>; message?: string }> {
+    if (!this.artifactToolRunner) {
+      return {
+        images: new Map(),
+        message: "Codex presentation renderer is disabled.",
+      };
+    }
+
+    try {
+      await fs.mkdir(this.cacheRoot, { recursive: true });
+      await fs.mkdir(cacheDir, { recursive: true });
+
+      await this.artifactToolRunner(
+        {
+          sourcePath: resolvedPath,
+          outputDir: cacheDir,
+          maxSlides: this.maxRenderedSlides,
+        },
+        { timeout: this.renderTimeoutMs },
+      );
+
+      const imageFiles = await listRenderedSlideFiles(cacheDir, this.maxRenderedSlides);
+      if (imageFiles.length === 0) {
+        return {
+          images: new Map(),
+          message: "Codex presentation renderer did not produce slide images.",
+        };
+      }
+
+      await this.writeRenderManifest(cacheDir, resolvedPath, stats, imageFiles, "artifact_tool");
+      return {
+        images: await this.readRenderedImages(imageFiles),
+      };
+    } catch (error) {
+      return {
+        images: new Map(),
+        message:
+          error instanceof Error
+            ? `Codex presentation renderer failed: ${error.message}`
+            : "Codex presentation renderer failed.",
+      };
+    }
+  }
+
+  private async renderSlideImagesWithLibreOffice(
+    resolvedPath: string,
+    stats: { size: number; mtimeMs: number },
+    cacheDir: string,
+  ): Promise<{ images: Map<number, PreviewImage>; message?: string }> {
     let tempDir: string | undefined;
     try {
       await fs.mkdir(this.cacheRoot, { recursive: true });
@@ -210,23 +346,10 @@ export class PptxPreviewService {
       );
 
       const imageFiles = await listRenderedSlideFiles(cacheDir, this.maxRenderedSlides);
-      const manifest: CachedRenderManifest = {
-        sourcePath: resolvedPath,
-        sourceSize: stats.size,
-        sourceMtimeMs: stats.mtimeMs,
-        imageFiles: imageFiles.map((image) => ({
-          index: image.index,
-          fileName: path.basename(image.path),
-        })),
+      await this.writeRenderManifest(cacheDir, resolvedPath, stats, imageFiles, "libreoffice");
+      return {
+        images: await this.readRenderedImages(imageFiles),
       };
-      await fs.writeFile(path.join(cacheDir, "manifest.json"), JSON.stringify(manifest), "utf-8");
-
-      const images = new Map<number, string>();
-      for (const image of imageFiles) {
-        const dataUrl = await readPngDataUrl(image.path);
-        if (dataUrl) images.set(image.index, dataUrl);
-      }
-      return { images };
     } catch (error) {
       return {
         images: new Map(),
@@ -243,6 +366,98 @@ export class PptxPreviewService {
       }
     }
   }
+
+  private async writeRenderManifest(
+    cacheDir: string,
+    resolvedPath: string,
+    stats: { size: number; mtimeMs: number },
+    imageFiles: Array<{ index: number; path: string }>,
+    renderer: CachedRenderManifest["renderer"],
+  ): Promise<void> {
+    const manifest: CachedRenderManifest = {
+      sourcePath: resolvedPath,
+      sourceSize: stats.size,
+      sourceMtimeMs: stats.mtimeMs,
+      renderer,
+      imageFiles: imageFiles.map((image) => ({
+        index: image.index,
+        fileName: path.basename(image.path),
+      })),
+    };
+    await fs.writeFile(path.join(cacheDir, "manifest.json"), JSON.stringify(manifest), "utf-8");
+  }
+
+  private async readRenderedImages(
+    imageFiles: Array<{ index: number; path: string }>,
+  ): Promise<Map<number, PreviewImage>> {
+    const images = new Map<number, PreviewImage>();
+    for (const image of imageFiles) {
+      const previewImage = await this.readPreviewImage(image.path);
+      if (previewImage) images.set(image.index, previewImage);
+    }
+    return images;
+  }
+
+  private async readPreviewImage(imagePath: string): Promise<PreviewImage | null> {
+    if (this.imageUrlFactory) {
+      try {
+        const imageUrl = await this.imageUrlFactory(imagePath);
+        if (imageUrl) return { imageUrl };
+      } catch {
+        // Fall through to a data URL when tokenized preview URLs are unavailable.
+      }
+    }
+
+    const imageDataUrl = await readPngDataUrl(imagePath);
+    return imageDataUrl ? { imageDataUrl } : null;
+  }
+}
+
+async function runArtifactToolPptxRenderer(
+  commandRunner: CommandRunner,
+  input: {
+    sourcePath: string;
+    outputDir: string;
+    maxSlides: number;
+  },
+  options: { timeout: number },
+): Promise<void> {
+  const runtime = await resolveCodexArtifactToolRuntime();
+  if (!runtime) {
+    throw new Error("bundled @oai/artifact-tool runtime is not available");
+  }
+
+  const script = `
+const fs = await import("node:fs/promises");
+const path = await import("node:path");
+const { FileBlob, PresentationFile } = await import("@oai/artifact-tool");
+
+const sourcePath = ${JSON.stringify(input.sourcePath)};
+const outputDir = ${JSON.stringify(input.outputDir)};
+const maxSlides = ${JSON.stringify(input.maxSlides)};
+
+await fs.mkdir(outputDir, { recursive: true });
+const pptx = await FileBlob.load(sourcePath);
+const presentation = await PresentationFile.importPptx(pptx);
+const slideCount = Math.min(Number(presentation.slides.count || 0), maxSlides);
+
+for (let index = 0; index < slideCount; index += 1) {
+  const slide = presentation.slides.getItem(index);
+  const png = await presentation.export({ slide, format: "png", scale: 1 });
+  const bytes = Buffer.from(await png.arrayBuffer());
+  await fs.writeFile(path.join(outputDir, \`slide-\${index + 1}.png\`), bytes);
+}
+`;
+
+  await commandRunner(
+    runtime.nodeBinary,
+    ["--input-type=module", "--eval", script],
+    {
+      timeout: options.timeout,
+      maxBuffer: 8 * 1024 * 1024,
+      cwd: runtime.nodeRoot,
+    },
+  );
 }
 
 function isPathInside(targetPath: string, rootPath: string): boolean {

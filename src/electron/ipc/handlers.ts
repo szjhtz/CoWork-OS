@@ -13,7 +13,6 @@ import { execFile, spawn as spawnProcess } from "child_process";
 import { promisify } from "util";
 import { promises as dns } from "dns";
 import { isIP } from "net";
-import mammoth from "mammoth";
 import mime from "mime-types";
 import { z } from "zod";
 import { getUserDataDir } from "../utils/user-data-dir";
@@ -22,14 +21,29 @@ import {
   runOcrFromImagePath,
   shouldRunImageOcr,
 } from "./image-viewer-ocr";
-import { extractPptxContentFromFile } from "../utils/pptx-extractor";
+import { buildWebPagePreviewFromPath } from "../utils/web-preview";
 import {
   PptxPreviewService,
   type PptxPresentationPreview,
+  type PptxPreviewRenderMode,
 } from "../utils/PptxPreviewService";
 import { extractPdfReviewData } from "../utils/pdf-review";
-import ExcelJS from "exceljs";
-import { createMediaPlaybackUrl } from "../media";
+import { createLocalPreviewFileUrl, createMediaPlaybackUrl } from "../media";
+import {
+  buildDelimitedSpreadsheetPreview,
+  buildSpreadsheetPreviewFromFile,
+  spreadsheetPreviewToTsv,
+  writeDelimitedSpreadsheetPreviewToFile,
+  writeSpreadsheetPreviewToFile,
+} from "../utils/spreadsheet-preview";
+import type { SpreadsheetPreview } from "../../shared/spreadsheet-preview";
+import { buildDocumentPreviewFromFile } from "../utils/document-preview";
+import { writeEditableDocumentBlocksToDocxFile } from "../utils/document-writer";
+import type {
+  DocumentPreview,
+  EditableDocumentBlock,
+} from "../../shared/document-preview";
+import type { WebPagePreview } from "../../shared/web-page-preview";
 import { DocumentEditorSessionService } from "../documents/DocumentEditorSessionService";
 import { MailboxService } from "../mailbox/MailboxService";
 import { AgentMailAdminService } from "../agentmail/AgentMailAdminService";
@@ -103,6 +117,7 @@ import {
   TaskLearningProgress,
   UnifiedRecallQuery,
   UnifiedRecallResponse,
+  MemoryObservationSearchQuery,
   ChronicleSettings,
   ChronicleCaptureStatus,
   ChronicleResolvedContext,
@@ -277,7 +292,9 @@ import {
 } from "../hooks";
 import { initializeHookAgentIngress } from "../hooks/agent-ingress";
 import { MemoryService } from "../memory/MemoryService";
+import { MemoryObservationService } from "../memory/MemoryObservationService";
 import { MemorySynthesizer } from "../memory/MemorySynthesizer";
+import { CuratedMemoryService } from "../memory/CuratedMemoryService";
 import { SupermemoryService } from "../memory/SupermemoryService";
 import { UserProfileService } from "../memory/UserProfileService";
 import { WORKSPACE_KIT_CONTRACTS } from "../context/kit-contracts";
@@ -286,6 +303,7 @@ import {
   readWorkspaceKitState,
   ensureBootstrapLifecycleState,
 } from "../context/kit-status";
+import { buildDefaultDesignSystemMarkdown } from "../context/design-system-template";
 import { writeKitFileWithSnapshot } from "../context/kit-revisions";
 import { InfraManager } from "../infra/infra-manager";
 import { InfraSettingsManager } from "../infra/infra-settings";
@@ -325,8 +343,35 @@ type FileViewerRequestOptions = {
   imageOcrMaxChars?: number;
   includeImageContent?: boolean;
   includePdfBase64?: boolean;
+  presentationRenderMode?: PptxPreviewRenderMode;
 };
 type MacSystemSettingsTarget = "microphone" | "dictation";
+
+let sharedPptxPreviewService: PptxPreviewService | null = null;
+
+function getSharedPptxPreviewService(): PptxPreviewService {
+  sharedPptxPreviewService ??= new PptxPreviewService({
+    imageUrlFactory: (imagePath) =>
+      createLocalPreviewFileUrl({
+        resolvedPath: imagePath,
+        rootPath: path.join(getUserDataDir(), "cache", "pptx-previews"),
+        mimeType: "image/png",
+      }),
+  });
+  return sharedPptxPreviewService;
+}
+
+function buildPptxContentFromPreview(preview: PptxPresentationPreview): string {
+  return preview.slides
+    .map((slide) => {
+      const lines = [`Slide ${slide.index}`];
+      if (slide.title) lines.push(slide.title);
+      if (slide.text && slide.text !== slide.title) lines.push(slide.text);
+      if (slide.notes) lines.push(`Notes: ${slide.notes}`);
+      return lines.join("\n");
+    })
+    .join("\n\n");
+}
 
 const execFileAsync = promisify(execFile);
 const SupermemorySettingsInputSchema = z.object({
@@ -360,6 +405,42 @@ const SupermemorySettingsInputSchema = z.object({
     )
     .max(50)
     .optional(),
+}).strict();
+const MemoryObservationStringArraySchema = z.array(z.string().trim().min(1).max(240)).max(12);
+const MemoryObservationPatchSchema = z.object({
+  title: z.string().trim().min(1).max(160).optional(),
+  subtitle: z.string().trim().max(200).optional(),
+  narrative: z.string().trim().min(1).max(2_000).optional(),
+  facts: MemoryObservationStringArraySchema.optional(),
+  concepts: MemoryObservationStringArraySchema.optional(),
+  filesRead: MemoryObservationStringArraySchema.optional(),
+  filesModified: MemoryObservationStringArraySchema.optional(),
+  tools: MemoryObservationStringArraySchema.optional(),
+  sourceEventIds: MemoryObservationStringArraySchema.optional(),
+  privacyState: z.enum(["normal", "private", "redacted", "suppressed"]).optional(),
+}).strict();
+const MemoryObservationUpdateSchema = z.object({
+  workspaceId: WorkspaceIdSchema,
+  memoryId: StringIdSchema,
+  patch: MemoryObservationPatchSchema,
+}).strict();
+const MemoryObservationMutationSchema = z.object({
+  workspaceId: WorkspaceIdSchema,
+  memoryId: StringIdSchema,
+}).strict();
+const MemoryObservationRedactSchema = MemoryObservationMutationSchema.extend({
+  replacement: z.string().trim().min(1).max(500).optional(),
+}).strict();
+const MemoryObservationPromoteSchema = MemoryObservationMutationSchema.extend({
+  target: z.enum(["user", "workspace"]).optional(),
+  kind: z.enum(["identity", "preference", "constraint", "workflow_rule", "project_fact", "active_commitment"]).optional(),
+}).strict();
+const MemoryObservationDetailsSchema = z.object({
+  workspaceId: WorkspaceIdSchema,
+  ids: z.array(StringIdSchema).min(1).max(25),
+}).strict();
+const MemoryObservationRebuildSchema = z.object({
+  force: z.boolean().optional(),
 }).strict();
 const logger = createLogger("IPC");
 const ProfileNameSchema = z.string().trim().min(1).max(80);
@@ -1648,6 +1729,50 @@ export async function setupIpcHandlers(
   );
 
   ipcMain.handle(
+    IPC_CHANNELS.FILE_OPEN_WITH_APP,
+    async (_, filePath: string, workspacePath: string | undefined, appName: string) => {
+      if (!workspacePath) {
+        throw new Error("Workspace path is required for file operations");
+      }
+      const allowedApps = new Set([
+        "Microsoft Excel",
+        "Numbers",
+        "Microsoft Outlook",
+        "Microsoft Word",
+        "Pages",
+        "TextEdit",
+        "Microsoft PowerPoint",
+        "Keynote",
+        "LibreOffice",
+        "Preview",
+      ]);
+      if (!allowedApps.has(appName)) {
+        throw new Error("Unsupported application");
+      }
+
+      const { resolvedPath } = await resolveExistingPathForViewer(
+        filePath,
+        workspacePath,
+        {
+          requireWorkspaceContainment: true,
+        },
+      );
+      if (!resolvedPath) {
+        return "File not found";
+      }
+
+      if (process.platform === "darwin") {
+        await execFileAsync("/usr/bin/open", ["-a", appName, resolvedPath], {
+          timeout: 10_000,
+        });
+        return "";
+      }
+
+      return shell.openPath(resolvedPath);
+    },
+  );
+
+  ipcMain.handle(
     IPC_CHANNELS.FILE_SHOW_IN_FINDER,
     async (_, filePath: string, workspacePath?: string) => {
       // Security: require workspacePath and validate path is within it
@@ -1789,6 +1914,7 @@ export async function setupIpcHandlers(
         imageOcrMaxChars,
         includeImageContent = true,
         includePdfBase64 = false,
+        presentationRenderMode = "full",
       } = data;
 
       if (!workspacePath || !workspacePath.trim()) {
@@ -1823,13 +1949,17 @@ export async function setupIpcHandlers(
         | "code"
         | "text"
         | "docx"
+        | "document"
         | "pdf"
         | "latex"
         | "image"
         | "video"
+        | "audio"
         | "pptx"
         | "xlsx"
         | "html"
+        | "json"
+        | "csv"
         | "unsupported" => {
         const codeExtensions = [
           ".js",
@@ -1846,7 +1976,6 @@ export async function setupIpcHandlers(
           ".css",
           ".scss",
           ".xml",
-          ".json",
           ".yaml",
           ".yml",
           ".toml",
@@ -1866,7 +1995,6 @@ export async function setupIpcHandlers(
         const textExtensions = [
           ".txt",
           ".log",
-          ".csv",
           ".env",
           ".gitignore",
           ".dockerignore",
@@ -1885,23 +2013,57 @@ export async function setupIpcHandlers(
           ".ico",
         ];
         const videoExtensions = [".mp4", ".webm"];
+        const audioExtensions = [".mp3", ".wav", ".ogg", ".m4a", ".flac", ".aac"];
 
         if (ext === ".md" || ext === ".markdown") return "markdown";
         if (ext === ".html" || ext === ".htm") return "html";
         if (ext === ".tex") return "latex";
         if (ext === ".docx") return "docx";
+        if (
+          ext === ".docm" ||
+          ext === ".dotx" ||
+          ext === ".dotm" ||
+          ext === ".doc" ||
+          ext === ".rtf" ||
+          ext === ".odt" ||
+          ext === ".ott" ||
+          ext === ".pages"
+        ) return "document";
         if (ext === ".pdf") return "pdf";
         if (ext === ".pptx") return "pptx";
-        if (ext === ".xlsx" || ext === ".xls") return "xlsx";
+        if (ext === ".xlsx" || ext === ".xls" || ext === ".xlsm") return "xlsx";
+        if (ext === ".json" || ext === ".jsonl" || ext === ".geojson") return "json";
+        if (ext === ".csv" || ext === ".tsv") return "csv";
         if (imageExtensions.includes(ext)) return "image";
         if (videoExtensions.includes(ext)) return "video";
+        if (audioExtensions.includes(ext)) return "audio";
         if (codeExtensions.includes(ext)) return "code";
         if (textExtensions.includes(ext)) return "text";
 
         return "unsupported";
       };
 
-      const fileType = getFileType(extension);
+      let fileType = getFileType(extension);
+      if (stats.isDirectory()) {
+        fileType = "html";
+      } else if (fileName === "package.json") {
+        try {
+          const packageJsonText = await fs.readFile(resolvedPath, "utf-8");
+          const packageJson = JSON.parse(packageJsonText) as {
+            dependencies?: Record<string, unknown>;
+            devDependencies?: Record<string, unknown>;
+          };
+          const deps = {
+            ...(packageJson.dependencies || {}),
+            ...(packageJson.devDependencies || {}),
+          };
+          if ("react" in deps || "react-dom" in deps || "vite" in deps || "next" in deps) {
+            fileType = "html";
+          }
+        } catch {
+          fileType = "json";
+        }
+      }
       const shouldAttemptImageOcr = shouldRunImageOcr({
         enableImageOcr,
         extension,
@@ -1914,9 +2076,12 @@ export async function setupIpcHandlers(
       const MAX_PDF_BASE64_SIZE = 25 * 1024 * 1024; // 25MB for inline review surfaces
       const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB
       const MAX_VIDEO_SIZE = 500 * 1024 * 1024; // 500MB
+      const MAX_AUDIO_SIZE = 200 * 1024 * 1024; // 200MB
       const MAX_PPTX_VIEWER_SIZE = 50 * 1024 * 1024; // 50MB before hard-stop
       const MAX_XLSX_SIZE = 20 * 1024 * 1024; // 20MB for spreadsheets
+      const MAX_DOCUMENT_VIEWER_SIZE = 25 * 1024 * 1024; // 25MB for document extraction
       const MAX_INLINE_VIDEO_DATA_URL_SIZE = 25 * 1024 * 1024; // 25MB for reliable in-app playback
+      const MAX_INLINE_AUDIO_DATA_URL_SIZE = 25 * 1024 * 1024;
 
       if (fileType === "image" && stats.size > MAX_IMAGE_SIZE) {
         return {
@@ -1928,6 +2093,12 @@ export async function setupIpcHandlers(
         return {
           success: false,
           error: "File too large for preview (max 500MB for videos)",
+        };
+      }
+      if (fileType === "audio" && stats.size > MAX_AUDIO_SIZE) {
+        return {
+          success: false,
+          error: "File too large for preview (max 200MB for audio)",
         };
       }
       if (fileType === "pptx" && stats.size > MAX_PPTX_VIEWER_SIZE) {
@@ -1942,6 +2113,12 @@ export async function setupIpcHandlers(
           error: "Spreadsheet too large for extraction (max 20MB)",
         };
       }
+      if ((fileType === "docx" || fileType === "document") && stats.size > MAX_DOCUMENT_VIEWER_SIZE) {
+        return {
+          success: false,
+          error: "Document too large for preview (max 25MB)",
+        };
+      }
       if (fileType === "pdf" && stats.size > MAX_PDF_SIZE) {
         return {
           success: false,
@@ -1951,9 +2128,12 @@ export async function setupIpcHandlers(
       if (
         fileType !== "image" &&
         fileType !== "video" &&
+        fileType !== "audio" &&
         fileType !== "unsupported" &&
         fileType !== "pptx" &&
         fileType !== "xlsx" &&
+        fileType !== "docx" &&
+        fileType !== "document" &&
         fileType !== "pdf" &&
         stats.size > MAX_TEXT_SIZE
       ) {
@@ -1971,6 +2151,11 @@ export async function setupIpcHandlers(
         let pdfDataBase64: string | undefined;
         let pdfReviewSummary: PdfReviewSummary | undefined;
         let presentationPreview: PptxPresentationPreview | undefined;
+        let spreadsheetPreview:
+          | Awaited<ReturnType<typeof buildSpreadsheetPreviewFromFile>>
+          | undefined;
+        let documentPreview: DocumentPreview | undefined;
+        let webPreview: WebPagePreview | undefined;
         let playbackUrl: string | undefined;
         let mimeType: string | undefined;
 
@@ -1978,16 +2163,32 @@ export async function setupIpcHandlers(
           case "markdown":
           case "latex":
           case "code":
-          case "text": {
+          case "text":
+          case "json": {
             content = await fs.readFile(resolvedPath, "utf-8");
             break;
           }
 
+          case "csv": {
+            content = await fs.readFile(resolvedPath, "utf-8");
+            spreadsheetPreview = buildDelimitedSpreadsheetPreview(content, {
+              delimiter: extension === ".tsv" ? "\t" : ",",
+              sheetName: path.basename(resolvedPath, extension),
+            });
+            break;
+          }
+
           case "docx": {
-            const buffer = await fs.readFile(resolvedPath);
-            const result = await mammoth.convertToHtml({ buffer });
-            htmlContent = result.value;
-            content = null; // HTML content is in htmlContent
+            documentPreview = await buildDocumentPreviewFromFile(resolvedPath);
+            htmlContent = documentPreview.htmlContent;
+            content = documentPreview.text || null;
+            break;
+          }
+
+          case "document": {
+            documentPreview = await buildDocumentPreviewFromFile(resolvedPath);
+            htmlContent = documentPreview.htmlContent;
+            content = documentPreview.text || null;
             break;
           }
 
@@ -2036,6 +2237,45 @@ export async function setupIpcHandlers(
             break;
           }
 
+          case "audio": {
+            mimeType =
+              ((mime.lookup(resolvedPath) || undefined) as
+                | string
+                | undefined) || undefined;
+            if (!mimeType || !mimeType.startsWith("audio/")) {
+              const fallbackByExt: Record<string, string> = {
+                ".mp3": "audio/mpeg",
+                ".wav": "audio/wav",
+                ".ogg": "audio/ogg",
+                ".m4a": "audio/mp4",
+                ".flac": "audio/flac",
+                ".aac": "audio/aac",
+              };
+              mimeType = fallbackByExt[extension];
+            }
+            if (!mimeType) {
+              return { success: false, error: "Unsupported audio type" };
+            }
+            if (stats.size <= MAX_INLINE_AUDIO_DATA_URL_SIZE) {
+              const buffer = await fs.readFile(resolvedPath);
+              playbackUrl = `data:${mimeType};base64,${buffer.toString("base64")}`;
+            } else {
+              if (!workspacePath || workspacePath.trim().length === 0) {
+                return {
+                  success: false,
+                  error: "Workspace path is required for audio preview",
+                };
+              }
+              playbackUrl = createMediaPlaybackUrl({
+                resolvedPath,
+                workspaceRoot: workspacePath,
+                mimeType,
+              });
+            }
+            content = null;
+            break;
+          }
+
           case "video": {
             mimeType =
               ((mime.lookup(resolvedPath) || undefined) as
@@ -2080,54 +2320,25 @@ export async function setupIpcHandlers(
           }
 
           case "html": {
-            htmlContent = await fs.readFile(resolvedPath, "utf-8");
+            webPreview = await buildWebPagePreviewFromPath(resolvedPath, workspacePath);
+            htmlContent = webPreview.htmlContent;
             content = null; // HTML content is in htmlContent
             break;
           }
 
           case "pptx": {
-            content = await extractPptxContentFromFile(resolvedPath);
-            presentationPreview = await new PptxPreviewService().buildPreview({
+            presentationPreview = await getSharedPptxPreviewService().buildPreview({
               filePath: resolvedPath,
               workspaceRoot: workspacePath,
+              renderMode: presentationRenderMode,
             });
+            content = buildPptxContentFromPreview(presentationPreview);
             break;
           }
 
           case "xlsx": {
-            const workbook = new ExcelJS.Workbook();
-            await workbook.xlsx.readFile(resolvedPath);
-            const sheetTexts: string[] = [];
-            workbook.eachSheet((worksheet) => {
-              const rows: string[] = [];
-              rows.push(`## Sheet: ${worksheet.name}`);
-              worksheet.eachRow((row, _rowNumber) => {
-                const cells: string[] = [];
-                row.eachCell({ includeEmpty: true }, (cell) => {
-                  const val = cell.value;
-                  if (val === null || val === undefined) {
-                    cells.push("");
-                  } else if (typeof val === "object" && "result" in val) {
-                    // Formula cell — use computed result
-                    cells.push(String((val as Any).result ?? ""));
-                  } else if (typeof val === "object" && "richText" in val) {
-                    // Rich text — concatenate text fragments
-                    cells.push(
-                      (val as Any).richText
-                        ?.map((rt: Any) => rt.text)
-                        .join("") ?? "",
-                    );
-                  } else if (val instanceof Date) {
-                    cells.push(val.toISOString());
-                  } else {
-                    cells.push(String(val));
-                  }
-                });
-                rows.push(cells.join("\t"));
-              });
-              sheetTexts.push(rows.join("\n"));
-            });
-            content = sheetTexts.join("\n\n");
+            spreadsheetPreview = await buildSpreadsheetPreviewFromFile(resolvedPath);
+            content = spreadsheetPreviewToTsv(spreadsheetPreview);
             break;
           }
 
@@ -2153,6 +2364,9 @@ export async function setupIpcHandlers(
             pdfDataBase64,
             pdfReviewSummary,
             presentationPreview,
+            spreadsheetPreview,
+            documentPreview,
+            webPreview,
             playbackUrl,
             mimeType,
           },
@@ -2161,6 +2375,147 @@ export async function setupIpcHandlers(
         return {
           success: false,
           error: `Failed to read file: ${error.message}`,
+        };
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.FILE_UPDATE_SPREADSHEET,
+    async (
+      _,
+      data: {
+        filePath: string;
+        workspacePath: string;
+        preview: SpreadsheetPreview;
+      },
+    ) => {
+      const { filePath, workspacePath, preview } = data || {};
+      if (!workspacePath || !workspacePath.trim()) {
+        throw new Error("Workspace path is required for spreadsheet edits");
+      }
+      if (!preview || !Array.isArray(preview.sheets)) {
+        return { success: false, error: "Spreadsheet data is missing" };
+      }
+
+      const { resolvedPath, attemptedPaths } = await resolveExistingPathForViewer(
+        filePath,
+        workspacePath,
+        {
+          requireWorkspaceContainment: true,
+        },
+      );
+      if (!resolvedPath) {
+        const attempted =
+          attemptedPaths.length > 0 ? ` (tried ${attemptedPaths.length} location(s))` : "";
+        return {
+          success: false,
+          error: `File not found: ${filePath}${attempted}`,
+        };
+      }
+
+      const extension = path.extname(resolvedPath).toLowerCase();
+      if (
+        extension !== ".xlsx" &&
+        extension !== ".xls" &&
+        extension !== ".xlsm" &&
+        extension !== ".csv" &&
+        extension !== ".tsv"
+      ) {
+        return {
+          success: false,
+          error: "Only local spreadsheet files can be edited in the spreadsheet viewer",
+        };
+      }
+
+      try {
+        const isDelimitedSpreadsheet = extension === ".csv" || extension === ".tsv";
+        const spreadsheetPreview = isDelimitedSpreadsheet
+          ? await writeDelimitedSpreadsheetPreviewToFile(
+              resolvedPath,
+              preview,
+              extension === ".tsv" ? "\t" : ",",
+            )
+          : await writeSpreadsheetPreviewToFile(resolvedPath, preview);
+        return {
+          success: true,
+          data: {
+            path: resolvedPath,
+            fileName: path.basename(resolvedPath),
+            fileType: isDelimitedSpreadsheet ? ("csv" as const) : ("xlsx" as const),
+            content: spreadsheetPreviewToTsv(spreadsheetPreview),
+            spreadsheetPreview,
+            size: (await fs.stat(resolvedPath)).size,
+          },
+        };
+      } catch (error: Any) {
+        return {
+          success: false,
+          error: `Failed to save spreadsheet: ${error.message}`,
+        };
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.FILE_UPDATE_DOCUMENT,
+    async (
+      _,
+      data: {
+        filePath: string;
+        workspacePath: string;
+        blocks: EditableDocumentBlock[];
+      },
+    ) => {
+      const { filePath, workspacePath, blocks } = data || {};
+      if (!workspacePath || !workspacePath.trim()) {
+        throw new Error("Workspace path is required for document edits");
+      }
+      if (!Array.isArray(blocks)) {
+        return { success: false, error: "Document edit data is missing" };
+      }
+
+      const { resolvedPath, attemptedPaths } = await resolveExistingPathForViewer(
+        filePath,
+        workspacePath,
+        { requireWorkspaceContainment: true },
+      );
+      if (!resolvedPath) {
+        const attempted =
+          attemptedPaths.length > 0 ? ` (tried ${attemptedPaths.length} location(s))` : "";
+        return {
+          success: false,
+          error: `File not found: ${filePath}${attempted}`,
+        };
+      }
+
+      const extension = path.extname(resolvedPath).toLowerCase();
+      if (extension !== ".docx") {
+        return {
+          success: false,
+          error: "Only DOCX files can be edited directly in the document viewer",
+        };
+      }
+
+      try {
+        await writeEditableDocumentBlocksToDocxFile(resolvedPath, blocks);
+        const documentPreview = await buildDocumentPreviewFromFile(resolvedPath);
+        return {
+          success: true,
+          data: {
+            path: resolvedPath,
+            fileName: path.basename(resolvedPath),
+            fileType: "docx" as const,
+            content: documentPreview.text || null,
+            htmlContent: documentPreview.htmlContent,
+            documentPreview,
+            size: (await fs.stat(resolvedPath)).size,
+          },
+        };
+      } catch (error: Any) {
+        return {
+          success: false,
+          error: `Failed to save document: ${error.message}`,
         };
       }
     },
@@ -3343,12 +3698,13 @@ export async function setupIpcHandlers(
 
     // Provide default permissions if not specified
     // Note: network is enabled by default for browser tools (web access)
+    const permissionSettings = PermissionSettingsManager.loadSettings();
     const defaultPermissions = {
       read: true,
       write: true,
       delete: false,
       network: true,
-      shell: false,
+      shell: permissionSettings.defaultShellEnabled,
     };
 
     return workspaceRepo.create(name, path, permissions ?? defaultPermissions);
@@ -5397,6 +5753,8 @@ export async function setupIpcHandlers(
         accessToken: tokens.access_token,
         refreshToken: tokens.refresh_token,
         tokenExpiresAt: tokens.expires_at,
+        accountId: tokens.accountId,
+        email: tokens.email,
         authMethod: "oauth",
         // Clear API key when using OAuth
         apiKey: undefined,
@@ -5425,8 +5783,11 @@ export async function setupIpcHandlers(
         accessToken: undefined,
         refreshToken: undefined,
         tokenExpiresAt: undefined,
+        accountId: undefined,
+        email: undefined,
         authMethod: undefined,
       };
+      settings.cachedOpenAIModels = undefined;
       LLMProviderFactory.saveSettings(settings);
     }
 
@@ -8452,7 +8813,11 @@ export async function setupIpcHandlers(
   // Task Label handlers
   ipcMain.handle(
     IPC_CHANNELS.TASK_LABEL_LIST,
-    async (_, workspaceId: string) => {
+    async (_, queryOrWorkspaceId: Any) => {
+      const workspaceId =
+        typeof queryOrWorkspaceId === "string"
+          ? queryOrWorkspaceId
+          : queryOrWorkspaceId?.workspaceId;
       const validated = validateInput(UUIDSchema, workspaceId, "workspace ID");
       return taskLabelRepo.list({ workspaceId: validated });
     },
@@ -10575,6 +10940,10 @@ function setupKitHandlers(
     }
 
     const fileName = path.basename(relPath);
+    const contract = WORKSPACE_KIT_CONTRACTS[fileName];
+    if (contract?.parser === "design-system") {
+      return content.endsWith("\n") ? content : `${content}\n`;
+    }
     const frontmatter = buildKitFrontmatter(fileName, updated);
     const normalized = content.trimEnd() + "\n";
     if (!frontmatter) {
@@ -10701,6 +11070,10 @@ function setupKitHandlers(
             `- \n\n` +
             `## Notes\n` +
             `- \n`,
+      },
+      {
+        relPath: path.join(kitDirName, "DESIGN.md"),
+        content: buildDefaultDesignSystemMarkdown(),
       },
       {
         relPath: path.join(kitDirName, "SOUL.md"),
@@ -11491,6 +11864,10 @@ function setupKitHandlers(
           stamp,
         );
 
+        if (fileName === "DESIGN.md") {
+          defaultContent = buildDefaultDesignSystemMarkdown();
+        }
+
         if (fileName === "USER.md") {
           defaultContent = withKitFrontmatter(
             relPath,
@@ -11641,6 +12018,9 @@ function setupMemoryHandlers(): void {
         verbatimRecallEnabled: true,
         wakeUpLayersEnabled: true,
         temporalKnowledgeEnabled: true,
+        structuredObservationsEnabled: true,
+        progressiveRecallToolsEnabled: true,
+        memoryInspectorEnabled: true,
       };
     }
   });
@@ -11776,6 +12156,98 @@ function setupMemoryHandlers(): void {
       logger.error("[Memory] Failed to get details:", error);
       return [];
     }
+  });
+
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_OBSERVATIONS_SEARCH,
+    async (_, data: MemoryObservationSearchQuery) => {
+      try {
+        return MemoryObservationService.search(data);
+      } catch (error) {
+        logger.error("[MemoryObservations] Failed to search:", error);
+        return [];
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_OBSERVATIONS_TIMELINE,
+    async (_, data: { workspaceId: string; memoryId?: string; query?: string; windowSize?: number }) => {
+      try {
+        return MemoryObservationService.timeline(data);
+      } catch (error) {
+        logger.error("[MemoryObservations] Failed to load timeline:", error);
+        return [];
+      }
+    },
+  );
+
+  ipcMain.handle(IPC_CHANNELS.MEMORY_OBSERVATIONS_DETAILS, async (_, data: unknown) => {
+    try {
+      const validated = validateInput(MemoryObservationDetailsSchema, data, "memory observation details");
+      return MemoryObservationService.details(validated.ids, validated.workspaceId);
+    } catch (error) {
+      logger.error("[MemoryObservations] Failed to get details:", error);
+      return [];
+    }
+  });
+
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_OBSERVATIONS_UPDATE,
+    async (_, data: unknown) => {
+      checkRateLimit(IPC_CHANNELS.MEMORY_OBSERVATIONS_UPDATE, RATE_LIMIT_CONFIGS.limited);
+      const validated = validateInput(MemoryObservationUpdateSchema, data, "memory observation update");
+      return MemoryObservationService.update(validated.workspaceId, validated.memoryId, validated.patch);
+    },
+  );
+
+  ipcMain.handle(IPC_CHANNELS.MEMORY_OBSERVATIONS_DELETE, async (_, data: unknown) => {
+    checkRateLimit(IPC_CHANNELS.MEMORY_OBSERVATIONS_DELETE, RATE_LIMIT_CONFIGS.limited);
+    const validated = validateInput(MemoryObservationMutationSchema, data, "memory observation delete");
+    return { success: MemoryObservationService.delete(validated.workspaceId, validated.memoryId) };
+  });
+
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_OBSERVATIONS_REDACT,
+    async (_, data: unknown) => {
+      checkRateLimit(IPC_CHANNELS.MEMORY_OBSERVATIONS_REDACT, RATE_LIMIT_CONFIGS.limited);
+      const validated = validateInput(MemoryObservationRedactSchema, data, "memory observation redact");
+      return MemoryObservationService.redact(validated.workspaceId, validated.memoryId, validated.replacement);
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_OBSERVATIONS_PROMOTE,
+    async (_, data: unknown) => {
+      checkRateLimit(IPC_CHANNELS.MEMORY_OBSERVATIONS_PROMOTE, RATE_LIMIT_CONFIGS.limited);
+      const validated = validateInput(MemoryObservationPromoteSchema, data, "memory observation promote");
+      const detail = MemoryObservationService.details([validated.memoryId], validated.workspaceId)[0];
+      if (!detail) return { success: false, error: "Memory observation not found" };
+      return CuratedMemoryService.curate({
+        workspaceId: detail.workspaceId,
+        taskId: detail.taskId,
+        action: "add",
+        target: validated.target || "workspace",
+        kind: validated.kind || "project_fact",
+        content: detail.title || detail.narrative,
+        reason: "Promoted from Memory Hub Inspector",
+      });
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_OBSERVATIONS_REBUILD_METADATA,
+    async (_event, data?: unknown) => {
+      checkRateLimit(IPC_CHANNELS.MEMORY_OBSERVATIONS_REBUILD_METADATA, RATE_LIMIT_CONFIGS.limited);
+      const validated = data === undefined
+        ? undefined
+        : validateInput(MemoryObservationRebuildSchema, data, "memory observation metadata rebuild");
+      return MemoryObservationService.startBackfill(validated?.force === true);
+    },
+  );
+
+  ipcMain.handle(IPC_CHANNELS.MEMORY_OBSERVATIONS_BACKFILL_STATUS, async () => {
+    return MemoryObservationService.getBackfillStatus();
   });
 
   // Get recent memories

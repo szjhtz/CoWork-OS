@@ -1,6 +1,58 @@
 import type { OAuthAuthInfo, OAuthCredentials, OAuthPrompt } from "@mariozechner/pi-ai";
 import { loadPiAiOAuthModule } from "./pi-ai-loader";
 
+const MANUAL_CALLBACK_HELPER_HTML = `data:text/html;charset=utf-8,${encodeURIComponent(`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Finish ChatGPT Sign-In</title>
+  <style>
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #111827; background: #f8fafc; }
+    main { padding: 28px; max-width: 680px; margin: 0 auto; }
+    h1 { font-size: 22px; margin: 0 0 10px; }
+    p { color: #4b5563; line-height: 1.45; }
+    code { background: #e5e7eb; padding: 2px 5px; border-radius: 5px; }
+    textarea { width: 100%; min-height: 132px; box-sizing: border-box; margin-top: 12px; padding: 12px; border-radius: 8px; border: 1px solid #cbd5e1; font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; resize: vertical; }
+    .actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 14px; }
+    button { border: 0; border-radius: 8px; padding: 10px 16px; font-size: 14px; cursor: pointer; }
+    button.primary { background: #111827; color: white; }
+    button.secondary { background: #e5e7eb; color: #111827; }
+    .hint { background: #fff7ed; border: 1px solid #fed7aa; border-radius: 8px; padding: 12px; margin: 16px 0; }
+    .error { color: #b91c1c; min-height: 20px; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Finish ChatGPT Sign-In</h1>
+    <p>Continue signing in with passkey in your normal browser. After OpenAI redirects to a page starting with <code>http://localhost:1455/auth/callback</code>, copy the full URL from the browser address bar and paste it here.</p>
+    <div class="hint">This fallback is needed because another app is already using localhost port 1455, so CoWork cannot receive the callback directly.</div>
+    <textarea id="callbackUrl" autofocus placeholder="http://localhost:1455/auth/callback?code=...&state=..."></textarea>
+    <div class="error" id="error"></div>
+    <div class="actions">
+      <button class="secondary" id="cancel">Cancel</button>
+      <button class="primary" id="continue">Continue</button>
+    </div>
+  </main>
+  <script>
+    window.__coworkOAuthResult = null;
+    const input = document.getElementById("callbackUrl");
+    const error = document.getElementById("error");
+    document.getElementById("continue").addEventListener("click", () => {
+      const value = input.value.trim();
+      if (!value.includes("code=")) {
+        error.textContent = "Paste the full callback URL that contains code=...";
+        return;
+      }
+      window.__coworkOAuthResult = { type: "submit", value };
+    });
+    document.getElementById("cancel").addEventListener("click", () => {
+      window.__coworkOAuthResult = { type: "cancel" };
+    });
+  </script>
+</body>
+</html>`)}`;
+
 let proxyBootstrapPromise: Promise<void> | null = null;
 
 function ensureNodeFetchProxySupport(): void {
@@ -33,6 +85,94 @@ function getElectronShell(): Any | null {
   return null;
 }
 
+function getElectronBrowserWindow(): Any | null {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+// oxlint-disable-next-line typescript-eslint(no-require-imports)
+    const electron = require("electron") as Any;
+    return electron?.BrowserWindow || null;
+  } catch {
+    return null;
+  }
+}
+
+async function canBindOpenAICodexCallbackPort(): Promise<boolean> {
+  try {
+    const net = await import("node:net");
+    return await new Promise<boolean>((resolve) => {
+      const server = net.createServer();
+      server.once("error", () => resolve(false));
+      server.listen(1455, "127.0.0.1", () => {
+        server.close(() => resolve(true));
+      });
+    });
+  } catch {
+    return false;
+  }
+}
+
+function promptForOpenAICodexRedirectUrl(): Promise<string> {
+  const BrowserWindow = getElectronBrowserWindow();
+  if (!BrowserWindow) return Promise.resolve("");
+
+  return new Promise<string>((resolve, reject) => {
+    let settled = false;
+    const promptWindow = new BrowserWindow({
+      width: 720,
+      height: 520,
+      title: "Finish ChatGPT Sign-In",
+      show: true,
+      webPreferences: {
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+      },
+    });
+
+    const settle = (value: string, isCancel = false) => {
+      if (settled) return;
+      settled = true;
+      clearInterval(pollTimer);
+      if (!promptWindow.isDestroyed()) promptWindow.close();
+      if (isCancel) {
+        reject(new Error("OpenAI OAuth was cancelled"));
+      } else {
+        resolve(value);
+      }
+    };
+
+    const pollTimer = setInterval(() => {
+      if (promptWindow.isDestroyed()) {
+        settle("", true);
+        return;
+      }
+      void promptWindow.webContents
+        .executeJavaScript("window.__coworkOAuthResult", true)
+        .then((result: Any) => {
+          if (!result) return;
+          if (result.type === "cancel") {
+            settle("", true);
+          } else if (result.type === "submit" && typeof result.value === "string") {
+            settle(result.value);
+          }
+        })
+        .catch(() => undefined);
+    }, 250);
+
+    promptWindow.on("closed", () => {
+      settle("", true);
+    });
+
+    void promptWindow.loadURL(MANUAL_CALLBACK_HELPER_HTML).catch((error: Error) => {
+      clearInterval(pollTimer);
+      if (!settled) {
+        settled = true;
+        reject(error);
+      }
+    });
+  });
+}
+
 /**
  * OpenAI OAuth tokens compatible with pi-ai SDK
  */
@@ -41,6 +181,20 @@ export interface OpenAIOAuthTokens {
   refresh_token: string;
   expires_at: number;
   email?: string;
+  accountId?: string;
+}
+
+export function extractChatGPTAccountId(token: string): string | undefined {
+  const parts = token.split(".");
+  if (parts.length < 2) return undefined;
+
+  try {
+    const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8")) as Any;
+    const accountId = payload?.["https://api.openai.com/auth"]?.chatgpt_account_id;
+    return typeof accountId === "string" && accountId.trim() ? accountId.trim() : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -53,6 +207,7 @@ function credentialsToTokens(credentials: OAuthCredentials): OpenAIOAuthTokens {
     refresh_token: credentials.refresh,
     expires_at: credentials.expires,
     email,
+    accountId: extractChatGPTAccountId(credentials.access),
   };
 }
 
@@ -80,34 +235,57 @@ export class OpenAIOAuth {
   async authenticate(): Promise<OpenAIOAuthTokens> {
     console.log("[OpenAI OAuth] Starting authentication flow with pi-ai SDK...");
     const { loginOpenAICodex } = await loadPiAiOAuthModule();
+    const useSystemBrowser = await canBindOpenAICodexCallbackPort();
+    let manualRedirectPromise: Promise<string> | null = null;
+    if (!useSystemBrowser) {
+      console.warn(
+        "[OpenAI OAuth] localhost:1455 is already in use. Using system browser with manual redirect paste so macOS passkeys still work.",
+      );
+    }
 
-    const credentials = await loginOpenAICodex({
-      onAuth: (info: OAuthAuthInfo) => {
-        console.log("[OpenAI OAuth] Opening browser for authentication...");
-        const shell = getElectronShell();
-        if (shell?.openExternal) {
-          shell.openExternal(info.url);
-        } else {
-          console.log(
-            "[OpenAI OAuth] Browser open is unavailable in this runtime. Open this URL manually:",
-          );
-          console.log(info.url);
-        }
-        if (info.instructions) {
-          console.log("[OpenAI OAuth] Instructions:", info.instructions);
-        }
-      },
-      onPrompt: async (prompt: OAuthPrompt) => {
-        // This is called if manual input is needed (shouldn't happen with browser flow)
-        console.log("[OpenAI OAuth] Prompt:", prompt.message);
-        // Return empty string - browser flow should handle this
-        return "";
-      },
-      onProgress: (message: string) => {
-        console.log("[OpenAI OAuth] Progress:", message);
-      },
-      originator: "cowork-os",
-    });
+    let credentials: OAuthCredentials;
+    try {
+      credentials = await loginOpenAICodex({
+        onAuth: (info: OAuthAuthInfo) => {
+          console.log("[OpenAI OAuth] Opening browser for authentication...");
+          if (!useSystemBrowser && !manualRedirectPromise) {
+            manualRedirectPromise = promptForOpenAICodexRedirectUrl();
+          }
+          const shell = getElectronShell();
+          if (shell?.openExternal) {
+            shell.openExternal(info.url);
+          } else {
+            console.log(
+              "[OpenAI OAuth] Browser open is unavailable in this runtime. Open this URL manually:",
+            );
+            console.log(info.url);
+          }
+          if (info.instructions) {
+            console.log("[OpenAI OAuth] Instructions:", info.instructions);
+          }
+        },
+        ...(!useSystemBrowser
+          ? {
+              onManualCodeInput: () => {
+                manualRedirectPromise ||= promptForOpenAICodexRedirectUrl();
+                return manualRedirectPromise;
+              },
+            }
+          : {}),
+        onPrompt: async (prompt: OAuthPrompt) => {
+          console.log("[OpenAI OAuth] Prompt:", prompt.message);
+          if (useSystemBrowser) return "";
+          manualRedirectPromise ||= promptForOpenAICodexRedirectUrl();
+          return manualRedirectPromise;
+        },
+        onProgress: (message: string) => {
+          console.log("[OpenAI OAuth] Progress:", message);
+        },
+        originator: "cowork-os",
+      });
+    } finally {
+      // The manual helper closes itself when submitted or cancelled.
+    }
 
     console.log("[OpenAI OAuth] Authentication successful!");
     if (credentials.email) {

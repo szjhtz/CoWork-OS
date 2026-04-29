@@ -4106,6 +4106,7 @@ interface MainContentProps {
     message: string,
     images?: ImageAttachment[],
     quotedAssistantMessage?: QuotedAssistantMessage,
+    options?: { permissionMode?: PermissionMode; shellAccess?: boolean },
   ) => void;
   onStartOnboarding?: () => void;
   onCreateTask?: (
@@ -9614,7 +9615,14 @@ function MainContentComponent({
         setVerificationAgentEnabled(false);
       } else {
         // Task is selected (even if not in current list) - send follow-up message
-        onSendMessage(message, imagePayload, quotedAssistantMessage ?? undefined);
+        onSendMessage(
+          message,
+          imagePayload,
+          quotedAssistantMessage ?? undefined,
+          permissionAccessMode === "full"
+            ? { permissionMode: "bypass_permissions", shellAccess: true }
+            : undefined,
+        );
       }
 
       const submittedWelcomeSuggestionDraft = activeWelcomeSuggestionDraft;

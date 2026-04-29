@@ -184,7 +184,7 @@ describe("MessageRouter WhatsApp task updates", () => {
     );
     await router.sendTaskUpdate(
       "task-tool-noise",
-      "Tool error (read_pdf_visual): p1: Gemini API key not configured. | p2: Gemini API key not configured.",
+      "Tool error (read_pdf_visual): p1: The current model cannot analyze images directly. Switch to an image-capable model/provider and resend the image. | p2: The current model cannot analyze images directly. Switch to an image-capable model/provider and resend the image.",
     );
 
     expect(adapter.sendMessage).not.toHaveBeenCalled();

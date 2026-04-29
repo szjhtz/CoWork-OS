@@ -12,7 +12,13 @@ export type KitMutability =
   | "agent_suggested"
   | "agent_maintained";
 
-export type KitParser = "freeform" | "sectioned" | "kv-lines" | "checklist" | "decision-log";
+export type KitParser =
+  | "freeform"
+  | "sectioned"
+  | "kv-lines"
+  | "checklist"
+  | "decision-log"
+  | "design-system";
 
 export interface KitContract {
   file: string;
@@ -24,7 +30,7 @@ export interface KitContract {
   mutability: KitMutability;
   belongsHere: string[];
   notHere: string[];
-  specialHandling?: "bootstrap" | "heartbeat";
+  specialHandling?: "bootstrap" | "heartbeat" | "design-system";
 }
 
 const BASE_CONTRACTS = {
@@ -291,6 +297,22 @@ const BASE_CONTRACTS = {
     belongsHere: ["project goals", "project constraints", "decisions", "notes"],
     notHere: ["global identity", "heartbeat routines", "credentials"],
   },
+  "DESIGN.md": {
+    file: "DESIGN.md",
+    title: "Design System",
+    scope: ["task", "main-session"] as KitScope[],
+    parser: "design-system" as KitParser,
+    maxChars: 6500,
+    mutability: "user_owned" as KitMutability,
+    belongsHere: [
+      "design tokens",
+      "visual principles",
+      "frontend component guidance",
+      "brand and interface constraints",
+    ],
+    notHere: ["secrets", "temporary task notes", "implementation backlog"],
+    specialHandling: "design-system" as const,
+  },
 } satisfies Record<string, KitContract>;
 
 export const WORKSPACE_KIT_CONTRACTS: Record<string, KitContract> = BASE_CONTRACTS;
@@ -307,6 +329,7 @@ export const WORKSPACE_PROMPT_ORDER = [
   "KPIS.md",
   "PRIORITIES.md",
   "CONTEXT.md",
+  "DESIGN.md",
   "ACCESS.md",
   "TOOLS.md",
   "SOUL.md",
@@ -338,6 +361,7 @@ export const WORKSPACE_HEALTH_FILES = [
   "KPIS.md",
   "CROSS_SIGNALS.md",
   "MISTAKES.md",
+  "DESIGN.md",
 ] as const;
 
 export function getKitContract(file: string): KitContract | undefined {

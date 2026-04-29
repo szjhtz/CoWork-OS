@@ -360,6 +360,23 @@ describe("EmailChannelConfigSchema", () => {
     expect(result.success).toBe(true);
   });
 
+  it("accepts follow-up permission overrides", () => {
+    const result = TaskMessageSchema.safeParse({
+      taskId: "550e8400-e29b-41d4-a716-446655440000",
+      message: "Continue with full access.",
+      permissionMode: "bypass_permissions",
+      shellAccess: true,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.data).toEqual(
+      expect.objectContaining({
+        permissionMode: "bypass_permissions",
+        shellAccess: true,
+      }),
+    );
+  });
+
   it("accepts unknown legacy keys for forward compatibility", () => {
     const result = EmailChannelConfigSchema.safeParse({
       protocol: "imap-smtp",

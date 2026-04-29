@@ -25,7 +25,7 @@ function formatFileSize(bytes: number): string {
 function getFirstMeaningfulSlide(preview: PresentationPreview | null) {
   if (!preview) return null;
   return (
-    preview.slides.find((slide) => slide.imageDataUrl) ||
+    preview.slides.find((slide) => slide.imageUrl || slide.imageDataUrl) ||
     preview.slides.find((slide) => slide.text.trim().length > 0) ||
     preview.slides[0] ||
     null
@@ -54,7 +54,9 @@ export function InlinePresentationPreview({
       setPreview(null);
 
       try {
-        const response = await window.electronAPI.readFileForViewer(filePath, workspacePath);
+        const response = await window.electronAPI.readFileForViewer(filePath, workspacePath, {
+          presentationRenderMode: "fast",
+        });
         if (cancelled) return;
         if (!response.success || !response.data) {
           setError(response.error || "Failed to load presentation");
@@ -120,7 +122,11 @@ export function InlinePresentationPreview({
   const subtitle = [
     `${preview.slideCount} slide${preview.slideCount === 1 ? "" : "s"}`,
     formatFileSize(size),
-    preview.renderStatus === "rendered" ? "Preview rendered" : "Text preview",
+    preview.renderStatus === "rendered" || preview.renderStatus === "cached"
+      ? "Preview rendered"
+      : preview.renderStatus === "rendering"
+        ? "Rendering previews"
+        : "Text preview",
   ]
     .filter(Boolean)
     .join(" • ");
@@ -152,8 +158,8 @@ export function InlinePresentationPreview({
         <ExternalLink size={16} />
       </div>
       <div className="inline-presentation-body">
-        {firstSlide.imageDataUrl ? (
-          <img src={firstSlide.imageDataUrl} alt={`Slide ${firstSlide.index}`} />
+        {firstSlide.imageUrl || firstSlide.imageDataUrl ? (
+          <img src={firstSlide.imageUrl || firstSlide.imageDataUrl} alt={`Slide ${firstSlide.index}`} />
         ) : (
           <pre>{previewText}</pre>
         )}

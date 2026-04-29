@@ -21,6 +21,7 @@ const KIT_DIRNAME = ".cowork";
 const MAX_FILE_BYTES = 96 * 1024;
 const MAX_SECTION_CHARS = 6000;
 const MAX_TOTAL_CHARS = 16000;
+const MAX_DESIGN_CONTEXT_CHARS = 7000;
 const AUTO_LORE_START = "<!-- cowork:auto:lore:start -->";
 const AUTO_LORE_END = "<!-- cowork:auto:lore:end -->";
 
@@ -29,6 +30,13 @@ const MAP_FILES: Array<{ relPath: string; title: string }> = [
   { relPath: "docs/architecture.md", title: "Architecture Notes" },
   { relPath: "ARCHITECTURE.md", title: "Architecture Notes (Root)" },
 ];
+
+const DESIGN_SYSTEM_FILES = [
+  ".cowork/DESIGN.md",
+  "DESIGN.md",
+  "docs/DESIGN.md",
+  "design/DESIGN.md",
+] as const;
 
 function getLocalDateStamp(now: Date): string {
   const yyyy = String(now.getFullYear());
@@ -172,6 +180,52 @@ function sanitizeForInjection(text: string): string {
 function clampSection(text: string, maxChars: number): string {
   if (text.length <= maxChars) return text;
   return text.slice(0, maxChars) + "\n[... truncated ...]";
+}
+
+export function isDesignSystemRelevantTask(taskPrompt: string): boolean {
+  const text = String(taskPrompt || "").toLowerCase();
+  if (!text.trim()) return false;
+  if (/\bdesign\.md\b/i.test(taskPrompt)) return true;
+  return /\b(ui|ux|frontend|front-end|web\s*app|webapp|website|landing\s*page|dashboard|design\s*system|design\s*tokens?|theme|theming|css|scss|tailwind|styled|styles?|layout|typography|palette|colors?|component|button|modal|sidebar|navbar|page|responsive|mobile|visual\s+design)\b/.test(
+    text,
+  );
+}
+
+export function buildWorkspaceDesignSystemContext(workspacePath: string, taskPrompt: string): string {
+  if (!isDesignSystemRelevantTask(taskPrompt)) return "";
+
+  for (const relPath of DESIGN_SYSTEM_FILES) {
+    const absPath = safeResolveWithinWorkspace(workspacePath, relPath);
+    if (!absPath) continue;
+    const raw = readFilePrefix(absPath, MAX_FILE_BYTES);
+    if (!raw) continue;
+
+    const contract = relPath === ".cowork/DESIGN.md" ? WORKSPACE_KIT_CONTRACTS["DESIGN.md"] : undefined;
+    const parsed = contract ? parseKitDocument(absPath, contract, relPath) : null;
+    const source = parsed?.body || raw;
+    const content = sanitizeForInjection(clampSection(source, MAX_DESIGN_CONTEXT_CHARS));
+    if (!content) continue;
+
+    return [
+      `### Workspace Design System (${relPath})`,
+      content,
+      "",
+      "Design-system behavior:",
+      "- Treat this document as the source of truth for UI/frontend visual decisions.",
+      "- Preserve its colors, typography, spacing, radii, component semantics, and motion constraints unless the user explicitly asks for a redesign.",
+      "- Map new UI values back to the closest existing token instead of inventing one-off values.",
+    ].join("\n");
+  }
+
+  return [
+    "### Workspace Design System (not found)",
+    "This task appears to involve UI/frontend/design work, but no DESIGN.md was found at .cowork/DESIGN.md, DESIGN.md, docs/DESIGN.md, or design/DESIGN.md.",
+    "",
+    "Design-system behavior:",
+    "- Before changing UI, inspect existing styles, CSS variables, theme files, and nearby components to infer the current design system.",
+    "- If the task creates or materially changes the visual system, create or update .cowork/DESIGN.md with tokens and design principles as part of the work.",
+    "- Do not invent disconnected colors, typography, spacing, or component treatments when existing UI patterns are discoverable.",
+  ].join("\n");
 }
 
 function buildMapSections(workspacePath: string): ExtractedSection[] {
@@ -335,16 +389,19 @@ function buildScopedKitSections(
   workspacePath: string,
   scopes: KitScope[],
   onboardingIncomplete: boolean,
+  includeDesignSystem: boolean,
 ): ExtractedSection[] {
   return buildWorkspaceKitSections({
     workspacePath,
     scopes,
     onboardingIncomplete,
-  }).map((section) => ({
-    title: section.title,
-    relPath: section.relPath,
-    content: formatWorkspaceKitBody(section.parsed.body, section.contract),
-  }));
+  })
+    .filter((section) => includeDesignSystem || section.file !== "DESIGN.md")
+    .map((section) => ({
+      title: section.title,
+      relPath: section.relPath,
+      content: formatWorkspaceKitBody(section.parsed.body, section.contract),
+    }));
 }
 
 export function buildWorkspaceKitContext(
@@ -355,6 +412,7 @@ export function buildWorkspaceKitContext(
 ): string {
   const collectedSections: ExtractedSection[] = [];
   const agentRoleId = typeof opts?.agentRoleId === "string" ? opts.agentRoleId : null;
+  const includeDesignSystem = isDesignSystemRelevantTask(taskPrompt);
 
   collectedSections.push(...buildMapSections(workspacePath));
 
@@ -362,7 +420,9 @@ export function buildWorkspaceKitContext(
   if (kitDir) {
     try {
       if (fs.existsSync(kitDir) && fs.statSync(kitDir).isDirectory()) {
-        collectedSections.push(...buildScopedKitSections(workspacePath, ["task", "company-ops"], false));
+        collectedSections.push(
+          ...buildScopedKitSections(workspacePath, ["task", "company-ops"], false, includeDesignSystem),
+        );
         collectedSections.push(...buildProjectContextSections(workspacePath, taskPrompt, agentRoleId));
         collectedSections.push(...buildDailyLogSection(workspacePath, now));
       }

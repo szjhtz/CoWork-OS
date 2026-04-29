@@ -1,217 +1,210 @@
+import type { MissionControlItem } from "../../../shared/types";
 import type { MissionControlData } from "./useMissionControlData";
-import { BOARD_COLUMNS } from "./useMissionControlData";
 
 interface MCOverviewTabProps {
   data: MissionControlData;
 }
 
+const CATEGORY_LABELS: Record<string, string> = {
+  attention: "Attention",
+  work: "Work",
+  reviews: "Reviews",
+  learnings: "Learnings",
+  awareness: "Awareness",
+  evidence: "Evidence",
+};
+
+function itemTone(item: MissionControlItem): string {
+  if (item.severity === "failed") return "danger";
+  if (item.severity === "action_needed") return "attention";
+  if (item.severity === "successful") return "healthy";
+  return "";
+}
+
+function BriefItem({
+  item,
+  formatRelativeTime,
+  onOpenTask,
+}: {
+  item: MissionControlItem;
+  formatRelativeTime: MissionControlData["formatRelativeTime"];
+  onOpenTask: (taskId: string) => void;
+}) {
+  return (
+    <article
+      className={`mc-v2-brief-item ${itemTone(item)}`}
+      onClick={() => { if (item.taskId) onOpenTask(item.taskId); }}
+      style={item.taskId ? { cursor: "pointer" } : undefined}
+    >
+      <div className="mc-v2-brief-item-top">
+        <span className="mc-v2-brief-kicker">{CATEGORY_LABELS[item.category]}</span>
+        <span className="mc-v2-feed-time">{formatRelativeTime(item.timestamp)}</span>
+      </div>
+      <h3>{item.title}</h3>
+      <p>{item.summary}</p>
+      {(item.decision || item.nextStep) && (
+        <div className="mc-v2-brief-disposition">
+          {item.decision && <span>{item.decision}</span>}
+          {item.nextStep && <strong>{item.nextStep}</strong>}
+        </div>
+      )}
+    </article>
+  );
+}
+
+function BriefSection({
+  title,
+  items,
+  empty,
+  formatRelativeTime,
+  onOpenTask,
+}: {
+  title: string;
+  items: MissionControlItem[];
+  empty: string;
+  formatRelativeTime: MissionControlData["formatRelativeTime"];
+  onOpenTask: (taskId: string) => void;
+}) {
+  return (
+    <section className="mc-v2-brief-section">
+      <div className="mc-v2-brief-section-header">
+        <h2>{title}</h2>
+        <span>{items.length}</span>
+      </div>
+      {items.length === 0 ? (
+        <div className="mc-v2-empty mc-v2-empty-compact">{empty}</div>
+      ) : (
+        <div className="mc-v2-brief-list">
+          {items.map((item) => (
+            <BriefItem
+              key={item.id}
+              item={item}
+              formatRelativeTime={formatRelativeTime}
+              onOpenTask={onOpenTask}
+            />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 export function MCOverviewTab({ data }: MCOverviewTabProps) {
   const {
-    activeAgentsCount, totalTasksInQueue, pendingMentionsCount,
-    agents, tasks, getTasksByColumn,
-    commandCenterSummary, commandCenterReviewQueue,
-    coreFailureClusters, coreEvalCases, coreExperiments, coreLearnings,
-    selectedCompany, plannerConfig, plannerRuns,
-    feedItems, setActiveTab, setOpsSubTab, getAgentStatus,
-    agentContext, formatRelativeTime, isAllWorkspacesSelected,
+    missionControlBrief,
+    missionControlItems,
+    activeAgentsCount,
+    totalTasksInQueue,
+    pendingMentionsCount,
+    commandCenterReviewQueue,
+    formatRelativeTime,
+    setActiveTab,
+    setDetailPanel,
+    loadMissionControlIntelligence,
+    selectedWorkspaceId,
   } = data;
 
-  const reviewCount = commandCenterReviewQueue.length;
-  const attentionCount = reviewCount + pendingMentionsCount + tasks.filter((t) => t.status === "blocked").length;
+  const brief = missionControlBrief;
+  const attention = brief?.sections.find((section) => section.title === "Needs attention")?.items || [];
+  const decisions = brief?.latestDecisions || [];
+  const learnings = brief?.learningChanges || [];
+  const awareness = brief?.awarenessClusters || [];
+  const work = brief?.activeWork || [];
+  const reviews = brief?.upcomingReviews || [];
 
-  const workingAgents = agents
-    .filter((a) => a.isActive && getAgentStatus(a.id) === "working")
-    .slice(0, 4);
-
-  const lastRun = plannerRuns[0];
+  const openTask = (taskId: string) => setDetailPanel({ kind: "task", taskId });
 
   return (
-    <div className="mc-v2-overview">
-      {/* Needs Attention */}
-      <div className="mc-v2-card" onClick={() => setActiveTab("feed")}>
-        <div className="mc-v2-card-header">
-          <span className="mc-v2-card-title">Needs Attention</span>
-          {attentionCount > 0 && <span className="mc-v2-card-badge attention">{attentionCount}</span>}
+    <div className="mc-v2-brief">
+      <div className="mc-v2-brief-hero">
+        <div>
+          <h1>Command Brief</h1>
+          <p>{brief ? `Updated ${formatRelativeTime(brief.generatedAt)}` : "Preparing grouped brief..."}</p>
         </div>
-        <div className="mc-v2-card-value">{attentionCount}</div>
-        <div className="mc-v2-card-items">
-          <div className="mc-v2-card-item">
-            <span className="mc-v2-card-item-label">Pending reviews</span>
-            <span className="mc-v2-card-item-value">{reviewCount}</span>
-          </div>
-          <div className="mc-v2-card-item">
-            <span className="mc-v2-card-item-label">Unread mentions</span>
-            <span className="mc-v2-card-item-value">{pendingMentionsCount}</span>
-          </div>
-          <div className="mc-v2-card-item">
-            <span className="mc-v2-card-item-label">Blocked tasks</span>
-            <span className="mc-v2-card-item-value">{tasks.filter((t) => t.status === "blocked").length}</span>
-          </div>
+        <div className="mc-v2-brief-actions">
+          <button className="mc-v2-icon-btn" onClick={() => void loadMissionControlIntelligence(selectedWorkspaceId)}>
+            Refresh brief
+          </button>
+          <button className="mc-v2-icon-btn" onClick={() => setActiveTab("feed")}>
+            Evidence Feed
+          </button>
         </div>
       </div>
 
-      {/* Active Work */}
-      <div className="mc-v2-card" onClick={() => setActiveTab("agents")}>
-        <div className="mc-v2-card-header">
-          <span className="mc-v2-card-title">Active Work</span>
-          <span className="mc-v2-card-badge healthy">{activeAgentsCount} active</span>
-        </div>
-        <div className="mc-v2-card-value">{activeAgentsCount}</div>
-        <div className="mc-v2-card-items">
-          {workingAgents.length === 0 ? (
-            <div className="mc-v2-card-item" style={{ color: "var(--color-text-muted)" }}>No agents working</div>
-          ) : (
-            workingAgents.map((a) => (
-              <div key={a.id} className="mc-v2-card-item">
-                <span className="mc-v2-card-item-label">
-                  <span style={{ color: a.color }}>{a.icon}</span> {a.displayName}
-                </span>
-                <span className="mc-v2-card-item-value" style={{ fontSize: 10, fontWeight: 400 }}>working</span>
-              </div>
-            ))
-          )}
-        </div>
+      <div className="mc-v2-brief-metrics">
+        <button className="mc-v2-brief-metric attention" onClick={() => setActiveTab("feed")}>
+          <strong>{brief?.attentionCount ?? 0}</strong>
+          <span>need attention</span>
+        </button>
+        <button className="mc-v2-brief-metric" onClick={() => setActiveTab("board")}>
+          <strong>{brief?.activeWorkCount || totalTasksInQueue}</strong>
+          <span>active work</span>
+        </button>
+        <button className="mc-v2-brief-metric" onClick={() => setActiveTab("intelligence")}>
+          <strong>{brief?.learningCount ?? 0}</strong>
+          <span>learnings</span>
+        </button>
+        <button className="mc-v2-brief-metric" onClick={() => setActiveTab("intelligence")}>
+          <strong>{brief?.awarenessCount ?? 0}</strong>
+          <span>awareness</span>
+        </button>
+        <button className="mc-v2-brief-metric" onClick={() => setActiveTab("feed")}>
+          <strong>{brief?.evidenceCount ?? 0}</strong>
+          <span>evidence rows</span>
+        </button>
       </div>
 
-      {/* Task Pipeline */}
-      <div className="mc-v2-card" onClick={() => setActiveTab("board")}>
-        <div className="mc-v2-card-header">
-          <span className="mc-v2-card-title">Task Pipeline</span>
-          <span className="mc-v2-card-badge">{totalTasksInQueue} in queue</span>
-        </div>
-        <div className="mc-v2-pipeline-bar">
-          {BOARD_COLUMNS.map((col) => {
-            const count = getTasksByColumn(col.id).length;
-            if (count === 0) return null;
-            return (
-              <div
-                key={col.id}
-                className="mc-v2-pipeline-segment"
-                style={{ flex: count, backgroundColor: col.color }}
-                title={`${col.label}: ${count}`}
-              >
-                {count}
-              </div>
-            );
-          })}
-          {totalTasksInQueue === 0 && tasks.length === 0 && (
-            <div style={{ flex: 1, background: "var(--color-bg-tertiary)", borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: "var(--color-text-muted)" }}>
-              Empty
-            </div>
-          )}
-        </div>
-        <div className="mc-v2-card-items">
-          {BOARD_COLUMNS.map((col) => (
-            <div key={col.id} className="mc-v2-card-item">
-              <span className="mc-v2-card-item-label">
-                <span style={{ width: 8, height: 8, borderRadius: "50%", background: col.color, display: "inline-block" }}></span>
-                {col.label}
-              </span>
-              <span className="mc-v2-card-item-value">{getTasksByColumn(col.id).length}</span>
-            </div>
-          ))}
-        </div>
+      <div className="mc-v2-brief-system-row">
+        <span>{activeAgentsCount} active agents</span>
+        <span>{pendingMentionsCount} pending mentions</span>
+        <span>{commandCenterReviewQueue.length} output reviews</span>
+        <span>{missionControlItems.length} grouped items</span>
       </div>
 
-      {/* Recent Activity */}
-      <div className="mc-v2-card" onClick={() => setActiveTab("feed")}>
-        <div className="mc-v2-card-header">
-          <span className="mc-v2-card-title">Recent Activity</span>
-        </div>
-        <div className="mc-v2-card-items">
-          {feedItems.slice(0, 5).map((item) => (
-            <div key={item.id} className="mc-v2-card-item">
-              <span className="mc-v2-card-item-label" style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                <strong>{item.agentName}</strong> {item.content.slice(0, 50)}
-                {isAllWorkspacesSelected && item.workspaceName ? (
-                  <span className="mc-v2-workspace-tag">{item.workspaceName}</span>
-                ) : null}
-              </span>
-              <span style={{ fontSize: 10, color: "var(--color-text-muted)", flexShrink: 0 }}>
-                {formatRelativeTime(item.timestamp)}
-              </span>
-            </div>
-          ))}
-          {feedItems.length === 0 && (
-            <div style={{ color: "var(--color-text-muted)", fontSize: 12 }}>{agentContext.getUiCopy("mcFeedEmpty")}</div>
-          )}
-        </div>
+      <div className="mc-v2-brief-grid">
+        <BriefSection
+          title="Needs Attention"
+          items={attention}
+          empty="No action-needed items right now."
+          formatRelativeTime={formatRelativeTime}
+          onOpenTask={openTask}
+        />
+        <BriefSection
+          title="Latest Decisions"
+          items={decisions}
+          empty="No recent decisions have been recorded."
+          formatRelativeTime={formatRelativeTime}
+          onOpenTask={openTask}
+        />
+        <BriefSection
+          title="Learnings"
+          items={learnings}
+          empty="No new learnings yet."
+          formatRelativeTime={formatRelativeTime}
+          onOpenTask={openTask}
+        />
+        <BriefSection
+          title="Awareness"
+          items={awareness}
+          empty="No grouped awareness signals yet."
+          formatRelativeTime={formatRelativeTime}
+          onOpenTask={openTask}
+        />
+        <BriefSection
+          title="Active Work"
+          items={work}
+          empty="No active grouped work items."
+          formatRelativeTime={formatRelativeTime}
+          onOpenTask={openTask}
+        />
+        <BriefSection
+          title="Upcoming Reviews"
+          items={reviews}
+          empty="No scheduled review notes yet."
+          formatRelativeTime={formatRelativeTime}
+          onOpenTask={openTask}
+        />
       </div>
-
-      <div className="mc-v2-card" onClick={() => { setActiveTab("ops"); setOpsSubTab("harness"); }}>
-        <div className="mc-v2-card-header">
-          <span className="mc-v2-card-title">Core Harness</span>
-          <span className="mc-v2-card-badge">{coreFailureClusters.length} clusters</span>
-        </div>
-        <div className="mc-v2-card-value">{coreEvalCases.length}</div>
-        <div className="mc-v2-card-items">
-          <div className="mc-v2-card-item">
-            <span className="mc-v2-card-item-label">Living evals</span>
-            <span className="mc-v2-card-item-value">{coreEvalCases.length}</span>
-          </div>
-          <div className="mc-v2-card-item">
-            <span className="mc-v2-card-item-label">Open experiments</span>
-            <span className="mc-v2-card-item-value">
-              {coreExperiments.filter((item) => ["proposed", "running", "passed_gate"].includes(item.status)).length}
-            </span>
-          </div>
-          <div className="mc-v2-card-item">
-            <span className="mc-v2-card-item-label">Recent learnings</span>
-            <span className="mc-v2-card-item-value">{coreLearnings.length}</span>
-          </div>
-        </div>
-      </div>
-
-      {/* Planner Health */}
-      {selectedCompany && (
-        <div className="mc-v2-card" onClick={() => { setActiveTab("ops"); setOpsSubTab("planner"); }}>
-          <div className="mc-v2-card-header">
-            <span className="mc-v2-card-title">Planner Health</span>
-            <span className={`mc-v2-card-badge ${plannerConfig?.enabled ? "healthy" : ""}`}>
-              {plannerConfig?.enabled ? "Enabled" : "Disabled"}
-            </span>
-          </div>
-          <div className="mc-v2-card-items">
-            <div className="mc-v2-card-item">
-              <span className="mc-v2-card-item-label">Last run</span>
-              <span className="mc-v2-card-item-value">{lastRun ? formatRelativeTime(lastRun.createdAt) : "never"}</span>
-            </div>
-            <div className="mc-v2-card-item">
-              <span className="mc-v2-card-item-label">Total runs</span>
-              <span className="mc-v2-card-item-value">{plannerRuns.length}</span>
-            </div>
-            {lastRun && (
-              <div className="mc-v2-card-item">
-                <span className="mc-v2-card-item-label">Last result</span>
-                <span className="mc-v2-card-item-value">{lastRun.createdIssueCount} created, {lastRun.dispatchedTaskCount} dispatched</span>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Operations Summary */}
-      {selectedCompany && commandCenterSummary && (
-        <div className="mc-v2-card" onClick={() => { setActiveTab("ops"); setOpsSubTab("overview"); }}>
-          <div className="mc-v2-card-header">
-            <span className="mc-v2-card-title">Operations</span>
-          </div>
-          <div className="mc-v2-card-items">
-            <div className="mc-v2-card-item">
-              <span className="mc-v2-card-item-label">Open issues</span>
-              <span className="mc-v2-card-item-value">{commandCenterSummary.overview.openIssueCount}</span>
-            </div>
-            <div className="mc-v2-card-item">
-              <span className="mc-v2-card-item-label">Pending review</span>
-              <span className="mc-v2-card-item-value">{commandCenterSummary.overview.pendingReviewCount}</span>
-            </div>
-            <div className="mc-v2-card-item">
-              <span className="mc-v2-card-item-label">Valuable outputs</span>
-              <span className="mc-v2-card-item-value">{commandCenterSummary.overview.valuableOutputCount}</span>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

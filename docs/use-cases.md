@@ -34,12 +34,13 @@ Cowork OS supports these via:
 - Inbox + briefing commands: `/inbox`, `/brief [morning|today|tomorrow|week]`
 - Slash skill workflows: `/simplify [objective] ...` for quality passes, `/batch <objective> ...` for parallelizable migration/transform workflows, and `/llm-wiki <objective> ...` for persistent research vaults
 - Integrations: Notion, Gmail/Google Calendar (if configured), Apple Calendar/Reminders (macOS)
-- Web automation: browser tools (plus MCP puppeteer fallback for some sites)
+- Web automation: visible Browser Workbench for normal-user site testing, with browser tools, screenshots, annotation, and fallback browser modes when explicitly needed
 - Company-ops primitives: venture workspace kit, digital twin operators, strategic planner, and Mission Control ops monitoring
 - Everything Workbench: task output cards, sidebar/fullscreen artifact workspaces, follow-up composer, and refresh-after-edit behavior for generated knowledge-work artifacts
 
 For the full founder-operated company recipe, see [Zero-Human Company Operations](zero-human-company.md).
 For the unified artifact workflow, see [Everything Workbench](everything-workbench.md).
+For live website testing inside the app, see [Browser Workbench](browser-workbench.md).
 
 ## Test Prompts (Copy/Paste)
 

@@ -169,6 +169,7 @@ import {
   cleanupCanvasHandlers,
 } from "./ipc/canvas-handlers";
 import { setupQAHandlers } from "./ipc/qa-handlers";
+import { getBrowserWorkbenchService } from "./browser/browser-workbench-service";
 import { pruneTempWorkspaces } from "./utils/temp-workspace";
 import { getActiveTempWorkspaceLeases } from "./utils/temp-workspace-lease";
 import { getPluginRegistry } from "./extensions/registry";
@@ -1103,8 +1104,10 @@ if (!gotTheLock) {
     loadMainWindowContent();
 
     mainWindow.on("closed", () => {
+      getBrowserWorkbenchService().setMainWindow(null);
       mainWindow = null;
     });
+    getBrowserWorkbenchService().setMainWindow(mainWindow);
 
     mainWindow.on("unresponsive", () => {
       logger.warn("Main window became unresponsive");
@@ -3661,6 +3664,63 @@ if (!gotTheLock) {
   ipcMain.handle(IPC_CHANNELS.WINDOW_IS_MAXIMIZED, () => {
     return BrowserWindow.getFocusedWindow()?.isMaximized() ?? false;
   });
+
+  ipcMain.handle(IPC_CHANNELS.BROWSER_WORKBENCH_REGISTER, (_event, data: Any) => {
+    if (
+      !data ||
+      typeof data.taskId !== "string" ||
+      typeof data.webContentsId !== "number"
+    ) {
+      throw new Error("Invalid browser workbench registration");
+    }
+    getBrowserWorkbenchService().registerSession({
+      taskId: data.taskId,
+      sessionId: typeof data.sessionId === "string" ? data.sessionId : "default",
+      webContentsId: data.webContentsId,
+      url: typeof data.url === "string" ? data.url : undefined,
+      title: typeof data.title === "string" ? data.title : undefined,
+    });
+    return { success: true };
+  });
+  ipcMain.handle(IPC_CHANNELS.BROWSER_WORKBENCH_UNREGISTER, (_event, data: Any) => {
+    if (!data || typeof data.taskId !== "string") return;
+    getBrowserWorkbenchService().unregisterSession({
+      taskId: data.taskId,
+      sessionId: typeof data.sessionId === "string" ? data.sessionId : "default",
+      webContentsId: typeof data.webContentsId === "number" ? data.webContentsId : undefined,
+    });
+    return { success: true };
+  });
+  ipcMain.handle(IPC_CHANNELS.BROWSER_WORKBENCH_STATUS, (_event, data: Any) => {
+    if (!data || typeof data.taskId !== "string") return;
+    getBrowserWorkbenchService().updateSessionStatus({
+      taskId: data.taskId,
+      sessionId: typeof data.sessionId === "string" ? data.sessionId : "default",
+      webContentsId: typeof data.webContentsId === "number" ? data.webContentsId : undefined,
+      url: typeof data.url === "string" ? data.url : undefined,
+      title: typeof data.title === "string" ? data.title : undefined,
+    });
+    return { success: true };
+  });
+  ipcMain.handle(IPC_CHANNELS.BROWSER_WORKBENCH_SCREENSHOT, async (_event, data: Any) => {
+    if (
+      !data ||
+      typeof data.taskId !== "string" ||
+      typeof data.workspacePath !== "string"
+    ) {
+      return { success: false, error: "Invalid browser screenshot request" };
+    }
+    const result = await getBrowserWorkbenchService().screenshot({
+      taskId: data.taskId,
+      sessionId: typeof data.sessionId === "string" ? data.sessionId : "default",
+      workspacePath: data.workspacePath,
+      filename: typeof data.filename === "string" ? data.filename : undefined,
+      includeDataUrl: data.includeDataUrl === true,
+    });
+    if (!result) return { success: false, error: "No active browser workbench session" };
+    return { success: true, ...result };
+  });
+
   const resolveDialogDefaultPath = async (candidate?: string | null) => {
     const requested = typeof candidate === "string" ? candidate.trim() : "";
     const tempWorkspaceRoot = path.resolve(os.tmpdir(), TEMP_WORKSPACE_ROOT_DIR_NAME);

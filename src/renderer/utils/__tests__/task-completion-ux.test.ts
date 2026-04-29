@@ -10,6 +10,7 @@ import {
   removeTaskId,
   shouldShowPersistentNeedsUserActionBanner,
   shouldClearUnseenOutputBadges,
+  shouldNotifyForTaskCompletionTerminalStatus,
   shouldShowCompletionToast,
   shouldTrackUnseenCompletion,
 } from "../task-completion-ux";
@@ -219,6 +220,13 @@ describe("task completion UX helpers", () => {
 
     expect(shouldClearUnseenOutputBadges(true, false)).toBe(true);
     expect(shouldClearUnseenOutputBadges(true, true)).toBe(false);
+  });
+
+  it("does not notify for successful completions", () => {
+    expect(shouldNotifyForTaskCompletionTerminalStatus("ok")).toBe(false);
+    expect(shouldNotifyForTaskCompletionTerminalStatus(undefined)).toBe(false);
+    expect(shouldNotifyForTaskCompletionTerminalStatus("partial_success")).toBe(true);
+    expect(shouldNotifyForTaskCompletionTerminalStatus("needs_user_action")).toBe(true);
   });
 
   it("keeps the persistent warning for verification-backed needs-user-action completions", () => {

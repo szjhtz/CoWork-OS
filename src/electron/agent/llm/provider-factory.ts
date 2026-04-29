@@ -48,6 +48,7 @@ import { withLlmModelSelectionMetadata } from "../../../shared/llm-model-selecti
 import { resolveModelPreferenceToModelKey } from "../../../shared/agent-preferences";
 import type {
   AgentConfig,
+  AzureReasoningEffort,
   CustomProviderConfig,
   LLMReasoningEffort,
   LlmProfile,
@@ -2981,11 +2982,13 @@ export class LLMProviderFactory {
     if (!reasoningEffort) return settings;
 
     if (providerType === "azure") {
+      const azureReasoningEffort: AzureReasoningEffort =
+        reasoningEffort === "xhigh" ? "extra_high" : reasoningEffort;
       return {
         ...settings,
         azure: {
           ...settings.azure,
-          reasoningEffort,
+          reasoningEffort: azureReasoningEffort,
         },
       };
     }

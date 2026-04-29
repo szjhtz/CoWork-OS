@@ -144,10 +144,19 @@ vi.mock("child_process", () => ({
       if (args[0] === "clone") {
         const targetDir = normalizePath(args[args.length - 1] || "/tmp/clone");
         ensureDir(targetDir);
-        mockFiles.set(
-          `${targetDir}/SKILL.md`,
-          "---\nname: Git Imported Skill\ndescription: Imported from a git repo\n---\n# Git Imported Skill\n",
-        );
+        const sourceUrl = args[args.length - 2] || "";
+        if (sourceUrl.includes("nested-skill-repo")) {
+          ensureDir(`${targetDir}/skills/karpathy-guidelines`);
+          mockFiles.set(
+            `${targetDir}/skills/karpathy-guidelines/SKILL.md`,
+            "---\nname: Nested Imported Skill\ndescription: Imported from a nested git skill repo\n---\n# Nested Imported Skill\n",
+          );
+        } else {
+          mockFiles.set(
+            `${targetDir}/SKILL.md`,
+            "---\nname: Git Imported Skill\ndescription: Imported from a git repo\n---\n# Git Imported Skill\n",
+          );
+        }
         callback(null, "", "");
         return;
       }
@@ -642,6 +651,26 @@ describe("SkillRegistry", () => {
       expect(result.skill?.id).toBe("git-imported-skill");
       expect(mockFiles.has(managedPath("git-imported-skill.json"))).toBe(true);
       expect(mockFiles.has(managedPath("git-imported-skill/SKILL.md"))).toBe(true);
+    });
+
+    it("does not fail a git install when temporary clone cleanup hits EPERM once", async () => {
+      mockRmSyncThrowOnceFor = ".tmp-skill-repo-";
+
+      const result = await registry.installFromGit("https://github.com/example/skill-repo");
+
+      expect(result.success).toBe(true);
+      expect(result.skill?.id).toBe("git-imported-skill");
+      expect(mockFiles.has(managedPath("git-imported-skill.json"))).toBe(true);
+      expect(mockFiles.has(managedPath("git-imported-skill/SKILL.md"))).toBe(true);
+    });
+
+    it("installs a single nested skills/*/SKILL.md bundle from a git repository", async () => {
+      const result = await registry.installFromGit("https://github.com/example/nested-skill-repo");
+
+      expect(result.success).toBe(true);
+      expect(result.skill?.id).toBe("nested-imported-skill");
+      expect(mockFiles.has(managedPath("nested-imported-skill.json"))).toBe(true);
+      expect(mockFiles.has(managedPath("nested-imported-skill/SKILL.md"))).toBe(true);
     });
 
     it("rejects oversized remote skill instructions before import", async () => {

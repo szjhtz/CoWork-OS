@@ -134,7 +134,7 @@ describe("toOpenAICompatibleMessages", () => {
     expect(result[0]).toMatchObject({
       role: "assistant",
       content:
-        'Analyzing image and tools.\n[Image attached: image/png, 0.0MB — this provider does not support inline images. Use the "analyze_image" tool to process this image, or switch to a vision-capable provider.]',
+        "Analyzing image and tools.\n[Image attached: image/png, 0.0MB - this provider does not support inline images. Switch to an image-capable model/provider and resend the image.]",
       tool_calls: [
         {
           id: "tool-2",
@@ -185,7 +185,7 @@ describe("toOpenAICompatibleMessages", () => {
     expect(result[0]).toMatchObject({
       role: "user",
       content:
-        'Here is an image:\n[Image attached: image/png, 0.0MB — this provider does not support inline images. Use the "analyze_image" tool to process this image, or switch to a vision-capable provider.]',
+        "Here is an image:\n[Image attached: image/png, 0.0MB - this provider does not support inline images. Switch to an image-capable model/provider and resend the image.]",
     });
   });
 
@@ -260,7 +260,7 @@ describe("toOpenAICompatibleMessages", () => {
     expect(result[0]).toMatchObject({
       role: "assistant",
       content:
-        'Reviewing attached screenshot.\n[Image attached: image/png, 0.0MB — this provider does not support inline images. Use the "analyze_image" tool to process this image, or switch to a vision-capable provider.]',
+        "Reviewing attached screenshot.\n[Image attached: image/png, 0.0MB - this provider does not support inline images. Switch to an image-capable model/provider and resend the image.]",
       tool_calls: [
         {
           id: "tool-4",
@@ -392,7 +392,7 @@ describe("toOpenAICompatibleMessages", () => {
 
     expect(result).toHaveLength(1);
     expect(result[0].content).toBe(
-      'Here is an image:\n[Image attached: image/png, 0.0MB — this provider does not support inline images. Use the "analyze_image" tool to process this image, or switch to a vision-capable provider.]',
+      "Here is an image:\n[Image attached: image/png, 0.0MB - this provider does not support inline images. Switch to an image-capable model/provider and resend the image.]",
     );
     expect(result[0].content).not.toContain("image_url");
   });

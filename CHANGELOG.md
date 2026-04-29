@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Everything Workbench positioning docs**: added the canonical [Everything Workbench](docs/everything-workbench.md) page and refreshed product copy around CoWork OS as a local-first AI workbench for generated docs, sheets, decks, web pages, PDFs, previews, tasks, and automations.
+- **Document artifact workbench**: Word-style document artifact cards now recognize DOCX, DOCM, DOTX, DOTM, DOC, RTF, ODT, OTT, and Pages outputs. DOCX opens directly into an editable sidebar/fullscreen document surface with Google Docs-style controls, save/copy actions, external app actions, functional follow-up composer controls, and automatic preview refresh after follow-up edits. See [Document Artifacts](docs/document-artifacts.md).
+- **Spreadsheet artifact format support**: spreadsheet artifact cards now recognize Excel workbooks, CSV/TSV, Numbers, Google Sheets shortcut files, ODS, and XLSB. Editable in-app mode supports workbook and delimited formats; native/app-owned formats keep the same artifact card and external-app/folder actions. See [Spreadsheet Artifacts](docs/spreadsheet-artifacts.md).
+- **Presentation artifact workbench**: PPTX outputs now render as compact artifact cards and open by default in a resizable sidebar/fullscreen presentation viewer with thumbnails, navigation, zoom, speaker notes, fast text-first loading, cached rendered slide images, external actions, and functional follow-up composer controls. Legacy PowerPoint formats are recognized with external-app/folder actions. See [Presentation Artifacts and PPTX Preview](docs/pptx-generation-and-preview.md).
+- **Web page artifact workbench**: generated `.html` / `.htm` files and built React output entrypoints now render as compact artifact cards and open by default in a resizable sidebar/fullscreen sandboxed iframe preview with browser/folder/copy actions and functional follow-up composer controls. React-style projects without build output show a build-output-needed state instead of auto-starting a dev server. See [Web Page Artifacts](docs/web-page-artifacts.md).
+
+### Changed
+- **Product positioning**: README, docs home, Features, Getting Started, Showcase, Use Cases, GTM, best-fit workflows, artifact docs, architecture, development, troubleshooting, and status docs now frame document, spreadsheet, presentation, web page, PDF, and preview surfaces as one unified artifact workbench that reduces app switching for generated knowledge work without claiming full office-suite replacement.
+- **Document output concept**: README, Features, Architecture, Development, Getting Started, Troubleshooting, Project Status, and the docs index now describe Word-style outputs as first-class document artifacts with sidebar/fullscreen editing for DOCX and preview/external handling for other document formats.
+- **Spreadsheet output concept**: README, Features, Architecture, Development, Getting Started, Troubleshooting, Project Status, and the docs index now describe Excel outputs as first-class spreadsheet artifacts with sidebar/fullscreen workbench behavior rather than only generic XLSX file previews.
+- **Presentation output concept**: README, Features, Architecture, Development, Getting Started, Troubleshooting, Project Status, Use Cases, and the docs index now describe PowerPoint outputs as first-class presentation artifacts with fast text-first preview, cached rendered slides, sidebar/fullscreen review, and deferred refresh after follow-up completion.
+- **Web output concept**: README, Features, Architecture, Development, Getting Started, Troubleshooting, Project Status, Use Cases, Live Canvas, and the docs index now describe generated web pages as first-class artifacts with sandboxed sidebar/fullscreen preview, built React output handling, no automatic dev-server startup, and deferred refresh after follow-up completion.
+
 ## [0.5.40] - 2026-04-26
 
 ### Added

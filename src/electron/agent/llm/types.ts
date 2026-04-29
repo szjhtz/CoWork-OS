@@ -6,6 +6,8 @@
 import type {
   LLMProviderType,
   AzureReasoningEffort,
+  OpenAIReasoningEffort,
+  LLMTextVerbosity,
   RuntimeToolMetadata,
   ExecutionMode,
   TaskDomain,
@@ -13,7 +15,7 @@ import type {
   WorkerRoleKind,
 } from "../../../shared/types";
 
-export type { LLMProviderType, AzureReasoningEffort };
+export type { LLMProviderType, AzureReasoningEffort, OpenAIReasoningEffort, LLMTextVerbosity };
 
 export interface LLMProviderConfig {
   type: LLMProviderType;
@@ -37,9 +39,18 @@ export interface LLMProviderConfig {
   openrouterBaseUrl?: string;
   // OpenAI-specific
   openaiApiKey?: string;
+  openaiReasoningEffort?: OpenAIReasoningEffort;
+  openaiTextVerbosity?: LLMTextVerbosity;
   openaiAccessToken?: string; // OAuth access token
   openaiRefreshToken?: string; // OAuth refresh token
   openaiTokenExpiresAt?: number; // OAuth token expiry timestamp
+  openaiOAuthTokenUpdater?: (tokens: {
+    access_token: string;
+    refresh_token: string;
+    expires_at: number;
+    email?: string;
+    accountId?: string;
+  }) => void | Promise<void>;
   // Azure OpenAI-specific
   azureApiKey?: string;
   azureEndpoint?: string;
@@ -211,6 +222,8 @@ export interface LLMToolResult {
 export interface LLMMessage {
   role: "user" | "assistant";
   content: string | LLMContent[] | LLMToolResult[];
+  /** Responses API assistant item phase used when replaying assistant state. */
+  phase?: "commentary" | "final_answer";
 }
 
 export type LLMSystemBlockScope = "session" | "turn" | "none";
@@ -268,6 +281,8 @@ export interface LLMRequest {
   system: string;
   systemBlocks?: LLMSystemBlock[];
   promptCache?: LLMPromptCacheConfig;
+  reasoningEffort?: OpenAIReasoningEffort;
+  textVerbosity?: LLMTextVerbosity;
   messages: LLMMessage[];
   tools?: LLMTool[];
   toolChoice?: LLMToolChoiceMode;

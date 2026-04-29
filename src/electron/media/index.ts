@@ -1,1 +1,6 @@
-export { createMediaPlaybackUrl, registerMediaProtocol, registerMediaScheme } from "./media-protocol";
+export {
+  createLocalPreviewFileUrl,
+  createMediaPlaybackUrl,
+  registerMediaProtocol,
+  registerMediaScheme,
+} from "./media-protocol";

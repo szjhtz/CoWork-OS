@@ -23,6 +23,8 @@ type ApprovalExperiencePreset = "standard" | "fewer_prompts" | "custom";
 const DEFAULT_SETTINGS: PermissionSettingsData = {
   version: 1,
   defaultMode: "dangerous_only",
+  defaultShellEnabled: false,
+  defaultPermissionAccess: "default",
   rules: [],
 };
 
@@ -94,6 +96,7 @@ export function applyFewerApprovalPromptsPreset<T extends BuiltinToolsSettingsDa
 } {
   return {
     permissionSettings: {
+      ...DEFAULT_SETTINGS,
       ...permissionSettings,
       defaultMode: "dangerous_only",
     },
@@ -113,6 +116,7 @@ export function applyStandardApprovalPromptsPreset<T extends BuiltinToolsSetting
 } {
   return {
     permissionSettings: {
+      ...DEFAULT_SETTINGS,
       ...permissionSettings,
       defaultMode: "default",
     },
@@ -193,6 +197,7 @@ export function PermissionSettingsPanel({ workspaceId }: PermissionSettingsPanel
       setSaving(true);
       await window.electronAPI.savePermissionSettings(next);
       setSettings(next);
+      window.dispatchEvent(new CustomEvent("cowork:permission-settings-updated", { detail: next }));
       setStatusMessage("Permission settings saved.");
     } catch (error) {
       console.error("Failed to save permission settings:", error);
@@ -394,6 +399,47 @@ export function PermissionSettingsPanel({ workspaceId }: PermissionSettingsPanel
         <p className="settings-hint">
           This mode applies when no explicit permission rule matches. For everyday repo work,
           `dangerous_only` is the lower-noise option.
+        </p>
+      </div>
+
+      <div className="settings-subsection">
+        <h4 style={{ margin: "0 0 8px" }}>Default access</h4>
+        <label className="settings-checkbox">
+          <input
+            type="checkbox"
+            checked={settings.defaultShellEnabled}
+            onChange={(e) =>
+              setSettings({
+                ...settings,
+                defaultShellEnabled: e.target.checked,
+              })
+            }
+          />
+          <span>Enable Shell for new workspaces</span>
+        </label>
+        <p className="settings-hint">
+          New workspaces will start with the Shell toggle on. Existing workspaces keep their
+          current Shell setting.
+        </p>
+
+        <label className="settings-label" style={{ marginTop: "12px" }}>
+          New task access
+        </label>
+        <select
+          className="settings-select"
+          value={settings.defaultPermissionAccess}
+          onChange={(e) =>
+            setSettings({
+              ...settings,
+              defaultPermissionAccess: e.target.value === "full" ? "full" : "default",
+            })
+          }
+        >
+          <option value="default">Default permissions</option>
+          <option value="full">Full access</option>
+        </select>
+        <p className="settings-hint">
+          Full access starts new tasks with permission bypass and Shell access enabled.
         </p>
       </div>
 

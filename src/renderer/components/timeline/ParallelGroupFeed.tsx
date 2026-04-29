@@ -5,6 +5,8 @@ import { StepFeed } from "./StepFeed";
 import type { TimelineIndicatorSpec } from "./timeline-indicators";
 import type { ParallelGroupProjection } from "./parallel-group-projection";
 
+type ParallelGroupLane = ParallelGroupProjection["lanes"][number];
+
 interface ParallelGroupFeedProps {
   group: ParallelGroupProjection;
   timeLabel: string;
@@ -49,6 +51,32 @@ function laneTone(status: TimelineEventStatus): "neutral" | "active" | "success"
   if (status === "completed" || status === "skipped") return "success";
   if (status === "in_progress" || status === "pending") return "active";
   return "neutral";
+}
+
+function isActiveStatus(status: TimelineEventStatus): boolean {
+  return status === "in_progress" || status === "pending";
+}
+
+function isActiveImageGenerationLane(lane: ParallelGroupLane): boolean {
+  return lane.toolName === "generate_image" && isActiveStatus(lane.status);
+}
+
+function hasActiveImageGenerationLane(group: ParallelGroupProjection): boolean {
+  return group.lanes.some(isActiveImageGenerationLane);
+}
+
+function ImageGenerationFramePreview() {
+  return (
+    <div
+      className="parallel-group-feed-image-frame"
+      role="status"
+      aria-live="polite"
+      aria-label="Generating image"
+    >
+      <span className="parallel-group-feed-image-frame-core" aria-hidden="true" />
+      <span className="parallel-group-feed-image-frame-sheen" aria-hidden="true" />
+    </div>
+  );
 }
 
 function buildParallelGroupTitle(group: ParallelGroupProjection, isActive: boolean): string {
@@ -104,7 +132,8 @@ export function ParallelGroupFeed({
   void _formatTime;
   const singleLane = group.lanes.length === 1 ? group.lanes[0] : null;
   const isActive =
-    group.status === "in_progress" || group.lanes.some((lane) => lane.status === "in_progress");
+    isActiveStatus(group.status) || group.lanes.some((lane) => isActiveStatus(lane.status));
+  const showImageGenerationFrame = hasActiveImageGenerationLane(group);
   const hasExpandableDetails = group.lanes.length > 1;
   const [expanded, setExpanded] = useState(hasExpandableDetails && (isActive || defaultExpanded));
 
@@ -133,6 +162,7 @@ export function ParallelGroupFeed({
             {groupTitle}
           </div>
         </div>
+        {showImageGenerationFrame ? <ImageGenerationFramePreview /> : null}
       </div>
     );
   }
@@ -172,6 +202,7 @@ export function ParallelGroupFeed({
                 </div>
               </div>
             ))}
+            {showImageGenerationFrame ? <ImageGenerationFramePreview /> : null}
           </div>
         ) : undefined
       }

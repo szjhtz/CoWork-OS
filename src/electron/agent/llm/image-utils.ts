@@ -108,16 +108,12 @@ export function createImageContent(
 /**
  * Estimate the token cost of an image for context window accounting.
  *
- * - Gemini: fixed 258 tokens per image
  * - Anthropic/Bedrock: ~1600 tokens per megapixel (approximated from file size)
  * - OpenAI: varies by detail mode; approximated from file size
  *
  * Without actual image dimensions we use file-size heuristics.
  */
 export function estimateImageTokens(image: LLMImageContent, providerType?: string): number {
-  if (providerType === "gemini") {
-    return 258;
-  }
   const sizeBytes = image.originalSizeBytes ?? Math.ceil((image.data.length * 3) / 4);
   const sizeMB = sizeBytes / (1024 * 1024);
   if (sizeMB <= 0.5) return 1000;
@@ -132,7 +128,7 @@ export function estimateImageTokens(image: LLMImageContent, providerType?: strin
 export function imageToTextFallback(image: LLMImageContent): string {
   const sizeBytes = image.originalSizeBytes ?? Math.ceil((image.data.length * 3) / 4);
   const sizeMB = (sizeBytes / (1024 * 1024)).toFixed(1);
-  return `[Image attached: ${image.mimeType}, ${sizeMB}MB — this provider does not support inline images. Use the "analyze_image" tool to process this image, or switch to a vision-capable provider.]`;
+  return `[Image attached: ${image.mimeType}, ${sizeMB}MB - this provider does not support inline images. Switch to an image-capable model/provider and resend the image.]`;
 }
 
 /**

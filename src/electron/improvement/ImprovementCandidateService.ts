@@ -12,6 +12,13 @@ import type {
   ImprovementFailureClass,
 } from "../../shared/types";
 import { isAutomatedTaskLike } from "../../shared/automated-task-detection";
+import {
+  buildDevLogStructuredSignature,
+  formatDevLogEventForEvidence,
+  isDevLogFailureEvent,
+  parseDevLogJsonLine,
+  type DevLogEvent,
+} from "../../shared/dev-log";
 import { getImprovementResetBaselineAt } from "./ImprovementHistoryState";
 import { ImprovementCandidateRepository } from "./ImprovementRepositories";
 import { ImprovementRunRepository } from "./ImprovementRepositories";
@@ -453,46 +460,131 @@ export class ImprovementCandidateService {
     const baseline = getImprovementResetBaselineAt() || 0;
 
     for (const workspace of this.workspaceRepo.findAll()) {
-      const logPath = path.join(workspace.path, "logs", "dev-latest.log");
-      if (!fs.existsSync(logPath)) continue;
-      if (baseline > 0) {
-        try {
-          const stat = fs.statSync(logPath);
-          if (stat.mtimeMs < baseline) continue;
-        } catch {
-          continue;
-        }
-      }
-      let content = "";
-      try {
-        content = fs.readFileSync(logPath, "utf8");
-      } catch {
-        continue;
-      }
-      const lines = content
-        .split(/\r?\n/)
-        .filter((line) => /error|exception|failed|uncaught/i.test(line))
-        .slice(-8);
-      if (lines.length === 0) continue;
-      const summary = lines[lines.length - 1].trim();
+      const latestJsonlPath = path.join(workspace.path, "logs", "dev-latest.jsonl");
+      const latestTextPath = path.join(workspace.path, "logs", "dev-latest.log");
+      const devLog = this.readLatestDevLogFailure(latestJsonlPath, latestTextPath, baseline);
+      if (!devLog) continue;
+
       const evidence: ImprovementEvidence = {
         type: "dev_log",
-        summary: this.truncate(summary),
-        details: this.truncate(lines.join("\n"), 1200),
+        summary: this.truncate(devLog.summary),
+        details: this.truncate(devLog.lines.join("\n"), 1200),
         createdAt: Date.now(),
         metadata: {
-          logPath,
+          logPath: devLog.logPath,
+          format: devLog.format,
+          fingerprintKey: devLog.fingerprintKey,
         },
       };
       this.upsertCandidate(workspace.id, {
         source: "dev_log",
         title: "Investigate recurring dev log errors",
-        summary: this.truncate(summary),
+        summary: this.truncate(devLog.summary),
         evidence,
         severity: 0.78,
-        fixabilityScore: this.inferFixabilityScore("dev_log", summary),
-        fingerprintKey: this.normalizeDevLogSignature(summary),
+        fixabilityScore: this.inferFixabilityScore("dev_log", devLog.summary),
+        fingerprintKey: devLog.fingerprintKey,
       });
+    }
+  }
+
+  private readLatestDevLogFailure(
+    latestJsonlPath: string,
+    latestTextPath: string,
+    baseline: number,
+  ):
+    | {
+        logPath: string;
+        format: "jsonl" | "text";
+        lines: string[];
+        summary: string;
+        fingerprintKey: string;
+      }
+    | null {
+    const jsonl = this.readLatestJsonlDevLogFailure(latestJsonlPath, baseline);
+    if (jsonl) return jsonl;
+    return this.readLatestTextDevLogFailure(latestTextPath, baseline);
+  }
+
+  private readLatestJsonlDevLogFailure(
+    logPath: string,
+    baseline: number,
+  ): {
+    logPath: string;
+    format: "jsonl";
+    lines: string[];
+    summary: string;
+    fingerprintKey: string;
+  } | null {
+    if (!this.isUsableDevLogPath(logPath, baseline)) return null;
+    let content = "";
+    try {
+      content = fs.readFileSync(logPath, "utf8");
+    } catch {
+      return null;
+    }
+
+    const events = content
+      .split(/\r?\n/)
+      .map((line) => parseDevLogJsonLine(line))
+      .filter((event): event is DevLogEvent => Boolean(event && isDevLogFailureEvent(event)))
+      .slice(-8);
+    if (events.length === 0) return null;
+
+    const summaryEvent = events[events.length - 1];
+    const lines = events.map((event) => formatDevLogEventForEvidence(event));
+    const summary = formatDevLogEventForEvidence(summaryEvent);
+    const fingerprintKey = this.normalizeDevLogSignature(
+      buildDevLogStructuredSignature(summaryEvent),
+    );
+    return {
+      logPath,
+      format: "jsonl",
+      lines,
+      summary,
+      fingerprintKey,
+    };
+  }
+
+  private readLatestTextDevLogFailure(
+    logPath: string,
+    baseline: number,
+  ): {
+    logPath: string;
+    format: "text";
+    lines: string[];
+    summary: string;
+    fingerprintKey: string;
+  } | null {
+    if (!this.isUsableDevLogPath(logPath, baseline)) return null;
+    let content = "";
+    try {
+      content = fs.readFileSync(logPath, "utf8");
+    } catch {
+      return null;
+    }
+    const lines = content
+      .split(/\r?\n/)
+      .filter((line) => /error|exception|failed|uncaught/i.test(line))
+      .slice(-8);
+    if (lines.length === 0) return null;
+    const summary = lines[lines.length - 1].trim();
+    return {
+      logPath,
+      format: "text",
+      lines,
+      summary,
+      fingerprintKey: this.normalizeDevLogSignature(summary),
+    };
+  }
+
+  private isUsableDevLogPath(logPath: string, baseline: number): boolean {
+    if (!fs.existsSync(logPath)) return false;
+    if (baseline <= 0) return true;
+    try {
+      return fs.statSync(logPath).mtimeMs >= baseline;
+    } catch {
+      return false;
     }
   }
 
@@ -697,9 +789,10 @@ export class ImprovementCandidateService {
       }
 
       if (candidate.source !== "dev_log") continue;
+      const structuredFingerprintKey = this.getDevLogCandidateFingerprintKey(candidate);
       const normalizedFingerprint = this.buildFingerprint(
         "dev_log",
-        this.normalizeDevLogSignature(candidate.summary),
+        structuredFingerprintKey ?? this.normalizeDevLogSignature(candidate.summary),
       );
       if (normalizedFingerprint === candidate.fingerprint) continue;
 
@@ -838,6 +931,16 @@ export class ImprovementCandidateService {
       .replace(/\s+/g, " ")
       .trim()
       .slice(0, 180);
+  }
+
+  private getDevLogCandidateFingerprintKey(candidate: ImprovementCandidate): string | undefined {
+    for (const evidence of candidate.evidence) {
+      const fingerprintKey = evidence.metadata?.fingerprintKey;
+      if (typeof fingerprintKey === "string" && fingerprintKey.trim()) {
+        return fingerprintKey;
+      }
+    }
+    return undefined;
   }
 
   private parsePayload(payload: unknown): Record<string, unknown> {

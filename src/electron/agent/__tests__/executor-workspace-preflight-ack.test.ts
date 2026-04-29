@@ -509,6 +509,17 @@ describe("TaskExecutor workspace preflight acknowledgement", () => {
     expect(requiredTools.has("write_file")).toBe(true);
   });
 
+  it("requires create_spreadsheet for Excel workbook artifact steps", () => {
+    const fakeThis: Any = Object.create((TaskExecutor as Any).prototype);
+    const requiredTools = (TaskExecutor as Any).prototype.extractRequiredToolsFromStepDescription.call(
+      fakeThis,
+      "Create the final Excel workbook `.cowork/openai_text_models.xlsx` containing the researched spreadsheet data.",
+    ) as Set<string>;
+
+    expect(requiredTools.has("create_spreadsheet")).toBe(true);
+    expect(requiredTools.has("write_file")).toBe(false);
+  });
+
   it("ignores non-tool via phrases such as localStorage when inferring required tools", () => {
     const fakeThis: Any = Object.create((TaskExecutor as Any).prototype);
     const requiredTools = (TaskExecutor as Any).prototype.extractRequiredToolsFromStepDescription.call(

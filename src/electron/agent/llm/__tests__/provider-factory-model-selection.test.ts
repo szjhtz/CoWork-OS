@@ -118,6 +118,27 @@ describe("LLMProviderFactory model status", () => {
     expect(status.currentModel).toBe(expectedCurrentModel);
     expect(status.models.some((model) => model.key === expectedCurrentModel)).toBe(true);
   });
+
+  it("defaults OpenAI OAuth model status to ChatGPT subscription models", () => {
+    const settings: LLMSettings = {
+      providerType: "openai",
+      modelKey: "gpt-4o-mini",
+      openai: {
+        authMethod: "oauth",
+        accessToken: "access-token",
+        refreshToken: "refresh-token",
+      },
+    };
+    vi.spyOn(LLMProviderFactory, "loadSettings").mockReturnValue(settings);
+    vi.spyOn(LLMProviderFactory, "getAvailableProviders").mockReturnValue([]);
+
+    const status = LLMProviderFactory.getConfigStatus();
+
+    expect(status.currentModel).toBe("gpt-5.5");
+    expect(status.models.map((model) => model.key)).toContain("gpt-5.5");
+    expect(status.models.map((model) => model.key)).toContain("gpt-5.4");
+    expect(status.models.map((model) => model.key)).toContain("gpt-5.3-codex-spark");
+  });
 });
 
 describe("LLMProviderFactory model selection persistence", () => {

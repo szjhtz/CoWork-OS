@@ -7,7 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.41] - 2026-04-29
+
 ### Added
+- **Release notes for 0.5.41**: see [Release Notes 0.5.41](docs/release-notes-0.5.41.md).
 - **Everything Workbench positioning docs**: added the canonical [Everything Workbench](docs/everything-workbench.md) page and refreshed product copy around CoWork OS as a local-first AI workbench for generated docs, sheets, decks, web pages, PDFs, previews, tasks, and automations.
 - **Document artifact workbench**: Word-style document artifact cards now recognize DOCX, DOCM, DOTX, DOTM, DOC, RTF, ODT, OTT, and Pages outputs. DOCX opens directly into an editable sidebar/fullscreen document surface with Google Docs-style controls, save/copy actions, external app actions, functional follow-up composer controls, and automatic preview refresh after follow-up edits. See [Document Artifacts](docs/document-artifacts.md).
 - **Spreadsheet artifact format support**: spreadsheet artifact cards now recognize Excel workbooks, CSV/TSV, Numbers, Google Sheets shortcut files, ODS, and XLSB. Editable in-app mode supports workbook and delimited formats; native/app-owned formats keep the same artifact card and external-app/folder actions. See [Spreadsheet Artifacts](docs/spreadsheet-artifacts.md).
@@ -1404,7 +1407,8 @@ This release is the first recommended Windows install baseline for normal users 
 | 0.1.0 | 2025-01-24 | First public release with core features |
 | 0.0.1 | 2025-01-20 | Initial development setup |
 
-[Unreleased]: https://github.com/CoWork-OS/CoWork-OS/compare/v0.5.40...HEAD
+[Unreleased]: https://github.com/CoWork-OS/CoWork-OS/compare/v0.5.41...HEAD
+[0.5.41]: https://github.com/CoWork-OS/CoWork-OS/compare/v0.5.40...v0.5.41
 [0.5.40]: https://github.com/CoWork-OS/CoWork-OS/compare/v0.5.35...v0.5.40
 [0.5.35]: https://github.com/CoWork-OS/CoWork-OS/releases/tag/v0.5.35
 [0.5.34]: https://github.com/CoWork-OS/CoWork-OS/releases/tag/v0.5.34

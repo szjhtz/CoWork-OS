@@ -42,8 +42,25 @@ npm run dev
 ```
 
 `npm run dev` checks **Settings → Appearance → Developer logging** (default: off).
-When enabled, logs are written to `logs/dev-YYYYMMDD-HHMMSS.log` and mirrored to
-`logs/dev-latest.log`, with an ISO date/time prefix on each log line.
+When enabled, each captured run writes a readable text log and a structured JSONL log:
+
+- `logs/dev-YYYYMMDD-HHMMSS.log` — human-readable output with an ISO date/time prefix.
+- `logs/dev-YYYYMMDD-HHMMSS.jsonl` — machine-readable events for diagnostics and self-improvement ingestion.
+- `logs/dev-latest.log` and `logs/dev-latest.jsonl` — overwritten mirrors for the most recent captured run.
+- `logs/dev-runs.json` — retained-run manifest with start/end time, exit status, file paths, byte size, line count, and warning/error counts.
+
+The terminal output is unchanged. Files written under `logs/` are redacted before they are stored:
+common bearer/basic auth headers, API keys, tokens, secrets, passwords, and URL credentials are replaced with `[REDACTED]`.
+JSONL events include `timestamp`, `runId`, `process`, `stream`, `level`, `component`, `message`,
+`rawLine`, and optional `taskId`, `workspaceId`, `error`, and `metadata` fields.
+
+Captured dev logs are local-only and cleaned up automatically. Defaults keep logs from the last 14 days,
+always retain the newest 20 runs, and cap retained `dev-*.log`/`dev-*.jsonl` files at 100 MB by deleting
+oldest run pairs first. Local overrides are available:
+
+```bash
+COWORK_DEV_LOG_RETENTION_DAYS=7 COWORK_DEV_LOG_MIN_RUNS=10 COWORK_DEV_LOG_MAX_MB=50 npm run dev:log
+```
 
 Force log capture regardless of Settings:
 
@@ -56,7 +73,7 @@ npm run dev:log
 | Command | Description |
 |---------|-------------|
 | `npm run dev` | Start development mode; log capture follows Settings toggle |
-| `npm run dev:log` | Start development mode and force timestamped logs to `logs/` |
+| `npm run dev:log` | Start development mode and force redacted text + JSONL logs to `logs/` |
 | `npm run dev:start` | Internal raw dev start command (used by wrappers) |
 | `npm run build` | Production build |
 | `npm run package` | Package desktop installers (`.dmg` on macOS, `.exe` on Windows) |
@@ -75,6 +92,29 @@ npm run dev:log
 | `npm run skills:validate-content` | Validate skill prompt content, placeholders, and references |
 | `npm run skills:audit` | Generate skill audit scorecards in `tmp/qa/` |
 | `npm run skills:check` | Run full skill quality gate (routing + content + audit + eval) |
+
+## Renderer Bundle Size
+
+The renderer startup bundle is intentionally kept separate from secondary product surfaces and heavyweight renderers.
+
+Current bundle-splitting rules:
+
+- Keep the primary task workspace (`App`, `Sidebar`, `MainContent`, `RightPanel`) available on initial load.
+- Lazy-load secondary views from `App.tsx`: Settings, Browser, Home, Devices, Health, Ideas, Inbox Agent, Agents Hub, and Mission Control.
+- Do not import heavyweight optional renderers at module top level when they are needed only for specific content. Mermaid is loaded from `MainContent.tsx` only when a Mermaid code block is rendered.
+- Do not import the `highlight.js` package root in renderer code. Use `highlight.js/lib/core` and register only the language grammars the UI should support eagerly.
+- Prefer feature-level dynamic imports before adding Rollup `manualChunks`; manual chunks improve cache boundaries, but they do not remove code from startup if imports remain static.
+
+The initial optimization reduced the renderer entry chunk from about `4,842 kB` minified (`1,267 kB` gzip) to about `1,259 kB` minified (`364 kB` gzip) in `npm run build:react`. Large feature code now appears as separate chunks such as `Settings`, `mermaid.core`, PDF, KaTeX, and chart/diagram chunks.
+
+When changing renderer imports, validate with:
+
+```bash
+npm run build:react
+npm run type-check
+```
+
+If the entry chunk grows unexpectedly, rebuild with sourcemaps and inspect the generated `dist/renderer/assets/index-*.js.map` to identify newly eager modules.
 
 ## Reliability Workflow (Local)
 
@@ -100,6 +140,17 @@ npm run qa:timeline:enforce -- --db /absolute/path/to.db
 
 See also:
 - [Reliability Flywheel](reliability-flywheel.md)
+
+## Memory Observation QA
+
+Run focused memory-observation checks when touching structured memory metadata, Memory Hub Inspector actions, prompt recall privacy, or memory backfill:
+
+```bash
+npx vitest run src/electron/memory/__tests__/MemoryObservationService.mock.test.ts src/electron/memory/__tests__/MemoryObservationService.test.ts
+npm run type-check
+```
+
+The native SQLite test file can skip locally when `better-sqlite3` is unavailable. Keep the mock-level suite passing because it covers startup backfill behavior, failed metadata-write accounting, workspace-scoped soft-delete, and prompt-recall suppression without native SQLite.
 
 ## Skills QA Workflow
 
@@ -144,7 +195,127 @@ npm run skills:check
 
 `setup.sh` reports the local Kami render toolchain (`python3`, `node`, `weasyprint`, `pypdf`, `pptxgenjs`, `playwright`, `pdffonts`, and local Chromium-family browser availability). If some render dependencies are missing, the skill can still scaffold and edit source projects, but PDF/PPTX export should be treated as conditional.
 
-PPTX artifact previews have a separate best-effort render path in the Electron main process. The viewer always extracts slide text and speaker notes from `.pptx`; visual slide thumbnails require local `soffice` (LibreOffice) for PPTX-to-PDF conversion and `pdftoppm` for PDF-to-PNG rendering. Missing binaries should degrade to text-only previews, not fail the file viewer.
+PPTX generation and previews use Codex's bundled `@oai/artifact-tool` runtime first. Generation falls back to `pptxgenjs` if that runtime is missing. Preview loading is two-phase: fast mode extracts slide text/notes and cached images immediately, while full mode renders missing slide images through artifact-tool, then local `soffice` (LibreOffice) plus `pdftoppm`, then text-only preview if no renderer succeeds. See [Presentation Artifacts and PPTX Preview](./pptx-generation-and-preview.md).
+
+### Everything Workbench artifact model
+
+The shared positioning and UX contract is documented in [Everything Workbench](./everything-workbench.md). Treat generated documents, spreadsheets, presentations, web pages, PDFs, and previews as one artifact workbench family:
+
+- task outputs should render as compact artifact cards when a dedicated surface exists
+- default **Open** should prefer the in-app sidebar for previewable/editable artifacts
+- fullscreen mode should keep the functional follow-up composer and latest-turn/working context
+- active follow-up work should keep the current preview visible and defer refresh until the relevant output is updated or the task completes
+- external app and folder actions should remain available for advanced native workflows
+
+### Spreadsheet artifact workflow
+
+Spreadsheet artifact behavior is documented in [Spreadsheet Artifacts](./spreadsheet-artifacts.md).
+
+Implementation notes:
+
+- `readFileForViewer` builds structured workbook and CSV/TSV preview data through `src/electron/utils/spreadsheet-preview.ts`.
+- `FileViewerResult.data.spreadsheetPreview` is optional; keep the tab-separated `content` fallback intact for older callers.
+- `SpreadsheetArtifactCard` owns the task-feed card and open dropdown. Default `Open` should route to the in-app sidebar viewer; dropdown options can open external apps or the folder.
+- `SpreadsheetArtifactViewer` owns grid selection, range/row/column copy, inline editing, add row/column, zoom, save, sidebar/fullscreen rendering, and the fullscreen follow-up composer.
+- `App.tsx` owns sidebar/fullscreen state, persisted sidebar width, and the follow-up turn filter used by the fullscreen task context frame.
+- Fullscreen follow-up context should filter to events emitted after the fullscreen prompt is sent. Do not clear that filter timestamp when the follow-up completes; only clear the optimistic working state.
+
+Focused checks:
+
+```bash
+npx vitest run \
+  src/electron/utils/__tests__/spreadsheet-preview.test.ts \
+  src/renderer/components/__tests__/spreadsheet-artifact-card.test.ts \
+  src/renderer/components/__tests__/spreadsheet-artifact-viewer.test.ts
+
+npm run build:react
+npm run type-check
+```
+
+### Document artifact workflow
+
+Document artifact behavior is documented in [Document Artifacts](./document-artifacts.md).
+
+Implementation notes:
+
+- `readFileForViewer` builds structured document preview data through `src/electron/utils/document-preview.ts`.
+- `FileViewerResult.data.documentPreview` is optional; keep existing `content` and `htmlContent` fallbacks intact for older callers.
+- `DocumentArtifactCard` owns the task-feed card and open dropdown. Default `Open` should route previewable local documents to the in-app sidebar viewer; dropdown options can open external apps or the folder.
+- `DocumentArtifactViewer` owns sidebar/fullscreen rendering, DOCX direct editing, toolbar commands, copy, save, external actions, and the fullscreen follow-up composer.
+- DOCX save writes editable block data back through `src/electron/utils/document-writer.ts` and `FILE_UPDATE_DOCUMENT`.
+- Non-DOCX Word-style formats are recognized as document artifacts, but v1 should keep them preview/external-open only unless a reliable local editor is added.
+- `App.tsx` owns shared artifact sidebar/fullscreen state, persisted sidebar width, preview refresh keys, and the follow-up turn filter used by the fullscreen task context frame.
+- Fullscreen follow-up context should filter to events emitted after the fullscreen prompt is sent. Do not clear that filter timestamp when the follow-up completes; only clear the optimistic working state and refresh the active document preview from disk.
+
+Focused checks:
+
+```bash
+npx vitest run \
+  src/electron/utils/__tests__/document-preview.test.ts \
+  src/electron/utils/__tests__/document-writer.test.ts \
+  src/renderer/components/__tests__/document-artifact-card.test.ts \
+  src/renderer/components/__tests__/document-artifact-viewer.test.ts
+
+npm run build:react
+npm run build:electron
+npm run type-check
+```
+
+### Presentation artifact workflow
+
+Presentation artifact behavior is documented in [Presentation Artifacts and PPTX Preview](./pptx-generation-and-preview.md).
+
+Implementation notes:
+
+- `src/shared/presentation-formats.ts` owns PowerPoint-style artifact detection and labels.
+- `readFileForViewer` accepts `presentationRenderMode: "fast" | "full"` for `.pptx` files.
+- Fast mode extracts slide text and speaker notes and reuses cached slide images without running expensive renderers.
+- Full mode uses the shared singleton `PptxPreviewService`, renders missing slide images in the background, dedupes in-flight renders, and returns `imageUrl` media links for cached PNGs.
+- `PresentationArtifactCard` owns the compact task-feed card and open dropdown. Default `Open` routes previewable `.pptx` files to the in-app sidebar viewer; legacy PowerPoint formats use external-app/folder actions.
+- `PresentationArtifactViewer` owns sidebar/fullscreen rendering, copy/external/folder actions, the fullscreen follow-up composer, and the cached viewer data shared between sidebar and fullscreen.
+- `PresentationViewer` owns thumbnails, slide navigation, zoom, the white top-aligned slide canvas, text fallback, and speaker notes.
+- `App.tsx` owns shared artifact sidebar/fullscreen state, persisted sidebar width, refresh keys, and the follow-up turn filter. During an active follow-up, artifact previews should keep the current deck visible and defer reloads until the follow-up completes.
+
+Focused checks:
+
+```bash
+npx vitest run \
+  src/electron/utils/__tests__/PptxPreviewService.test.ts \
+  src/renderer/components/__tests__/presentation-artifact-card.test.ts \
+  src/renderer/components/__tests__/presentation-artifact-viewer.test.ts
+
+npm run build:react
+npm run build:electron
+npm run type-check
+```
+
+### Web page artifact workflow
+
+Web page artifact behavior is documented in [Web Page Artifacts](./web-page-artifacts.md).
+
+Implementation notes:
+
+- `src/shared/web-page-formats.ts` owns HTML/HTM artifact detection and labels.
+- `readFileForViewer` returns `FileViewerResult.data.webPreview` for generated HTML, built React output, and React-style project paths.
+- `src/electron/utils/web-preview.ts` resolves HTML files directly, detects React/Vite/Next project roots from `package.json`, and looks for built `dist/index.html`, `build/index.html`, or `out/index.html`.
+- `src/electron/utils/html-preview-assets.ts` inlines local assets for sandboxed iframe preview where possible.
+- `WebArtifactCard` owns the compact task-feed card and open dropdown. Default `Open` routes previewable web pages to the in-app sidebar viewer.
+- `WebArtifactViewer` owns sidebar/fullscreen rendering, the sandboxed iframe, browser/folder/copy actions, unavailable-state rendering, and the fullscreen follow-up composer.
+- `App.tsx` owns shared artifact sidebar/fullscreen state, persisted sidebar width, refresh keys, and the follow-up turn filter. During an active follow-up, web previews should keep the current page visible and defer reloads until the follow-up completes or a matching file output is emitted.
+- V1 must not auto-start React, Vite, or Next dev servers from the artifact viewer. Missing build output should remain a structured preview-unavailable state.
+
+Focused checks:
+
+```bash
+npx vitest run \
+  src/electron/utils/__tests__/web-preview.test.ts \
+  src/renderer/components/__tests__/web-artifact-card.test.ts \
+  src/renderer/components/__tests__/web-artifact-viewer.test.ts
+
+npm run build:react
+npm run build:electron
+npm run type-check
+```
 
 ### LaTeX PDF workflow
 

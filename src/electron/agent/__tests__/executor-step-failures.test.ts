@@ -2414,6 +2414,41 @@ relationship_memory:
     }
   });
 
+  it("requires the presentation generator for slide authoring steps in presentation tasks", () => {
+    executor = createExecutorWithStubs([], {});
+    (executor as Any).task.title = "CoWork OS presentation";
+    (executor as Any).task.prompt = "Create a concise presentation about CoWork OS.";
+
+    const step: Any = {
+      id: "draft-slide-outline",
+      description: "Draft slide outline",
+      status: "pending",
+    };
+
+    const contract = (executor as Any).resolveStepExecutionContract(step);
+
+    expect(contract.mode).toBe("mutation_required");
+    expect(contract.artifactKind).toBe("presentation");
+    expect(Array.from(contract.requiredTools)).toContain("create_presentation");
+    expect(contract.requiredExtensions).toContain(".pptx");
+  });
+
+  it("uses presentation-specific write recovery instead of generic file writes", () => {
+    executor = createExecutorWithStubs([], {});
+    const step: Any = {
+      id: "presentation-recovery",
+      description: "Create a concise presentation about CoWork OS.",
+      status: "pending",
+    };
+    const stepContract = (executor as Any).resolveStepExecutionContract(step);
+
+    const template = (executor as Any).buildWriteRecoveryTemplate(step, stepContract);
+
+    expect(template.templateId).toBe("write_recovery:create_presentation");
+    expect(JSON.stringify(template.steps)).toContain("create_presentation");
+    expect(JSON.stringify(template.steps)).toContain("generate_presentation");
+  });
+
   it("does not trigger first-write checkpoint failure after repeated successful generate_presentation calls", async () => {
     executor = createExecutorWithStubs(
       [

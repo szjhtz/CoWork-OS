@@ -2958,7 +2958,7 @@ Web Fetch (PREFERRED for reading web content):
   Use this for APIs, raw file downloads, or when you need custom headers/body.
 
 Browser Automation (use only when interaction is needed):
-- browser_navigate: Navigate to a URL (use only for pages requiring JS or when you need to interact)
+- browser_navigate: Navigate to a URL in the visible in-app browser workbench by default. Use it for JS-heavy pages, app/site testing, forms, screenshots, or “use/test/check this website as a normal user” tasks.
 - browser_screenshot: Take a screenshot of the page
 - browser_get_content: Get page text, links, and forms (use after navigate, for inspecting interactive elements)
 - browser_click: Click on an element
@@ -3012,7 +3012,7 @@ Image Generation:
 Vision (Image Understanding):
 - analyze_image: Analyze an image file from the workspace (screenshots/photos)
   - Extract text, describe items, answer questions, summarize what is shown
-  - Uses a vision-capable provider (Azure OpenAI/OpenAI/Anthropic/Bedrock/Gemini); the tool will prompt setup guidance if missing.
+  - Uses the active non-Gemini image-capable provider (Azure OpenAI/OpenAI/Anthropic/Bedrock); if the active model cannot accept images, ask the user to switch to an image-capable model/provider.
 - read_pdf_visual: Visually analyze a PDF document's layout, design, and content
   - Converts PDF pages to images and analyzes them in one step (no need for pdftoppm + analyze_image separately)
   - Use only when you need visual layout, design, colors, formatting, scan/OCR interpretation, or page appearance

@@ -148,6 +148,35 @@ describe("TaskExecutor plan parsing", () => {
     expect(executor.plan.steps).toHaveLength(1);
   });
 
+  it("adds a final XLSX workbook step when a spreadsheet plan only contains research steps", async () => {
+    const response = {
+      usage: { inputTokens: 1, outputTokens: 2 },
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            description: "Research OpenAI text models",
+            steps: [
+              { id: "1", description: "Define the model scope" },
+              { id: "2", description: "Exclude image-only and deprecated models" },
+            ],
+          }),
+        },
+      ],
+    };
+    const executor = createPlanExecutor(response);
+    const prompt = "create a spreadsheet of all OpenAI text models and exclude non-text models";
+    executor.task.title = "OpenAI text model spreadsheet";
+    executor.task.prompt = prompt;
+    executor.task.rawPrompt = prompt;
+
+    await executor.createPlan();
+
+    expect(executor.plan.steps).toHaveLength(3);
+    expect(executor.plan.steps[2].description).toContain(".xlsx");
+    expect(executor.plan.steps[2].description).toContain("Excel workbook");
+  });
+
   it("offers only generate_image tools for simple image generation prompts", () => {
     const executor = createPlanExecutor({
       usage: { inputTokens: 1, outputTokens: 2 },
@@ -165,6 +194,121 @@ describe("TaskExecutor plan parsing", () => {
     ]);
 
     expect(scoped.map((tool: Any) => tool.name)).toEqual(["generate_image"]);
+  });
+
+  it("keeps dashboard UI polish prompts on code tools unless live verification is requested", () => {
+    const executor = createPlanExecutor({
+      usage: { inputTokens: 1, outputTokens: 2 },
+      content: [],
+    });
+    const prompt =
+      "Improve the dashboard UI. Keep the existing design system and make the buttons more consistent.";
+    executor.task.title = "Improve dashboard UI";
+    executor.task.prompt = prompt;
+    executor.task.rawPrompt = prompt;
+    executor.currentStepId = "1";
+    executor.plan = {
+      description: "Plan",
+      steps: [
+        {
+          id: "1",
+          description: "Update dashboard button variants and call sites.",
+          status: "pending",
+        },
+      ],
+    };
+    executor.resolveStepExecutionContract = vi.fn().mockReturnValue({
+      requiresMutation: true,
+      requiredTools: new Set<string>(),
+      requiredExtensions: [],
+      requiresArtifactEvidence: false,
+    });
+    executor.isVerificationStepForCompletion = vi.fn().mockReturnValue(false);
+    executor.getEffectiveTaskDomain = vi.fn().mockReturnValue("code");
+
+    const scoped = executor
+      .applyStepScopedToolPolicy([
+        { name: "read_file" },
+        { name: "edit_file" },
+        { name: "write_file" },
+        { name: "browser_navigate" },
+        { name: "browser_screenshot" },
+        { name: "open_application" },
+        { name: "screenshot" },
+        { name: "open_url" },
+        { name: "run_command" },
+      ])
+      .map((tool: Any) => tool.name);
+
+    expect(scoped).toEqual(["read_file", "edit_file", "write_file", "run_command"]);
+  });
+
+  it("allows browser tools for UI prompts that explicitly request browser verification", () => {
+    const executor = createPlanExecutor({
+      usage: { inputTokens: 1, outputTokens: 2 },
+      content: [],
+    });
+    const prompt =
+      "Improve the dashboard UI and verify in browser that the buttons look consistent.";
+    executor.task.title = "Improve dashboard UI";
+    executor.task.prompt = prompt;
+    executor.task.rawPrompt = prompt;
+    executor.currentStepId = "1";
+    executor.plan = {
+      description: "Plan",
+      steps: [
+        {
+          id: "1",
+          description: "Update dashboard button variants and verify in browser.",
+          status: "pending",
+        },
+      ],
+    };
+    executor.resolveStepExecutionContract = vi.fn().mockReturnValue({
+      requiresMutation: true,
+      requiredTools: new Set<string>(),
+      requiredExtensions: [],
+      requiresArtifactEvidence: false,
+    });
+    executor.isVerificationStepForCompletion = vi.fn().mockReturnValue(false);
+    executor.getEffectiveTaskDomain = vi.fn().mockReturnValue("code");
+
+    const scoped = executor
+      .applyStepScopedToolPolicy([{ name: "read_file" }, { name: "browser_navigate" }])
+      .map((tool: Any) => tool.name);
+
+    expect(scoped).toContain("browser_navigate");
+  });
+
+  it("blocks native and browser tools before use for code-first UI prompts", () => {
+    const executor = createPlanExecutor({
+      usage: { inputTokens: 1, outputTokens: 2 },
+      content: [],
+    });
+    const prompt =
+      "Improve the dashboard UI. Keep the existing design system and make the buttons more consistent.";
+    executor.task.title = "Improve dashboard UI";
+    executor.task.prompt = prompt;
+    executor.task.rawPrompt = prompt;
+    executor.currentStepId = "1";
+    executor.plan = {
+      description: "Plan",
+      steps: [
+        {
+          id: "1",
+          description: "Update dashboard button variants and call sites.",
+          status: "pending",
+        },
+      ],
+    };
+
+    const result = executor.applyPreToolUsePolicyHook({
+      toolName: "browser_navigate",
+      input: { url: "http://localhost:5173" },
+      stepMode: undefined,
+    });
+
+    expect(result.blockedResult?.error).toContain("Code-first UI task mode is active");
   });
 
   it("uses the simple image path for app avatar image prompts", async () => {

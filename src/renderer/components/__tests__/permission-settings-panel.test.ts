@@ -55,6 +55,8 @@ describe("PermissionSettingsPanel helpers", () => {
       {
         version: 1,
         defaultMode: "default",
+        defaultShellEnabled: false,
+        defaultPermissionAccess: "default",
         rules: [],
       },
       {
@@ -69,6 +71,8 @@ describe("PermissionSettingsPanel helpers", () => {
     );
 
     expect(result.permissionSettings.defaultMode).toBe("dangerous_only");
+    expect(result.permissionSettings.defaultShellEnabled).toBe(false);
+    expect(result.permissionSettings.defaultPermissionAccess).toBe("default");
     expect(result.builtinSettings.runCommandApprovalMode).toBe("single_bundle");
   });
 
@@ -78,6 +82,8 @@ describe("PermissionSettingsPanel helpers", () => {
         {
           version: 1,
           defaultMode: "dangerous_only",
+          defaultShellEnabled: false,
+          defaultPermissionAccess: "default",
           rules: [],
         },
         {
@@ -92,6 +98,8 @@ describe("PermissionSettingsPanel helpers", () => {
       {
         version: 1,
         defaultMode: "dangerous_only",
+        defaultShellEnabled: false,
+        defaultPermissionAccess: "default",
         rules: [],
       },
       {

@@ -381,6 +381,8 @@ export const TaskMessageSchema = z
         truncated: z.boolean().optional(),
       })
       .optional(),
+    permissionMode: PermissionModeSchema.optional(),
+    shellAccess: z.boolean().optional(),
   })
   .superRefine((data, ctx) => {
     if (!data.images || data.images.length === 0) {

@@ -2,7 +2,11 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { buildWorkspaceKitContext } from "../WorkspaceKitContext";
+import {
+  buildWorkspaceDesignSystemContext,
+  buildWorkspaceKitContext,
+  isDesignSystemRelevantTask,
+} from "../WorkspaceKitContext";
 
 function writeFile(p: string, content: string): void {
   fs.mkdirSync(path.dirname(p), { recursive: true });
@@ -33,6 +37,80 @@ describe("WorkspaceKitContext", () => {
     const out = buildWorkspaceKitContext(tmpDir, "any");
     expect(out).toContain("Workspace Rules (.cowork/AGENTS.md)");
     expect(out).toContain("Be concise");
+  });
+
+  it("detects UI and frontend tasks as design-system relevant", () => {
+    expect(isDesignSystemRelevantTask("Improve the dashboard UI spacing")).toBe(true);
+    expect(isDesignSystemRelevantTask("Build a React landing page")).toBe(true);
+    expect(isDesignSystemRelevantTask("Summarize the backend logs")).toBe(false);
+  });
+
+  it("builds automatic design context from .cowork/DESIGN.md for UI tasks", () => {
+    writeFile(
+      path.join(tmpDir, ".cowork", "DESIGN.md"),
+      [
+        "---",
+        "name: Product UI",
+        "colors:",
+        '  primary: "#14b8a6"',
+        "---",
+        "",
+        "# Design System",
+        "- Use compact panels",
+        "",
+      ].join("\n"),
+    );
+
+    const out = buildWorkspaceDesignSystemContext(tmpDir, "Improve the frontend dashboard");
+    expect(out).toContain("Workspace Design System (.cowork/DESIGN.md)");
+    expect(out).toContain('primary: "#14b8a6"');
+    expect(out).toContain("Use compact panels");
+  });
+
+  it("includes DESIGN.md in workspace kit context only for design-relevant tasks", () => {
+    writeFile(
+      path.join(tmpDir, ".cowork", "DESIGN.md"),
+      [
+        "---",
+        "name: Product UI",
+        "colors:",
+        '  primary: "#14b8a6"',
+        "---",
+        "",
+        "# Design System",
+        "- Use compact panels",
+        "",
+      ].join("\n"),
+    );
+
+    expect(buildWorkspaceKitContext(tmpDir, "Summarize recent notes")).not.toContain(
+      "Design System (.cowork/DESIGN.md)",
+    );
+    expect(buildWorkspaceKitContext(tmpDir, "Improve the dashboard UI")).toContain(
+      "Design System (.cowork/DESIGN.md)",
+    );
+  });
+
+  it("builds automatic design context from root DESIGN.md without workspace kit", () => {
+    writeFile(
+      path.join(tmpDir, "DESIGN.md"),
+      ["---", "name: Root Design", "---", "", "# Design System", "- Root design rule"].join("\n"),
+    );
+
+    const out = buildWorkspaceDesignSystemContext(tmpDir, "Update the CSS theme");
+    expect(out).toContain("Workspace Design System (DESIGN.md)");
+    expect(out).toContain("Root design rule");
+  });
+
+  it("returns design-system discovery guidance for UI tasks without DESIGN.md", () => {
+    const out = buildWorkspaceDesignSystemContext(tmpDir, "Improve the page layout");
+    expect(out).toContain("Workspace Design System (not found)");
+    expect(out).toContain("create or update .cowork/DESIGN.md");
+  });
+
+  it("skips automatic design context for non-UI tasks", () => {
+    writeFile(path.join(tmpDir, "DESIGN.md"), "# Design System\n- Should not load\n");
+    expect(buildWorkspaceDesignSystemContext(tmpDir, "Summarize this CSV")).toBe("");
   });
 
   it("includes PRIORITIES.md and CROSS_SIGNALS.md when present", () => {

@@ -57,6 +57,7 @@ import type {
   TaskTraceRunSummary,
   GetCoreTraceResult,
   ImageAttachment,
+  LLMReasoningEffort,
   LLMProviderType,
   ManagedAgentAuditEntry,
   ManagedAgentConversionResult,
@@ -97,6 +98,7 @@ import type {
   ApprovalResponse,
   InputRequest,
   InputRequestResponse,
+  PermissionMode,
   QuotedAssistantMessage,
   Workspace,
   GuardrailSettings,
@@ -1920,6 +1922,46 @@ contextBridge.exposeInMainWorld("electronAPI", {
     workspacePath: string;
     blocks: EditableDocumentBlock[];
   }) => ipcRenderer.invoke(IPC_CHANNELS.FILE_UPDATE_DOCUMENT, data) as Promise<FileViewerResult>,
+  registerBrowserWorkbenchSession: (data: BrowserWorkbenchSessionRegistration) =>
+    ipcRenderer.invoke(IPC_CHANNELS.BROWSER_WORKBENCH_REGISTER, data) as Promise<{ success: true }>,
+  unregisterBrowserWorkbenchSession: (data: {
+    taskId: string;
+    sessionId?: string;
+    webContentsId?: number;
+  }) => ipcRenderer.invoke(IPC_CHANNELS.BROWSER_WORKBENCH_UNREGISTER, data) as Promise<{ success: true }>,
+  updateBrowserWorkbenchStatus: (data: {
+    taskId: string;
+    sessionId?: string;
+    webContentsId?: number;
+    url?: string;
+    title?: string;
+  }) => ipcRenderer.invoke(IPC_CHANNELS.BROWSER_WORKBENCH_STATUS, data) as Promise<{ success: true }>,
+  captureBrowserWorkbenchScreenshot: (data: {
+    taskId: string;
+    sessionId?: string;
+    workspacePath: string;
+    filename?: string;
+    includeDataUrl?: boolean;
+  }) =>
+    ipcRenderer.invoke(IPC_CHANNELS.BROWSER_WORKBENCH_SCREENSHOT, data) as Promise<{
+      success: boolean;
+      path?: string;
+      fullPath?: string;
+      width?: number;
+      height?: number;
+      dataUrl?: string;
+      error?: string;
+    }>,
+  onBrowserWorkbenchOpenRequest: (callback: (request: BrowserWorkbenchOpenRequest) => void) => {
+    const handler = (_: Any, request: BrowserWorkbenchOpenRequest) => callback(request);
+    ipcRenderer.on(IPC_CHANNELS.BROWSER_WORKBENCH_OPEN_REQUEST, handler);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.BROWSER_WORKBENCH_OPEN_REQUEST, handler);
+  },
+  onBrowserWorkbenchCursor: (callback: (event: BrowserWorkbenchCursorEvent) => void) => {
+    const handler = (_: Any, event: BrowserWorkbenchCursorEvent) => callback(event);
+    ipcRenderer.on(IPC_CHANNELS.BROWSER_WORKBENCH_CURSOR, handler);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.BROWSER_WORKBENCH_CURSOR, handler);
+  },
   getLlmWikiVaultSummary: (data: { workspacePath: string; vaultPath?: string }) =>
     ipcRenderer.invoke(IPC_CHANNELS.LLM_WIKI_GET_VAULT_SUMMARY, data) as Promise<LlmWikiVaultSummary>,
   importFilesToWorkspace: (data: { workspaceId: string; files: string[] }) =>
@@ -2176,6 +2218,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     message: string,
     images?: ImageAttachment[],
     quotedAssistantMessage?: QuotedAssistantMessage,
+    options?: { permissionMode?: PermissionMode; shellAccess?: boolean },
   ) => {
     const validatedImages = validateSendMessageAttachments(images);
     return ipcRenderer.invoke(IPC_CHANNELS.TASK_SEND_MESSAGE, {
@@ -2183,6 +2226,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
       message,
       images: validatedImages,
       quotedAssistantMessage,
+      ...(options?.permissionMode ? { permissionMode: options.permissionMode } : {}),
+      ...(options?.shellAccess !== undefined ? { shellAccess: options.shellAccess } : {}),
     });
   },
 
@@ -2457,7 +2502,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
       | {
           providerType?: LLMProviderType;
           modelKey: string;
-          reasoningEffort?: "low" | "medium" | "high" | "extra_high";
+          reasoningEffort?: LLMReasoningEffort;
         },
   ) => ipcRenderer.invoke(IPC_CHANNELS.LLM_SET_MODEL, selection),
   getProviderModels: (providerType: string) =>
@@ -4376,6 +4421,42 @@ export type {
 // Export Context Policy types
 export type { SecurityModeType, ContextTypeValue, ContextPolicyData, UpdateContextPolicyOptions };
 
+export interface BrowserWorkbenchOpenRequest {
+  requestId: string;
+  taskId: string;
+  sessionId: string;
+  url?: string;
+}
+
+export interface BrowserWorkbenchSessionRegistration {
+  taskId: string;
+  sessionId: string;
+  webContentsId: number;
+  url?: string;
+  title?: string;
+}
+
+export interface BrowserWorkbenchCursorEvent {
+  taskId: string;
+  sessionId: string;
+  x: number;
+  y: number;
+  kind:
+    | "move"
+    | "click"
+    | "fill"
+    | "type"
+    | "press"
+    | "scroll"
+    | "wait"
+    | "select"
+    | "read"
+    | "navigate";
+  label?: string;
+  pulse?: boolean;
+  at: number;
+}
+
 // Export Mission Control types
 export type {
   HeartbeatStatus,
@@ -4415,6 +4496,42 @@ export interface ElectronAPI {
     workspacePath: string;
     blocks: EditableDocumentBlock[];
   }) => Promise<FileViewerResult>;
+  registerBrowserWorkbenchSession: (
+    data: BrowserWorkbenchSessionRegistration,
+  ) => Promise<{ success: boolean }>;
+  unregisterBrowserWorkbenchSession: (data: {
+    taskId: string;
+    sessionId?: string;
+    webContentsId?: number;
+  }) => Promise<{ success: boolean }>;
+  updateBrowserWorkbenchStatus: (data: {
+    taskId: string;
+    sessionId?: string;
+    webContentsId?: number;
+    url?: string;
+    title?: string;
+  }) => Promise<{ success: boolean }>;
+  captureBrowserWorkbenchScreenshot: (data: {
+    taskId: string;
+    sessionId?: string;
+    workspacePath: string;
+    filename?: string;
+    includeDataUrl?: boolean;
+  }) => Promise<{
+    success: boolean;
+    path?: string;
+    fullPath?: string;
+    width?: number;
+    height?: number;
+    dataUrl?: string;
+    error?: string;
+  }>;
+  onBrowserWorkbenchOpenRequest: (
+    callback: (request: BrowserWorkbenchOpenRequest) => void,
+  ) => () => void;
+  onBrowserWorkbenchCursor: (
+    callback: (event: BrowserWorkbenchCursorEvent) => void,
+  ) => () => void;
   getLlmWikiVaultSummary: (data: {
     workspacePath: string;
     vaultPath?: string;
@@ -4614,6 +4731,7 @@ export interface ElectronAPI {
     message: string,
     images?: ImageAttachment[],
     quotedAssistantMessage?: QuotedAssistantMessage,
+    options?: { permissionMode?: PermissionMode; shellAccess?: boolean },
   ) => Promise<void>;
   sendStepFeedback: (
     taskId: string,
@@ -4815,7 +4933,7 @@ export interface ElectronAPI {
       | {
           providerType?: LLMProviderType;
           modelKey: string;
-          reasoningEffort?: "low" | "medium" | "high" | "extra_high";
+          reasoningEffort?: LLMReasoningEffort;
         },
   ) => Promise<{ success: boolean }>;
   getProviderModels: (

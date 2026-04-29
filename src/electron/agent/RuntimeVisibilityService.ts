@@ -5,6 +5,7 @@ import {
 } from "../database/repositories";
 import { type ActivityRepository } from "../activity/ActivityRepository";
 import { MemoryService } from "../memory/MemoryService";
+import { MemoryObservationService } from "../memory/MemoryObservationService";
 import { KnowledgeGraphService } from "../knowledge-graph/KnowledgeGraphService";
 import { ChronicleObservationRepository } from "../chronicle";
 import { LLMProviderFactory, type LLMSettings } from "./llm/provider-factory";
@@ -14,7 +15,6 @@ import type {
   LearningProgressStep,
   Task,
   TaskLearningProgress,
-  LLMRoutingReason,
   UnifiedRecallQuery,
   UnifiedRecallResponse,
   UnifiedRecallResult,
@@ -241,6 +241,12 @@ export class RuntimeVisibilityService {
       for (const mem of MemoryService.searchForPromptRecall(workspaceId, normalizedQuery, limit * 2)) {
         const snippet = truncate(mem.snippet || "", 260);
         if (!matchesQuery(snippet)) continue;
+        let observation: ReturnType<typeof MemoryObservationService.details>[number] | undefined;
+        try {
+          observation = MemoryObservationService.details([mem.id], workspaceId)[0];
+        } catch {
+          observation = undefined;
+        }
         addResult({
           sourceType: "memory",
           objectId: mem.id,
@@ -249,9 +255,18 @@ export class RuntimeVisibilityService {
           timestamp: mem.createdAt,
           rank: rankFrom("memory", mem.createdAt, mem.relevanceScore ?? 0),
           snippet,
-          title: normalizeText(mem.type) || "Memory",
+          title: observation?.title || normalizeText(mem.type) || "Memory",
           sourceLabel: "Memory",
-          metadata: { type: mem.type, relevanceScore: mem.relevanceScore },
+          metadata: {
+            type: mem.type,
+            relevanceScore: mem.relevanceScore,
+            observationTitle: observation?.title,
+            concepts: observation?.concepts || [],
+            filesRead: observation?.filesRead || [],
+            filesModified: observation?.filesModified || [],
+            privacyState: observation?.privacyState,
+            sourceEventIds: observation?.sourceEventIds || [],
+          },
         });
       }
     }
@@ -358,7 +373,13 @@ export class RuntimeVisibilityService {
       const taskIds = taskCandidates.map((task) => task.id);
       const taskEvents =
         taskIds.length > 0 ? deps.eventRepo.findByTaskIds(taskIds) : [];
-      const eventsByTask = new Map<string, any[]>();
+      const eventsByTask = new Map<string, Array<{
+        id: string;
+        taskId: string;
+        type: string;
+        payload: unknown;
+        timestamp?: number;
+      }>>();
       for (const event of taskEvents) {
         const list = eventsByTask.get(event.taskId) || [];
         list.push(event);
@@ -460,11 +481,14 @@ export class RuntimeVisibilityService {
       isVerificationTask?: boolean;
     },
   ): LLMRoutingRuntimeState {
-    const currentProvider = settings.providerType as any;
+    const currentProvider = settings.providerType as LLMRoutingRuntimeState["currentProvider"];
     const modelStatus = LLMProviderFactory.getProviderModelStatus(settings);
-    const selection = LLMProviderFactory.resolveTaskModelSelection(options?.task?.agentConfig as any, {
-      isVerificationTask: options?.isVerificationTask,
-    });
+    const selection = LLMProviderFactory.resolveTaskModelSelection(
+      options?.task?.agentConfig as Parameters<typeof LLMProviderFactory.resolveTaskModelSelection>[0],
+      {
+        isVerificationTask: options?.isVerificationTask,
+      },
+    );
     const routing = LLMProviderFactory.getProviderRoutingSettings(settings, selection.providerType);
     return {
       currentProvider,

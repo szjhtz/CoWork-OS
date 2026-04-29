@@ -109,7 +109,7 @@ const DEFAULT_SETTINGS: BuiltinToolsSettings = {
     image: {
       enabled: true,
       priority: "normal",
-      description: "AI image generation (Gemini, OpenAI, OpenAI OAuth, Azure, OpenRouter)",
+      description: "AI image generation (Gemini, OpenAI, ChatGPT Subscription, Azure, OpenRouter)",
     },
     chronicle: {
       enabled: true,

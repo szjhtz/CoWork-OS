@@ -30,6 +30,7 @@ import { createLogger } from "../../utils/logger";
 const logger = createLogger("azure-openai");
 const DEFAULT_AZURE_API_VERSION = "2024-12-01-preview";
 const AZURE_MAX_TOOLS = 128;
+const AZURE_CHAT_MAX_TOOL_CALL_ID_LENGTH = 64;
 const textDecoder = new TextDecoder();
 
 const isToolResult = (item: LLMContent | LLMToolResult): item is LLMToolResult =>
@@ -141,6 +142,7 @@ export class AzureOpenAIProvider implements LLMProvider {
     const messages = toOpenAICompatibleMessages(request.messages, request.system, {
       supportsImages: true,
       systemBlocks: request.systemBlocks,
+      maxToolCallIdLength: AZURE_CHAT_MAX_TOOL_CALL_ID_LENGTH,
     });
     const rawTools = request.tools ? toOpenAICompatibleTools(request.tools) : undefined;
     if (rawTools && rawTools.length > AZURE_MAX_TOOLS) {

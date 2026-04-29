@@ -159,6 +159,10 @@ export function shouldClearUnseenOutputBadges(isMainView: boolean, rightPanelCol
   return isMainView && !rightPanelCollapsed;
 }
 
+export function shouldNotifyForTaskCompletionTerminalStatus(terminalStatus?: string): boolean {
+  return typeof terminalStatus === "string" && terminalStatus !== "ok";
+}
+
 export function createCompletionOutputToastActions(
   primaryOutputPath: string | undefined,
   dependencies: CompletionToastActionDependencies,

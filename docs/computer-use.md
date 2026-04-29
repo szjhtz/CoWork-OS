@@ -15,7 +15,7 @@ Use computer use when the task clearly requires **a desktop GUI** that is not ex
 **Prefer instead** when possible:
 
 - **MCP connectors and APIs** for SaaS and internal systems
-- **`browser_*` tools** for web surfaces (even if the user says “browser” in passing)
+- **`browser_*` tools and the [Browser Workbench](browser-workbench.md)** for web surfaces, website testing, normal-user browser flows, screenshots, annotation, and visible in-app browser automation
 - **`run_command` / scripts** for file, git, and CLI workflows
 - **`open_application`** to launch an app; pair with `screenshot`/`click`/`type_text` only when the agent must then interact with that app’s UI
 

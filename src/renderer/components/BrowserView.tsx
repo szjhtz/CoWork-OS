@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
+const webviewPopupProps = { allowpopups: "true" } as Any;
+
 interface BrowserViewProps {
   initialUrl?: string;
   onBack: () => void;
@@ -153,7 +155,7 @@ export function BrowserView({ initialUrl, onBack }: BrowserViewProps) {
             ref={webviewRef}
             src={activeUrl}
             className="browser-webview"
-            allowpopups={true}
+            {...webviewPopupProps}
             webpreferences="contextIsolation=yes, nodeIntegration=no"
           />
         ) : (

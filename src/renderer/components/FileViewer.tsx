@@ -1,8 +1,34 @@
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import hljs from "highlight.js/lib/core";
+import bash from "highlight.js/lib/languages/bash";
+import css from "highlight.js/lib/languages/css";
+import javascript from "highlight.js/lib/languages/javascript";
+import json from "highlight.js/lib/languages/json";
+import markdown from "highlight.js/lib/languages/markdown";
+import plaintext from "highlight.js/lib/languages/plaintext";
+import python from "highlight.js/lib/languages/python";
+import sql from "highlight.js/lib/languages/sql";
+import typescript from "highlight.js/lib/languages/typescript";
+import xml from "highlight.js/lib/languages/xml";
+import yaml from "highlight.js/lib/languages/yaml";
 import { FileViewerResult } from "../../electron/preload";
+
+if (!hljs.getLanguage("typescript")) {
+  hljs.registerLanguage("bash", bash);
+  hljs.registerLanguage("css", css);
+  hljs.registerLanguage("javascript", javascript);
+  hljs.registerLanguage("json", json);
+  hljs.registerLanguage("markdown", markdown);
+  hljs.registerLanguage("plaintext", plaintext);
+  hljs.registerLanguage("python", python);
+  hljs.registerLanguage("sql", sql);
+  hljs.registerLanguage("typescript", typescript);
+  hljs.registerLanguage("xml", xml);
+  hljs.registerLanguage("yaml", yaml);
+}
 import { useAgentContext } from "../hooks/useAgentContext";
 import { createVideoObjectUrl } from "../utils/videoPlayback";
 import { PDFDocumentSurface } from "./PDFDocumentSurface";
@@ -10,13 +36,18 @@ import { PresentationViewer } from "./PresentationViewer";
 import { ThemeIcon } from "./ThemeIcon";
 import {
   AlertTriangleIcon,
+  ClipboardIcon,
   CodeIcon,
   FileIcon,
   FileTextIcon,
+  FolderIcon,
   GlobeIcon,
   ImageIcon,
   PresentationIcon,
 } from "./LineIcons";
+
+type FileViewerData = NonNullable<FileViewerResult["data"]>;
+type FileType = FileViewerData["fileType"];
 
 interface FileViewerProps {
   filePath: string;
@@ -24,12 +55,225 @@ interface FileViewerProps {
   onClose: () => void;
 }
 
+const formatSize = (bytes: number): string => {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${kb.toFixed(1)} KB`;
+  const mb = kb / 1024;
+  return `${mb.toFixed(1)} MB`;
+};
+
+const EXT_LANG_MAP: Record<string, string> = {
+  ts: "typescript",
+  tsx: "typescript",
+  js: "javascript",
+  jsx: "javascript",
+  py: "python",
+  json: "json",
+  jsonl: "json",
+  geojson: "json",
+  yaml: "yaml",
+  yml: "yaml",
+  md: "markdown",
+  markdown: "markdown",
+  sh: "bash",
+  bash: "bash",
+  zsh: "bash",
+  sql: "sql",
+  html: "xml",
+  htm: "xml",
+  xml: "xml",
+  css: "css",
+  scss: "css",
+  diff: "diff",
+  tex: "plaintext",
+};
+
+const detectLanguage = (fileName: string): string => {
+  const ext = fileName.split(".").pop()?.toLowerCase() || "";
+  return EXT_LANG_MAP[ext] || "plaintext";
+};
+
+const safeHighlight = (code: string, language: string): string => {
+  try {
+    if (hljs.getLanguage(language)) {
+      return hljs.highlight(code, { language, ignoreIllegals: true }).value;
+    }
+  } catch {
+    // fall through
+  }
+  // escape HTML for raw fallback
+  return code.replace(/[&<>"]/g, (c) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+  })[c] as string);
+};
+
+// Minimal RFC 4180 parser supporting quoted fields with embedded commas/newlines
+const parseDsv = (text: string, delimiter: string): string[][] => {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = "";
+  let inQuotes = false;
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') {
+          cell += '"';
+          i += 2;
+          continue;
+        }
+        inQuotes = false;
+        i += 1;
+        continue;
+      }
+      cell += ch;
+      i += 1;
+      continue;
+    }
+    if (ch === '"' && cell.length === 0) {
+      inQuotes = true;
+      i += 1;
+      continue;
+    }
+    if (ch === delimiter) {
+      row.push(cell);
+      cell = "";
+      i += 1;
+      continue;
+    }
+    if (ch === "\n" || ch === "\r") {
+      row.push(cell);
+      cell = "";
+      rows.push(row);
+      row = [];
+      if (ch === "\r" && text[i + 1] === "\n") i += 2;
+      else i += 1;
+      continue;
+    }
+    cell += ch;
+    i += 1;
+  }
+  if (cell.length > 0 || row.length > 0) {
+    row.push(cell);
+    rows.push(row);
+  }
+  return rows.filter((r) => !(r.length === 1 && r[0] === ""));
+};
+
+const formatDuration = (seconds: number): string => {
+  if (!Number.isFinite(seconds) || seconds <= 0) return "";
+  const total = Math.round(seconds);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (h > 0) return `${h}:${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+  return `${m}:${s.toString().padStart(2, "0")}`;
+};
+
+const ALPHA_FORMATS = new Set(["png", "svg", "webp", "gif", "ico"]);
+
+const hasAlphaChannel = (fileName: string): boolean => {
+  const ext = fileName.split(".").pop()?.toLowerCase() || "";
+  return ALPHA_FORMATS.has(ext);
+};
+
+interface JsonNodeProps {
+  value: unknown;
+  name?: string;
+  depth: number;
+  defaultOpen: boolean;
+}
+
+function JsonNode({ value, name, depth, defaultOpen }: JsonNodeProps) {
+  const [open, setOpen] = useState(defaultOpen);
+  const isObject = value !== null && typeof value === "object";
+  const isArray = Array.isArray(value);
+  const keyLabel = name !== undefined ? <span className="json-node-key">{JSON.stringify(name)}:</span> : null;
+
+  if (!isObject) {
+    let valueClass = "json-node-value";
+    let display: string;
+    if (typeof value === "string") {
+      valueClass += " json-node-string";
+      display = JSON.stringify(value);
+    } else if (typeof value === "number") {
+      valueClass += " json-node-number";
+      display = String(value);
+    } else if (typeof value === "boolean") {
+      valueClass += " json-node-boolean";
+      display = String(value);
+    } else if (value === null) {
+      valueClass += " json-node-null";
+      display = "null";
+    } else {
+      display = String(value);
+    }
+    return (
+      <div className="json-node json-node-leaf" style={{ paddingLeft: depth * 14 }}>
+        {keyLabel}
+        <span className={valueClass}>{display}</span>
+      </div>
+    );
+  }
+
+  const entries = isArray
+    ? (value as unknown[]).map((v, i) => [String(i), v] as const)
+    : Object.entries(value as Record<string, unknown>);
+  const summary = isArray ? `[${entries.length}]` : `{${entries.length}}`;
+  const openBracket = isArray ? "[" : "{";
+  const closeBracket = isArray ? "]" : "}";
+
+  return (
+    <div className="json-node">
+      <div
+        className="json-node-header"
+        style={{ paddingLeft: depth * 14 }}
+        onClick={() => setOpen(!open)}
+      >
+        <span className="json-node-toggle">{open ? "▾" : "▸"}</span>
+        {keyLabel}
+        <span className="json-node-bracket">{openBracket}</span>
+        {!open && <span className="json-node-summary">{summary}</span>}
+        {!open && <span className="json-node-bracket">{closeBracket}</span>}
+      </div>
+      {open && (
+        <>
+          {entries.map(([k, v]) => (
+            <JsonNode
+              key={k}
+              name={isArray ? undefined : k}
+              value={v}
+              depth={depth + 1}
+              defaultOpen={depth < 1}
+            />
+          ))}
+          <div className="json-node-bracket-close" style={{ paddingLeft: depth * 14 }}>
+            {closeBracket}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 export function FileViewer({ filePath, workspacePath, onClose }: FileViewerProps) {
   const [loading, setLoading] = useState(true);
-  const [fileData, setFileData] = useState<FileViewerResult["data"] | null>(null);
+  const [fileData, setFileData] = useState<FileViewerData | null>(null);
   const [videoPlaybackUrl, setVideoPlaybackUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [imageDimensions, setImageDimensions] = useState<{ width: number; height: number } | null>(null);
+  const [imageActualSize, setImageActualSize] = useState(false);
+  const [audioDurationSec, setAudioDurationSec] = useState<number | null>(null);
+  const [jsonRaw, setJsonRaw] = useState(false);
+  const [copyFlash, setCopyFlash] = useState(false);
   const agentContext = useAgentContext();
+  const copyTimerRef = useRef<number | null>(null);
 
   // Load file on mount
   useEffect(() => {
@@ -65,8 +309,10 @@ export function FileViewer({ filePath, workspacePath, onClose }: FileViewerProps
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [onClose]);
 
+  // Prepare video / audio playback URL
   useEffect(() => {
-    const nextUrl = fileData?.fileType === "video" ? fileData.playbackUrl : null;
+    const isMedia = fileData?.fileType === "video" || fileData?.fileType === "audio";
+    const nextUrl = isMedia ? fileData?.playbackUrl : null;
     if (!nextUrl) {
       setVideoPlaybackUrl(null);
       return;
@@ -75,12 +321,12 @@ export function FileViewer({ filePath, workspacePath, onClose }: FileViewerProps
     const resolvedUrl = createVideoObjectUrl(nextUrl);
     if (!resolvedUrl) {
       setVideoPlaybackUrl(null);
-      setError("Failed to prepare video playback.");
+      setError("Failed to prepare media playback.");
       return;
     }
 
     setVideoPlaybackUrl(resolvedUrl);
-    setError((current) => (current === "Failed to prepare video playback." ? null : current));
+    setError((current) => (current === "Failed to prepare media playback." ? null : current));
 
     return () => {
       if (resolvedUrl !== nextUrl) {
@@ -89,7 +335,44 @@ export function FileViewer({ filePath, workspacePath, onClose }: FileViewerProps
     };
   }, [fileData]);
 
-  // Open in external app
+  // Decode image dimensions for the subtitle metadata
+  useEffect(() => {
+    if (fileData?.fileType !== "image" || !fileData.content) {
+      setImageDimensions(null);
+      return;
+    }
+    let cancelled = false;
+    const img = new Image();
+    img.onload = () => {
+      if (cancelled) return;
+      setImageDimensions({ width: img.naturalWidth, height: img.naturalHeight });
+    };
+    img.onerror = () => {
+      if (cancelled) return;
+      setImageDimensions(null);
+    };
+    img.src = fileData.content;
+    return () => {
+      cancelled = true;
+    };
+  }, [fileData]);
+
+  // Reset per-format state when fileData changes
+  useEffect(() => {
+    setImageActualSize(false);
+    setAudioDurationSec(null);
+    setJsonRaw(false);
+  }, [fileData?.fileType, fileData?.path]);
+
+  // Cleanup copy-flash timer
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current !== null) {
+        window.clearTimeout(copyTimerRef.current);
+      }
+    };
+  }, []);
+
   const handleOpenExternal = async () => {
     try {
       await window.electronAPI.openFile(filePath, workspacePath);
@@ -106,23 +389,31 @@ export function FileViewer({ filePath, workspacePath, onClose }: FileViewerProps
     }
   };
 
-  // Format file size
-  const formatSize = (bytes: number): string => {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  const handleCopyPath = async () => {
+    try {
+      await navigator.clipboard.writeText(filePath);
+      setCopyFlash(true);
+      if (copyTimerRef.current !== null) window.clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = window.setTimeout(() => setCopyFlash(false), 1400);
+    } catch (err) {
+      console.error("Failed to copy path:", err);
+    }
   };
 
-  // Get file icon based on type
-  const getFileIcon = (type?: string): React.ReactNode => {
+  const getFileIcon = (type?: FileType): React.ReactNode => {
     switch (type) {
       case "markdown":
         return <ThemeIcon emoji="📝" icon={<FileTextIcon size={16} />} />;
       case "code":
+      case "json":
         return <ThemeIcon emoji="💻" icon={<CodeIcon size={16} />} />;
+      case "csv":
+      case "xlsx":
+        return <ThemeIcon emoji="📊" icon={<FileTextIcon size={16} />} />;
       case "text":
         return <ThemeIcon emoji="📄" icon={<FileIcon size={16} />} />;
       case "docx":
+      case "document":
         return <ThemeIcon emoji="📘" icon={<FileTextIcon size={16} />} />;
       case "pdf":
         return <ThemeIcon emoji="📕" icon={<FileTextIcon size={16} />} />;
@@ -132,10 +423,10 @@ export function FileViewer({ filePath, workspacePath, onClose }: FileViewerProps
         return <ThemeIcon emoji="🖼️" icon={<ImageIcon size={16} />} />;
       case "video":
         return <ThemeIcon emoji="🎬" icon={<FileIcon size={16} />} />;
+      case "audio":
+        return <ThemeIcon emoji="🎵" icon={<FileIcon size={16} />} />;
       case "pptx":
         return <ThemeIcon emoji="📊" icon={<PresentationIcon size={16} />} />;
-      case "xlsx":
-        return <ThemeIcon emoji="📊" icon={<FileTextIcon size={16} />} />;
       case "html":
         return <ThemeIcon emoji="🌐" icon={<GlobeIcon size={16} />} />;
       default:
@@ -143,7 +434,95 @@ export function FileViewer({ filePath, workspacePath, onClose }: FileViewerProps
     }
   };
 
-  // Render content based on file type
+  // Per-format subtitle (e.g. "PDF · 12 pages · 1.4 MB")
+  const subtitle = useMemo<string>(() => {
+    if (!fileData) return "";
+    const sizeStr = formatSize(fileData.size);
+    const parts: string[] = [];
+
+    switch (fileData.fileType) {
+      case "html":
+        parts.push("HTML");
+        if (sizeStr) parts.push(sizeStr);
+        break;
+      case "image": {
+        const ext = fileData.fileName.split(".").pop()?.toUpperCase() || "Image";
+        parts.push(ext);
+        if (imageDimensions) parts.push(`${imageDimensions.width}×${imageDimensions.height}`);
+        if (sizeStr) parts.push(sizeStr);
+        break;
+      }
+      case "video":
+        parts.push("Video");
+        if (sizeStr) parts.push(sizeStr);
+        break;
+      case "audio": {
+        parts.push("Audio");
+        if (audioDurationSec) parts.push(formatDuration(audioDurationSec));
+        if (sizeStr) parts.push(sizeStr);
+        break;
+      }
+      case "pdf": {
+        parts.push("PDF");
+        const pages = fileData.pdfReviewSummary?.pageCount;
+        if (pages) parts.push(`${pages} page${pages === 1 ? "" : "s"}`);
+        if (sizeStr) parts.push(sizeStr);
+        break;
+      }
+      case "pptx": {
+        parts.push("PowerPoint");
+        const slideCount = fileData.presentationPreview?.slideCount;
+        if (slideCount) parts.push(`${slideCount} slide${slideCount === 1 ? "" : "s"}`);
+        if (sizeStr) parts.push(sizeStr);
+        break;
+      }
+      case "xlsx":
+        parts.push("Spreadsheet");
+        if (sizeStr) parts.push(sizeStr);
+        break;
+      case "csv": {
+        const ext = fileData.fileName.toLowerCase().endsWith(".tsv") ? "TSV" : "CSV";
+        parts.push(ext);
+        const text = fileData.content || "";
+        const rowCount = text ? text.split(/\r?\n/).filter((l) => l.length > 0).length : 0;
+        if (rowCount) parts.push(`${rowCount} row${rowCount === 1 ? "" : "s"}`);
+        if (sizeStr) parts.push(sizeStr);
+        break;
+      }
+      case "json": {
+        const ext = fileData.fileName.split(".").pop()?.toUpperCase() || "JSON";
+        parts.push(ext);
+        if (sizeStr) parts.push(sizeStr);
+        break;
+      }
+      case "code": {
+        const ext = fileData.fileName.split(".").pop()?.toLowerCase() || "code";
+        parts.push(ext.toUpperCase());
+        if (sizeStr) parts.push(sizeStr);
+        break;
+      }
+      case "markdown":
+        parts.push("Markdown");
+        if (sizeStr) parts.push(sizeStr);
+        break;
+      case "latex":
+        parts.push("LaTeX");
+        if (sizeStr) parts.push(sizeStr);
+        break;
+      case "docx":
+      case "document":
+        parts.push("Word");
+        if (fileData.documentPreview?.format) parts.push(fileData.documentPreview.format);
+        if (sizeStr) parts.push(sizeStr);
+        break;
+      case "text":
+      default:
+        parts.push("Text");
+        if (sizeStr) parts.push(sizeStr);
+    }
+    return parts.join(" · ");
+  }, [fileData, imageDimensions, audioDurationSec]);
+
   const renderContent = () => {
     if (!fileData) return null;
 
@@ -156,17 +535,123 @@ export function FileViewer({ filePath, workspacePath, onClose }: FileViewerProps
         );
 
       case "code":
-      case "latex":
+      case "latex": {
+        const lang = fileData.fileType === "latex" ? "plaintext" : detectLanguage(fileData.fileName);
+        const html = safeHighlight(fileData.content || "", lang);
+        return (
+          <div className="file-viewer-code-block">
+            <pre className="file-viewer-code">
+              <code className={`hljs language-${lang}`} dangerouslySetInnerHTML={{ __html: html }} />
+            </pre>
+          </div>
+        );
+      }
+
       case "text":
         return <pre className="file-viewer-code">{fileData.content}</pre>;
 
+      case "json": {
+        const raw = fileData.content || "";
+        if (jsonRaw) {
+          const html = safeHighlight(raw, "json");
+          return (
+            <div className="file-viewer-code-block">
+              <pre className="file-viewer-code">
+                <code className="hljs language-json" dangerouslySetInnerHTML={{ __html: html }} />
+              </pre>
+            </div>
+          );
+        }
+        const isJsonl = fileData.fileName.toLowerCase().endsWith(".jsonl");
+        let parsed: unknown;
+        let parseError: string | null = null;
+        try {
+          if (isJsonl) {
+            parsed = raw
+              .split(/\r?\n/)
+              .filter((l) => l.trim().length > 0)
+              .map((l) => JSON.parse(l));
+          } else {
+            parsed = JSON.parse(raw);
+          }
+        } catch (e) {
+          parseError = e instanceof Error ? e.message : "Invalid JSON";
+        }
+
+        if (parseError) {
+          const html = safeHighlight(raw, "json");
+          return (
+            <div className="file-viewer-code-block">
+              <div className="file-viewer-json-warning">
+                Failed to parse JSON ({parseError}). Showing raw content.
+              </div>
+              <pre className="file-viewer-code">
+                <code className="hljs language-json" dangerouslySetInnerHTML={{ __html: html }} />
+              </pre>
+            </div>
+          );
+        }
+
+        return (
+          <div className="file-viewer-json-tree">
+            <JsonNode value={parsed} depth={0} defaultOpen />
+          </div>
+        );
+      }
+
+      case "csv": {
+        const isTsv = fileData.fileName.toLowerCase().endsWith(".tsv");
+        const rows = parseDsv(fileData.content || "", isTsv ? "\t" : ",");
+        if (rows.length === 0) {
+          return <div className="file-viewer-placeholder">Empty file.</div>;
+        }
+        const [header, ...body] = rows;
+        return (
+          <div className="file-viewer-tabular">
+            <div className="file-viewer-tabular-scroll">
+              <table className="file-viewer-tabular-table">
+                <thead>
+                  <tr>
+                    {header.map((cell, ci) => (
+                      <th key={ci}>{cell}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {body.map((row, ri) => (
+                    <tr key={ri}>
+                      {row.map((cell, ci) => (
+                        <td key={ci}>{cell}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      }
+
       case "docx":
+      case "document": {
+        const preview = fileData.documentPreview;
+        if (preview?.previewMode === "unavailable") {
+          return (
+            <div className="file-viewer-placeholder">
+              {preview.conversionMessage || "No in-app document preview is available."}
+            </div>
+          );
+        }
+        if (preview?.previewMode === "text") {
+          return <pre className="file-viewer-code">{preview.text}</pre>;
+        }
         return (
           <div
             className="file-viewer-docx"
-            dangerouslySetInnerHTML={{ __html: fileData.htmlContent || "" }}
+            dangerouslySetInnerHTML={{ __html: preview?.htmlContent || fileData.htmlContent || "" }}
           />
         );
+      }
 
       case "html":
         return (
@@ -239,7 +724,11 @@ export function FileViewer({ filePath, workspacePath, onClose }: FileViewerProps
 
       case "image":
         return (
-          <div className="file-viewer-image-container">
+          <div
+            className="file-viewer-image-container"
+            data-alpha={hasAlphaChannel(fileData.fileName) ? "true" : undefined}
+            data-mode={imageActualSize ? "actual" : "fit"}
+          >
             <img
               src={fileData.content || ""}
               alt={fileData.fileName}
@@ -259,6 +748,29 @@ export function FileViewer({ filePath, workspacePath, onClose }: FileViewerProps
               preload="auto"
               playsInline
               poster={fileData.posterDataUrl}
+            />
+          </div>
+        );
+
+      case "audio":
+        return (
+          <div className="file-viewer-audio-container">
+            <div className="file-viewer-audio-icon">
+              <ThemeIcon emoji="🎵" icon={<FileIcon size={36} />} />
+            </div>
+            <div className="file-viewer-audio-name">{fileData.fileName}</div>
+            <audio
+              key={videoPlaybackUrl || fileData.playbackUrl || ""}
+              src={videoPlaybackUrl || ""}
+              className="file-viewer-audio"
+              controls
+              preload="metadata"
+              onLoadedMetadata={(e) => {
+                const target = e.currentTarget;
+                if (Number.isFinite(target.duration)) {
+                  setAudioDurationSec(target.duration);
+                }
+              }}
             />
           </div>
         );
@@ -288,8 +800,6 @@ export function FileViewer({ filePath, workspacePath, onClose }: FileViewerProps
         );
 
       case "xlsx": {
-        // Parse tab-separated content produced by the backend:
-        // Sheets separated by "\n\n", each starting with "## Sheet: <name>"
         const sheets = (fileData.content || "").split("\n\n").map((block) => {
           const lines = block.split("\n");
           let name = "Sheet";
@@ -303,12 +813,14 @@ export function FileViewer({ filePath, workspacePath, onClose }: FileViewerProps
         });
 
         return (
-          <div className="file-viewer-xlsx">
+          <div className="file-viewer-tabular">
             {sheets.map((sheet, si) => (
-              <div key={si} className="file-viewer-xlsx-sheet">
-                {sheets.length > 1 && <h3 className="file-viewer-xlsx-sheet-name">{sheet.name}</h3>}
-                <div className="file-viewer-xlsx-scroll">
-                  <table className="file-viewer-xlsx-table">
+              <div key={si} className="file-viewer-tabular-sheet">
+                {sheets.length > 1 && (
+                  <h3 className="file-viewer-tabular-sheet-name">{sheet.name}</h3>
+                )}
+                <div className="file-viewer-tabular-scroll">
+                  <table className="file-viewer-tabular-table">
                     {sheet.rows.length > 0 && (
                       <thead>
                         <tr>
@@ -350,22 +862,76 @@ export function FileViewer({ filePath, workspacePath, onClose }: FileViewerProps
     }
   };
 
-  // Use portal to render at document body level (escapes parent container constraints)
+  const fileType = fileData?.fileType;
+  const showImageFitToggle = fileType === "image";
+  const showJsonRawToggle = fileType === "json";
+
   return createPortal(
     <div className="file-viewer-overlay" onClick={onClose}>
       <div
-        className={`file-viewer-modal ${fileData?.fileType === "pptx" ? "file-viewer-modal-presentation" : ""}`}
+        className="file-viewer-modal"
+        data-format={fileType || "loading"}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="file-viewer-header">
           <div className="file-viewer-title">
-            <span className="file-viewer-icon">{getFileIcon(fileData?.fileType)}</span>
-            <span className="file-viewer-filename">
-              {fileData?.fileName || filePath.split("/").pop()}
-            </span>
-            {fileData && <span className="file-viewer-size">{formatSize(fileData.size)}</span>}
+            <span className="file-viewer-icon">{getFileIcon(fileType)}</span>
+            <div className="file-viewer-name-wrap">
+              <span className="file-viewer-filename" title={fileData?.fileName}>
+                {fileData?.fileName || filePath.split("/").pop()}
+              </span>
+              {subtitle && <span className="file-viewer-subtitle">{subtitle}</span>}
+            </div>
           </div>
           <div className="file-viewer-actions">
+            {showImageFitToggle && (
+              <button
+                className="file-viewer-action-btn"
+                onClick={() => setImageActualSize((v) => !v)}
+                title={imageActualSize ? "Fit to window" : "Actual size"}
+              >
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  {imageActualSize ? (
+                    <>
+                      <path d="M2 6V2h4M14 6V2h-4M2 10v4h4M14 10v4h-4" strokeLinecap="round" />
+                    </>
+                  ) : (
+                    <>
+                      <path d="M6 2H2v4M10 2h4v4M6 14H2v-4M10 14h4v-4" strokeLinecap="round" />
+                    </>
+                  )}
+                </svg>
+              </button>
+            )}
+            {showJsonRawToggle && (
+              <button
+                className={`file-viewer-action-btn ${jsonRaw ? "is-active" : ""}`}
+                onClick={() => setJsonRaw((v) => !v)}
+                title={jsonRaw ? "Show as tree" : "Show raw"}
+              >
+                <span className="file-viewer-action-text">{jsonRaw ? "Tree" : "Raw"}</span>
+              </button>
+            )}
+            <button
+              className="file-viewer-action-btn"
+              onClick={handleCopyPath}
+              title={copyFlash ? "Copied!" : "Copy file path"}
+            >
+              {copyFlash ? (
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M3 8l3.5 3.5L13 4.5" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              ) : (
+                <ClipboardIcon size={16} />
+              )}
+            </button>
+            <button
+              className="file-viewer-action-btn"
+              onClick={handleShowInFinder}
+              title="Show in Finder"
+            >
+              <FolderIcon size={16} />
+            </button>
             <button
               className="file-viewer-action-btn"
               onClick={handleOpenExternal}
@@ -402,9 +968,14 @@ export function FileViewer({ filePath, workspacePath, onClose }: FileViewerProps
                 <ThemeIcon emoji="⚠️" icon={<AlertTriangleIcon size={18} />} />
               </span>
               <p>{error}</p>
-              <button onClick={handleOpenExternal} className="file-viewer-open-btn">
-                Try Opening with Default App
-              </button>
+              <div className="file-viewer-error-actions">
+                <button onClick={handleShowInFinder} className="file-viewer-open-btn file-viewer-open-btn-secondary">
+                  Show in Finder
+                </button>
+                <button onClick={handleOpenExternal} className="file-viewer-open-btn">
+                  Open with Default App
+                </button>
+              </div>
             </div>
           )}
 

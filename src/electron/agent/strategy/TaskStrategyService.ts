@@ -39,7 +39,10 @@ export class TaskStrategyService {
       /\b(create|generate|make)\s+(?:an?\s+)?(?:image|picture|photo|illustration)\s+(?:of|with|about|for|on|explaining?)\b/.test(
         lower,
       ) ||
-      /\b(create|generate|make)\s+(?:an?\s+)?(?:infographic|poster)(?:\s+image)?\b/.test(lower)
+      /\b(create|generate|make)\s+(?:an?\s+)?(?:infographic|poster)(?:\s+image)?\b/.test(lower) ||
+      /\b(create|generate|make|produce|design|render)\s+(?:(?:a|an|the|some|me|us|one|two|three|four|five|several|new)\s+)?(?:(?!\b(?:with|using|containing|including|mentioning|that)\b)[\w-]+\s+){0,5}(?:image|picture|photo|photograph|illustration|render|rendering|artwork|drawing|painting|visual|graphic|poster|infographic|icon|logo|avatar|wallpaper|banner|portrait|thumbnail|mockup)s?\b/.test(
+        lower,
+      )
     );
   }
 

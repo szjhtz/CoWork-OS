@@ -71,6 +71,39 @@ describe("toOpenAICompatibleMessages", () => {
     expect(result[1]).toMatchObject({ role: "tool", tool_call_id: "tool-1", content: "done" });
   });
 
+  it("shortens long tool call IDs consistently when a provider limit is set", () => {
+    const longId =
+      "call_fTqRlz9aYMXqPEzJkcc0NrzA|fc_074924a6cf3a48280169f173f70f988191b1e8342ae256b142";
+    const input = [
+      {
+        role: "assistant" as const,
+        content: [
+          {
+            type: "tool_use" as const,
+            id: longId,
+            name: "scratchpad_write",
+            input: {
+              key: "heartbeat-190f8bd3-bf28-458d-8819-333337121d6d-duplicate-already-covered",
+              content: "Heartbeat run id: 190f8bd3-bf28-458d-8819-333337121d6d.",
+            },
+          },
+        ],
+      },
+      {
+        role: "user" as const,
+        content: [{ type: "tool_result" as const, tool_use_id: longId, content: "done" }],
+      },
+    ];
+
+    const result = toOpenAICompatibleMessages(input, undefined, { maxToolCallIdLength: 64 });
+    const toolCallId = result[0].tool_calls?.[0]?.id;
+
+    expect(toolCallId).toBeDefined();
+    expect(toolCallId).not.toBe(longId);
+    expect(toolCallId?.length).toBeLessThanOrEqual(64);
+    expect(result[1]).toMatchObject({ role: "tool", tool_call_id: toolCallId, content: "done" });
+  });
+
   it("does not drop text when image and tool_use are both present for an assistant message", () => {
     const input = [
       {

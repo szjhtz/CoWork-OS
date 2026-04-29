@@ -17,6 +17,7 @@ import {
   LLMMessage,
   LLMTool,
 } from "./types";
+import { imageToTextFallback } from "./image-utils";
 
 /**
  * Google AI Studio (Gemini) provider implementation
@@ -140,12 +141,7 @@ export class GeminiProvider implements LLMProvider {
           } else if (item.type === "text") {
             parts.push({ text: item.text });
           } else if (item.type === "image") {
-            parts.push({
-              inlineData: {
-                mimeType: item.mimeType,
-                data: item.data,
-              },
-            });
+            parts.push({ text: imageToTextFallback(item) });
           }
         }
       }

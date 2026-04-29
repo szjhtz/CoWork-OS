@@ -105,6 +105,7 @@ The injected block is wrapped as pinned profile-style context, but it remains ad
 ## Mirroring Behavior
 
 If **Mirror Memory Writes** is enabled, CoWork mirrors non-private archive-memory captures into Supermemory.
+Structured observation metadata remains local-first and authoritative for privacy decisions.
 
 Current mirroring source:
 
@@ -113,15 +114,18 @@ Current mirroring source:
 Current mirrored payload shape:
 
 - raw memory content as an external document
-- metadata including workspace ID, workspace name, task ID, memory type, and capture timestamp
+- metadata including workspace ID, workspace name, task ID, memory type, capture timestamp, and structured observation fields when available
 
 Current exclusions:
 
 - private/strict-mode memory entries are not mirrored
+- redacted and suppressed structured observations are not mirrored
 - clipboard-only/private sensitive content remains local
 - this integration does not currently stream every chat turn into Supermemory conversations
 
 That last point matters: CoWork currently mirrors memory captures, not the full conversation transcript lifecycle.
+
+For the local structured-memory model, see [Structured Memory Observations](memory-observations.md).
 
 ---
 

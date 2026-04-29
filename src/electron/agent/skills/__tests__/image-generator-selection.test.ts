@@ -81,10 +81,54 @@ describe("selectImageProviderOrder", () => {
     });
 
     expect(order[0]?.provider).toBe("openai-codex");
+    expect(order[0]?.modelPreset).toBe("gpt-image-2");
     expect(order.map((entry) => entry.provider)).toContain("openrouter");
   });
 
-  it("honors an explicit OpenAI OAuth image provider when API key auth is also configured", () => {
+  it("prefers openai-codex for automatic routing when OpenAI OAuth and API key auth are both configured", () => {
+    const order = selectImageProviderOrder({
+      settings: {
+        providerType: "openai",
+        modelKey: "x",
+        openai: {
+          apiKey: "openai-api-key",
+          accessToken: "oauth-access-token",
+          refreshToken: "oauth-refresh-token",
+          authMethod: "oauth",
+        },
+      } as Any,
+      prompt: "make a poster",
+      providerOverride: "auto",
+    });
+
+    expect(order[0]).toEqual({ provider: "openai-codex", modelPreset: "gpt-image-2" });
+    expect(order.map((entry) => entry.provider)).toContain("openai");
+  });
+
+  it("honors an explicit OpenAI API image provider when OpenAI OAuth is the active chat auth", () => {
+    const order = selectImageProviderOrder({
+      settings: {
+        providerType: "openai",
+        modelKey: "x",
+        openai: {
+          apiKey: "openai-api-key",
+          accessToken: "oauth-access-token",
+          refreshToken: "oauth-refresh-token",
+          authMethod: "oauth",
+        },
+        imageGeneration: {
+          defaultProvider: "openai",
+          defaultModel: "gpt-image-2",
+        },
+      } as Any,
+      prompt: "make a poster",
+      providerOverride: "auto",
+    });
+
+    expect(order[0]).toEqual({ provider: "openai", modelPreset: "gpt-image-2" });
+  });
+
+  it("upgrades an explicit OpenAI OAuth image provider to the current ChatGPT image model", () => {
     const order = selectImageProviderOrder({
       settings: {
         providerType: "openai",
@@ -104,6 +148,6 @@ describe("selectImageProviderOrder", () => {
       providerOverride: "auto",
     });
 
-    expect(order[0]).toEqual({ provider: "openai-codex", modelPreset: "gpt-image-1.5" });
+    expect(order[0]).toEqual({ provider: "openai-codex", modelPreset: "gpt-image-2" });
   });
 });

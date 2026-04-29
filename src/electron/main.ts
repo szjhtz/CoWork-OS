@@ -118,6 +118,10 @@ import {
   StrategicPlannerService,
   setStrategicPlannerService,
 } from "./control-plane/StrategicPlannerService";
+import {
+  SymphonyService,
+  setSymphonyService,
+} from "./control-plane/SymphonyService";
 import { attachControlPlaneTaskLifecycleSync } from "./control-plane/task-run-sync";
 import {
   buildManagedScheduledWorkspacePath,
@@ -236,6 +240,7 @@ let feedbackService: FeedbackService | null = null;
 let loreService: LoreService | null = null;
 let xMentionBridgeService: XMentionBridgeService | null = null;
 let strategicPlannerService: StrategicPlannerService | null = null;
+let symphonyService: SymphonyService | null = null;
 let eventTriggerService: EventTriggerService | null = null;
 let routineService: RoutineService | null = null;
 let coreTraceService: CoreTraceService | null = null;
@@ -1201,7 +1206,7 @@ if (!gotTheLock) {
                 "default-src 'self'; " +
                   "script-src 'self'; " +
                   "style-src 'self' 'unsafe-inline'; " + // Allow inline styles for React
-                  "img-src 'self' data: https:; " + // Allow images from self, data URIs, and HTTPS
+                  "img-src 'self' data: media: https:; " + // Allow images from self, data URIs, HTTPS, and preview media URLs
                   "font-src 'self' data:; " + // Allow fonts from self and data URIs
                   "connect-src 'self' https:; " + // Allow API calls to HTTPS endpoints
                   "media-src 'self' data: blob: media: https:; " + // Allow inline video previews via blob/data URLs and the media:// protocol
@@ -1432,6 +1437,18 @@ if (!gotTheLock) {
       db: dbManager.getDatabase(),
       log: (...args) => logger.warn(...args),
     });
+    try {
+      symphonyService = new SymphonyService({
+        db: dbManager.getDatabase(),
+        agentDaemon,
+        log: (...args) => logger.info(...args),
+      });
+      setSymphonyService(symphonyService);
+      symphonyService.start();
+      logger.info("Symphony issue orchestration initialized");
+    } catch (error) {
+      logger.error("Failed to initialize Symphony issue orchestration:", error);
+    }
 
     // Optional: bootstrap a default workspace on startup for headless/server deployments.
     // This makes a fresh VPS instance usable without first opening the desktop UI.
@@ -2489,6 +2506,7 @@ if (!gotTheLock) {
           standupService,
           heartbeatService,
           getPlannerService: () => strategicPlannerService,
+          getSymphonyService: () => symphonyService,
           getMainWindow: () => mainWindow,
           coreTraceService,
           coreMemoryDistiller,
@@ -3546,6 +3564,15 @@ if (!gotTheLock) {
       }
       strategicPlannerService = null;
       setStrategicPlannerService(null);
+    }
+    if (symphonyService) {
+      try {
+        symphonyService.stop();
+      } catch (error) {
+        console.error("[Main] Failed to stop Symphony service:", error);
+      }
+      symphonyService = null;
+      setSymphonyService(null);
     }
 
     if (xMentionBridgeService) {

@@ -9,13 +9,19 @@ const runCandidateReassignments: Array<{ from: string; to: string }> = [];
 let recentTaskRows: Array<{ id: string }> = [];
 let recentEventRows: Any[] = [];
 let logExists = true;
+let jsonLogExists = false;
 let logContents =
   "[10:00:01] Error: preload bridge exploded\n[10:00:02] uncaught exception while loading panel";
+let jsonLogContents = "";
 
 vi.mock("fs", () => {
   const mockFs = {
-    existsSync: vi.fn(() => logExists),
-    readFileSync: vi.fn(() => logContents),
+    existsSync: vi.fn((targetPath: string) =>
+      String(targetPath).endsWith("dev-latest.jsonl") ? jsonLogExists : logExists,
+    ),
+    readFileSync: vi.fn((targetPath: string) =>
+      String(targetPath).endsWith("dev-latest.jsonl") ? jsonLogContents : logContents,
+    ),
   };
   return {
     default: mockFs,
@@ -128,8 +134,10 @@ describe("ImprovementCandidateService", () => {
     recentTaskRows = [];
     recentEventRows = [];
     logExists = true;
+    jsonLogExists = false;
     logContents =
       "[10:00:01] Error: preload bridge exploded\n[10:00:02] uncaught exception while loading panel";
+    jsonLogContents = "";
     db = {
       transaction: vi.fn((fn: () => void) => fn),
       prepare: vi.fn((sql: string) => {
@@ -321,6 +329,56 @@ describe("ImprovementCandidateService", () => {
     await service.refresh();
 
     expect(service.listCandidates("workspace-1").filter((candidate) => candidate.source === "dev_log")).toHaveLength(1);
+  });
+
+  it("prefers structured JSONL dev logs over text fallback", async () => {
+    workspaces.push({
+      id: "workspace-1",
+      path: "/tmp/workspace-1",
+    });
+    logContents = "[10:00:01] Error: text fallback should not be used";
+    jsonLogExists = true;
+    jsonLogContents =
+      JSON.stringify({
+        timestamp: "2026-04-28T10:00:00.000Z",
+        runId: "20260428-100000",
+        process: "electron",
+        stream: "stderr",
+        level: "error",
+        component: "Main",
+        message: "Structured failure from JSONL",
+        rawLine: "[electron] [Main] Structured failure from JSONL",
+      }) + "\n";
+
+    const service = new ImprovementCandidateService(db);
+    await service.refresh();
+
+    const [candidate] = service.listCandidates("workspace-1").filter((row) => row.source === "dev_log");
+    expect(candidate?.summary).toContain("Structured failure from JSONL");
+    expect(candidate?.summary).not.toContain("text fallback");
+    expect(candidate?.evidence[0]?.metadata).toMatchObject({
+      format: "jsonl",
+      logPath: "/tmp/workspace-1/logs/dev-latest.jsonl",
+    });
+  });
+
+  it("falls back to text dev logs when JSONL is unavailable", async () => {
+    workspaces.push({
+      id: "workspace-1",
+      path: "/tmp/workspace-1",
+    });
+    jsonLogExists = false;
+    logContents = "[10:00:01] Error: text fallback is still supported";
+
+    const service = new ImprovementCandidateService(db);
+    await service.refresh();
+
+    const [candidate] = service.listCandidates("workspace-1").filter((row) => row.source === "dev_log");
+    expect(candidate?.summary).toContain("text fallback is still supported");
+    expect(candidate?.evidence[0]?.metadata).toMatchObject({
+      format: "text",
+      logPath: "/tmp/workspace-1/logs/dev-latest.log",
+    });
   });
 
   it("resolves stale success-only task_failure candidates during refresh", async () => {

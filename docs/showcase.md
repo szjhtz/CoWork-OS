@@ -766,7 +766,12 @@ Turn this meeting transcript into action items. For each item:
 
 Scrape websites, monitor prices, map site structures, and extract structured data with anti-bot bypass.
 
+For normal-user website testing, JavaScript-heavy app checks, forms, screenshots, or visual QA, CoWork opens the [Browser Workbench](browser-workbench.md): a visible right-sidebar/fullscreen browser where the agent and user share the same page, with cursor movement, screenshot capture, and annotation.
+
 **What it handles:**
+- Visible browser-use testing for live websites and local apps
+- Shared right-sidebar/fullscreen browser sessions with persistent workspace profile
+- Screenshots and screenshot annotation for visual feedback
 - Single and batch URL scraping with TLS fingerprinting
 - Stealth mode with Cloudflare bypass
 - Structured data extraction (tables, lists, metadata)

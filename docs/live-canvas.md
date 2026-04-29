@@ -84,6 +84,14 @@ The export menu (E key or export button) provides three options:
 
 The in-app preview allows you to interact with canvas content directly without switching windows. Use interactive mode (default) for full browser-like interaction, or switch to snapshot mode when you just want to monitor changes.
 
+## Relationship To Web Page Artifacts
+
+Live Canvas is an active visual workspace. Web page artifacts are durable local output files.
+
+Use Live Canvas when an agent is actively iterating on an HTML/CSS/JavaScript experience through canvas sessions, snapshots, console output, checkpoints, and canvas-specific export controls.
+
+Use [Web Page Artifacts](web-page-artifacts.md) when a task creates a local `.html` / `.htm` file or built React output such as `dist/index.html`, `build/index.html`, or `out/index.html`. Those files render as compact task-feed artifact cards and open in the shared artifact sidebar/fullscreen viewer with a sandboxed iframe, browser/folder/copy actions, and follow-up composer context. The artifact viewer does not auto-start React, Vite, or Next dev servers; source projects need built HTML output before they can preview in this path.
+
 ## Build Mode
 
 Build Mode is a dedicated "idea → working prototype" workflow layered on top of Live Canvas. It guides the agent through four structured phases, each producing a named checkpoint that you can revert to or diff against.

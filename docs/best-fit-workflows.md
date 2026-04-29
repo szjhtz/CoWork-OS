@@ -15,7 +15,7 @@ CoWork OS is built for production use: approval gates, guardrail budgets, local-
 
 These are the same reasons teams pick CoWork OS for daily governed operations. The outsourced-workflow fit is additive, not a repositioning.
 
-CoWork's Everything Workbench strengthens these lanes for knowledge workers and operators: reports, issue summaries, tables, decks, web pages, and PDFs stay attached to the task that produced them. Teams can review or lightly edit generated artifacts in-place, request follow-up changes, and still open native office apps when specialized functionality is needed.
+CoWork's Everything Workbench strengthens these lanes for knowledge workers and operators: reports, issue summaries, tables, decks, generated web pages, live website testing, and PDFs stay attached to the task that produced or used them. Teams can review or lightly edit generated artifacts in-place, test websites in a visible Browser Workbench, annotate screenshots, request follow-up changes, and still open native office apps or external browsers when specialized functionality is needed.
 
 ---
 
@@ -85,6 +85,7 @@ Use these phrases:
 - "vendor-swap-friendly workflow"
 - "best-fit workflow"
 - "one workspace for knowledge-work artifacts"
+- "visible browser workbench for normal-user website testing"
 - "fewer context switches for generated work"
 
 Avoid:

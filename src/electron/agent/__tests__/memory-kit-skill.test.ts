@@ -74,6 +74,7 @@ describe("Memory Kit Skill", () => {
       expect(skillData.prompt).toContain(".cowork/TOOLS.md");
       expect(skillData.prompt).toContain(".cowork/IDENTITY.md");
       expect(skillData.prompt).toContain(".cowork/BOOTSTRAP.md");
+      expect(skillData.prompt).toContain(".cowork/DESIGN.md");
     });
 
     it("should include daily log template", () => {

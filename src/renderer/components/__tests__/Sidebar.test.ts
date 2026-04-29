@@ -2,9 +2,41 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { Sidebar } from "../Sidebar";
+import { Sidebar, truncateSidebarTitleAtWordBoundary } from "../Sidebar";
 
 describe("Sidebar top-level destinations", () => {
+  it("truncates sidebar titles at whole words", () => {
+    const measureByCharacters = (value: string) => value.length;
+
+    expect(
+      truncateSidebarTitleAtWordBoundary(
+        'check the "new country for onboarding',
+        25,
+        measureByCharacters,
+      ),
+    ).toBe('check the "new country...');
+
+    expect(
+      truncateSidebarTitleAtWordBoundary(
+        "I need to create a presentation",
+        20,
+        measureByCharacters,
+      ),
+    ).toBe("I need to create...");
+  });
+
+  it("does not show a partial first word when a sidebar title is very narrow", () => {
+    const measureByCharacters = (value: string) => value.length;
+
+    expect(
+      truncateSidebarTitleAtWordBoundary(
+        "Presentation",
+        5,
+        measureByCharacters,
+      ),
+    ).toBe("...");
+  });
+
   it("renders Agents as a primary destination and keeps More collapsed by default", () => {
     const markup = renderToStaticMarkup(
       React.createElement(Sidebar, {
@@ -93,5 +125,45 @@ describe("Sidebar top-level destinations", () => {
     expect(markup).not.toContain("cli-task-status awaiting");
     expect(markup).not.toContain("cli-session-indicator-awaiting");
     expect(markup).not.toContain("cli-task-time");
+  });
+
+  it("places the completion attention dot directly before the session time", () => {
+    const now = Date.now();
+    const markup = renderToStaticMarkup(
+      React.createElement(Sidebar, {
+        workspace: { id: "ws-1", name: "Workspace", path: "/workspace" } as Any,
+        tasks: [
+          {
+            id: "task-1",
+            title: "Heartbeat: Pending work from inbox",
+            prompt: "Heartbeat: Pending work from inbox",
+            status: "completed",
+            source: "manual",
+            workspaceId: "ws-1",
+            createdAt: now - 60 * 1000,
+            updatedAt: now - 60 * 1000,
+          },
+        ] as Any,
+        completionAttentionTaskIds: ["task-1"],
+        selectedTaskId: null,
+        onSelectTask: () => {},
+        onOpenHome: () => {},
+        onOpenIdeas: () => {},
+        onOpenInboxAgent: () => {},
+        onOpenAgents: () => {},
+        onOpenHealth: () => {},
+        onNewSession: () => {},
+        onOpenSettings: () => {},
+        onOpenMissionControl: () => {},
+        onOpenDevices: () => {},
+        onTasksChanged: () => {},
+      }),
+    );
+
+    expect(markup).toContain("cli-task-time-wrap");
+    expect(markup).toContain("task-completion-unread-dot");
+    expect(markup.indexOf("task-completion-unread-dot")).toBeLessThan(
+      markup.indexOf("class=\"cli-task-time\""),
+    );
   });
 });

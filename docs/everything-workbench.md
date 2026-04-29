@@ -28,6 +28,7 @@ The workbench model is shared across supported artifact types:
 5. The follow-up composer stays with the artifact so the user can request changes in context.
 6. The preview refreshes after the follow-up finishes and the relevant file changes.
 7. Dropdown actions still provide external app, browser, folder, and copy-path options.
+8. Live websites can open in the Browser Workbench so interactive browser-use tasks happen beside the task instead of in a hidden or external browser.
 
 This keeps the agent next to the work product. A spreadsheet can be selected and copied, a DOCX can be edited and saved, a deck can be reviewed slide by slide, a generated page can be opened in a sandboxed preview, and a PDF/LaTeX pair can be inspected from the same task surface.
 
@@ -37,6 +38,7 @@ This keeps the agent next to the work product. A spreadsheet can be selected and
 - **Spreadsheets**: Excel workbooks and CSV/TSV files open in an editable sheet workbench with selection, row/column selection, copy, zoom, add row/column, save, and follow-up context. Native/app-owned spreadsheet formats keep card and external actions. See [Spreadsheet Artifacts](spreadsheet-artifacts.md).
 - **Presentations**: PPTX decks open in a slide viewer with thumbnails, navigation, zoom, speaker notes, text-first loading, cached slide images, and follow-up refresh after requested edits. Legacy PowerPoint formats keep external actions. See [Presentation Artifacts and PPTX Preview](pptx-generation-and-preview.md).
 - **Web pages**: Generated HTML/HTM files and built React output open in a sandboxed iframe preview with browser/folder/copy actions. Fullscreen mode supports follow-up edits and defers refresh until the updated output is ready. See [Web Page Artifacts](web-page-artifacts.md).
+- **Live websites**: Browser-use tasks open a visible in-app Browser Workbench by default. The agent and user share the same right-sidebar/fullscreen webview, with navigation controls, screenshots, annotation, and visible cursor movement during actions. See [Browser Workbench](browser-workbench.md).
 - **PDF and LaTeX**: Source-first LaTeX workflows preserve the editable `.tex` file and pair it with the compiled PDF in one artifact workbench when a local TeX engine is available.
 - **General previews**: The format-aware file preview popup remains available for files that do not have a dedicated artifact workbench.
 
@@ -48,6 +50,7 @@ Use CoWork OS as the first stop for generated knowledge work:
 - create and adjust spreadsheets, CSVs, tables, and lightweight workbook outputs
 - review generated decks and request slide changes through follow-up prompts
 - inspect generated HTML pages and built React output without leaving the task
+- test live websites and local web apps in the in-app browser while watching the agent click, type, scroll, and inspect the page
 - keep the task timeline, artifact, and follow-up request in one context
 
 Use external apps when the work needs advanced native behavior:
@@ -67,3 +70,4 @@ The product promise is not "replace every office app." The promise is "reduce th
 - [Spreadsheet Artifacts](spreadsheet-artifacts.md)
 - [Presentation Artifacts and PPTX Preview](pptx-generation-and-preview.md)
 - [Web Page Artifacts](web-page-artifacts.md)
+- [Browser Workbench](browser-workbench.md)

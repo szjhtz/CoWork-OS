@@ -1806,6 +1806,9 @@ export class ToolRegistry {
     register("git_merge_to_base", async () => this.gitTools.gitMergeToBase());
     register("system_info", async () => this.systemTools.getSystemInfo());
     register("search_memories", async ({ request }) => this.systemTools.searchMemories(request.input));
+    register("memory_search_index", async ({ request }) => this.systemTools.searchMemoryIndex(request.input), readParallelSchedulerSpec);
+    register("memory_timeline", async ({ request }) => this.systemTools.memoryTimeline(request.input), readParallelSchedulerSpec);
+    register("memory_details", async ({ request }) => this.systemTools.memoryDetails(request.input), readParallelSchedulerSpec);
     register("search_quotes", async ({ request }) => this.systemTools.searchQuotes(request.input), readParallelSchedulerSpec);
     register("search_sessions", async ({ request }) => this.systemTools.searchSessions(request.input), readParallelSchedulerSpec);
     register("memory_topics_load", async ({ request }) => this.systemTools.loadMemoryTopics(request.input), readParallelSchedulerSpec);
@@ -3462,6 +3465,9 @@ ${skillDescriptions}`;
     // System tools
     if (name === "system_info") return await this.systemTools.getSystemInfo();
     if (name === "search_memories") return await this.systemTools.searchMemories(input);
+    if (name === "memory_search_index") return await this.systemTools.searchMemoryIndex(input);
+    if (name === "memory_timeline") return await this.systemTools.memoryTimeline(input);
+    if (name === "memory_details") return await this.systemTools.memoryDetails(input);
     if (name === "search_quotes") return await this.systemTools.searchQuotes(input);
     if (name === "search_sessions") return await this.systemTools.searchSessions(input);
     if (name === "memory_topics_load") return await this.systemTools.loadMemoryTopics(input);

@@ -155,9 +155,9 @@ const TOOL_PROMPT_METADATA_BY_NAME: Record<string, LLMToolPromptMetadata> = {
   })),
   browser_navigate: createPromptMetadata(() => ({
     appendDescription:
-      "Use for interactive or JS-heavy pages, login flows, or screenshots. After navigating, immediately inspect with browser_get_content or browser_screenshot.",
+      "Use for interactive or JS-heavy pages, app/site testing, login flows, or screenshots. By default this opens and controls the visible in-app browser workbench for the active task; after the user logs in there, continue the same visible session. Do not set headless=true for normal user-facing site testing. Use force_headless/profile/debugger options only when no visible workbench session is available and background or signed-in external Chrome browsing is required. After navigating, immediately inspect with browser_get_content or browser_screenshot.",
     compactDescription:
-      "Use for interactive or JS-heavy pages, login flows, or screenshots. Navigate, then inspect immediately.",
+      "Use for interactive or JS-heavy pages and visible site testing. Navigate, then inspect immediately.",
   })),
   browser_get_content: createPromptMetadata(() => ({
     appendDescription:

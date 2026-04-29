@@ -144,7 +144,11 @@ import { TaskStrategyService } from "./strategy/TaskStrategyService";
 import { CitationTracker } from "./citation/CitationTracker";
 import { WorkflowDecomposer, workflowPhaseTypeToCapability } from "./strategy/WorkflowDecomposer";
 import { scorePlanStepIntentAlignment, scoreStepIntentOverlap } from "./step-intent-alignment";
-import { buildWorkspaceKitContext } from "../memory/WorkspaceKitContext";
+import {
+  buildWorkspaceDesignSystemContext,
+  buildWorkspaceKitContext,
+  isDesignSystemRelevantTask,
+} from "../memory/WorkspaceKitContext";
 import { MemoryFeaturesManager } from "../settings/memory-features-manager";
 import { InputSanitizer, OutputFilter } from "./security";
 import { buildRolePersonaPrompt } from "../agents/role-persona";
@@ -9094,11 +9098,53 @@ ${transcript}
     });
   }
 
+  private planContainsXlsxArtifactStep(steps: PlanStep[]): boolean {
+    return steps.some((step) => {
+      const desc = String(step?.description || "").toLowerCase();
+      if (!desc.trim()) return false;
+      const hasSpreadsheetTarget = /\.xlsx\b/.test(desc) || /\b(spreadsheet|excel|workbook)\b/.test(desc);
+      if (!hasSpreadsheetTarget) return false;
+      return /\b(create|generate|write|save|produce|export|build|make)\b/.test(desc);
+    });
+  }
+
+  private buildTaskArtifactFilename(extension: string): string {
+    const source = String(this.task?.title || this.getContractPrompt() || "task_output")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "")
+      .slice(0, 72);
+    const stem = source || "task_output";
+    return `.cowork/${stem}${extension}`;
+  }
+
+  private buildXlsxArtifactPlanStepDescription(): string {
+    const filename = this.buildTaskArtifactFilename(".xlsx");
+    return `Create the final Excel workbook \`${filename}\` containing the researched spreadsheet data, with clear headers and rows.`;
+  }
+
   private ensureRequiredPlanSteps(plan: Plan): Plan {
     const nextPlan: Plan = {
       ...plan,
       steps: Array.isArray(plan?.steps) ? [...plan.steps] : [],
     };
+
+    const requiredArtifactExtensions = this.task
+      ? this.buildCompletionContract().requiredArtifactExtensions.map((extension) =>
+          String(extension || "").toLowerCase(),
+        )
+      : [];
+    if (
+      requiredArtifactExtensions.includes(".xlsx") &&
+      !this.planContainsXlsxArtifactStep(nextPlan.steps)
+    ) {
+      nextPlan.steps.push({
+        id: String(nextPlan.steps.length + 1),
+        description: this.buildXlsxArtifactPlanStepDescription(),
+        kind: "primary",
+        status: "pending",
+      });
+    }
 
     if (
       this.requiresVisualQARun &&
@@ -9323,6 +9369,13 @@ ${transcript}
       /\b(create|generate|write|save|produce|export)\b/.test(desc);
     if (documentIntent) {
       required.add(canonicalizeToolNameUtil(this.normalizeToolName("create_document").name));
+    }
+
+    const spreadsheetIntent =
+      /\b(spreadsheet|excel|xlsx|workbook)\b/.test(desc) &&
+      /\b(create|generate|write|save|produce|export|build|make)\b/.test(desc);
+    if (spreadsheetIntent) {
+      addRequiredToolIfKnown("create_spreadsheet");
     }
 
     const requiresRunCommandEvidence =
@@ -12244,6 +12297,22 @@ ${transcript}
     forcedToolName?: string;
     forcedInput?: Any;
   } {
+    const currentStep = this.currentStepId && Array.isArray(this.plan?.steps)
+      ? this.plan.steps.find((candidate) => candidate.id === this.currentStepId)
+      : undefined;
+    const codeFirstUiText = `${this.task.title || ""}\n${currentStep?.description || ""}\n${this.getExecutionTaskPrompt()}\n${this.lastUserMessage || ""}`;
+    if (
+      this.isCodeFirstUiTask(codeFirstUiText) &&
+      this.isCodeFirstUiBlockedTool(opts.toolName)
+    ) {
+      return {
+        blockedResult: {
+          error:
+            "Code-first UI task mode is active: use filesystem/code tools and static checks. Do not open desktop apps, take screenshots, or use browser automation unless the user explicitly asks for live visual verification.",
+        },
+      };
+    }
+
     const nativeGuiStepGuard = this.getCurrentStepNativeGuiGuard();
     if (
       nativeGuiStepGuard.nativeGuiIntent &&
@@ -12361,6 +12430,7 @@ ${transcript}
       "",
       "OPERATING RULES:",
       "- Use tools when they are needed to complete the task.",
+      "- Work from the requested outcome and success criteria; choose the shortest reliable path, validate concrete changes when practical, and stop once the task is genuinely complete.",
       "- Do not ask \"Should I proceed?\" when the available tool flow already handles approvals or execution.",
       "- Keep routine tool narration minimal; narrate only when the action is sensitive or the extra context helps the user.",
       "",
@@ -12413,6 +12483,65 @@ ${transcript}
 
   private buildExecutionWorkspaceContextPrompt(): string {
     return `Workspace: ${this.workspace.path}`;
+  }
+
+  private hasExplicitLiveVisualSurfaceIntent(text: string): boolean {
+    return /\b(screenshot|screen\s*capture|on\s+screen|current\s+screen|open\s+(?:the\s+)?(?:app|application|browser|preview)|live\s+preview|browser|playwright|visual\s+qa|qa_run|localhost|dev\s+server|rendered\s+(?:page|app|ui)|see\s+how\s+it\s+looks|check\s+in\s+browser|verify\s+in\s+browser|test\s+in\s+browser)\b/i.test(
+      text,
+    );
+  }
+
+  private isCodeFirstUiTask(text?: string): boolean {
+    const combined = String(text || `${this.task.title}\n${this.getContractPrompt()}`);
+    return isDesignSystemRelevantTask(combined) && !this.hasExplicitLiveVisualSurfaceIntent(combined);
+  }
+
+  private isCodeFirstUiBlockedTool(toolName: string): boolean {
+    return (
+      [
+        "open_application",
+        "take_screenshot",
+        "screenshot",
+        "click",
+        "double_click",
+        "move_mouse",
+        "drag",
+        "scroll",
+        "type_text",
+        "keypress",
+        "wait",
+        "open_url",
+      ].includes(toolName) ||
+      toolName.startsWith("browser_")
+    );
+  }
+
+  private buildCodeFirstUiGuidancePrompt(taskPrompt: string): string {
+    if (!this.isCodeFirstUiTask(taskPrompt)) return "";
+    return [
+      "CODE-FIRST UI TASK MODE:",
+      "- This task is UI/frontend/design-related, but the user did not ask for live browser, native app, screenshot, or visual QA.",
+      "- Use filesystem/code tools first: inspect existing components, styles, CSS variables, design tokens, and nearby patterns.",
+      "- Use DESIGN.md or inferred project styles as the source of truth.",
+      "- Do not open desktop apps, take screenshots, or use browser automation unless the user explicitly asks for live visual verification.",
+      "- Do not split subjective visual consistency into separate verification steps such as same sizing, same radius, same padding, or same font weight.",
+      "- Prefer a compact implementation plan: inspect design system, centralize button variants/styles, update call sites, run static checks/build if available.",
+      "- Verification should be code-based: changed files, class/component usage, lint/type/build checks, or exact token/class references.",
+    ].join("\n");
+  }
+
+  private buildAutomaticDesignSystemContext(
+    taskPrompt: string,
+    gatewayContext: string,
+    allowTrustedSharedContext = false,
+  ): string {
+    if (!this.workspace.permissions.read) return "";
+    if (gatewayContext !== "private" && !allowTrustedSharedContext) return "";
+    try {
+      return buildWorkspaceDesignSystemContext(this.workspace.path, taskPrompt);
+    } catch {
+      return "";
+    }
   }
 
   private buildPlanningTurnGuidancePrompt(params: {
@@ -13243,6 +13372,10 @@ ${transcript}
       return allowlist.has(name);
     });
 
+    const codeFirstUiScoped = this.isCodeFirstUiTask(stepText)
+      ? scoped.filter((tool) => !this.isCodeFirstUiBlockedTool(String(tool.name || "")))
+      : scoped;
+
     const deepWorkBlockedBoost =
       this.task.agentConfig?.deepWorkMode &&
       this.recoveryRequestActive &&
@@ -13250,7 +13383,11 @@ ${transcript}
         ? 12
         : 0;
     const stepCap = stepKind === "mutation_required" ? 56 : stepKind === "verification" ? 32 : 40;
-    return this.capToolCount(scoped, stepCap + deepWorkBlockedBoost, stepCap + deepWorkBlockedBoost);
+    return this.capToolCount(
+      codeFirstUiScoped,
+      stepCap + deepWorkBlockedBoost,
+      stepCap + deepWorkBlockedBoost,
+    );
   }
 
   /**
@@ -21549,6 +21686,10 @@ You are continuing a previous conversation. The context from the previous conver
     const skillRoutingQuery = this.getSkillRoutingQuery();
     this.logSkillRoutingContext("plan.create.start", skillRoutingQuery);
     let kitContext = "";
+    const automaticDesignSystemContext = this.buildAutomaticDesignSystemContext(
+      this.getContractPrompt(),
+      gatewayContext,
+    );
     try {
       const features = MemoryFeaturesManager.loadSettings();
       if (gatewayContext === "private" && features.contextPackInjectionEnabled) {
@@ -21658,8 +21799,9 @@ Return ONLY a JSON object:
         this.buildPlanningTurnGuidancePrompt({
           toolDescriptions,
           planningGuidance,
-          kitContext,
+          kitContext: [kitContext, automaticDesignSystemContext].filter(Boolean).join("\n\n"),
         }),
+        this.buildCodeFirstUiGuidancePrompt(planTextPrompt),
         adaptiveRecoveryGuidance,
       ]
         .filter(Boolean)
@@ -23119,6 +23261,17 @@ Return ONLY a JSON object:
     const externalProfileContext = allowMemoryInjection
       ? await this.buildSupermemoryProfileBlock(this.getExecutionTaskPrompt())
       : "";
+    let automaticDesignSystemContext = this.buildAutomaticDesignSystemContext(
+      this.getExecutionTaskPrompt(),
+      gatewayContext,
+      allowTrustedSharedMemory,
+    );
+    if (
+      automaticDesignSystemContext &&
+      /\bWorkspace Design System\b/.test(synthesizedMemoryBlock)
+    ) {
+      automaticDesignSystemContext = "";
+    }
     const roleContext = this.getRoleContextPrompt();
     const infraContext = this.getInfraContextPrompt();
     const visualQAContext = this.getVisualQAContextPrompt();
@@ -23151,7 +23304,9 @@ Return ONLY a JSON object:
       taskPrompt: this.getExecutionTaskPrompt(),
       identityPrompt,
       roleContext,
-      memoryContext: [synthesizedMemoryBlock, externalProfileContext].filter(Boolean).join("\n\n"),
+      memoryContext: [automaticDesignSystemContext, synthesizedMemoryBlock, externalProfileContext]
+        .filter(Boolean)
+        .join("\n\n"),
       awarenessSnapshot: awarenessSnapshotBlock,
       infraContext,
       visualQAContext,

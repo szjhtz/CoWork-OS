@@ -86,6 +86,10 @@ CoWork OS is a **security-first personal AI assistant platform** with multi-chan
 
 #### Browser Automation
 - [x] Playwright integration
+- [x] Visible Browser Workbench for interactive browser-use tasks
+- [x] Right-sidebar/fullscreen webview routing with persistent workspace browser profile
+- [x] Visible cursor movement for agent browser actions
+- [x] Screenshot capture and screenshot annotation
 - [x] Navigation, screenshots, PDF export
 - [x] Click, fill, type, press keys
 - [x] Content extraction (text, links, forms)

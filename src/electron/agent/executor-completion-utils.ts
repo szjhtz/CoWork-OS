@@ -52,7 +52,35 @@ export function promptRequestsArtifactOutput(taskTitle: string, taskPrompt: stri
     /\b(file|document|report|pdf|docx|markdown|md|spreadsheet|csv|xlsx|json|txt|pptx|slide|slides)\b/.test(
       prompt,
     );
-  return createVerb && artifactNoun;
+  return (createVerb && artifactNoun) || promptRequestsPresentationArtifactOutput(taskTitle, taskPrompt);
+}
+
+export function promptRequestsPresentationArtifactOutput(
+  taskTitle: string,
+  taskPrompt: string,
+): boolean {
+  const prompt = `${taskTitle}\n${normalizePromptForContracts(taskPrompt)}`.toLowerCase();
+  if (!prompt.trim()) return false;
+
+  const presentationNoun = String.raw`(?:presentation|slide\s+deck|pitch\s+deck|deck|powerpoint|pptx|slides?)`;
+  const directCreation = new RegExp(
+    String.raw`\b(?:create|build|make|generate|produce|draft|prepare|design|author|compose)\b[\s\S]{0,40}\b(?:a|an|the|concise|short|brief|full|complete|polished|powerpoint|pptx|slide\s+deck|pitch\s+deck|deck|presentation|slides?)\b[\s\S]{0,40}\b${presentationNoun}\b`,
+    "i",
+  ).test(prompt);
+  const createNounImmediately = new RegExp(
+    String.raw`\b(?:create|build|make|generate|produce|draft|prepare|design|author|compose)\s+(?:a\s+|an\s+|the\s+)?(?:concise\s+|short\s+|brief\s+|full\s+|complete\s+|polished\s+)?${presentationNoun}\b`,
+    "i",
+  ).test(prompt);
+  const transformIntoPresentation = new RegExp(
+    String.raw`\b(?:turn|convert|transform)\b[\s\S]{0,60}\binto\s+(?:a\s+|an\s+|the\s+)?${presentationNoun}\b`,
+    "i",
+  ).test(prompt);
+  const explicitPptxOutput =
+    /\b(?:create|build|make|generate|produce|draft|prepare|design|author|compose|export|save)\b/.test(
+      prompt,
+    ) && /\bpptx\b|\.pptx\b/.test(prompt);
+
+  return directCreation || createNounImmediately || transformIntoPresentation || explicitPptxOutput;
 }
 
 export function promptRequestsCanvasArtifactOutput(taskTitle: string, taskPrompt: string): boolean {
@@ -101,6 +129,9 @@ export function inferRequiredArtifactExtensions(taskTitle: string, taskPrompt: s
   if (!hasCreateIntent) return [];
 
   const extensions = new Set<string>(extractArtifactExtensionsFromText(prompt));
+  if (promptRequestsPresentationArtifactOutput(taskTitle, taskPrompt)) {
+    extensions.add(".pptx");
+  }
 
   return Array.from(extensions);
 }

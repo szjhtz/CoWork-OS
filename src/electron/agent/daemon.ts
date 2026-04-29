@@ -59,6 +59,7 @@ import {
   isTempWorkspaceId,
   ImageAttachment,
   QuotedAssistantMessage,
+  TaskFollowUpInput,
   MULTI_LLM_PROVIDER_DISPLAY,
   AgentTeamRun,
   AgentTeamItem,
@@ -483,6 +484,41 @@ export class AgentDaemon extends EventEmitter {
         ...workspace.permissions,
         shell: true,
       },
+    };
+  }
+
+  private applyTaskFollowUpOverrides(
+    task: Task,
+    options?: Pick<TaskFollowUpInput, "permissionMode" | "shellAccess">,
+  ): { task: Task; changed: boolean } {
+    const hasPermissionMode = typeof options?.permissionMode === "string";
+    const hasShellAccess = typeof options?.shellAccess === "boolean";
+    if (!hasPermissionMode && !hasShellAccess) {
+      return { task, changed: false };
+    }
+
+    const nextAgentConfig: AgentConfig = { ...(task.agentConfig || {}) };
+    let changed = false;
+
+    if (hasPermissionMode && nextAgentConfig.permissionMode !== options.permissionMode) {
+      nextAgentConfig.permissionMode = options.permissionMode;
+      changed = true;
+    }
+    if (hasShellAccess && nextAgentConfig.shellAccess !== options.shellAccess) {
+      nextAgentConfig.shellAccess = options.shellAccess;
+      changed = true;
+    }
+
+    if (!changed) {
+      return { task, changed: false };
+    }
+
+    return {
+      task: {
+        ...task,
+        agentConfig: nextAgentConfig,
+      },
+      changed: true,
     };
   }
 
@@ -7839,6 +7875,7 @@ export class AgentDaemon extends EventEmitter {
     message: string,
     images?: ImageAttachment[],
     quotedAssistantMessage?: QuotedAssistantMessage,
+    options?: Pick<TaskFollowUpInput, "permissionMode" | "shellAccess">,
   ): Promise<{ queued: boolean }> {
     let cached = this.activeTasks.get(taskId);
     let executor: TaskExecutor;
@@ -7848,19 +7885,24 @@ export class AgentDaemon extends EventEmitter {
     if (!task) {
       throw new Error(`Task ${taskId} not found`);
     }
-    const { task: effectiveTask } = this.applyAgentRoleOverrides(task);
+    const overrideResult = this.applyTaskFollowUpOverrides(task, options);
+    if (overrideResult.changed) {
+      this.taskRepo.update(taskId, { agentConfig: overrideResult.task.agentConfig });
+    }
+    const { task: effectiveTask } = this.applyAgentRoleOverrides(overrideResult.task);
 
     const workspace = this.workspaceRepo.findById(effectiveTask.workspaceId);
     if (!workspace) {
       throw new Error(`Workspace ${effectiveTask.workspaceId} not found`);
     }
+    const effectiveWorkspace = this.applyTaskWorkspaceOverrides(effectiveTask, workspace);
 
     this.taskRepo.touch(taskId);
 
     if (!cached) {
       // Task executor not in memory - need to recreate it
       // Create new executor
-      executor = new TaskExecutor(effectiveTask, workspace, this);
+      executor = new TaskExecutor(effectiveTask, effectiveWorkspace, this);
 
       // Rebuild conversation history from saved events
       const events = this.getTaskEventsForReplay(taskId);
@@ -7875,8 +7917,9 @@ export class AgentDaemon extends EventEmitter {
       });
     } else {
       executor = cached.executor;
-      // Update workspace to pick up permission changes (e.g., shell enabled)
-      executor.updateWorkspace(workspace);
+      executor.updateTaskAgentConfig(effectiveTask.agentConfig);
+      // Update workspace to pick up permission changes (e.g. shell enabled)
+      executor.updateWorkspace(effectiveWorkspace);
       cached.lastAccessed = Date.now();
       cached.status = "active";
     }

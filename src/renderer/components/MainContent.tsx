@@ -14,8 +14,20 @@ import type { MouseEvent as ReactMouseEvent } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
-import hljs from "highlight.js";
-import mermaid from "mermaid";
+import hljs from "highlight.js/lib/core";
+import bash from "highlight.js/lib/languages/bash";
+import css from "highlight.js/lib/languages/css";
+import diff from "highlight.js/lib/languages/diff";
+import javascript from "highlight.js/lib/languages/javascript";
+import json from "highlight.js/lib/languages/json";
+import markdown from "highlight.js/lib/languages/markdown";
+import plaintext from "highlight.js/lib/languages/plaintext";
+import python from "highlight.js/lib/languages/python";
+import shell from "highlight.js/lib/languages/shell";
+import sql from "highlight.js/lib/languages/sql";
+import typescript from "highlight.js/lib/languages/typescript";
+import xml from "highlight.js/lib/languages/xml";
+import yaml from "highlight.js/lib/languages/yaml";
 import {
   Task,
   TaskEvent,
@@ -58,6 +70,22 @@ import {
   LLM_WIKI_QUERY_GUI_PROMPT,
 } from "../../shared/starter-missions";
 import { detectModeSuggestions, type ModeSuggestion } from "../../shared/mode-suggestion-detection";
+import {
+  isSpreadsheetArtifactFile,
+  isSpreadsheetMimeType,
+} from "../../shared/spreadsheet-formats";
+import {
+  isWordDocumentArtifactFile,
+  isWordDocumentMimeType,
+} from "../../shared/document-formats";
+import {
+  isPresentationArtifactFile,
+  isPresentationMimeType,
+} from "../../shared/presentation-formats";
+import {
+  isWebPageArtifactFile,
+  isWebPageMimeType,
+} from "../../shared/web-page-formats";
 import { CollaborativeAgentLines } from "./CollaborativeAgentLines";
 import { CollaborativeSummaryPanel } from "./CollaborativeSummaryPanel";
 import { DispatchedAgentsPanel } from "./DispatchedAgentsPanel";
@@ -114,12 +142,15 @@ import {
   type SharedTaskEventUiState,
 } from "../utils/task-event-derived";
 import {
+  ArrowUp,
   Check as CheckIcon,
   ChevronDown,
   Loader2,
   MessageCircle,
+  Mic,
   Play,
   Plus,
+  Square,
   ListTodo,
   Search,
   ShieldAlert,
@@ -136,8 +167,11 @@ import {
   X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { InlineHtmlPreview } from "./InlineHtmlPreview";
 import { InlineVideoPreview } from "./InlineVideoPreview";
+import { SpreadsheetArtifactCard } from "./SpreadsheetArtifactCard";
+import { DocumentArtifactCard } from "./DocumentArtifactCard";
+import { PresentationArtifactCard } from "./PresentationArtifactCard";
+import { WebArtifactCard } from "./WebArtifactCard";
 import { MarkdownImagePreview } from "./MarkdownImagePreview";
 import { ReplayControlsBar } from "./ReplayControls";
 import { DebugSessionPanel } from "./DebugSessionPanel";
@@ -155,10 +189,11 @@ const MAX_QUOTED_ASSISTANT_PREVIEW_CHARS = 280;
 const ACTIVE_WORK_SIGNAL_WINDOW_MS = 30_000;
 const IMAGE_FILE_EXT_RE = /\.(png|jpe?g|gif|webp|svg|bmp|ico)$/i;
 const VIDEO_FILE_EXT_RE = /\.(mp4|webm)$/i;
+type PermissionAccessMode = "default" | "full";
 const HTML_FILE_EXT_RE = /\.html?$/i;
-const SPREADSHEET_FILE_EXT_RE = /\.xlsx?$/i;
-const PRESENTATION_FILE_EXT_RE = /\.pptx$/i;
-const DOCUMENT_PREVIEW_EXT_RE = /\.(pdf|docx|md|markdown|tex|txt)$/i;
+const SPREADSHEET_FILE_EXT_RE = /\.(xlsx?|xlsm|xlsb|csv|tsv|ods|numbers|gsheet)$/i;
+const PRESENTATION_FILE_EXT_RE = /\.(pptx|ppt|pptm|potx|potm|ppsx|ppsm)$/i;
+const DOCUMENT_PREVIEW_EXT_RE = /\.(pdf|docx|docm|dotx|dotm|doc|rtf|odt|ott|pages|md|markdown|tex|txt)$/i;
 const ACTIVE_WORK_EVENT_TYPES: EventType[] = [
   "executing",
   "step_started",
@@ -179,6 +214,33 @@ const TERMINAL_WORK_EVENT_TYPES = new Set<EventType | "task_paused" | "task_canc
 ]);
 const WELCOME_TASK_SUGGESTION_LIMIT = 5;
 const WELCOME_SUGGESTION_TEXT_MAX = 96;
+const TASK_FEED_MEASUREMENT_LAYOUT_VERSION = "diff-spacing-v2";
+const COLLAPSED_USER_BUBBLE_MAX_HEIGHT = 220;
+const COLLAPSED_USER_BUBBLE_MIN_HEIGHT = 96;
+
+hljs.registerLanguage("bash", bash);
+hljs.registerLanguage("css", css);
+hljs.registerLanguage("diff", diff);
+hljs.registerLanguage("javascript", javascript);
+hljs.registerLanguage("js", javascript);
+hljs.registerLanguage("json", json);
+hljs.registerLanguage("markdown", markdown);
+hljs.registerLanguage("md", markdown);
+hljs.registerLanguage("plaintext", plaintext);
+hljs.registerLanguage("text", plaintext);
+hljs.registerLanguage("python", python);
+hljs.registerLanguage("py", python);
+hljs.registerLanguage("shell", shell);
+hljs.registerLanguage("sh", shell);
+hljs.registerLanguage("sql", sql);
+hljs.registerLanguage("typescript", typescript);
+hljs.registerLanguage("ts", typescript);
+hljs.registerLanguage("tsx", typescript);
+hljs.registerLanguage("jsx", javascript);
+hljs.registerLanguage("html", xml);
+hljs.registerLanguage("xml", xml);
+hljs.registerLanguage("yaml", yaml);
+hljs.registerLanguage("yml", yaml);
 
 type WelcomeTaskSuggestionSource = "heartbeat" | "memory" | "insight";
 type WelcomeTaskSuggestionModule =
@@ -475,7 +537,25 @@ function dedupeWelcomeTaskSuggestions(
   return out;
 }
 
-type GeneratedInlinePreviewKind = "image" | "video" | "html" | "spreadsheet" | "presentation";
+type GeneratedInlinePreviewKind = "image" | "video" | "html" | "spreadsheet" | "presentation" | "document";
+const END_OF_TASK_ARTIFACT_KINDS = new Set<GeneratedInlinePreviewKind>([
+  "html",
+  "spreadsheet",
+  "presentation",
+  "document",
+]);
+
+const GENERATED_ARTIFACT_LINK_EXTENSIONS =
+  "html?|xlsx?|xlsm|xlsb|csv|tsv|ods|numbers|gsheet|docx|docm|dotx|dotm|doc|rtf|odt|ott|pages|pptx|pptm?|potx|potm|ppsx|ppsm";
+
+const GENERATED_ARTIFACT_LINK_RE = new RegExp(
+  "`([^`\\r\\n]+\\.(?:" +
+    GENERATED_ARTIFACT_LINK_EXTENSIONS +
+    "))`|((?:\\.{1,2}/|[\\w@.-]+/)?[\\w@./-]+\\.(?:" +
+    GENERATED_ARTIFACT_LINK_EXTENSIONS +
+    "))",
+  "gi",
+);
 
 export function getInlinePreviewKindForGeneratedFile(args: {
   path?: unknown;
@@ -494,23 +574,72 @@ export function getInlinePreviewKindForGeneratedFile(args: {
     return "video";
   }
 
-  if (fileType === "html" || mimeType === "text/html" || HTML_FILE_EXT_RE.test(filePath)) {
+  if (
+    fileType === "html" ||
+    isWebPageMimeType(mimeType) ||
+    isWebPageArtifactFile(filePath) ||
+    HTML_FILE_EXT_RE.test(filePath)
+  ) {
     return "html";
   }
 
-  if (fileType === "spreadsheet" || SPREADSHEET_FILE_EXT_RE.test(filePath)) {
+  if (
+    fileType === "spreadsheet" ||
+    isSpreadsheetMimeType(mimeType) ||
+    isSpreadsheetArtifactFile(filePath)
+  ) {
     return "spreadsheet";
   }
 
   if (
     fileType === "presentation" ||
-    mimeType === "application/vnd.openxmlformats-officedocument.presentationml.presentation" ||
-    PRESENTATION_FILE_EXT_RE.test(filePath)
+    isPresentationMimeType(mimeType) ||
+    isPresentationArtifactFile(filePath)
   ) {
     return "presentation";
   }
 
+  if (
+    fileType === "document" ||
+    fileType === "docx" ||
+    isWordDocumentMimeType(mimeType) ||
+    isWordDocumentArtifactFile(filePath)
+  ) {
+    return "document";
+  }
+
   return null;
+}
+
+function normalizeGeneratedArtifactPathCandidate(candidate: string): string {
+  const normalized = candidate
+    .trim()
+    .replace(/^[<"'“”‘’]+/g, "")
+    .replace(/[>"'“”‘’,.;:)\]}]+$/g, "");
+
+  if (!normalized || /^(?:https?:)?\/\//i.test(normalized)) return "";
+  if (!getInlinePreviewKindForGeneratedFile({ path: normalized })) return "";
+  return normalized;
+}
+
+export function extractGeneratedArtifactPathsFromText(text: string, limit = 8): string[] {
+  if (!text.trim()) return [];
+  GENERATED_ARTIFACT_LINK_RE.lastIndex = 0;
+
+  const seen = new Set<string>();
+  const paths: string[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = GENERATED_ARTIFACT_LINK_RE.exec(text)) && paths.length < limit) {
+    const prefix = text.slice(Math.max(0, match.index - 8), match.index);
+    if (/https?:\/\/$/i.test(prefix)) continue;
+    const candidate = normalizeGeneratedArtifactPathCandidate(match[1] || match[2] || "");
+    if (!candidate) continue;
+    const dedupeKey = candidate.toLowerCase();
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
+    paths.push(candidate);
+  }
+  return paths;
 }
 
 export function getInlinePreviewKindForTaskEvent(event: TaskEvent): GeneratedInlinePreviewKind | null {
@@ -528,6 +657,83 @@ export function getInlinePreviewKindForTaskEvent(event: TaskEvent): GeneratedInl
     mimeType: event.payload?.mimeType,
     type: event.payload?.type,
   });
+}
+
+function normalizeArtifactCardKey(filePath: string): string {
+  return filePath.trim().replace(/\\/g, "/").toLowerCase();
+}
+
+function getTaskEventArtifactPaths(event: TaskEvent, eventStream?: TaskEvent[]): string[] {
+  const effectiveType = getEffectiveTaskEventType(event);
+  const paths: unknown[] = [];
+
+  if (
+    effectiveType === "file_created" ||
+    effectiveType === "file_modified" ||
+    effectiveType === "artifact_created"
+  ) {
+    paths.push(event.payload?.path, event.payload?.to, event.payload?.from);
+  }
+
+  if (event.type === "timeline_artifact_emitted") {
+    paths.push(event.payload?.path);
+  }
+
+  if (effectiveType === "follow_up_completed") {
+    const message =
+      typeof event.payload?.followUpMessage === "string" ? event.payload.followUpMessage : "";
+    paths.push(...extractGeneratedArtifactPathsFromText(message));
+  }
+
+  if (effectiveType === "task_completed") {
+    const outputSummary = resolveTaskOutputSummaryFromCompletionEvent(event, eventStream);
+    if (outputSummary) {
+      paths.push(
+        outputSummary.primaryOutputPath,
+        ...outputSummary.created,
+        ...(outputSummary.modifiedFallback || []),
+      );
+    }
+  }
+
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+  for (const path of paths) {
+    if (typeof path !== "string" || path.trim().length === 0) continue;
+    const key = normalizeArtifactCardKey(path);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    normalized.push(path);
+  }
+  return normalized;
+}
+
+export function shouldRenderOpenArtifactCardAtEvent(args: {
+  path: string;
+  event: TaskEvent;
+  eventStream?: TaskEvent[];
+}): boolean {
+  const previewKind = getInlinePreviewKindForGeneratedFile({ path: args.path });
+  if (!previewKind || !END_OF_TASK_ARTIFACT_KINDS.has(previewKind)) return true;
+  const eventStream = args.eventStream;
+  if (!Array.isArray(eventStream) || eventStream.length === 0) return true;
+
+  const targetKey = normalizeArtifactCardKey(args.path);
+  let currentIndex = -1;
+  let lastReferenceIndex = -1;
+  for (let index = 0; index < eventStream.length; index += 1) {
+    const candidate = eventStream[index];
+    if (candidate === args.event || (candidate.id && candidate.id === args.event.id)) {
+      currentIndex = index;
+    }
+    const referencesTarget = getTaskEventArtifactPaths(candidate, eventStream)
+      .some((path) => normalizeArtifactCardKey(path) === targetKey);
+    if (referencesTarget) {
+      lastReferenceIndex = index;
+    }
+  }
+
+  return currentIndex >= 0 && currentIndex === lastReferenceIndex;
 }
 
 function isActiveWorkSignal(event: TaskEvent, effectiveType: string): boolean {
@@ -1039,9 +1245,7 @@ import { CitationBadge } from "./CitationPanel";
 import { CommandOutput } from "./CommandOutput";
 import { CanvasPreview } from "./CanvasPreview";
 import { InlineImagePreview } from "./InlineImagePreview";
-import { InlineSpreadsheetPreview } from "./InlineSpreadsheetPreview";
 import { InlineDocumentPreview } from "./InlineDocumentPreview";
-import { InlinePresentationPreview } from "./InlinePresentationPreview";
 import { LatexArtifactWorkbench } from "./LatexArtifactWorkbench";
 import { StepFeed } from "./timeline/StepFeed";
 import { ParallelGroupFeed } from "./timeline/ParallelGroupFeed";
@@ -1062,6 +1266,12 @@ import { findLatexPdfPair } from "../utils/latex-artifacts";
 
 // Mermaid diagram component — theme-aware init for reliable text visibility
 let mermaidLastTheme: boolean | null = null;
+let mermaidApiPromise: Promise<typeof import("mermaid").default> | null = null;
+
+function loadMermaid() {
+  mermaidApiPromise ??= import("mermaid").then((module) => module.default);
+  return mermaidApiPromise;
+}
 
 // Reset when theme changes so next diagram render picks up new theme
 if (typeof document !== "undefined") {
@@ -1077,7 +1287,7 @@ if (typeof document !== "undefined") {
   });
 }
 
-function initMermaid() {
+function initMermaid(mermaid: typeof import("mermaid").default) {
   const isDark = !document.documentElement.classList.contains("theme-light");
   if (mermaidLastTheme === isDark) return;
   mermaidLastTheme = isDark;
@@ -1161,14 +1371,18 @@ function MermaidDiagram({ chart }: { chart: string }) {
   }, []);
 
   useLayoutEffect(() => {
-    initMermaid();
     let cancelled = false;
     setError(null);
     setSvg(null);
-    mermaid
-      .render(idRef.current, chart)
-      .then(({ svg: rendered }) => {
-        if (!cancelled) setSvg(rendered);
+
+    loadMermaid()
+      .then((mermaid) => {
+        if (cancelled) return null;
+        initMermaid(mermaid);
+        return mermaid.render(idRef.current, chart);
+      })
+      .then((result) => {
+        if (!cancelled && result?.svg) setSvg(result.svg);
       })
       .catch((err) => {
         if (!cancelled) setError(err?.message || "Failed to render diagram");
@@ -1217,12 +1431,62 @@ interface CodeBlockProps {
   node?: unknown;
 }
 
+export function normalizeCodeBlockTextForDisplay(codeText: string, language?: string): string {
+  const normalizedLanguage = (language || "").toLowerCase();
+  if (normalizedLanguage !== "diff" && normalizedLanguage !== "patch") {
+    return codeText;
+  }
+  return codeText.replace(/(?:\r?\n[ \t]*)+$/g, "");
+}
+
+export function resolveSafeCollapsedBubbleHeight(
+  lineBottoms: number[],
+  maxHeight = COLLAPSED_USER_BUBBLE_MAX_HEIGHT,
+  minHeight = COLLAPSED_USER_BUBBLE_MIN_HEIGHT,
+): number {
+  const lastVisibleLineBottom = lineBottoms
+    .filter((bottom) => Number.isFinite(bottom) && bottom > 0 && bottom <= maxHeight)
+    .at(-1);
+
+  if (lastVisibleLineBottom == null) return maxHeight;
+
+  return Math.max(minHeight, Math.min(maxHeight, Math.floor(lastVisibleLineBottom)));
+}
+
+function collectTextLineBottoms(root: HTMLElement): number[] {
+  const rootTop = root.getBoundingClientRect().top;
+  const lineBottoms: number[] = [];
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+
+  while (walker.nextNode()) {
+    const node = walker.currentNode;
+    if (!node.textContent?.trim()) continue;
+
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    for (const rect of Array.from(range.getClientRects())) {
+      const bottom = rect.bottom - rootTop;
+      if (rect.height > 0 && bottom > 0) {
+        lineBottoms.push(bottom);
+      }
+    }
+    range.detach();
+  }
+
+  return lineBottoms.sort((a, b) => a - b);
+}
+
+function getSafeCollapsedUserBubbleHeight(root: HTMLElement): number {
+  return resolveSafeCollapsedBubbleHeight(collectTextLineBottoms(root));
+}
+
 function CodeBlock({ children, className, ...props }: CodeBlockProps) {
   const [copied, setCopied] = useState(false);
 
   // Check if this is a code block (has language class) vs inline code
-  const isCodeBlock = className?.startsWith("language-");
-  const language = className?.replace("language-", "") || "";
+  const languageMatch = /(?:^|\s)language-([^\s]+)/.exec(className || "");
+  const isCodeBlock = Boolean(languageMatch);
+  const language = languageMatch?.[1] || "";
 
   // Get the text content for copying
   const getTextContent = (node: React.ReactNode): string => {
@@ -1234,10 +1498,12 @@ function CodeBlock({ children, className, ...props }: CodeBlockProps) {
     return "";
   };
 
+  const rawCodeText = isCodeBlock ? getTextContent(children) : "";
+  const displayCodeText = normalizeCodeBlockTextForDisplay(rawCodeText, language);
+
   const handleCopy = async () => {
-    const text = getTextContent(children);
     try {
-      await navigator.clipboard.writeText(text);
+      await navigator.clipboard.writeText(displayCodeText);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch (err) {
@@ -1255,13 +1521,15 @@ function CodeBlock({ children, className, ...props }: CodeBlockProps) {
   }
 
   // Render mermaid diagrams inline
-  const codeText = getTextContent(children);
   if (language === "mermaid") {
-    return <MermaidDiagram chart={codeText} />;
+    return <MermaidDiagram chart={rawCodeText} />;
   }
 
   // Compute highlighted HTML
-  const highlightedHtml = useMemo(() => highlightCode(codeText, language), [codeText, language]);
+  const highlightedHtml = useMemo(
+    () => highlightCode(displayCodeText, language),
+    [displayCodeText, language],
+  );
 
   // For code blocks, wrap with copy button
   return (
@@ -1308,7 +1576,7 @@ function CodeBlock({ children, className, ...props }: CodeBlockProps) {
         />
       ) : (
         <code className={className} {...props}>
-          {children}
+          {displayCodeText}
         </code>
       )}
     </div>
@@ -1519,13 +1787,35 @@ const MessageQuoteButton = memo(function MessageQuoteButton({
 function CollapsibleUserBubble({ children }: { children: React.ReactNode }) {
   const [expanded, setExpanded] = useState(false);
   const [needsCollapse, setNeedsCollapse] = useState(false);
+  const [collapsedHeight, setCollapsedHeight] = useState(COLLAPSED_USER_BUBBLE_MAX_HEIGHT);
   const contentRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (contentRef.current) {
-      setNeedsCollapse(contentRef.current.scrollHeight > 220);
+  const measure = useCallback(() => {
+    const node = contentRef.current;
+    if (!node) return;
+
+    const shouldCollapse = node.scrollHeight > COLLAPSED_USER_BUBBLE_MAX_HEIGHT;
+    setNeedsCollapse(shouldCollapse);
+    setCollapsedHeight(
+      shouldCollapse ? getSafeCollapsedUserBubbleHeight(node) : COLLAPSED_USER_BUBBLE_MAX_HEIGHT,
+    );
+  }, []);
+
+  useLayoutEffect(() => {
+    measure();
+
+    const node = contentRef.current;
+    if (!node) return undefined;
+
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", measure);
+      return () => window.removeEventListener("resize", measure);
     }
-  }, [children]);
+
+    const observer = new ResizeObserver(() => measure());
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [children, measure]);
 
   const collapsed = needsCollapse && !expanded;
 
@@ -1534,6 +1824,7 @@ function CollapsibleUserBubble({ children }: { children: React.ReactNode }) {
       <div
         ref={contentRef}
         className={`chat-bubble user-bubble markdown-content${!collapsed ? " expanded" : ""}`}
+        style={collapsed ? { maxHeight: `${collapsedHeight}px` } : undefined}
         onClick={() => {
           if (collapsed) setExpanded(true);
         }}
@@ -2406,6 +2697,8 @@ interface ModelDropdownProps {
   selectedProvider: LLMProviderType;
   selectedReasoningEffort?: LLMReasoningEffort;
   providers?: LLMProviderInfo[];
+  variant?: "button" | "label";
+  align?: "left" | "right";
   onModelChange: (selection: {
     providerType?: LLMProviderType;
     modelKey: string;
@@ -2414,12 +2707,14 @@ interface ModelDropdownProps {
   onOpenSettings?: (tab?: SettingsTab) => void;
 }
 
-function ModelDropdown({
+export function ModelDropdown({
   models,
   selectedModel,
   selectedProvider,
   selectedReasoningEffort,
   providers = [],
+  variant = "button",
+  align = "left",
   onModelChange,
   onOpenSettings,
 }: ModelDropdownProps) {
@@ -2579,11 +2874,16 @@ function ModelDropdown({
     setActiveProviderMenu(null);
     onOpenSettings?.("llm");
   };
+  const activeProvider = otherProviders.find((provider) => provider.type === activeProviderMenu);
+  const activeProviderModels = activeProvider ? providerModelCache[activeProvider.type] || [] : [];
 
   return (
-    <div className="model-dropdown-container" ref={containerRef}>
+    <div
+      className={`model-dropdown-container ${align === "right" ? "align-right" : ""}`}
+      ref={containerRef}
+    >
       <button
-        className={`model-selector ${isOpen ? "open" : ""}`}
+        className={`${variant === "label" ? "model-label-subtle" : "model-selector"} ${isOpen ? "open" : ""}`}
         onClick={() => {
           setIsOpen(!isOpen);
           if (!isOpen) {
@@ -2594,19 +2894,21 @@ function ModelDropdown({
         }}
         onKeyDown={handleKeyDown}
       >
-        <svg
-          width="14"
-          height="14"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5L12 3z" />
-          <path d="M18 14l1 3 3 1-3 1-1 3-1-3-3-1 3-1 1-3z" />
-        </svg>
+        {variant !== "label" && (
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5L12 3z" />
+            <path d="M18 14l1 3 3 1-3 1-1 3-1-3-3-1 3-1 1-3z" />
+          </svg>
+        )}
         <span>{selectedModelLabel}</span>
         {effectiveReasoningEffort && (
           <span className="model-selector-effort">
@@ -2630,121 +2932,34 @@ function ModelDropdown({
         </svg>
       </button>
       {isOpen && (
-        <div className="model-dropdown">
-          {selectedReasoningEfforts.length > 0 && (
-            <div className="model-dropdown-section">
-              <div className="model-dropdown-section-label">Intelligence</div>
-              {LLM_REASONING_EFFORT_OPTIONS.filter((option) =>
-                selectedReasoningEfforts.includes(option.value),
-              ).map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  className={`model-dropdown-item compact ${option.value === effectiveReasoningEffort ? "selected" : ""}`}
-                  onClick={() =>
-                    onModelChange({
-                      providerType: selectedProvider,
-                      modelKey: selectedModel,
-                      reasoningEffort: option.value,
-                    })
-                  }
-                >
-                  <span className="model-dropdown-item-name">{option.label}</span>
-                  {option.value === effectiveReasoningEffort && (
-                    <svg
-                      width="14"
-                      height="14"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                    >
-                      <path d="M20 6L9 17l-5-5" />
-                    </svg>
-                  )}
-                </button>
-              ))}
-            </div>
-          )}
-          <div className="model-dropdown-search">
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-            >
-              <circle cx="11" cy="11" r="8" />
-              <path d="M21 21l-4.35-4.35" />
-            </svg>
-            <input
-              ref={inputRef}
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder={`Search ${currentProviderLabel} models...`}
-              autoFocus
-            />
-          </div>
-          <div className="model-dropdown-section-label model-dropdown-provider-label">
-            {currentProviderLabel}
-          </div>
-          <div className="model-dropdown-list">
-            {filteredModels.length === 0 ? (
-              <div className="model-dropdown-no-results">No models found</div>
-            ) : (
-              filteredModels.map((model) => (
-                <button
-                  key={model.key}
-                  className={`model-dropdown-item ${model.key === selectedModel ? "selected" : ""}`}
-                  onClick={() => selectModel(selectedProvider, model.key, model)}
-                >
-                  <div className="model-dropdown-item-content">
-                    <span className="model-dropdown-item-name">{model.displayName}</span>
-                    <span className="model-dropdown-item-desc">{model.description}</span>
-                  </div>
-                  {model.key === selectedModel && (
-                    <svg
-                      width="14"
-                      height="14"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                    >
-                      <path d="M20 6L9 17l-5-5" />
-                    </svg>
-                  )}
-                </button>
-              ))
-            )}
-          </div>
-          {otherProviders.length > 0 && (
-            <div className="model-dropdown-section model-dropdown-other-providers">
-              <div className="model-dropdown-section-label">Other providers</div>
-              {otherProviders.map((provider) => {
-                const providerModels = providerModelCache[provider.type] || [];
-                const isActive = activeProviderMenu === provider.type;
-                return (
-                  <div
-                    key={provider.type}
-                    className="model-dropdown-provider-row"
-                    onMouseEnter={() => {
-                      setActiveProviderMenu(provider.type);
-                      void loadProviderModels(provider.type);
-                    }}
+        <div
+          className={`model-dropdown ${align === "right" ? "align-right" : ""}`}
+          onMouseLeave={() => setActiveProviderMenu(null)}
+        >
+          <div className="model-dropdown-panel">
+            {selectedReasoningEfforts.length > 0 && (
+              <div
+                className="model-dropdown-section"
+                onMouseEnter={() => setActiveProviderMenu(null)}
+              >
+                <div className="model-dropdown-section-label">Intelligence</div>
+                {LLM_REASONING_EFFORT_OPTIONS.filter((option) =>
+                  selectedReasoningEfforts.includes(option.value),
+                ).map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    className={`model-dropdown-item compact ${option.value === effectiveReasoningEffort ? "selected" : ""}`}
+                    onClick={() =>
+                      onModelChange({
+                        providerType: selectedProvider,
+                        modelKey: selectedModel,
+                        reasoningEffort: option.value,
+                      })
+                    }
                   >
-                    <button
-                      type="button"
-                      className={`model-dropdown-item compact ${isActive ? "highlighted" : ""}`}
-                      onClick={() => {
-                        setActiveProviderMenu(isActive ? null : provider.type);
-                        void loadProviderModels(provider.type);
-                      }}
-                    >
-                      <span className="model-dropdown-item-name">{provider.name}</span>
+                    <span className="model-dropdown-item-name">{option.label}</span>
+                    {option.value === effectiveReasoningEffort && (
                       <svg
                         width="14"
                         height="14"
@@ -2753,50 +2968,142 @@ function ModelDropdown({
                         stroke="currentColor"
                         strokeWidth="2"
                       >
-                        <path d="M9 18l6-6-6-6" />
+                        <path d="M20 6L9 17l-5-5" />
                       </svg>
-                    </button>
-                    {isActive && (
-                      <div className="model-dropdown-submenu">
-                        {loadingProviderModels === provider.type ? (
-                          <div className="model-dropdown-no-results">Loading models...</div>
-                        ) : providerModels.length === 0 ? (
-                          <div className="model-dropdown-no-results">No models found</div>
-                        ) : (
-                          providerModels.map((model) => (
-                            <button
-                              key={model.key}
-                              type="button"
-                              className="model-dropdown-item"
-                              onClick={() => selectModel(provider.type, model.key, model)}
-                            >
-                              <div className="model-dropdown-item-content">
-                                <span className="model-dropdown-item-name">
-                                  {model.displayName}
-                                </span>
-                                <span className="model-dropdown-item-desc">
-                                  {model.description}
-                                </span>
-                              </div>
-                            </button>
-                          ))
-                        )}
-                      </div>
                     )}
-                  </div>
-                );
-              })}
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="model-dropdown-search" onMouseEnter={() => setActiveProviderMenu(null)}>
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <circle cx="11" cy="11" r="8" />
+                <path d="M21 21l-4.35-4.35" />
+              </svg>
+              <input
+                ref={inputRef}
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder={`Search ${currentProviderLabel} models...`}
+                autoFocus
+              />
+            </div>
+            <div className="model-dropdown-section-label model-dropdown-provider-label">
+              {currentProviderLabel}
+            </div>
+            <div className="model-dropdown-list" onMouseEnter={() => setActiveProviderMenu(null)}>
+              {filteredModels.length === 0 ? (
+                <div className="model-dropdown-no-results">No models found</div>
+              ) : (
+                filteredModels.map((model) => (
+                  <button
+                    key={model.key}
+                    className={`model-dropdown-item ${model.key === selectedModel ? "selected" : ""}`}
+                    onClick={() => selectModel(selectedProvider, model.key, model)}
+                  >
+                    <div className="model-dropdown-item-content">
+                      <span className="model-dropdown-item-name">{model.displayName}</span>
+                      <span className="model-dropdown-item-desc">{model.description}</span>
+                    </div>
+                    {model.key === selectedModel && (
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                      >
+                        <path d="M20 6L9 17l-5-5" />
+                      </svg>
+                    )}
+                  </button>
+                ))
+              )}
+            </div>
+            {otherProviders.length > 0 && (
+              <div className="model-dropdown-section model-dropdown-other-providers">
+                <div className="model-dropdown-section-label">Other providers</div>
+                <div className="model-dropdown-provider-list">
+                  {otherProviders.map((provider) => {
+                    const isActive = activeProviderMenu === provider.type;
+                    return (
+                      <div
+                        key={provider.type}
+                        className="model-dropdown-provider-row"
+                        onMouseEnter={() => {
+                          setActiveProviderMenu(provider.type);
+                          void loadProviderModels(provider.type);
+                        }}
+                      >
+                        <button
+                          type="button"
+                          className={`model-dropdown-item compact ${isActive ? "highlighted" : ""}`}
+                          onClick={() => {
+                            setActiveProviderMenu(isActive ? null : provider.type);
+                            void loadProviderModels(provider.type);
+                          }}
+                        >
+                          <span className="model-dropdown-item-name">{provider.name}</span>
+                          <svg
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                          >
+                            <path d="M9 18l6-6-6-6" />
+                          </svg>
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            <div className="model-dropdown-footer" onMouseEnter={() => setActiveProviderMenu(null)}>
+              <button
+                type="button"
+                className="model-dropdown-provider-btn"
+                onClick={handleOpenProviders}
+              >
+                Model settings
+              </button>
+            </div>
+          </div>
+          {activeProvider && (
+            <div className="model-dropdown-submenu">
+              {loadingProviderModels === activeProvider.type ? (
+                <div className="model-dropdown-no-results">Loading models...</div>
+              ) : activeProviderModels.length === 0 ? (
+                <div className="model-dropdown-no-results">No models found</div>
+              ) : (
+                activeProviderModels.map((model) => (
+                  <button
+                    key={model.key}
+                    type="button"
+                    className="model-dropdown-item"
+                    onClick={() => selectModel(activeProvider.type, model.key, model)}
+                  >
+                    <div className="model-dropdown-item-content">
+                      <span className="model-dropdown-item-name">{model.displayName}</span>
+                      <span className="model-dropdown-item-desc">{model.description}</span>
+                    </div>
+                  </button>
+                ))
+              )}
             </div>
           )}
-          <div className="model-dropdown-footer">
-            <button
-              type="button"
-              className="model-dropdown-provider-btn"
-              onClick={handleOpenProviders}
-            >
-              Model settings
-            </button>
-          </div>
         </div>
       )}
     </div>
@@ -3822,6 +4129,10 @@ interface MainContentProps {
   onDismissInputRequest?: (requestId: string) => void;
   onOpenBrowserView?: (url?: string) => void;
   onViewTaskOutputs?: (taskId: string, primaryOutputPath?: string) => void;
+  onOpenSpreadsheetArtifact?: (path: string) => void;
+  onOpenDocumentArtifact?: (path: string) => void;
+  onOpenPresentationArtifact?: (path: string) => void;
+  onOpenWebArtifact?: (path: string) => void;
   selectedModel: string;
   selectedProvider: LLMProviderType;
   selectedReasoningEffort?: LLMReasoningEffort;
@@ -3867,7 +4178,7 @@ type SelectedSkillModalState = {
   launchMode: SkillModalLaunchMode;
 };
 
-export type TranscriptMode = "live" | "inspect";
+export type TranscriptMode = "live" | "inspect" | "delivery";
 
 function getTaskFeedRowEventType(row: TaskFeedRow): string | null {
   if (row.kind !== "timeline" || row.item.kind !== "event") return null;
@@ -3906,10 +4217,18 @@ export function getDefaultTranscriptMode(args: {
   isReplayMode: boolean;
   verboseSteps: boolean;
   isChatTask: boolean;
+  taskStatus?: Task["status"] | null;
 }): TranscriptMode {
-  return args.isTaskWorking && !args.isReplayMode && !args.verboseSteps && !args.isChatTask
-    ? "live"
-    : "inspect";
+  if (args.isReplayMode || args.verboseSteps || args.isChatTask) {
+    return "inspect";
+  }
+  if (args.isTaskWorking) {
+    return "live";
+  }
+  if (args.taskStatus === "completed") {
+    return "delivery";
+  }
+  return "inspect";
 }
 
 export function shouldShowBootstrapProgressRow(args: {
@@ -4050,6 +4369,77 @@ function isUrgentLiveTranscriptRow(row: TaskFeedRow): boolean {
   return effectiveType ? LIVE_TRANSCRIPT_URGENT_EFFECTIVE_EVENT_TYPES.has(effectiveType) : false;
 }
 
+function getTaskFeedRowEvents(row: TaskFeedRow): Array<{
+  event: TaskEvent;
+  eventIndex?: number;
+  eventOrder: number;
+}> {
+  if (row.kind !== "timeline") return [];
+  if (row.item.kind === "event") {
+    return [{ event: row.item.event as TaskEvent, eventIndex: row.item.eventIndex, eventOrder: 0 }];
+  }
+  if (row.item.kind !== "action_block" || !Array.isArray(row.item.events)) return [];
+  return row.item.events.map((event: TaskEvent, eventOrder: number) => ({
+    event,
+    eventIndex: Array.isArray(row.item.eventIndices)
+      ? row.item.eventIndices[eventOrder]
+      : undefined,
+    eventOrder,
+  }));
+}
+
+function collectTaskFeedRowEventStream(feedRows: TaskFeedRow[]): TaskEvent[] {
+  return feedRows.flatMap((row) => getTaskFeedRowEvents(row).map((entry) => entry.event));
+}
+
+function isDeliveryCompletionEvent(event: TaskEvent, eventStream: TaskEvent[]): boolean {
+  if (getEffectiveTaskEventType(event) !== "task_completed") return false;
+  const outputSummary = resolveTaskOutputSummaryFromCompletionEvent(event, eventStream);
+  if (hasTaskOutputs(outputSummary)) return true;
+  if (getCompletionSummaryText(event).length > 0) return true;
+  return (
+    event.payload?.terminalStatus === "needs_user_action" ||
+    event.payload?.terminalStatus === "partial_success"
+  );
+}
+
+function isDeliveryCriticalEvent(event: TaskEvent): boolean {
+  const effectiveType = getEffectiveTaskEventType(event);
+  return (
+    effectiveType === "error" ||
+    effectiveType === "step_failed" ||
+    effectiveType === "verification_failed" ||
+    effectiveType === "verification_pending_user_action" ||
+    event.type === "timeline_error"
+  );
+}
+
+function isDeliveryEvent(event: TaskEvent, eventStream: TaskEvent[]): boolean {
+  return isDeliveryCompletionEvent(event, eventStream) || isDeliveryCriticalEvent(event);
+}
+
+function createDeliveryEventRow(
+  row: TaskFeedRow,
+  event: TaskEvent,
+  eventIndex: number | undefined,
+  eventOrder: number,
+): TaskFeedRow {
+  if (row.kind === "timeline" && row.item.kind === "event") return row;
+  return {
+    kind: "timeline",
+    key: `delivery-event:${event.id || row.key}:${eventIndex ?? eventOrder}`,
+    estimatedHeight: estimateTaskFeedRowHeight({ kind: "event", event }),
+    timelineIndex: row.kind === "timeline" ? row.timelineIndex : eventOrder,
+    item: {
+      kind: "event",
+      event,
+      eventIndex,
+    },
+    revision: `${row.revision}:${event.id}:${eventIndex ?? eventOrder}`,
+    visiblePerfEventId: event.id ?? row.visiblePerfEventId,
+  };
+}
+
 function isMeaningfulLiveTranscriptRow(row: TaskFeedRow): boolean {
   if (row.kind === "leading-command-outputs") return false;
   if (row.kind !== "timeline") return true;
@@ -4153,6 +4543,51 @@ export function selectVisibleTaskFeedRows(
   feedRows: TaskFeedRow[],
   transcriptMode: TranscriptMode,
 ): { visibleFeedRows: TaskFeedRow[]; hiddenLiveFeedRowCount: number } {
+  if (transcriptMode === "delivery") {
+    const eventStream = collectTaskFeedRowEventStream(feedRows);
+    const candidates: Array<{ order: number; row: TaskFeedRow }> = [];
+    let finalAssistant: { order: number; row: TaskFeedRow } | null = null;
+    const pushCandidate = (order: number, row: TaskFeedRow) => {
+      candidates.push({ order, row });
+    };
+
+    for (const [rowIndex, row] of feedRows.entries()) {
+      const rowEvents = getTaskFeedRowEvents(row);
+      for (const { event, eventIndex, eventOrder } of rowEvents) {
+        const order = rowIndex + eventOrder / 1000;
+        if (getEffectiveTaskEventType(event) === "assistant_message" && event.payload?.internal !== true) {
+          finalAssistant = {
+            order,
+            row: createDeliveryEventRow(row, event, eventIndex, eventOrder),
+          };
+          continue;
+        }
+        if (isDeliveryEvent(event, eventStream)) {
+          pushCandidate(order, createDeliveryEventRow(row, event, eventIndex, eventOrder));
+        }
+      }
+    }
+
+    if (finalAssistant) {
+      pushCandidate(finalAssistant.order, finalAssistant.row);
+    }
+
+    const seenKeys = new Set<string>();
+    const visibleFeedRows = candidates
+      .sort((a, b) => a.order - b.order)
+      .map((candidate) => candidate.row)
+      .filter((row) => {
+        if (seenKeys.has(row.key)) return false;
+        seenKeys.add(row.key);
+        return true;
+      });
+
+    return {
+      visibleFeedRows,
+      hiddenLiveFeedRowCount: Math.max(0, feedRows.length - visibleFeedRows.length),
+    };
+  }
+
   if (transcriptMode !== "live" || feedRows.length <= 8) {
     return { visibleFeedRows: feedRows, hiddenLiveFeedRowCount: 0 };
   }
@@ -4263,12 +4698,12 @@ export function estimateTaskFeedRowHeight(
 
     // Virtualized history views should estimate against the collapsed/windowed
     // action block that is actually rendered, not the raw hidden event count.
-    if (!expanded) return 56;
+    if (!expanded) return 34;
 
-    const headerHeight = 44;
-    const controlsHeight = hasVisibilityToggle ? 32 : 0;
-    const eventsHeight = visibleEventCount * 56;
-    const paddingHeight = visibleEventCount > 0 ? 20 : 8;
+    const headerHeight = 30;
+    const controlsHeight = hasVisibilityToggle ? 28 : 0;
+    const eventsHeight = visibleEventCount * 42;
+    const paddingHeight = visibleEventCount > 0 ? 10 : 4;
     return Math.min(520, headerHeight + controlsHeight + eventsHeight + paddingHeight);
   }
 
@@ -4280,7 +4715,22 @@ export function estimateTaskFeedRowHeight(
     return Math.min(420, 120 + Math.ceil(messageLength / 180) * 44);
   }
 
-  return 120;
+  if (
+    effectiveType === "artifact_created" ||
+    event.type === "timeline_artifact_emitted"
+  ) {
+    return 42;
+  }
+
+  if (effectiveType === "file_modified") {
+    return event.payload?.oldPreview || event.payload?.newPreview ? 58 : 42;
+  }
+
+  if (effectiveType === "file_created") {
+    return event.payload?.contentPreview ? 64 : 42;
+  }
+
+  return 84;
 }
 
 function assignTimelineRef(
@@ -4512,6 +4962,7 @@ const TaskConversationRenderedRows = memo(function TaskConversationRenderedRows(
     !isReplayMode;
   const [feedRowHeights, setFeedRowHeights] = useState<Map<string, number>>(() => new Map());
   const feedRowHeightsRef = useRef<Map<string, number>>(new Map());
+  const feedRowHeightSignaturesRef = useRef<Map<string, string>>(new Map());
   const pendingFeedRowHeightsRef = useRef<Map<string, number>>(new Map());
   const feedRowHeightFlushFrameRef = useRef<number | null>(null);
   const [conversationFlowOffsetTop, setConversationFlowOffsetTop] = useState(0);
@@ -4522,16 +4973,24 @@ const TaskConversationRenderedRows = memo(function TaskConversationRenderedRows(
   }, [feedRowHeights]);
 
   useEffect(() => {
-    const activeKeys = new Set(renderableFeedRows.map((row) => row.key));
+    const activeSignatures = new Map(
+      renderableFeedRows.map((row) => [
+        row.key,
+        `${TASK_FEED_MEASUREMENT_LAYOUT_VERSION}:${row.revision}:${row.estimatedHeight}`,
+      ]),
+    );
+    const previousSignatures = feedRowHeightSignaturesRef.current;
+    feedRowHeightSignaturesRef.current = activeSignatures;
     setFeedRowHeights((prev) => {
       let changed = false;
       const next = new Map<string, number>();
       for (const [key, value] of prev.entries()) {
-        if (activeKeys.has(key)) {
-          next.set(key, value);
-        } else {
+        const activeSignature = activeSignatures.get(key);
+        if (!activeSignature || previousSignatures.get(key) !== activeSignature) {
           changed = true;
+          continue;
         }
+        next.set(key, value);
       }
       if (changed) {
         feedRowHeightsRef.current = next;
@@ -4787,6 +5246,8 @@ const TaskConversationFlow = memo(function TaskConversationFlow(props: any) {
   const isChatTask = props.isChatTask as boolean;
   const isTaskWorking = props.isTaskWorking as boolean;
   const isReplayMode = props.isReplayMode as boolean;
+  const defaultTranscriptMode = props.defaultTranscriptMode as TranscriptMode;
+  const transcriptMode = props.transcriptMode as TranscriptMode;
   const lastAssistantMessage = props.lastAssistantMessage as TaskEvent | null;
   const initialPromptEventId = props.initialPromptEventId as string | null;
   const markdownComponents = props.markdownComponents as any;
@@ -4799,6 +5260,18 @@ const TaskConversationFlow = memo(function TaskConversationFlow(props: any) {
   const onSelectChildTask = props.onSelectChildTask as ((taskId: string) => void) | undefined;
   const onViewTaskOutputs = props.onViewTaskOutputs as
     | ((taskId: string, primaryOutputPath?: string) => void)
+    | undefined;
+  const onOpenSpreadsheetArtifact = props.onOpenSpreadsheetArtifact as
+    | ((path: string) => void)
+    | undefined;
+  const onOpenDocumentArtifact = props.onOpenDocumentArtifact as
+    | ((path: string) => void)
+    | undefined;
+  const onOpenPresentationArtifact = props.onOpenPresentationArtifact as
+    | ((path: string) => void)
+    | undefined;
+  const onOpenWebArtifact = props.onOpenWebArtifact as
+    | ((path: string) => void)
     | undefined;
   const parallelGroupsByAnchorEventId = props.parallelGroupsByAnchorEventId as Map<string, any>;
   const rejectMenuOpenFor = props.rejectMenuOpenFor as string | null;
@@ -4842,6 +5315,8 @@ const TaskConversationFlow = memo(function TaskConversationFlow(props: any) {
   const voiceEnabled = props.voiceEnabled as boolean;
   const wrappingUp = props.wrappingUp as boolean;
   const workspace = props.workspace as Workspace | null;
+  const showFullTimeline = props.showFullTimeline as () => void;
+  const returnToDefaultTranscript = props.returnToDefaultTranscript as () => void;
 
   recordRendererRender(
     "MainContent.taskConversationShell",
@@ -5061,28 +5536,6 @@ const TaskConversationFlow = memo(function TaskConversationFlow(props: any) {
     isReplayMode,
     getActionBlockRenderState,
   ]);
-  const defaultTranscriptMode = getDefaultTranscriptMode({
-    isTaskWorking,
-    isReplayMode,
-    verboseSteps,
-    isChatTask,
-  });
-  const [transcriptModeOverride, setTranscriptModeOverride] = useState<TranscriptMode | null>(null);
-  const transcriptMode = transcriptModeOverride ?? defaultTranscriptMode;
-  useEffect(() => {
-    setTranscriptModeOverride(null);
-  }, [task?.id]);
-  useEffect(() => {
-    if (defaultTranscriptMode === "inspect" && transcriptModeOverride === "live") {
-      setTranscriptModeOverride(null);
-    }
-  }, [defaultTranscriptMode, transcriptModeOverride]);
-  const showFullTimeline = useCallback(() => {
-    setTranscriptModeOverride("inspect");
-  }, []);
-  const returnToLiveTranscript = useCallback(() => {
-    setTranscriptModeOverride("live");
-  }, []);
   const { visibleFeedRows, hiddenLiveFeedRowCount } = useMemo(
     () => selectVisibleTaskFeedRows(feedRows, transcriptMode),
     [feedRows, transcriptMode],
@@ -5568,6 +6021,10 @@ const TaskConversationFlow = memo(function TaskConversationFlow(props: any) {
                               ? renderEventDetails(event, voiceEnabled, markdownComponents, {
                                   workspacePath: workspace?.path,
                                   onOpenViewer: setViewerFilePath,
+                                  onOpenSpreadsheetArtifact,
+                                  onOpenDocumentArtifact,
+                                  onOpenPresentationArtifact,
+                                  onOpenWebArtifact,
                                   onQuoteAssistantMessage,
                                   events,
                                   onViewOutputs: onViewTaskOutputs,
@@ -6105,6 +6562,10 @@ const TaskConversationFlow = memo(function TaskConversationFlow(props: any) {
                           ? renderEventDetails(event, voiceEnabled, markdownComponents, {
                               workspacePath: workspace?.path,
                               onOpenViewer: setViewerFilePath,
+                              onOpenSpreadsheetArtifact,
+                              onOpenDocumentArtifact,
+                              onOpenPresentationArtifact,
+                              onOpenWebArtifact,
                               onQuoteAssistantMessage,
                               events,
                               onViewOutputs: onViewTaskOutputs,
@@ -6162,7 +6623,7 @@ const TaskConversationFlow = memo(function TaskConversationFlow(props: any) {
                     hiddenLiveFeedRowCount={hiddenLiveFeedRowCount}
                     canReturnToLiveView={defaultTranscriptMode === "live"}
                     onShowFullTimeline={showFullTimeline}
-                    onBackToLiveView={returnToLiveTranscript}
+                    onBackToLiveView={returnToDefaultTranscript}
                     reasoningPanel={
                       showReasoningPanel ? (
                         <AgentReasoningPanel currentStep={currentStep} state={reasoningPanelState} />
@@ -6198,6 +6659,10 @@ const TaskConversationFlow = memo(function TaskConversationFlow(props: any) {
       mainBodyRef,
       messageFeedbackMap,
       onOpenBrowserView,
+      onOpenSpreadsheetArtifact,
+      onOpenDocumentArtifact,
+      onOpenPresentationArtifact,
+      onOpenWebArtifact,
       onQuoteAssistantMessage,
       onSelectChildTask,
       onViewTaskOutputs,
@@ -6223,7 +6688,7 @@ const TaskConversationFlow = memo(function TaskConversationFlow(props: any) {
       transcriptMode,
       defaultTranscriptMode,
       lastActionBlockTimelineIndex,
-      returnToLiveTranscript,
+      returnToDefaultTranscript,
       showFullTimeline,
       timelineItems,
       timelineRef,
@@ -6256,6 +6721,8 @@ function areTaskConversationFlowPropsEqual(prev: any, next: any): boolean {
     prev.isChatTask === next.isChatTask &&
     prev.isTaskWorking === next.isTaskWorking &&
     prev.isReplayMode === next.isReplayMode &&
+    prev.defaultTranscriptMode === next.defaultTranscriptMode &&
+    prev.transcriptMode === next.transcriptMode &&
     prev.lastAssistantMessage?.id === next.lastAssistantMessage?.id &&
     prev.initialPromptEventId === next.initialPromptEventId &&
     prev.markdownComponents === next.markdownComponents &&
@@ -6291,7 +6758,13 @@ function areTaskConversationFlowPropsEqual(prev: any, next: any): boolean {
     prev.formatTime === next.formatTime &&
     prev.renderCommandOutputs === next.renderCommandOutputs &&
     prev.toggleEventExpanded === next.toggleEventExpanded &&
+    prev.showFullTimeline === next.showFullTimeline &&
+    prev.returnToDefaultTranscript === next.returnToDefaultTranscript &&
     prev.onOpenBrowserView === next.onOpenBrowserView &&
+    prev.onOpenSpreadsheetArtifact === next.onOpenSpreadsheetArtifact &&
+    prev.onOpenDocumentArtifact === next.onOpenDocumentArtifact &&
+    prev.onOpenPresentationArtifact === next.onOpenPresentationArtifact &&
+    prev.onOpenWebArtifact === next.onOpenWebArtifact &&
     prev.onQuoteAssistantMessage === next.onQuoteAssistantMessage &&
     prev.onSelectChildTask === next.onSelectChildTask &&
     prev.onViewTaskOutputs === next.onViewTaskOutputs
@@ -6323,6 +6796,10 @@ function MainContentComponent({
   onDismissInputRequest,
   onOpenBrowserView,
   onViewTaskOutputs,
+  onOpenSpreadsheetArtifact,
+  onOpenDocumentArtifact,
+  onOpenPresentationArtifact,
+  onOpenWebArtifact,
   selectedModel,
   selectedProvider,
   selectedReasoningEffort,
@@ -6561,7 +7038,10 @@ function MainContentComponent({
   const [multiLlmModeEnabled, setMultiLlmModeEnabled] = useState(false);
   const [chronicleEnabledForTask, setChronicleEnabledForTask] = useState(true);
   const [executionMode, setExecutionMode] = useState<ExecutionMode>("execute");
-  const [permissionAccessMode, setPermissionAccessMode] = useState<"default" | "full">("default");
+  const [defaultPermissionAccessMode, setDefaultPermissionAccessMode] =
+    useState<PermissionAccessMode>("default");
+  const [permissionAccessMode, setPermissionAccessMode] =
+    useState<PermissionAccessMode>("default");
   const [modeSuggestions, setModeSuggestions] = useState<ModeSuggestion[]>([]);
   const [suggestionsDismissed, setSuggestionsDismissed] = useState(false);
   const modeSuggestionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -6677,6 +7157,46 @@ function MainContentComponent({
     },
   });
   const [viewerFilePath, setViewerFilePath] = useState<string | null>(null);
+  const openSpreadsheetArtifact = useCallback(
+    (path: string) => {
+      if (onOpenSpreadsheetArtifact) {
+        onOpenSpreadsheetArtifact(path);
+        return;
+      }
+      setViewerFilePath(path);
+    },
+    [onOpenSpreadsheetArtifact],
+  );
+  const openDocumentArtifact = useCallback(
+    (path: string) => {
+      if (onOpenDocumentArtifact) {
+        onOpenDocumentArtifact(path);
+        return;
+      }
+      setViewerFilePath(path);
+    },
+    [onOpenDocumentArtifact],
+  );
+  const openPresentationArtifact = useCallback(
+    (path: string) => {
+      if (onOpenPresentationArtifact) {
+        onOpenPresentationArtifact(path);
+        return;
+      }
+      setViewerFilePath(path);
+    },
+    [onOpenPresentationArtifact],
+  );
+  const openWebArtifact = useCallback(
+    (path: string) => {
+      if (onOpenWebArtifact) {
+        onOpenWebArtifact(path);
+        return;
+      }
+      setViewerFilePath(path);
+    },
+    [onOpenWebArtifact],
+  );
   const [llmWikiVaultSummary, setLlmWikiVaultSummary] = useState<LlmWikiVaultSummary | null>(null);
   const [llmWikiVaultLoading, setLlmWikiVaultLoading] = useState(false);
   const [welcomeTaskSuggestions, setWelcomeTaskSuggestions] = useState<WelcomeTaskSuggestion[]>([]);
@@ -6942,8 +7462,6 @@ function MainContentComponent({
   const [overflowSubmenu, setOverflowSubmenu] = useState<"mode" | "domain" | null>(null);
   const overflowMenuRef = useRef<HTMLDivElement>(null);
   const overflowToggleBtnRef = useRef<HTMLButtonElement>(null);
-  const [showModelDropdownFromLabel, setShowModelDropdownFromLabel] = useState(false);
-  const modelLabelRef = useRef<HTMLDivElement>(null);
   const [showModeDropdown, setShowModeDropdown] = useState(false);
   const modeDropdownRef = useRef<HTMLDivElement>(null);
   const [showDomainDropdown, setShowDomainDropdown] = useState(false);
@@ -7230,6 +7748,35 @@ function MainContentComponent({
 
   const isTaskFinished =
     task?.status === "completed" || task?.status === "failed" || task?.status === "cancelled";
+  const isReplayMode = replayControls?.isReplayMode ?? false;
+  const defaultTranscriptMode = getDefaultTranscriptMode({
+    isTaskWorking,
+    isReplayMode,
+    verboseSteps,
+    isChatTask,
+    taskStatus: task?.status,
+  });
+  const [transcriptModeOverride, setTranscriptModeOverride] = useState<TranscriptMode | null>(null);
+  const transcriptMode = transcriptModeOverride ?? defaultTranscriptMode;
+  useEffect(() => {
+    setTranscriptModeOverride(null);
+  }, [task?.id]);
+  useEffect(() => {
+    if (defaultTranscriptMode === "inspect" && transcriptModeOverride !== null) {
+      setTranscriptModeOverride(null);
+    }
+  }, [defaultTranscriptMode, transcriptModeOverride]);
+  const showFullTimeline = useCallback(() => {
+    setTranscriptModeOverride("inspect");
+  }, []);
+  const returnToDefaultTranscript = useCallback(() => {
+    setTranscriptModeOverride(null);
+  }, []);
+  const toggleCompletedTranscriptMode = useCallback(() => {
+    if (defaultTranscriptMode !== "delivery") return;
+    setTranscriptModeOverride((current) => (current === "inspect" ? null : "inspect"));
+  }, [defaultTranscriptMode]);
+  const canToggleCompletedTranscript = defaultTranscriptMode === "delivery";
   const liveWorkStartedAt = task ? (latestUserMessageTimestamp ?? task.createdAt) : Date.now();
   const liveWorkCompletedAt = isTaskFinished
     ? (task?.completedAt ?? task?.updatedAt)
@@ -7860,6 +8407,50 @@ function MainContentComponent({
     setShellEnabled(workspace?.permissions?.shell ?? false);
   }, [workspace?.id, workspace?.permissions?.shell]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    const applyPermissionDefaults = (
+      permissionSettings: { defaultPermissionAccess?: "default" | "full" },
+      forceSelection = false,
+    ) => {
+      const nextDefault: PermissionAccessMode =
+        permissionSettings.defaultPermissionAccess === "full" ? "full" : "default";
+      setDefaultPermissionAccessMode(nextDefault);
+      setPermissionAccessMode((current) =>
+        forceSelection || current === "default" ? nextDefault : current,
+      );
+    };
+
+    const loadPermissionDefaults = async () => {
+      try {
+        const permissionSettings = await window.electronAPI.getPermissionSettings();
+        if (cancelled) return;
+        applyPermissionDefaults(permissionSettings);
+      } catch (error) {
+        console.error("Failed to load permission defaults:", error);
+      }
+    };
+
+    const handlePermissionSettingsUpdated = (event: Event) => {
+      const detail = (event as CustomEvent).detail;
+      if (detail && typeof detail === "object") {
+        applyPermissionDefaults(detail, true);
+      }
+    };
+
+    void loadPermissionDefaults();
+    window.addEventListener("cowork:permission-settings-updated", handlePermissionSettingsUpdated);
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener(
+        "cowork:permission-settings-updated",
+        handlePermissionSettingsUpdated,
+      );
+    };
+  }, []);
+
   // Toggle shell permission for current workspace
   const handleShellToggle = async () => {
     if (!workspace) return;
@@ -8166,19 +8757,6 @@ function MainContentComponent({
     );
   };
 
-  // Close model dropdown from label on click outside (focused mode)
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (modelLabelRef.current && !modelLabelRef.current.contains(e.target as Node)) {
-        setShowModelDropdownFromLabel(false);
-      }
-    };
-    if (showModelDropdownFromLabel) {
-      document.addEventListener("mousedown", handleClickOutside);
-    }
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [showModelDropdownFromLabel]);
-
   // Handle workspace dropdown toggle - load workspaces when opening
   const handleWorkspaceDropdownToggle = async () => {
     if (!showWorkspaceDropdown) {
@@ -8283,6 +8861,32 @@ function MainContentComponent({
     return getInlinePreviewKindForTaskEvent(event) === "html";
   }, []);
 
+  const isDocumentFileEvent = useCallback((event: TaskEvent): boolean => {
+    return getInlinePreviewKindForTaskEvent(event) === "document";
+  }, []);
+
+  const isPresentationFileEvent = useCallback((event: TaskEvent): boolean => {
+    return getInlinePreviewKindForTaskEvent(event) === "presentation";
+  }, []);
+
+  const shouldExposeEndOfTaskArtifactCard = useCallback((event: TaskEvent): boolean => {
+    const previewKind = getInlinePreviewKindForTaskEvent(event);
+    if (!previewKind || !END_OF_TASK_ARTIFACT_KINDS.has(previewKind)) return true;
+    const artifactPath = getTaskEventArtifactPaths(event, events)
+      .find((path) => {
+        const kind = getInlinePreviewKindForGeneratedFile({ path });
+        return Boolean(kind && END_OF_TASK_ARTIFACT_KINDS.has(kind));
+      });
+    return Boolean(
+      artifactPath &&
+        shouldRenderOpenArtifactCardAtEvent({
+          path: artifactPath,
+          event,
+          eventStream: events,
+        }),
+    );
+  }, [events]);
+
   const shouldRenderTimelineEventInStepFeed = useCallback((event: TaskEvent): boolean => {
     const effectiveType = getEffectiveTaskEventType(event);
     if (effectiveType === "user_message" || effectiveType === "assistant_message") {
@@ -8307,13 +8911,19 @@ function MainContentComponent({
   const hasEventDetails = useCallback((event: TaskEvent): boolean => {
     const effectiveType = getEffectiveTaskEventType(event);
     if (isImageFileEvent(event)) return true;
-    if (isHtmlFileEvent(event)) return true;
+    if (isHtmlFileEvent(event)) return shouldExposeEndOfTaskArtifactCard(event);
     if (isVideoFileEvent(event)) return true;
-    if (isSpreadsheetFileEvent(event)) return true;
+    if (isSpreadsheetFileEvent(event)) return shouldExposeEndOfTaskArtifactCard(event);
+    if (isDocumentFileEvent(event)) return shouldExposeEndOfTaskArtifactCard(event);
+    if (isPresentationFileEvent(event)) return shouldExposeEndOfTaskArtifactCard(event);
     if (workspace?.path && getStepCompletionPreviewPath(event)) return true;
     if (effectiveType === "follow_up_completed") return true;
     if (effectiveType === "task_completed") {
-      return hasTaskOutputs(resolveTaskOutputSummaryFromCompletionEvent(event, events));
+      return (
+        hasTaskOutputs(resolveTaskOutputSummaryFromCompletionEvent(event, events)) ||
+        event.payload?.terminalStatus === "needs_user_action" ||
+        event.payload?.terminalStatus === "partial_success"
+      );
     }
     if (shouldHideApprovalEventInStepFeed(event)) {
       return false;
@@ -8336,8 +8946,25 @@ function MainContentComponent({
     if (
       (event.type === "timeline_artifact_emitted" || effectiveType === "artifact_created") &&
       typeof event.payload?.path === "string"
-    )
+    ) {
+      const artifactPreviewKind = getInlinePreviewKindForGeneratedFile({
+        path: event.payload.path,
+        mimeType: event.payload?.mimeType,
+        type: event.payload?.type,
+      });
+      if (
+        artifactPreviewKind &&
+        END_OF_TASK_ARTIFACT_KINDS.has(artifactPreviewKind) &&
+        !shouldRenderOpenArtifactCardAtEvent({
+          path: event.payload.path,
+          event,
+          eventStream: events,
+        })
+      ) {
+        return false;
+      }
       return true;
+    }
     if (
       effectiveType === "file_created" &&
       (event.payload?.contentPreview || event.payload?.copiedFrom)
@@ -8348,10 +8975,17 @@ function MainContentComponent({
       (event.payload?.oldPreview || event.payload?.action === "rename")
     )
       return true;
+    if (effectiveType === "tool_result") {
+      const result = event.payload?.result;
+      const failed =
+        result &&
+        typeof result === "object" &&
+        ((result as Any).success === false || Boolean((result as Any).error));
+      return verboseSteps || Boolean(failed);
+    }
     return [
       "plan_created",
       "tool_call",
-      "tool_result",
       "assistant_message",
       "error",
       "step_failed",
@@ -8361,8 +8995,11 @@ function MainContentComponent({
     events,
     isHtmlFileEvent,
     isImageFileEvent,
+    isDocumentFileEvent,
+    isPresentationFileEvent,
     isSpreadsheetFileEvent,
     isVideoFileEvent,
+    shouldExposeEndOfTaskArtifactCard,
     verboseSteps,
     workspace?.path,
   ]);
@@ -8373,15 +9010,36 @@ function MainContentComponent({
   const shouldDefaultExpand = useCallback((event: TaskEvent): boolean => {
     const effectiveType = getEffectiveTaskEventType(event);
     if (isImageFileEvent(event)) return true;
-    if (isHtmlFileEvent(event)) return true;
+    if (isHtmlFileEvent(event)) return shouldExposeEndOfTaskArtifactCard(event);
     if (isVideoFileEvent(event)) return true;
-    if (isSpreadsheetFileEvent(event)) return true;
+    if (isSpreadsheetFileEvent(event)) return shouldExposeEndOfTaskArtifactCard(event);
+    if (isDocumentFileEvent(event)) return shouldExposeEndOfTaskArtifactCard(event);
+    if (isPresentationFileEvent(event)) return shouldExposeEndOfTaskArtifactCard(event);
     if (workspace?.path && getStepCompletionPreviewPath(event)) return true;
     if (effectiveType === "follow_up_completed") return true;
     if (effectiveType === "task_completed") return hasEventDetails(event);
     if (shouldHideApprovalEventInStepFeed(event)) return false;
+    if (effectiveType === "artifact_created") {
+      const artifactPath = typeof event.payload?.path === "string" ? event.payload.path : "";
+      const artifactPreviewKind = getInlinePreviewKindForGeneratedFile({
+        path: artifactPath,
+        mimeType: event.payload?.mimeType,
+        type: event.payload?.type,
+      });
+      if (
+        artifactPreviewKind &&
+        END_OF_TASK_ARTIFACT_KINDS.has(artifactPreviewKind) &&
+        !shouldRenderOpenArtifactCardAtEvent({
+          path: artifactPath,
+          event,
+          eventStream: events,
+        })
+      ) {
+        return false;
+      }
+      return true;
+    }
     if (
-      effectiveType === "artifact_created" ||
       effectiveType === "diagram_created" ||
       event.type === "timeline_evidence_attached" ||
       event.type === "timeline_error"
@@ -8409,8 +9067,11 @@ function MainContentComponent({
     hasEventDetails,
     isHtmlFileEvent,
     isImageFileEvent,
+    isDocumentFileEvent,
+    isPresentationFileEvent,
     isSpreadsheetFileEvent,
     isVideoFileEvent,
+    shouldExposeEndOfTaskArtifactCard,
     workspace?.path,
   ]);
 
@@ -8427,12 +9088,14 @@ function MainContentComponent({
   const mainBodyRef = useRef<HTMLDivElement>(null);
   const autoScrollFrameRef = useRef<number | null>(null);
   const lastAutoScrollTargetRef = useRef<number | null>(null);
+  const activeScrollbarTimeoutRef = useRef<number | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const mentionContainerRef = useRef<HTMLDivElement>(null);
   const mentionDropdownRef = useRef<HTMLDivElement>(null);
   const placeholderTextRef = useRef<HTMLSpanElement>(null);
   const cliInputWrapperRef = useRef<HTMLDivElement>(null);
   const [cursorLeft, setCursorLeft] = useState<number>(0);
+  const [isCliInputFocused, setIsCliInputFocused] = useState(false);
 
   // Auto-resize textarea; prefer direct event-path resizing to avoid an extra
   // effect/layout cycle on every keypress in long sessions.
@@ -8459,6 +9122,7 @@ function MainContentComponent({
     return () => {
       if (resizeRafRef.current) cancelAnimationFrame(resizeRafRef.current);
       if (autoScrollFrameRef.current) cancelAnimationFrame(autoScrollFrameRef.current);
+      if (activeScrollbarTimeoutRef.current) window.clearTimeout(activeScrollbarTimeoutRef.current);
     };
   }, []);
 
@@ -8485,26 +9149,28 @@ function MainContentComponent({
     rotatingPlaceholders.length > 0
       ? rotatingPlaceholders[rotatingIndex % rotatingPlaceholders.length]
       : personalityPlaceholder;
+  const showCliPlaceholder = !inputValue && !isCliInputFocused;
+  const showCliEmptyCursor = !inputValue && isCliInputFocused;
 
-  // Keep the empty-state cursor attached to the rendered placeholder instead of
+  // Keep the empty focused cursor attached to the editable area instead of
   // relying on theme-specific padding and prompt-width constants.
   useLayoutEffect(() => {
-    if (inputValue) return;
+    if (!showCliEmptyCursor) return;
 
-    const updatePlaceholderCursor = () => {
-      const placeholderEl = placeholderTextRef.current;
+    const updateEmptyCursor = () => {
+      const inputAreaEl = mentionContainerRef.current;
       const wrapperEl = cliInputWrapperRef.current;
-      if (!placeholderEl || !wrapperEl) return;
+      if (!inputAreaEl || !wrapperEl) return;
 
-      const placeholderRect = placeholderEl.getBoundingClientRect();
+      const inputAreaRect = inputAreaEl.getBoundingClientRect();
       const wrapperRect = wrapperEl.getBoundingClientRect();
-      setCursorLeft(placeholderRect.left - wrapperRect.left + placeholderRect.width + 1);
+      setCursorLeft(inputAreaRect.left - wrapperRect.left);
     };
 
-    updatePlaceholderCursor();
-    window.addEventListener("resize", updatePlaceholderCursor);
-    return () => window.removeEventListener("resize", updatePlaceholderCursor);
-  }, [inputValue, placeholder]);
+    updateEmptyCursor();
+    window.addEventListener("resize", updateEmptyCursor);
+    return () => window.removeEventListener("resize", updateEmptyCursor);
+  }, [showCliEmptyCursor]);
 
   // Check if user is near the bottom of the scroll container
   const isNearBottom = useCallback((element: HTMLElement, threshold = 100) => {
@@ -8516,6 +9182,15 @@ function MainContentComponent({
   const handleScroll = useCallback(() => {
     const container = mainBodyRef.current;
     if (!container) return;
+
+    container.classList.add("is-scrolling");
+    if (activeScrollbarTimeoutRef.current) {
+      window.clearTimeout(activeScrollbarTimeoutRef.current);
+    }
+    activeScrollbarTimeoutRef.current = window.setTimeout(() => {
+      container.classList.remove("is-scrolling");
+      activeScrollbarTimeoutRef.current = null;
+    }, 800);
 
     // If user scrolls to near bottom, re-enable auto-scroll
     // If user scrolls away from bottom, disable auto-scroll
@@ -8934,7 +9609,7 @@ function MainContentComponent({
         setCollaborativeModeEnabled(false);
         setMultiLlmModeEnabled(false);
         setChronicleEnabledForTask(true);
-        setPermissionAccessMode("default");
+        setPermissionAccessMode(defaultPermissionAccessMode);
         setMultiLlmConfig(null);
         setVerificationAgentEnabled(false);
       } else {
@@ -10210,10 +10885,24 @@ function MainContentComponent({
                 </div>
               )}
               {renderModeSuggestionBar()}
-              <div className="cli-input-wrapper" ref={cliInputWrapperRef}>
+              <div
+                className="cli-input-wrapper"
+                ref={cliInputWrapperRef}
+                onMouseDown={(event) => {
+                  if (
+                    event.target instanceof HTMLElement &&
+                    event.target.closest(
+                      ".mention-autocomplete-dropdown, .slash-autocomplete-dropdown",
+                    )
+                  ) {
+                    return;
+                  }
+                  textareaRef.current?.focus();
+                }}
+              >
                 <span className="cli-input-prompt">~$</span>
                 <div className="mention-autocomplete-wrapper" ref={mentionContainerRef}>
-                  {!inputValue && (
+                  {showCliPlaceholder && (
                     <span
                       ref={placeholderTextRef}
                       className={`cli-rotating-placeholder${placeholderFading ? " fading" : ""}`}
@@ -10231,6 +10920,8 @@ function MainContentComponent({
                     onChange={handleInputChange}
                     onKeyDown={handleKeyDown}
                     onPaste={handlePaste}
+                    onFocus={() => setIsCliInputFocused(true)}
+                    onBlur={() => setIsCliInputFocused(false)}
                     onClick={handleInputClick}
                     onKeyUp={handleInputKeyUp}
                     rows={1}
@@ -10238,7 +10929,9 @@ function MainContentComponent({
                   {renderMentionDropdown()}
                   {renderSlashDropdown()}
                 </div>
-                {!inputValue && <span className="cli-cursor" style={{ left: cursorLeft }} />}
+                {showCliEmptyCursor && (
+                  <span className="cli-cursor active" style={{ left: cursorLeft }} />
+                )}
               </div>
 
               <div className="welcome-input-footer">
@@ -10633,35 +11326,17 @@ function MainContentComponent({
                           </svg>
                         </button>
                       )}
-                      <div className="model-label-container" ref={modelLabelRef}>
-                        <button
-                          className="model-label-subtle"
-                          onClick={() => setShowModelDropdownFromLabel(!showModelDropdownFromLabel)}
-                          title="Change model"
-                        >
-                          {availableModels.find((m) => m.key === selectedModel)?.displayName ||
-                            selectedModel}
-                        </button>
-                        {showModelDropdownFromLabel && (
-                          <div className="model-label-dropdown">
-                            {availableModels.map((m) => (
-                              <button
-                                key={m.key}
-                                className={`model-label-dropdown-item ${m.key === selectedModel ? "active" : ""}`}
-                                onClick={() => {
-                                  onModelChange({
-                                    providerType: selectedProvider,
-                                    modelKey: m.key,
-                                  });
-                                  setShowModelDropdownFromLabel(false);
-                                }}
-                              >
-                                {m.displayName}
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                      </div>
+                      <ModelDropdown
+                        models={availableModels}
+                        selectedModel={selectedModel}
+                        selectedProvider={selectedProvider}
+                        selectedReasoningEffort={selectedReasoningEffort}
+                        providers={availableProviders}
+                        onModelChange={onModelChange}
+                        onOpenSettings={onOpenSettings}
+                        variant="label"
+                        align="right"
+                      />
                       <button
                         className={`voice-input-btn ${voiceInput.state}`}
                         onClick={voiceInput.toggleRecording}
@@ -10688,23 +11363,14 @@ function MainContentComponent({
                             <path d="M12 6v6l4 2" />
                           </svg>
                         ) : voiceInput.state === "recording" ? (
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                            <rect x="6" y="6" width="12" height="12" rx="2" />
-                          </svg>
+                          <Square
+                            size={12}
+                            fill="currentColor"
+                            strokeWidth={0}
+                            aria-hidden="true"
+                          />
                         ) : (
-                          <svg
-                            width="16"
-                            height="16"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="2"
-                          >
-                            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
-                            <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-                            <line x1="12" y1="19" x2="12" y2="23" />
-                            <line x1="8" y1="23" x2="16" y2="23" />
-                          </svg>
+                          <Mic size={16} aria-hidden="true" />
                         )}
                         {voiceInput.state === "recording" && (
                           <span
@@ -10722,16 +11388,7 @@ function MainContentComponent({
                           isPreparingMessage
                         }
                       >
-                        <svg
-                          width="16"
-                          height="16"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                        >
-                          <path d="M12 19V5M5 12l7-7 7 7" />
-                        </svg>
+                        <ArrowUp size={16} aria-hidden="true" />
                       </button>
                     </>
                   ) : (
@@ -10848,23 +11505,14 @@ function MainContentComponent({
                             <path d="M12 6v6l4 2" />
                           </svg>
                         ) : voiceInput.state === "recording" ? (
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                            <rect x="6" y="6" width="12" height="12" rx="2" />
-                          </svg>
+                          <Square
+                            size={12}
+                            fill="currentColor"
+                            strokeWidth={0}
+                            aria-hidden="true"
+                          />
                         ) : (
-                          <svg
-                            width="16"
-                            height="16"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="2"
-                          >
-                            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
-                            <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-                            <line x1="12" y1="19" x2="12" y2="23" />
-                            <line x1="8" y1="23" x2="16" y2="23" />
-                          </svg>
+                          <Mic size={16} aria-hidden="true" />
                         )}
                         {voiceInput.state === "recording" && (
                           <span
@@ -10882,16 +11530,7 @@ function MainContentComponent({
                           isPreparingMessage
                         }
                       >
-                        <svg
-                          width="16"
-                          height="16"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                        >
-                          <path d="M12 19V5M5 12l7-7 7 7" />
-                        </svg>
+                        <ArrowUp size={16} aria-hidden="true" />
                       </button>
                     </>
                   )}
@@ -11270,11 +11909,19 @@ function MainContentComponent({
       handleStepFeedback={handleStepFeedback}
       isChatTask={isChatTask}
       isTaskWorking={isTaskWorking}
-      isReplayMode={replayControls?.isReplayMode ?? false}
+      isReplayMode={isReplayMode}
+      defaultTranscriptMode={defaultTranscriptMode}
+      transcriptMode={transcriptMode}
+      showFullTimeline={showFullTimeline}
+      returnToDefaultTranscript={returnToDefaultTranscript}
       markdownComponents={markdownComponents}
       mainBodyRef={mainBodyRef}
       messageFeedbackMap={messageFeedbackMap}
       onOpenBrowserView={onOpenBrowserView}
+      onOpenSpreadsheetArtifact={openSpreadsheetArtifact}
+      onOpenDocumentArtifact={openDocumentArtifact}
+      onOpenPresentationArtifact={openPresentationArtifact}
+      onOpenWebArtifact={openWebArtifact}
       onQuoteAssistantMessage={handleQuoteAssistantMessage}
       onSelectChildTask={onSelectChildTask}
       onViewTaskOutputs={onViewTaskOutputs}
@@ -11372,13 +12019,32 @@ function MainContentComponent({
           {(hasNonConversationEvents || isTaskWorking || isTaskFinished) && (
             <div className="timeline-controls">
               <div className="timeline-controls-status">
-                <span
-                  className={`timeline-controls-label ${
-                    isTaskWorking || isTaskFinished ? "with-duration" : ""
-                  }`}
-                >
-                  {workDurationLabel}
-                </span>
+                {canToggleCompletedTranscript ? (
+                  <button
+                    type="button"
+                    className="timeline-controls-label timeline-controls-label-button with-duration"
+                    onClick={toggleCompletedTranscriptMode}
+                    aria-expanded={transcriptMode !== "delivery"}
+                    title={
+                      transcriptMode === "delivery"
+                        ? "Show full timeline"
+                        : "Show only final output"
+                    }
+                  >
+                    <span>{workDurationLabel}</span>
+                    <span className="timeline-controls-label-chevron" aria-hidden="true">
+                      {transcriptMode === "delivery" ? ">" : "v"}
+                    </span>
+                  </button>
+                ) : (
+                  <span
+                    className={`timeline-controls-label ${
+                      isTaskWorking || isTaskFinished ? "with-duration" : ""
+                    }`}
+                  >
+                    {workDurationLabel}
+                  </span>
+                )}
                 {isTaskWorking && continuationStatusChip && (
                   <span className="header-continuation-chip" title="Adaptive continuation status">
                     <span>{continuationStatusChip.window}</span>
@@ -11663,19 +12329,9 @@ function MainContentComponent({
               onClick={handleAttachFiles}
               disabled={isUploadingAttachments}
               title="Attach files"
+              aria-label="Attach files"
             >
-              <svg
-                width="18"
-                height="18"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" />
-              </svg>
+              <Plus size={24} aria-hidden="true" />
             </button>
             {uiDensity === "focused" && (
               <div className="workspace-dropdown-container" ref={workspaceDropdownRef}>
@@ -11759,35 +12415,17 @@ function MainContentComponent({
             </div>
             <div className="input-actions">
               {uiDensity === "focused" && (
-                <div className="model-label-container" ref={modelLabelRef}>
-                  <button
-                    className="model-label-subtle"
-                    onClick={() => setShowModelDropdownFromLabel(!showModelDropdownFromLabel)}
-                    title="Change model"
-                  >
-                    {availableModels.find((m) => m.key === selectedModel)?.displayName ||
-                      selectedModel}
-                  </button>
-                  {showModelDropdownFromLabel && (
-                    <div className="model-label-dropdown">
-                      {availableModels.map((m) => (
-                        <button
-                          key={m.key}
-                          className={`model-label-dropdown-item ${m.key === selectedModel ? "active" : ""}`}
-                          onClick={() => {
-                            onModelChange({
-                              providerType: selectedProvider,
-                              modelKey: m.key,
-                            });
-                            setShowModelDropdownFromLabel(false);
-                          }}
-                        >
-                          {m.displayName}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                <ModelDropdown
+                  models={availableModels}
+                  selectedModel={selectedModel}
+                  selectedProvider={selectedProvider}
+                  selectedReasoningEffort={selectedReasoningEffort}
+                  providers={availableProviders}
+                  onModelChange={onModelChange}
+                  onOpenSettings={onOpenSettings}
+                  variant="label"
+                  align="right"
+                />
               )}
               <button
                 className={`voice-input-btn ${voiceInput.state}`}
@@ -11817,23 +12455,14 @@ function MainContentComponent({
                     <path d="M12 6v6l4 2" />
                   </svg>
                 ) : voiceInput.state === "recording" ? (
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                    <rect x="6" y="6" width="12" height="12" rx="2" />
-                  </svg>
+                  <Square
+                    size={12}
+                    fill="currentColor"
+                    strokeWidth={0}
+                    aria-hidden="true"
+                  />
                 ) : (
-                  <svg
-                    width="16"
-                    height="16"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                  >
-                    <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
-                    <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-                    <line x1="12" y1="19" x2="12" y2="23" />
-                    <line x1="8" y1="23" x2="16" y2="23" />
-                  </svg>
+                  <Mic size={16} aria-hidden="true" />
                 )}
                 {voiceInput.state === "recording" && (
                   <span
@@ -11845,16 +12474,7 @@ function MainContentComponent({
               {isTaskWorking && onStopTask ? (
                 <div className="task-control-buttons">
                   <button className="stop-btn-simple" onClick={onStopTask} title="Stop task">
-                    <svg
-                      width="16"
-                      height="16"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                    >
-                      <rect x="3" y="3" width="18" height="18" rx="2" />
-                    </svg>
+                    <Square size={16} aria-hidden="true" />
                   </button>
                 </div>
               ) : (
@@ -11868,16 +12488,7 @@ function MainContentComponent({
                   }
                   title="Send message"
                 >
-                  <svg
-                    width="16"
-                    height="16"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                  >
-                    <path d="M12 19V5M5 12l7-7 7 7" />
-                  </svg>
+                  <ArrowUp size={16} aria-hidden="true" />
                 </button>
               )}
             </div>
@@ -12270,7 +12881,11 @@ function areMainContentPropsEqual(prev: MainContentProps, next: MainContentProps
     prev.uiDensity === next.uiDensity &&
     prev.rendererPerfLoggingEnabled === next.rendererPerfLoggingEnabled &&
     getRemoteSessionSignature(prev.remoteSession) === getRemoteSessionSignature(next.remoteSession) &&
-    prev.replayControls === next.replayControls
+    prev.replayControls === next.replayControls &&
+    prev.onOpenSpreadsheetArtifact === next.onOpenSpreadsheetArtifact &&
+    prev.onOpenDocumentArtifact === next.onOpenDocumentArtifact &&
+    prev.onOpenPresentationArtifact === next.onOpenPresentationArtifact &&
+    prev.onOpenWebArtifact === next.onOpenWebArtifact
   );
 }
 
@@ -12955,6 +13570,10 @@ function renderEventDetails(
   options?: {
     workspacePath?: string;
     onOpenViewer?: (path: string) => void;
+    onOpenSpreadsheetArtifact?: (path: string) => void;
+    onOpenDocumentArtifact?: (path: string) => void;
+    onOpenPresentationArtifact?: (path: string) => void;
+    onOpenWebArtifact?: (path: string) => void;
     onQuoteAssistantMessage?: (quote: QuotedAssistantMessage) => void;
     events?: TaskEvent[];
     onViewOutputs?: (taskId: string, primaryOutputPath?: string) => void;
@@ -12968,6 +13587,10 @@ function renderEventDetails(
 ) {
   const workspacePath = options?.workspacePath;
   const onOpenViewer = options?.onOpenViewer;
+  const onOpenSpreadsheetArtifact = options?.onOpenSpreadsheetArtifact;
+  const onOpenDocumentArtifact = options?.onOpenDocumentArtifact;
+  const onOpenPresentationArtifact = options?.onOpenPresentationArtifact;
+  const onOpenWebArtifact = options?.onOpenWebArtifact;
   const onQuoteAssistantMessage = options?.onQuoteAssistantMessage;
   const eventStream = options?.events || [];
   const onViewOutputs = options?.onViewOutputs;
@@ -12978,6 +13601,67 @@ function renderEventDetails(
       : options?.childTasks?.find((t) => t.id === event.taskId) ?? options?.task;
   const effectiveType = getEffectiveTaskEventType(event);
   const stepCompletionPreviewPath = getStepCompletionPreviewPath(event);
+  const shouldRenderOpenArtifactCard = (artifactPath: string) =>
+    shouldRenderOpenArtifactCardAtEvent({
+      path: artifactPath,
+      event,
+      eventStream,
+    });
+  const renderLinkedArtifactCards = (text: string) => {
+    if (!workspacePath) return null;
+    const artifactPaths = extractGeneratedArtifactPathsFromText(text)
+      .filter((artifactPath) => shouldRenderOpenArtifactCard(artifactPath));
+    if (artifactPaths.length === 0) return null;
+
+    return (
+      <div className="assistant-artifact-cards">
+        {artifactPaths.map((artifactPath) => {
+          const previewKind = getInlinePreviewKindForGeneratedFile({ path: artifactPath });
+          if (previewKind === "spreadsheet") {
+            return (
+              <SpreadsheetArtifactCard
+                key={artifactPath}
+                filePath={artifactPath}
+                workspacePath={workspacePath}
+                onOpenViewer={onOpenSpreadsheetArtifact || onOpenViewer}
+              />
+            );
+          }
+          if (previewKind === "document") {
+            return (
+              <DocumentArtifactCard
+                key={artifactPath}
+                filePath={artifactPath}
+                workspacePath={workspacePath}
+                onOpenViewer={onOpenDocumentArtifact || onOpenViewer}
+              />
+            );
+          }
+          if (previewKind === "presentation") {
+            return (
+              <PresentationArtifactCard
+                key={artifactPath}
+                filePath={artifactPath}
+                workspacePath={workspacePath}
+                onOpenViewer={onOpenPresentationArtifact || onOpenViewer}
+              />
+            );
+          }
+          if (previewKind === "html") {
+            return (
+              <WebArtifactCard
+                key={artifactPath}
+                filePath={artifactPath}
+                workspacePath={workspacePath}
+                onOpenViewer={onOpenWebArtifact || onOpenViewer}
+              />
+            );
+          }
+          return null;
+        })}
+      </div>
+    );
+  };
 
   if (event.type === "timeline_group_started" || event.type === "timeline_group_finished") {
     if (summaryMode) return null;
@@ -13076,6 +13760,10 @@ function renderEventDetails(
         typeof primaryOutputPath === "string" && HTML_FILE_EXT_RE.test(primaryOutputPath);
       const primaryOutputIsPresentation =
         typeof primaryOutputPath === "string" && PRESENTATION_FILE_EXT_RE.test(primaryOutputPath);
+      const primaryOutputIsSpreadsheet =
+        typeof primaryOutputPath === "string" && SPREADSHEET_FILE_EXT_RE.test(primaryOutputPath);
+      const primaryOutputIsDocument =
+        typeof primaryOutputPath === "string" && isWordDocumentArtifactFile(primaryOutputPath);
       const latexPair = findLatexPdfPair(eventStream, outputSummary);
       const outputCount = outputSummary?.outputCount ?? 0;
       const outputLabel =
@@ -13117,21 +13805,55 @@ function renderEventDetails(
                   />
                 </div>
               )}
-              {!latexPair && primaryOutputIsHtml && primaryOutputPath && workspacePath && (
+              {!latexPair &&
+                primaryOutputIsHtml &&
+                primaryOutputPath &&
+                workspacePath &&
+                shouldRenderOpenArtifactCard(primaryOutputPath) && (
                 <div className="completion-output-preview">
-                  <InlineHtmlPreview
+                  <WebArtifactCard
                     filePath={primaryOutputPath}
                     workspacePath={workspacePath}
-                    onOpenViewer={onOpenViewer}
+                    onOpenViewer={onOpenWebArtifact || onOpenViewer}
                   />
                 </div>
               )}
-              {!latexPair && primaryOutputIsPresentation && primaryOutputPath && workspacePath && (
+              {!latexPair &&
+                primaryOutputIsPresentation &&
+                primaryOutputPath &&
+                workspacePath &&
+                shouldRenderOpenArtifactCard(primaryOutputPath) && (
                 <div className="completion-output-preview">
-                  <InlinePresentationPreview
+                  <PresentationArtifactCard
                     filePath={primaryOutputPath}
                     workspacePath={workspacePath}
-                    onOpenViewer={onOpenViewer}
+                    onOpenViewer={onOpenPresentationArtifact || onOpenViewer}
+                  />
+                </div>
+              )}
+              {!latexPair &&
+                primaryOutputIsSpreadsheet &&
+                primaryOutputPath &&
+                workspacePath &&
+                shouldRenderOpenArtifactCard(primaryOutputPath) && (
+                <div className="completion-output-preview">
+                  <SpreadsheetArtifactCard
+                    filePath={primaryOutputPath}
+                    workspacePath={workspacePath}
+                    onOpenViewer={onOpenSpreadsheetArtifact || onOpenViewer}
+                  />
+                </div>
+              )}
+              {!latexPair &&
+                primaryOutputIsDocument &&
+                primaryOutputPath &&
+                workspacePath &&
+                shouldRenderOpenArtifactCard(primaryOutputPath) && (
+                <div className="completion-output-preview">
+                  <DocumentArtifactCard
+                    filePath={primaryOutputPath}
+                    workspacePath={workspacePath}
+                    onOpenViewer={onOpenDocumentArtifact || onOpenViewer}
                   />
                 </div>
               )}
@@ -13210,6 +13932,7 @@ function renderEventDetails(
               </ReactMarkdown>
             </div>
           )}
+          {renderLinkedArtifactCards(followUpMessage)}
         </div>
       );
     }
@@ -13295,25 +14018,33 @@ function renderEventDetails(
 
       // edit_file: show diff-like view
       if (tcToolName === "edit_file" && tcInput?.file_path) {
+        const oldDiffPreview =
+          typeof tcInput.old_string === "string"
+            ? normalizeCodeBlockTextForDisplay(truncateForDisplay(tcInput.old_string, 500), "diff")
+            : "";
+        const newDiffPreview =
+          typeof tcInput.new_string === "string"
+            ? normalizeCodeBlockTextForDisplay(truncateForDisplay(tcInput.new_string, 500), "diff")
+            : "";
         return (
           <div className="event-details event-details-scrollable event-details-code-preview">
             <div className="code-preview-header">
               <span className="code-preview-path">{tcInput.file_path}</span>
             </div>
             <div className="edit-diff-preview">
-              {tcInput.old_string && (
+              {oldDiffPreview && (
                 <div className="diff-line diff-removed">
                   <span className="diff-marker">-</span>
                   <pre>
-                    <code>{truncateForDisplay(tcInput.old_string, 500)}</code>
+                    <code>{oldDiffPreview}</code>
                   </pre>
                 </div>
               )}
-              {tcInput.new_string && (
+              {newDiffPreview && (
                 <div className="diff-line diff-added">
                   <span className="diff-marker">+</span>
                   <pre>
-                    <code>{truncateForDisplay(tcInput.new_string, 500)}</code>
+                    <code>{newDiffPreview}</code>
                   </pre>
                 </div>
               )}
@@ -13348,6 +14079,7 @@ function renderEventDetails(
               onOpenViewer={onOpenViewer}
             />
           </div>
+          {renderLinkedArtifactCards(linkedMessage)}
           <div className="message-actions">
             <MessageCopyButton text={event.payload.message} />
             <MessageSpeakButton text={event.payload.message} voiceEnabled={voiceEnabled} />
@@ -13523,37 +14255,69 @@ function renderEventDetails(
         );
       }
 
-      if (fcPreviewKind === "html" && fcPath && workspacePath) {
+      if (
+        fcPreviewKind === "html" &&
+        fcPath &&
+        workspacePath &&
+        shouldRenderOpenArtifactCard(String(fcPath))
+      ) {
         return (
           <div className="event-details event-details-file-preview">
-            <InlineHtmlPreview
+            <WebArtifactCard
               filePath={fcPath}
               workspacePath={workspacePath}
-              onOpenViewer={onOpenViewer}
+              onOpenViewer={onOpenWebArtifact || onOpenViewer}
             />
           </div>
         );
       }
 
-      if (fcPreviewKind === "spreadsheet" && fcPath && workspacePath) {
+      if (
+        fcPreviewKind === "spreadsheet" &&
+        fcPath &&
+        workspacePath &&
+        shouldRenderOpenArtifactCard(String(fcPath))
+      ) {
         return (
           <div className="event-details event-details-file-preview">
-            <InlineSpreadsheetPreview
+            <SpreadsheetArtifactCard
               filePath={fcPath}
               workspacePath={workspacePath}
-              onOpenViewer={onOpenViewer}
+              onOpenViewer={onOpenSpreadsheetArtifact || onOpenViewer}
             />
           </div>
         );
       }
 
-      if (fcPreviewKind === "presentation" && fcPath && workspacePath) {
+      if (
+        fcPreviewKind === "document" &&
+        fcPath &&
+        workspacePath &&
+        shouldRenderOpenArtifactCard(String(fcPath))
+      ) {
         return (
           <div className="event-details event-details-file-preview">
-            <InlinePresentationPreview
+            <DocumentArtifactCard
               filePath={fcPath}
               workspacePath={workspacePath}
-              onOpenViewer={onOpenViewer}
+              onOpenViewer={onOpenDocumentArtifact || onOpenViewer}
+            />
+          </div>
+        );
+      }
+
+      if (
+        fcPreviewKind === "presentation" &&
+        fcPath &&
+        workspacePath &&
+        shouldRenderOpenArtifactCard(String(fcPath))
+      ) {
+        return (
+          <div className="event-details event-details-file-preview">
+            <PresentationArtifactCard
+              filePath={fcPath}
+              workspacePath={workspacePath}
+              onOpenViewer={onOpenPresentationArtifact || onOpenViewer}
             />
           </div>
         );
@@ -13683,25 +14447,69 @@ function renderEventDetails(
         );
       }
 
-      if (fmPreviewKind === "html" && fmPath && workspacePath) {
+      if (
+        fmPreviewKind === "html" &&
+        fmPath &&
+        workspacePath &&
+        shouldRenderOpenArtifactCard(String(fmPath))
+      ) {
         return (
           <div className="event-details event-details-file-preview">
-            <InlineHtmlPreview
+            <WebArtifactCard
               filePath={fmPath}
               workspacePath={workspacePath}
-              onOpenViewer={onOpenViewer}
+              onOpenViewer={onOpenWebArtifact || onOpenViewer}
             />
           </div>
         );
       }
 
-      if (fmPreviewKind === "presentation" && fmPath && workspacePath) {
+      if (
+        fmPreviewKind === "spreadsheet" &&
+        fmPath &&
+        workspacePath &&
+        shouldRenderOpenArtifactCard(String(fmPath))
+      ) {
         return (
           <div className="event-details event-details-file-preview">
-            <InlinePresentationPreview
+            <SpreadsheetArtifactCard
               filePath={fmPath}
               workspacePath={workspacePath}
-              onOpenViewer={onOpenViewer}
+              onOpenViewer={onOpenSpreadsheetArtifact || onOpenViewer}
+            />
+          </div>
+        );
+      }
+
+      if (
+        fmPreviewKind === "document" &&
+        fmPath &&
+        workspacePath &&
+        shouldRenderOpenArtifactCard(String(fmPath))
+      ) {
+        return (
+          <div className="event-details event-details-file-preview">
+            <DocumentArtifactCard
+              filePath={fmPath}
+              workspacePath={workspacePath}
+              onOpenViewer={onOpenDocumentArtifact || onOpenViewer}
+            />
+          </div>
+        );
+      }
+
+      if (
+        fmPreviewKind === "presentation" &&
+        fmPath &&
+        workspacePath &&
+        shouldRenderOpenArtifactCard(String(fmPath))
+      ) {
+        return (
+          <div className="event-details event-details-file-preview">
+            <PresentationArtifactCard
+              filePath={fmPath}
+              workspacePath={workspacePath}
+              onOpenViewer={onOpenPresentationArtifact || onOpenViewer}
             />
           </div>
         );
@@ -13709,22 +14517,30 @@ function renderEventDetails(
 
       // Edit diff preview
       if (fmPayload?.type === "edit" && (fmPayload?.oldPreview || fmPayload?.newPreview)) {
+        const oldDiffPreview =
+          typeof fmPayload.oldPreview === "string"
+            ? normalizeCodeBlockTextForDisplay(fmPayload.oldPreview, "diff")
+            : "";
+        const newDiffPreview =
+          typeof fmPayload.newPreview === "string"
+            ? normalizeCodeBlockTextForDisplay(fmPayload.newPreview, "diff")
+            : "";
         return (
           <div className="event-details event-details-scrollable event-details-code-preview">
             <div className="edit-diff-preview">
-              {fmPayload.oldPreview && (
+              {oldDiffPreview && (
                 <div className="diff-line diff-removed">
                   <span className="diff-marker">-</span>
                   <pre>
-                    <code>{fmPayload.oldPreview}</code>
+                    <code>{oldDiffPreview}</code>
                   </pre>
                 </div>
               )}
-              {fmPayload.newPreview && (
+              {newDiffPreview && (
                 <div className="diff-line diff-added">
                   <span className="diff-marker">+</span>
                   <pre>
-                    <code>{fmPayload.newPreview}</code>
+                    <code>{newDiffPreview}</code>
                   </pre>
                 </div>
               )}
@@ -13809,37 +14625,65 @@ function renderEventDetails(
           );
         }
 
-        if (artifactPreviewKind === "html" && workspacePath) {
+        if (
+          artifactPreviewKind === "html" &&
+          workspacePath &&
+          shouldRenderOpenArtifactCard(artifactPath)
+        ) {
           return (
             <div className="event-details event-details-file-preview">
-              <InlineHtmlPreview
+              <WebArtifactCard
                 filePath={artifactPath}
                 workspacePath={workspacePath}
-                onOpenViewer={onOpenViewer}
+                onOpenViewer={onOpenWebArtifact || onOpenViewer}
               />
             </div>
           );
         }
 
-        if (artifactPreviewKind === "spreadsheet" && workspacePath) {
+        if (
+          artifactPreviewKind === "spreadsheet" &&
+          workspacePath &&
+          shouldRenderOpenArtifactCard(artifactPath)
+        ) {
           return (
             <div className="event-details event-details-file-preview">
-              <InlineSpreadsheetPreview
+              <SpreadsheetArtifactCard
                 filePath={artifactPath}
                 workspacePath={workspacePath}
-                onOpenViewer={onOpenViewer}
+                onOpenViewer={onOpenSpreadsheetArtifact || onOpenViewer}
               />
             </div>
           );
         }
 
-        if (artifactPreviewKind === "presentation" && workspacePath) {
+        if (
+          artifactPreviewKind === "document" &&
+          workspacePath &&
+          shouldRenderOpenArtifactCard(artifactPath)
+        ) {
           return (
             <div className="event-details event-details-file-preview">
-              <InlinePresentationPreview
+              <DocumentArtifactCard
                 filePath={artifactPath}
                 workspacePath={workspacePath}
-                onOpenViewer={onOpenViewer}
+                onOpenViewer={onOpenDocumentArtifact || onOpenViewer}
+              />
+            </div>
+          );
+        }
+
+        if (
+          artifactPreviewKind === "presentation" &&
+          workspacePath &&
+          shouldRenderOpenArtifactCard(artifactPath)
+        ) {
+          return (
+            <div className="event-details event-details-file-preview">
+              <PresentationArtifactCard
+                filePath={artifactPath}
+                workspacePath={workspacePath}
+                onOpenViewer={onOpenPresentationArtifact || onOpenViewer}
               />
             </div>
           );

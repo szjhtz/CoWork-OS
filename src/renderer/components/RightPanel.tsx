@@ -1005,6 +1005,8 @@ const FolderSection = memo(function FolderSection({
 }) {
   if (!visible) return null;
   recordRendererRender("RightPanel.section", "folder", rendererPerfLoggingEnabled);
+  const fileCount = files.length || outputSummary?.outputCount || 0;
+  const fileCountLabel = `${fileCount} file${fileCount === 1 ? "" : "s"}`;
   return (
     <div className="right-panel-section cli-section">
       <div className="cli-section-header" onClick={toggleSection}>
@@ -1013,8 +1015,14 @@ const FolderSection = memo(function FolderSection({
           <span className="terminal-only">{filesTitleText}</span>
           <span className="modern-only">Files</span>
         </span>
-        {outputSummary && outputSummary.outputCount > 0 && (
-          <span className="cli-output-count-badge">{outputSummary.outputCount}</span>
+        {fileCount > 0 && (
+          <span
+            className="cli-output-count-badge cli-file-count-badge"
+            aria-label={fileCountLabel}
+            title={fileCountLabel}
+          >
+            <span className="cli-file-count-number">{fileCount}</span>
+          </span>
         )}
         <span className="cli-section-toggle">
           <span className="terminal-only">{expanded ? "[-]" : "[+]"}</span>

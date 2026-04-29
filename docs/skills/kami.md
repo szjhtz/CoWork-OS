@@ -117,7 +117,7 @@ The skill checks for:
 - bundled `playwright` plus a local Chromium-family browser for slide PDF export
 - `pdffonts` when available for PDF font inspection
 
-Rendered PPTX previews in the CoWork file viewer are separate from Kami's export pipeline. Opening `output.pptx` in CoWork always shows extracted slide text and speaker notes; visual slide thumbnails additionally require local `soffice` and `pdftoppm`.
+Rendered PPTX previews in the CoWork file viewer are separate from Kami's export pipeline. Opening `output.pptx` in CoWork always shows extracted slide text and speaker notes immediately; visual slide thumbnails load from cache or render in the background through the Codex presentation runtime, with local `soffice` and `pdftoppm` as fallback converters.
 
 You can run the same preflight manually:
 

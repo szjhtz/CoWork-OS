@@ -47,6 +47,26 @@ describe("VerificationRuntime", () => {
     expect(result.shouldBlock).toBe(false);
   });
 
+  it("asks the verifier to flag unrelated or overcomplicated changes", async () => {
+    const runReadOnlyChildTaskAndWait = vi.fn().mockResolvedValue({
+      childTaskId: "child-1",
+      status: "completed" as const,
+      summary: "VERDICT: PASS\nLooks good",
+    });
+    const runtime = new VerificationRuntime({ runReadOnlyChildTaskAndWait });
+
+    await runtime.run({
+      parentTask: makeTask(),
+      explicit: true,
+      parentSummary: "Implementation finished",
+    });
+
+    const prompt = runReadOnlyChildTaskAndWait.mock.calls[0]?.[0]?.prompt || "";
+    expect(prompt).toContain("every changed file should trace to the user request");
+    expect(prompt).toContain("unrelated cleanup");
+    expect(prompt).toContain("speculative abstractions");
+  });
+
   it("blocks high-risk partial verification results", async () => {
     const runtime = new VerificationRuntime({
       runReadOnlyChildTaskAndWait: vi.fn().mockResolvedValue({

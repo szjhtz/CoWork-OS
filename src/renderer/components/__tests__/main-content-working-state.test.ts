@@ -6,6 +6,7 @@ import {
   deriveAgentReasoningPanelState,
   deriveTaskHeaderPresentation,
   estimateTaskFeedRowHeight,
+  extractGeneratedArtifactPathsFromText,
   getInlinePreviewKindForGeneratedFile,
   getInlinePreviewKindForTaskEvent,
   getAutoScrollTargetTop,
@@ -15,6 +16,7 @@ import {
   isTaskActivelyWorking,
   pruneStringSetToActiveIds,
   selectVisibleTaskFeedRows,
+  shouldRenderOpenArtifactCardAtEvent,
   shouldShowBootstrapProgressRow,
   shouldScheduleAutoScrollWrite,
 } from "../MainContent";
@@ -66,6 +68,22 @@ describe("isTaskActivelyWorking", () => {
     ).toBe("presentation");
   });
 
+  it("extracts generated office artifact paths from assistant text", () => {
+    expect(
+      extractGeneratedArtifactPathsFromText(
+        "Validated:\n- File: `artifacts/sample_presentation.pptx`\n- Also saved reports/summary.docx and sample.xlsx.",
+      ),
+    ).toEqual(["artifacts/sample_presentation.pptx", "reports/summary.docx", "sample.xlsx"]);
+  });
+
+  it("does not promote remote office links as local artifact cards", () => {
+    expect(
+      extractGeneratedArtifactPathsFromText(
+        "Reference: https://example.com/artifacts/sample_presentation.pptx and local/output.pptx",
+      ),
+    ).toEqual(["local/output.pptx"]);
+  });
+
   it("treats file lifecycle html events as previewable", () => {
     expect(
       getInlinePreviewKindForTaskEvent(
@@ -83,6 +101,69 @@ describe("isTaskActivelyWorking", () => {
         }),
       ),
     ).toBe("html");
+  });
+
+  it("only renders repeated office artifact cards at the last reference", () => {
+    const created = makeEvent("created", 100, "file_created", {
+      path: "artifacts/sample_presentation.pptx",
+      mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    });
+    const emitted = makeEvent("artifact", 200, "artifact_created", {
+      path: "artifacts/sample_presentation.pptx",
+      mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    });
+    const completed = makeEvent("completed", 300, "task_completed", {
+      outputSummary: {
+        created: ["artifacts/sample_presentation.pptx"],
+        primaryOutputPath: "artifacts/sample_presentation.pptx",
+        outputCount: 1,
+      },
+    });
+    const eventStream = [created, emitted, completed];
+
+    expect(
+      shouldRenderOpenArtifactCardAtEvent({
+        path: "artifacts/sample_presentation.pptx",
+        event: created,
+        eventStream,
+      }),
+    ).toBe(false);
+    expect(
+      shouldRenderOpenArtifactCardAtEvent({
+        path: "artifacts/sample_presentation.pptx",
+        event: emitted,
+        eventStream,
+      }),
+    ).toBe(false);
+    expect(
+      shouldRenderOpenArtifactCardAtEvent({
+        path: "artifacts/sample_presentation.pptx",
+        event: completed,
+        eventStream,
+      }),
+    ).toBe(true);
+  });
+
+  it("continues to render image artifact cards inline", () => {
+    const created = makeEvent("image", 100, "file_created", {
+      path: "artifacts/screenshot.png",
+      mimeType: "image/png",
+    });
+    const completed = makeEvent("completed", 200, "task_completed", {
+      outputSummary: {
+        created: ["artifacts/screenshot.png"],
+        primaryOutputPath: "artifacts/screenshot.png",
+        outputCount: 1,
+      },
+    });
+
+    expect(
+      shouldRenderOpenArtifactCardAtEvent({
+        path: "artifacts/screenshot.png",
+        event: created,
+        eventStream: [created, completed],
+      }),
+    ).toBe(true);
   });
 
   it("hides the header title when it only repeats the initial prompt", () => {
@@ -174,6 +255,42 @@ describe("isTaskActivelyWorking", () => {
         isReplayMode: false,
         verboseSteps: false,
         isChatTask: false,
+      }),
+    ).toBe("inspect");
+    expect(
+      getDefaultTranscriptMode({
+        isTaskWorking: false,
+        isReplayMode: false,
+        verboseSteps: false,
+        isChatTask: false,
+        taskStatus: "completed",
+      }),
+    ).toBe("delivery");
+    expect(
+      getDefaultTranscriptMode({
+        isTaskWorking: false,
+        isReplayMode: false,
+        verboseSteps: true,
+        isChatTask: false,
+        taskStatus: "completed",
+      }),
+    ).toBe("inspect");
+    expect(
+      getDefaultTranscriptMode({
+        isTaskWorking: false,
+        isReplayMode: true,
+        verboseSteps: false,
+        isChatTask: false,
+        taskStatus: "completed",
+      }),
+    ).toBe("inspect");
+    expect(
+      getDefaultTranscriptMode({
+        isTaskWorking: false,
+        isReplayMode: false,
+        verboseSteps: false,
+        isChatTask: true,
+        taskStatus: "completed",
       }),
     ).toBe("inspect");
   });
@@ -412,6 +529,125 @@ describe("isTaskActivelyWorking", () => {
     expect(result.visibleFeedRows[0]?.key).toBe("budget-1");
   });
 
+  it("projects completed delivery mode to final output rows", () => {
+    const rows = [
+      {
+        kind: "timeline",
+        key: "user-1",
+        estimatedHeight: 100,
+        timelineIndex: 0,
+        visiblePerfEventId: "user-1",
+        revision: "user-1",
+        item: { kind: "event", event: makeEvent("user-1", 100, "user_message", { message: "User" }) },
+      },
+      {
+        kind: "timeline",
+        key: "action-block-1",
+        estimatedHeight: 180,
+        timelineIndex: 1,
+        visiblePerfEventId: "complete-1",
+        revision: "action-block-1",
+        item: {
+          kind: "action_block",
+          blockId: "action-block-1",
+          eventIndices: [1, 2],
+          events: [
+            makeEvent("step-1", 200, "timeline_step_updated", {
+              legacyType: "progress_update",
+              message: "Working",
+            }),
+            makeEvent("complete-1", 300, "task_completed", {
+              outputSummary: {
+                created: ["sample.xlsx"],
+                primaryOutputPath: "sample.xlsx",
+                outputCount: 1,
+                folders: ["."],
+              },
+            }),
+          ],
+        },
+      },
+      {
+        kind: "timeline",
+        key: "assistant-1",
+        estimatedHeight: 100,
+        timelineIndex: 2,
+        visiblePerfEventId: "assistant-1",
+        revision: "assistant-1",
+        item: {
+          kind: "event",
+          event: makeEvent("assistant-1", 400, "assistant_message", { message: "Created sample.xlsx" }),
+        },
+      },
+    ] as Any[];
+
+    const result = selectVisibleTaskFeedRows(rows, "delivery");
+
+    expect(result.visibleFeedRows.map((row) => row.key)).toEqual([
+      "delivery-event:complete-1:2",
+      "assistant-1",
+    ]);
+    const completionRow = result.visibleFeedRows[0];
+    expect(completionRow?.kind).toBe("timeline");
+    if (completionRow?.kind !== "timeline") {
+      throw new Error("Expected completion row to be a timeline event");
+    }
+    expect(completionRow.item.kind).toBe("event");
+    expect(completionRow.item.event.id).toBe("complete-1");
+    expect(result.hiddenLiveFeedRowCount).toBe(1);
+  });
+
+  it("keeps action-required and critical terminal rows in delivery mode", () => {
+    const rows = [
+      {
+        kind: "timeline",
+        key: "step-1",
+        estimatedHeight: 100,
+        timelineIndex: 0,
+        visiblePerfEventId: "step-1",
+        revision: "step-1",
+        item: {
+          kind: "event",
+          event: makeEvent("step-1", 100, "timeline_step_updated", {
+            legacyType: "progress_update",
+            message: "Working",
+          }),
+        },
+      },
+      {
+        kind: "timeline",
+        key: "needs-action",
+        estimatedHeight: 100,
+        timelineIndex: 1,
+        visiblePerfEventId: "needs-action",
+        revision: "needs-action",
+        item: {
+          kind: "event",
+          event: makeEvent("needs-action", 200, "task_completed", {
+            terminalStatus: "needs_user_action",
+            pendingChecklist: ["Open the generated file"],
+          }),
+        },
+      },
+      {
+        kind: "timeline",
+        key: "error-1",
+        estimatedHeight: 100,
+        timelineIndex: 2,
+        visiblePerfEventId: "error-1",
+        revision: "error-1",
+        item: {
+          kind: "event",
+          event: makeEvent("error-1", 300, "error", { message: "Verification failed" }),
+        },
+      },
+    ] as Any[];
+
+    const result = selectVisibleTaskFeedRows(rows, "delivery");
+
+    expect(result.visibleFeedRows.map((row) => row.key)).toEqual(["needs-action", "error-1"]);
+  });
+
   it("keeps collapsed action block estimates compact for virtualized history views", () => {
     const height = estimateTaskFeedRowHeight(
       {
@@ -427,7 +663,7 @@ describe("isTaskActivelyWorking", () => {
       { expanded: false, visibleEventCount: 0, hasVisibilityToggle: false },
     );
 
-    expect(height).toBe(56);
+    expect(height).toBe(34);
   });
 
   it("bases expanded action block estimates on visible rows instead of raw hidden events", () => {
@@ -446,7 +682,29 @@ describe("isTaskActivelyWorking", () => {
     );
 
     expect(height).toBeLessThan(520);
-    expect(height).toBe(488);
+    expect(height).toBe(362);
+  });
+
+  it("keeps file and artifact event estimates close to compact step rows", () => {
+    const fileModifiedHeight = estimateTaskFeedRowHeight({
+      kind: "event",
+      event: makeEvent("file-modified", 100, "file_modified", {
+        path: "delivery_ops_unification_manager_deck.md",
+        type: "edit",
+        oldPreview: "- old",
+        newPreview: "+ new",
+      }),
+    });
+    const artifactHeight = estimateTaskFeedRowHeight({
+      kind: "event",
+      event: makeEvent("artifact", 200, "artifact_created", {
+        path: "delivery_ops_unification_manager_deck.md",
+        type: "markdown",
+      }),
+    });
+
+    expect(fileModifiedHeight).toBe(58);
+    expect(artifactHeight).toBe(42);
   });
 
   it("only suppresses run_command terminals for visible expanded rows", () => {

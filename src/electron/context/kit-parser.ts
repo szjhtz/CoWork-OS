@@ -75,7 +75,10 @@ export function parseKitDocumentFromString(
   const { meta, body } = splitFrontmatter(raw);
   const warnings: string[] = [];
 
-  const sanitized = sanitizeKitMarkdown(body);
+  // DESIGN.md uses its YAML frontmatter as the token source of truth, so unlike
+  // normal kit docs we keep the full document available for agent context.
+  const sourceBody = contract.parser === "design-system" ? raw : body;
+  const sanitized = sanitizeKitMarkdown(sourceBody);
   const truncated = truncateKitText(sanitized, contract.maxChars);
   if (!truncated.value.trim()) return null;
 

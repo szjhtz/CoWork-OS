@@ -169,10 +169,11 @@ export class VerificationRuntime {
       "2. Be adversarial: try to falsify the claim that the task is complete.",
       "3. Inspect files and outputs using command/file evidence, not just prose.",
       "4. Check completeness, correctness, and whether anything was missed.",
-      "5. Start the final answer with exactly VERDICT: PASS, VERDICT: FAIL, or VERDICT: PARTIAL.",
-      "6. Then provide concise bullet findings focused on gaps and evidence.",
-      "7. Do not modify project files.",
-      "8. Include at least one adversarial probe.",
+      "5. Check scope control: every changed file should trace to the user request; flag unrelated cleanup, broad rewrites, renames, or speculative abstractions.",
+      "6. Start the final answer with exactly VERDICT: PASS, VERDICT: FAIL, or VERDICT: PARTIAL.",
+      "7. Then provide concise bullet findings focused on gaps and evidence.",
+      "8. Do not modify project files.",
+      "9. Include at least one adversarial probe.",
     ].join("\n");
   }
 }

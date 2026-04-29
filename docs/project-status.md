@@ -7,6 +7,7 @@ CoWork OS is a **security-first personal AI assistant platform** with multi-chan
 ### What CoWork OS Is
 
 - **Personal AI Gateway**: Connect your AI assistant to WhatsApp, Telegram, Discord, Slack, and iMessage
+- **Everything Workbench**: Create, open, review, lightly edit, and revise generated documents, spreadsheets, presentations, web pages, PDFs, and previews from the same local-first task workspace
 - **Managed Devices**: Operate local and remote CoWork machines from a dedicated Devices tab
 - **Automations Surface**: One settings group for queueing, scheduling, triggers, briefing, and Workflow Intelligence suggestions/reflection
 - **Renderer Performance**: Sidebar and timeline virtualization in the `CoWork-OS/CoWork-OS` repo use `@chenglou/pretext` for text measurement and keep long task feeds responsive
@@ -112,11 +113,15 @@ CoWork OS is a **security-first personal AI assistant platform** with multi-chan
 - [x] search_files - Search by name/content
 
 #### Document Tools and Skills
-- [x] Spreadsheet - Excel .xlsx (exceljs)
+- [x] Everything Workbench - shared task-output model for generated docs, sheets, decks, web pages, PDFs, and previews with compact cards, sidebar/fullscreen artifact workspaces, follow-up composer context, refresh-after-edit behavior, and external app actions for advanced native workflows
+- [x] Spreadsheet - Excel .xlsx (exceljs) generation and structured preview extraction
+- [x] Spreadsheet artifact workbench - compact task cards, resizable sidebar viewer, fullscreen editable grid, selection/copy/save/zoom, and follow-up composer controls
 - [x] Document - Word .docx and PDF (docx, pdfkit)
+- [x] Document artifact workbench - compact task cards, resizable sidebar/fullscreen viewer, direct DOCX editing, save/copy/external actions, follow-up composer controls, and best-effort preview/external handling for DOC/RTF/ODT/OTT/Pages outputs
 - [x] LaTeX compilation - `.tex` source to PDF via system `tectonic`, `latexmk`, `xelatex`, `lualatex`, or `pdflatex`
-- [x] Presentation - PowerPoint .pptx (pptxgenjs)
-- [x] Presentation previews - PPTX slide thumbnails, navigation, extracted text, and speaker notes in the in-app viewer
+- [x] Presentation - PowerPoint .pptx generation through the Codex presentation runtime with `pptxgenjs` fallback
+- [x] Presentation artifact workbench - compact task cards, resizable sidebar/fullscreen viewer, fast text-first loading, cached slide images, navigation, zoom, speaker notes, and follow-up composer controls
+- [x] Web page artifact workbench - compact task cards for generated HTML/HTM and built React output, resizable sidebar/fullscreen sandboxed iframe viewer, browser/folder/copy actions, and follow-up composer controls
 - [x] Folder Organizer - By type/date
 - [x] Kami - Editorial PDFs, resumes, one-pagers, diagrams, and slide decks with workspace-local scaffolding
 
@@ -206,8 +211,11 @@ CoWork OS is a **security-first personal AI assistant platform** with multi-chan
 - [x] Quick Task FAB (floating action button)
 - [x] Toast notifications for task completion
 - [x] In-app file viewer for artifacts
+- [x] Spreadsheet artifact viewer with sidebar/fullscreen modes, persisted sidebar width, editable grid controls, structured workbook/CSV/TSV preview data, and external artifact handling for Numbers/Google Sheets/ODS/XLSB outputs
+- [x] Document artifact viewer with sidebar/fullscreen modes, persisted sidebar width, structured document preview data, direct DOCX editing, save/copy controls, and external artifact handling for legacy/native document formats
 - [x] Paired LaTeX/PDF artifact workbench with Summary, `.tex source`, and PDF tabs
-- [x] Rich PPTX artifact viewer with inline deck cards and full-slide preview
+- [x] Rich PPTX artifact viewer with inline deck cards, sidebar/fullscreen modes, fast text-first preview, cached rendered slides, and follow-up refresh after completion
+- [x] Web page artifact viewer with inline HTML cards, sidebar/fullscreen modes, sandboxed iframe preview, built React output handling, and follow-up refresh after completion
 - [x] Parallel task queue panel
 - [x] Collaborative Thoughts Panel - Real-time agent thinking display
 - [x] Comparison View - Side-by-side agent/model output comparison
@@ -430,7 +438,7 @@ Operations Requiring Approval:
 14. Run multiple tasks in parallel (1-10 concurrent)
 15. Configure safety guardrails (budgets, blocked commands)
 16. Use system tools (screenshots, clipboard, open apps)
-17. View artifacts with the in-app file viewer, including rich `.pptx` deck previews
+17. View artifacts with the in-app file viewer, including spreadsheet workbench views, document artifact editing, and rich `.pptx` deck previews
 18. Customize agent personality via Settings or conversation prompts
 19. Run tasks in isolated git worktrees with auto-commit and merge
 20. Use collaborative mode for multi-agent team reasoning
@@ -456,10 +464,10 @@ Operations Requiring Approval:
 - `discord.js` - Discord bot
 - `grammy` - Telegram bot
 - `@slack/bolt` - Slack bot
-- `exceljs` - Excel creation
+- `exceljs` - Excel creation, preview extraction, and save/update support
 - `docx` - Word document creation
 - `pdfkit` - PDF creation
-- `pptxgenjs` - PowerPoint creation
+- `@oai/artifact-tool` / `pptxgenjs` - PowerPoint creation and rendering fallback
 - `electron-updater` - Auto-updates
 
 ### Development

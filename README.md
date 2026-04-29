@@ -461,6 +461,8 @@ See [CHANGELOG.md](CHANGELOG.md) for the full history of completed features.
 | [Release Notes 0.5.41](docs/release-notes-0.5.41.md) | What is new in the latest release |
 | [Use Case Showcase](docs/showcase.md) | Comprehensive guide to what you can build and automate |
 | [Features](docs/features.md) | Complete feature reference |
+| [Everything Workbench](docs/everything-workbench.md) | Unified in-app artifact model for docs, sheets, decks, web pages, PDFs, and live browser sessions |
+| [Browser Workbench](docs/browser-workbench.md) | Visible in-app browser for website testing, screenshots, annotation, and browser-use automation |
 | [Chat Mode](docs/chat-mode.md) | Direct chat-only mode with no tools and same-session follow-ups |
 | [Platform Updates](docs/integration-skill-bootstrap-lifecycle.md) | Detailed implementation notes for integration setup, skill proposals, workspace-kit contracts, and bootstrap lifecycle |
 | [Channels](docs/channels.md) | Messaging channel setup (17 channels) |

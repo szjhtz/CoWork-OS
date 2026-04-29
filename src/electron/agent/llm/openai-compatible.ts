@@ -7,6 +7,7 @@ import {
   LLMTool,
   LLMToolResult,
 } from "./types";
+import { createHash } from "node:crypto";
 import { imageToTextFallback } from "./image-utils";
 import { createLogger } from "../../utils/logger";
 import { assertNormalizedTurnTranscript } from "../runtime/turn-transcript-normalizer";
@@ -21,6 +22,48 @@ export interface OpenAICompatibleMessageOptions {
   /** Set to false to replace image blocks with text fallback (default: false) */
   supportsImages?: boolean;
   systemBlocks?: LLMSystemBlock[];
+  /** Provider-specific maximum for tool call IDs. Matching tool results are rewritten consistently. */
+  maxToolCallIdLength?: number;
+}
+
+function hashToolCallId(id: string): string {
+  return createHash("sha256").update(id).digest("hex");
+}
+
+function createToolCallIdMapper(maxLength?: number): (id: string) => string {
+  if (!maxLength || maxLength < 1) {
+    return (id) => id;
+  }
+
+  const byOriginal = new Map<string, string>();
+  const used = new Set<string>();
+
+  return (id: string): string => {
+    const existing = byOriginal.get(id);
+    if (existing) return existing;
+
+    if (id.length <= maxLength && !used.has(id)) {
+      byOriginal.set(id, id);
+      used.add(id);
+      return id;
+    }
+
+    const prefix = "call_az_";
+    const hash = hashToolCallId(id);
+    const hashBudget = Math.max(1, maxLength - prefix.length);
+    let mapped = `${prefix}${hash.slice(0, hashBudget)}`;
+    let suffix = 1;
+
+    while (used.has(mapped)) {
+      const suffixText = `_${suffix++}`;
+      const baseBudget = Math.max(1, maxLength - prefix.length - suffixText.length);
+      mapped = `${prefix}${hash.slice(0, baseBudget)}${suffixText}`;
+    }
+
+    byOriginal.set(id, mapped);
+    used.add(mapped);
+    return mapped;
+  };
 }
 
 export function sanitizeToolCallHistory(messages: LLMMessage[]): LLMMessage[] {
@@ -51,6 +94,7 @@ export function toOpenAICompatibleMessages(
   const result: Array<{ role: string; content: Any; tool_call_id?: string; tool_calls?: Any[] }> =
     [];
   const supportsImages = options?.supportsImages === true;
+  const mapToolCallId = createToolCallIdMapper(options?.maxToolCallIdLength);
 
   result.push(...buildOpenAICompatibleSystemMessages(system, options?.systemBlocks));
 
@@ -84,12 +128,12 @@ export function toOpenAICompatibleMessages(
           result.push({
             role: "tool",
             content: item.content,
-            tool_call_id: item.tool_use_id,
+            tool_call_id: mapToolCallId(item.tool_use_id),
           });
         }
       } else if (item.type === "tool_use") {
         toolCalls.push({
-          id: item.id,
+          id: mapToolCallId(item.id),
           type: "function",
           function: {
             name: item.name,

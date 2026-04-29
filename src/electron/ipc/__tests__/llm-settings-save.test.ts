@@ -138,6 +138,8 @@ describe("buildSavedLLMSettings", () => {
         accessToken: "access-token",
         refreshToken: "refresh-token",
         tokenExpiresAt: 12345,
+        accountId: "acct_existing",
+        email: "user@example.com",
       },
     };
 
@@ -159,9 +161,44 @@ describe("buildSavedLLMSettings", () => {
       accessToken: "access-token",
       refreshToken: "refresh-token",
       tokenExpiresAt: 12345,
+      accountId: "acct_existing",
+      email: "user@example.com",
       model: "gpt-4.1",
     });
     expect(saved.fallbackProviders).toEqual(validated.fallbackProviders);
+  });
+
+  it("persists OpenAI GPT-5.5 reasoning and verbosity settings", () => {
+    const existingSettings: LLMSettingsData = {
+      providerType: "openai",
+      modelKey: "gpt-5.5",
+      openai: {
+        apiKey: "sk-existing",
+        model: "gpt-5.5",
+        authMethod: "api_key",
+      },
+    };
+
+    const validated: LLMSettingsData = {
+      providerType: "openai",
+      modelKey: "gpt-5.5",
+      openai: {
+        model: "gpt-5.5",
+        reasoningEffort: "xhigh",
+        textVerbosity: "low",
+        authMethod: "api_key",
+      },
+    };
+
+    const saved = buildSavedLLMSettings(validated, existingSettings);
+
+    expect(saved.openai).toEqual({
+      apiKey: "sk-existing",
+      model: "gpt-5.5",
+      reasoningEffort: "xhigh",
+      textVerbosity: "low",
+      authMethod: "api_key",
+    });
   });
 
   it("allows switching OpenAI auth from OAuth to API key", () => {
@@ -173,6 +210,8 @@ describe("buildSavedLLMSettings", () => {
         accessToken: "access-token",
         refreshToken: "refresh-token",
         tokenExpiresAt: 12345,
+        accountId: "acct_existing",
+        email: "user@example.com",
       },
     };
 

@@ -3,7 +3,12 @@ import * as path from "path";
 import { Workspace } from "../../../shared/types";
 import { AgentDaemon } from "../daemon";
 import { BrowserService } from "../browser/browser-service";
+import {
+  BrowserWorkbenchService,
+  getBrowserWorkbenchService,
+} from "../../browser/browser-workbench-service";
 
+// oxlint-disable-next-line typescript-eslint/no-explicit-any
 type Any = any;
 
 /**
@@ -27,6 +32,7 @@ export class BrowserTools {
     private workspace: Workspace,
     private daemon: AgentDaemon,
     private taskId: string,
+    private browserWorkbenchService: BrowserWorkbenchService = getBrowserWorkbenchService(),
   ) {
     this.browserService = new BrowserService(workspace, {
       headless: true,
@@ -60,6 +66,52 @@ export class BrowserTools {
       return Math.round(rawTimeout);
     }
     return undefined;
+  }
+
+  private getSessionId(input: unknown): string | undefined {
+    const toolInput = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+    return typeof toolInput.session_id === "string" && toolInput.session_id.trim()
+      ? toolInput.session_id.trim()
+      : undefined;
+  }
+
+  private shouldPreferVisibleWorkbench(input: unknown): boolean {
+    const toolInput = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+    const forceHeadless =
+      toolInput.force_headless === true ||
+      toolInput.mode === "headless" ||
+      toolInput.visible === false ||
+      toolInput.browser_surface === "headless";
+    if (forceHeadless) return false;
+    if (typeof toolInput.debugger_url === "string" && toolInput.debugger_url.trim()) return false;
+    if (this.hasVisibleWorkbenchSession(input)) return true;
+    if (typeof toolInput.profile === "string" && toolInput.profile.trim()) return false;
+    if (typeof toolInput.browser_channel === "string" && toolInput.browser_channel.trim()) return false;
+    if (this.browserState.profile || this.browserState.debuggerUrl) return false;
+    return true;
+  }
+
+  private isProfileLaunchConflict(error: unknown): boolean {
+    const message = String((error as Error)?.message || error || "");
+    return /ProcessSingleton|SingletonLock|profile.*in use|already running with this profile|already in use/i.test(
+      message,
+    );
+  }
+
+  private profileLaunchConflictResult(error: unknown): Any {
+    const message = String((error as Error)?.message || error || "");
+    return {
+      success: false,
+      error:
+        "Chrome is already running with that profile, so I could not launch a separate profile-backed browser. Continue in the visible Browser Use session, or attach to an already-running Chrome instance with browser_attach and a debugger_url.",
+      details: message,
+      browserMode: "external_profile",
+      retryableWithVisibleWorkbench: true,
+    };
+  }
+
+  private hasVisibleWorkbenchSession(input: unknown): boolean {
+    return Boolean(this.browserWorkbenchService.getSession(this.taskId, this.getSessionId(input)));
   }
 
   private getPersistentUserDataDir(profile: string): string {
@@ -175,9 +227,11 @@ export class BrowserTools {
       {
         name: "browser_navigate",
         description:
-          "Navigate the browser to a URL. Opens the browser if not already open. " +
-          "Optional: set headless=false to open a visible browser window. " +
-          "Optional: set profile to enable a persistent browser profile (cookies/storage persist across tasks). " +
+          "Navigate the browser to a URL. For interactive testing, this opens and controls the visible in-app browser workbench for the active task by default. " +
+          "If a visible workbench session already exists, continue using it even when profile/browser_channel options are supplied. " +
+          "The legacy headless flag is compatibility-only and does not override the visible workbench for normal site testing. " +
+          "Optional: set force_headless=true only when the user explicitly asks for background/headless Playwright. " +
+          "Optional: set profile to use a Playwright browser profile or external signed-in Chrome fallback (not the embedded workbench). " +
           'Optional: set browser_channel to "chrome" (system Google Chrome) or "brave" (system Brave); default is bundled Chromium. ' +
           "NOTE: For RESEARCH tasks (finding news, trends, discussions), use web_search instead - it aggregates results from multiple sources. " +
           "For simply reading a specific URL, use web_fetch - it is faster and lighter. " +
@@ -196,7 +250,13 @@ export class BrowserTools {
             },
             headless: {
               type: "boolean",
-              description: "Run browser headless (default: true). Set false for a visible window.",
+              description:
+                "Compatibility flag for legacy Playwright fallback. Ignored for normal visible in-app browser workbench routing.",
+            },
+            force_headless: {
+              type: "boolean",
+              description:
+                "Force the legacy headless Playwright path. Use only when the user explicitly asks for background/headless browsing.",
             },
             profile: {
               type: "string",
@@ -209,6 +269,11 @@ export class BrowserTools {
               enum: ["chromium", "chrome", "brave"],
               description:
                 'Which browser binary to use (default: chromium). "chrome" requires Google Chrome; "brave" requires Brave (or BRAVE_PATH).',
+            },
+            session_id: {
+              type: "string",
+              description:
+                "Optional visible in-app browser workbench session id. Defaults to the active task browser session.",
             },
           },
           required: ["url"],
@@ -246,6 +311,10 @@ export class BrowserTools {
               type: "boolean",
               description: "Allow screenshots of consent pages (default: false)",
             },
+            session_id: {
+              type: "string",
+              description: "Optional visible in-app browser workbench session id.",
+            },
           },
         },
       },
@@ -258,7 +327,12 @@ export class BrowserTools {
           "Use this only after browser_navigate when you need JavaScript-rendered content or to inspect forms/links for interaction.",
         input_schema: {
           type: "object" as const,
-          properties: {},
+          properties: {
+            session_id: {
+              type: "string",
+              description: "Optional visible in-app browser workbench session id.",
+            },
+          },
         },
       },
       {
@@ -275,6 +349,10 @@ export class BrowserTools {
             timeout_ms: {
               type: "number",
               description: "Action timeout in ms. Use 60000+ for slow pages (default: 90_000)",
+            },
+            session_id: {
+              type: "string",
+              description: "Optional visible in-app browser workbench session id.",
             },
           },
           required: ["selector"],
@@ -298,6 +376,10 @@ export class BrowserTools {
             timeout_ms: {
               type: "number",
               description: "Action timeout in ms. Use 60000+ for slow pages (default: 90_000)",
+            },
+            session_id: {
+              type: "string",
+              description: "Optional visible in-app browser workbench session id.",
             },
           },
           required: ["selector", "value"],
@@ -325,6 +407,10 @@ export class BrowserTools {
               type: "number",
               description: "Action timeout in ms. Use 60000+ for slow pages (default: 90_000)",
             },
+            session_id: {
+              type: "string",
+              description: "Optional visible in-app browser workbench session id.",
+            },
           },
           required: ["selector", "text"],
         },
@@ -338,6 +424,10 @@ export class BrowserTools {
             key: {
               type: "string",
               description: 'The key to press (e.g., "Enter", "Tab", "Escape", "ArrowDown")',
+            },
+            session_id: {
+              type: "string",
+              description: "Optional visible in-app browser workbench session id.",
             },
           },
           required: ["key"],
@@ -356,6 +446,10 @@ export class BrowserTools {
             timeout: {
               type: "number",
               description: "Max time to wait in ms. Default: 30000",
+            },
+            session_id: {
+              type: "string",
+              description: "Optional visible in-app browser workbench session id.",
             },
           },
           required: ["selector"],
@@ -376,6 +470,10 @@ export class BrowserTools {
               type: "number",
               description: "Pixels to scroll (for up/down). Default: 500",
             },
+            session_id: {
+              type: "string",
+              description: "Optional visible in-app browser workbench session id.",
+            },
           },
           required: ["direction"],
         },
@@ -394,6 +492,10 @@ export class BrowserTools {
               type: "string",
               description: "Value to select",
             },
+            session_id: {
+              type: "string",
+              description: "Optional visible in-app browser workbench session id.",
+            },
           },
           required: ["selector", "value"],
         },
@@ -407,6 +509,10 @@ export class BrowserTools {
             selector: {
               type: "string",
               description: "CSS selector for the element",
+            },
+            session_id: {
+              type: "string",
+              description: "Optional visible in-app browser workbench session id.",
             },
           },
           required: ["selector"],
@@ -422,6 +528,10 @@ export class BrowserTools {
               type: "string",
               description: "JavaScript code to execute",
             },
+            session_id: {
+              type: "string",
+              description: "Optional visible in-app browser workbench session id.",
+            },
           },
           required: ["script"],
         },
@@ -431,7 +541,12 @@ export class BrowserTools {
         description: "Go back in browser history",
         input_schema: {
           type: "object" as const,
-          properties: {},
+          properties: {
+            session_id: {
+              type: "string",
+              description: "Optional visible in-app browser workbench session id.",
+            },
+          },
         },
       },
       {
@@ -439,7 +554,12 @@ export class BrowserTools {
         description: "Go forward in browser history",
         input_schema: {
           type: "object" as const,
-          properties: {},
+          properties: {
+            session_id: {
+              type: "string",
+              description: "Optional visible in-app browser workbench session id.",
+            },
+          },
         },
       },
       {
@@ -447,7 +567,12 @@ export class BrowserTools {
         description: "Reload the current page",
         input_schema: {
           type: "object" as const,
-          properties: {},
+          properties: {
+            session_id: {
+              type: "string",
+              description: "Optional visible in-app browser workbench session id.",
+            },
+          },
         },
       },
       {
@@ -504,6 +629,10 @@ export class BrowserTools {
               },
               description: "Array of actions to execute in order",
             },
+            session_id: {
+              type: "string",
+              description: "Optional visible in-app browser workbench session id.",
+            },
           },
           required: ["actions"],
         },
@@ -556,13 +685,47 @@ export class BrowserTools {
       }
 
       case "browser_navigate": {
-        await this.ensureBrowserConfigured({
-          headless: input?.headless,
-          profile: input?.profile,
-          browser_channel: input?.browser_channel,
-          debugger_url: this.browserState.debuggerUrl,
-        });
-        const result = await this.browserService.navigate(input.url, input.wait_until || "load");
+        if (this.shouldPreferVisibleWorkbench(input)) {
+          const visibleResult = await this.browserWorkbenchService.navigate({
+            taskId: this.taskId,
+            sessionId: this.getSessionId(input),
+            url: input?.url,
+            waitUntil: input?.wait_until || "load",
+          });
+          if (visibleResult) {
+            this.daemon.logEvent(this.taskId, "browser_action", {
+              action: "navigate",
+              url: visibleResult.url,
+              title: visibleResult.title,
+              sessionId: this.getSessionId(input) || "default",
+              visible: true,
+            });
+            return visibleResult;
+          }
+        }
+        let result;
+        try {
+          await this.ensureBrowserConfigured({
+            headless: input?.force_headless === true ? true : input?.headless,
+            profile: input?.profile,
+            browser_channel: input?.browser_channel,
+            debugger_url: this.browserState.debuggerUrl,
+          });
+          result = await this.browserService.navigate(input.url, input.wait_until || "load");
+        } catch (error) {
+          if (this.isProfileLaunchConflict(error)) {
+            const conflictResult = this.profileLaunchConflictResult(error);
+            this.daemon.logEvent(this.taskId, "browser_action", {
+              action: "navigate",
+              url: input?.url,
+              success: false,
+              browserMode: "external_profile",
+              profileLaunchConflict: true,
+            });
+            return conflictResult;
+          }
+          throw error;
+        }
         this.daemon.logEvent(this.taskId, "browser_action", {
           action: "navigate",
           url: result.url,
@@ -593,6 +756,50 @@ export class BrowserTools {
           max_wait_ms,
           allow_consent,
         } = input || {};
+
+        if (this.shouldPreferVisibleWorkbench(input) && this.hasVisibleWorkbenchSession(input)) {
+          if (require_selector) {
+            const waitResult = await this.browserWorkbenchService.waitForSelector(
+              this.taskId,
+              require_selector,
+              max_wait_ms || 10000,
+              this.getSessionId(input),
+            );
+            if (!waitResult?.success) {
+              throw new Error(`Required selector not found: ${require_selector}`);
+            }
+          }
+          const current = await this.browserWorkbenchService.getContent(
+            this.taskId,
+            this.getSessionId(input),
+          );
+          const currentUrl = typeof current?.url === "string" ? current.url : "";
+          if (!allow_consent && currentUrl.includes("consent.google.com")) {
+            throw new Error("Consent page detected; dismiss consent before taking screenshot.");
+          }
+          if (Array.isArray(disallow_url_contains) && disallow_url_contains.length > 0) {
+            for (const fragment of disallow_url_contains) {
+              if (fragment && currentUrl.includes(fragment)) {
+                throw new Error(`Current URL matches disallowed fragment: ${fragment}`);
+              }
+            }
+          }
+          const result = await this.browserWorkbenchService.screenshot({
+            taskId: this.taskId,
+            sessionId: this.getSessionId(input),
+            workspacePath: this.workspace.path,
+            filename,
+          });
+          if (result) {
+            const fullPath = path.join(this.workspace.path, result.path);
+            this.daemon.logEvent(this.taskId, "file_created", {
+              path: result.path,
+              type: "screenshot",
+            });
+            this.daemon.registerArtifact(this.taskId, fullPath, "image/png");
+            return { success: true, ...result, visible: true };
+          }
+        }
 
         if (require_selector) {
           const waitResult = await this.browserService.waitForSelector(
@@ -636,6 +843,20 @@ export class BrowserTools {
       }
 
       case "browser_get_content": {
+        if (this.shouldPreferVisibleWorkbench(input) && this.hasVisibleWorkbenchSession(input)) {
+          const result = await this.browserWorkbenchService.getContent(
+            this.taskId,
+            this.getSessionId(input),
+          );
+          if (result) {
+            this.daemon.logEvent(this.taskId, "browser_action", {
+              action: "get_content",
+              url: result.url,
+              visible: true,
+            });
+            return { success: true, ...result };
+          }
+        }
         const result = await this.browserService.getContent();
         this.daemon.logEvent(this.taskId, "browser_action", {
           action: "get_content",
@@ -645,6 +866,22 @@ export class BrowserTools {
       }
 
       case "browser_click": {
+        if (this.shouldPreferVisibleWorkbench(input) && this.hasVisibleWorkbenchSession(input)) {
+          const result = await this.browserWorkbenchService.click(
+            this.taskId,
+            input.selector,
+            this.getSessionId(input),
+          );
+          if (result) {
+            this.daemon.logEvent(this.taskId, "browser_action", {
+              action: "click",
+              selector: input.selector,
+              success: result.success,
+              visible: true,
+            });
+            return result;
+          }
+        }
         const result = await this.browserService.click(input.selector, this.getTimeoutMs(input));
         this.daemon.logEvent(this.taskId, "browser_action", {
           action: "click",
@@ -655,6 +892,23 @@ export class BrowserTools {
       }
 
       case "browser_fill": {
+        if (this.shouldPreferVisibleWorkbench(input) && this.hasVisibleWorkbenchSession(input)) {
+          const result = await this.browserWorkbenchService.fill(
+            this.taskId,
+            input.selector,
+            input.value,
+            this.getSessionId(input),
+          );
+          if (result) {
+            this.daemon.logEvent(this.taskId, "browser_action", {
+              action: "fill",
+              selector: input.selector,
+              success: result.success,
+              visible: true,
+            });
+            return result;
+          }
+        }
         const result = await this.browserService.fill(
           input.selector,
           input.value,
@@ -669,6 +923,23 @@ export class BrowserTools {
       }
 
       case "browser_type": {
+        if (this.shouldPreferVisibleWorkbench(input) && this.hasVisibleWorkbenchSession(input)) {
+          const result = await this.browserWorkbenchService.type(
+            this.taskId,
+            input.selector,
+            input.text,
+            this.getSessionId(input),
+          );
+          if (result) {
+            this.daemon.logEvent(this.taskId, "browser_action", {
+              action: "type",
+              selector: input.selector,
+              success: result.success,
+              visible: true,
+            });
+            return result;
+          }
+        }
         const result = await this.browserService.type(
           input.selector,
           input.text,
@@ -684,6 +955,22 @@ export class BrowserTools {
       }
 
       case "browser_press": {
+        if (this.shouldPreferVisibleWorkbench(input) && this.hasVisibleWorkbenchSession(input)) {
+          const result = await this.browserWorkbenchService.press(
+            this.taskId,
+            input.key,
+            this.getSessionId(input),
+          );
+          if (result) {
+            this.daemon.logEvent(this.taskId, "browser_action", {
+              action: "press",
+              key: input.key,
+              success: result.success,
+              visible: true,
+            });
+            return result;
+          }
+        }
         const result = await this.browserService.press(input.key);
         this.daemon.logEvent(this.taskId, "browser_action", {
           action: "press",
@@ -694,6 +981,23 @@ export class BrowserTools {
       }
 
       case "browser_wait": {
+        if (this.shouldPreferVisibleWorkbench(input) && this.hasVisibleWorkbenchSession(input)) {
+          const result = await this.browserWorkbenchService.waitForSelector(
+            this.taskId,
+            input.selector,
+            input.timeout,
+            this.getSessionId(input),
+          );
+          if (result) {
+            this.daemon.logEvent(this.taskId, "browser_action", {
+              action: "wait",
+              selector: input.selector,
+              success: result.success,
+              visible: true,
+            });
+            return result;
+          }
+        }
         const result = await this.browserService.waitForSelector(input.selector, input.timeout);
         this.daemon.logEvent(this.taskId, "browser_action", {
           action: "wait",
@@ -704,6 +1008,22 @@ export class BrowserTools {
       }
 
       case "browser_scroll": {
+        if (this.shouldPreferVisibleWorkbench(input) && this.hasVisibleWorkbenchSession(input)) {
+          const result = await this.browserWorkbenchService.scroll(
+            this.taskId,
+            input.direction,
+            input.amount,
+            this.getSessionId(input),
+          );
+          if (result) {
+            this.daemon.logEvent(this.taskId, "browser_action", {
+              action: "scroll",
+              direction: input.direction,
+              visible: true,
+            });
+            return result;
+          }
+        }
         const result = await this.browserService.scroll(input.direction, input.amount);
         this.daemon.logEvent(this.taskId, "browser_action", {
           action: "scroll",
@@ -713,6 +1033,23 @@ export class BrowserTools {
       }
 
       case "browser_select": {
+        if (this.shouldPreferVisibleWorkbench(input) && this.hasVisibleWorkbenchSession(input)) {
+          const result = await this.browserWorkbenchService.select(
+            this.taskId,
+            input.selector,
+            input.value,
+            this.getSessionId(input),
+          );
+          if (result) {
+            this.daemon.logEvent(this.taskId, "browser_action", {
+              action: "select",
+              selector: input.selector,
+              success: result.success,
+              visible: true,
+            });
+            return result;
+          }
+        }
         const result = await this.browserService.select(input.selector, input.value);
         this.daemon.logEvent(this.taskId, "browser_action", {
           action: "select",
@@ -723,6 +1060,14 @@ export class BrowserTools {
       }
 
       case "browser_get_text": {
+        if (this.shouldPreferVisibleWorkbench(input) && this.hasVisibleWorkbenchSession(input)) {
+          const result = await this.browserWorkbenchService.getText(
+            this.taskId,
+            input.selector,
+            this.getSessionId(input),
+          );
+          if (result) return result;
+        }
         const result = await this.browserService.getText(input.selector);
         return result;
       }
@@ -734,6 +1079,21 @@ export class BrowserTools {
             "browser_evaluate cannot run Node.js APIs. Use run_command for shell commands.",
           );
         }
+        if (this.shouldPreferVisibleWorkbench(input) && this.hasVisibleWorkbenchSession(input)) {
+          const result = await this.browserWorkbenchService.evaluate(
+            this.taskId,
+            input.script,
+            this.getSessionId(input),
+          );
+          if (result) {
+            this.daemon.logEvent(this.taskId, "browser_action", {
+              action: "evaluate",
+              success: result.success,
+              visible: true,
+            });
+            return result;
+          }
+        }
         const result = await this.browserService.evaluate(input.script);
         this.daemon.logEvent(this.taskId, "browser_action", {
           action: "evaluate",
@@ -743,6 +1103,20 @@ export class BrowserTools {
       }
 
       case "browser_back": {
+        if (this.shouldPreferVisibleWorkbench(input) && this.hasVisibleWorkbenchSession(input)) {
+          const result = await this.browserWorkbenchService.goBack(
+            this.taskId,
+            this.getSessionId(input),
+          );
+          if (result) {
+            this.daemon.logEvent(this.taskId, "browser_action", {
+              action: "back",
+              url: result.url,
+              visible: true,
+            });
+            return result;
+          }
+        }
         const result = await this.browserService.goBack();
         this.daemon.logEvent(this.taskId, "browser_action", {
           action: "back",
@@ -752,6 +1126,20 @@ export class BrowserTools {
       }
 
       case "browser_forward": {
+        if (this.shouldPreferVisibleWorkbench(input) && this.hasVisibleWorkbenchSession(input)) {
+          const result = await this.browserWorkbenchService.goForward(
+            this.taskId,
+            this.getSessionId(input),
+          );
+          if (result) {
+            this.daemon.logEvent(this.taskId, "browser_action", {
+              action: "forward",
+              url: result.url,
+              visible: true,
+            });
+            return result;
+          }
+        }
         const result = await this.browserService.goForward();
         this.daemon.logEvent(this.taskId, "browser_action", {
           action: "forward",
@@ -761,6 +1149,20 @@ export class BrowserTools {
       }
 
       case "browser_reload": {
+        if (this.shouldPreferVisibleWorkbench(input) && this.hasVisibleWorkbenchSession(input)) {
+          const result = await this.browserWorkbenchService.reload(
+            this.taskId,
+            this.getSessionId(input),
+          );
+          if (result) {
+            this.daemon.logEvent(this.taskId, "browser_action", {
+              action: "reload",
+              url: result.url,
+              visible: true,
+            });
+            return result;
+          }
+        }
         const result = await this.browserService.reload();
         this.daemon.logEvent(this.taskId, "browser_action", {
           action: "reload",
@@ -782,6 +1184,96 @@ export class BrowserTools {
         const actions = Array.isArray(input?.actions) ? input.actions : [];
         if (actions.length === 0) {
           return { success: false, error: "actions array is required and must not be empty" };
+        }
+        if (this.shouldPreferVisibleWorkbench(input) && this.hasVisibleWorkbenchSession(input)) {
+          const results: Array<{ type: string; success: boolean; error?: string }> = [];
+          for (let i = 0; i < actions.length; i++) {
+            const act = actions[i] as Record<string, unknown>;
+            const delayMs = typeof act.delay_ms === "number" && act.delay_ms > 0 ? act.delay_ms : 0;
+            if (delayMs > 0) await new Promise((r) => setTimeout(r, delayMs));
+            const actType = String(act.type || "").toLowerCase();
+            try {
+              let result: Any = null;
+              if (actType === "click") {
+                result = await this.browserWorkbenchService.click(
+                  this.taskId,
+                  String(act.selector || ""),
+                  this.getSessionId(input),
+                );
+              } else if (actType === "fill") {
+                result = await this.browserWorkbenchService.fill(
+                  this.taskId,
+                  String(act.selector || ""),
+                  String(act.value ?? ""),
+                  this.getSessionId(input),
+                );
+              } else if (actType === "type") {
+                result = await this.browserWorkbenchService.type(
+                  this.taskId,
+                  String(act.selector || ""),
+                  String(act.text ?? ""),
+                  this.getSessionId(input),
+                );
+              } else if (actType === "press") {
+                result = await this.browserWorkbenchService.press(
+                  this.taskId,
+                  String(act.key || ""),
+                  this.getSessionId(input),
+                );
+              } else if (actType === "wait") {
+                result = await this.browserWorkbenchService.waitForSelector(
+                  this.taskId,
+                  String(act.selector || ""),
+                  (act.timeout_ms as number) || 10000,
+                  this.getSessionId(input),
+                );
+              } else if (actType === "scroll") {
+                const direction =
+                  act.direction === "up" ||
+                  act.direction === "down" ||
+                  act.direction === "top" ||
+                  act.direction === "bottom"
+                    ? act.direction
+                    : "down";
+                result = await this.browserWorkbenchService.scroll(
+                  this.taskId,
+                  direction,
+                  typeof act.amount === "number" ? act.amount : undefined,
+                  this.getSessionId(input),
+                );
+              } else {
+                results.push({ type: actType, success: false, error: `Unknown action type: ${actType}` });
+                break;
+              }
+              results.push({
+                type: actType,
+                success: result?.success !== false,
+                error: result?.error,
+              });
+              if (result?.success === false) break;
+            } catch (err) {
+              results.push({
+                type: actType,
+                success: false,
+                error: err instanceof Error ? err.message : String(err),
+              });
+              break;
+            }
+          }
+          const allSuccess = results.every((r) => r.success);
+          this.daemon.logEvent(this.taskId, "browser_action", {
+            action: "act_batch",
+            count: actions.length,
+            completed: results.length,
+            success: allSuccess,
+            visible: true,
+          });
+          return {
+            success: allSuccess,
+            results,
+            completed: results.length,
+            total: actions.length,
+          };
         }
         const results: Array<{ type: string; success: boolean; error?: string }> = [];
         const timeoutMs = this.getTimeoutMs(input);

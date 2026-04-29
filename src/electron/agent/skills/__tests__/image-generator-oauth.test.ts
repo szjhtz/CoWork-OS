@@ -123,14 +123,13 @@ describe("ImageGenerator OpenAI OAuth", () => {
     const result = await generator.generate({
       prompt: "draw a poster of a lighthouse in fog",
       provider: "openai-codex",
-      model: "gpt-image-1.5",
       filename: "poster",
       imageSize: "1K",
     });
 
     expect(result.success).toBe(true);
     expect(result.provider).toBe("openai-codex");
-    expect(result.model).toBe("gpt-image-1.5");
+    expect(result.model).toBe("gpt-image-2");
     expect(result.images).toHaveLength(1);
     expect(fs.readFileSync(path.join(tempDir, "poster.png")).toString()).toBe("oauth-image");
 
@@ -151,12 +150,12 @@ describe("ImageGenerator OpenAI OAuth", () => {
       tools: [
         expect.objectContaining({
           type: "image_generation",
-          model: "gpt-image-1.5",
-          action: "generate",
+          model: "gpt-image-2",
           output_format: "png",
         }),
       ],
     });
+    expect(responseStreamParams[0].tools[0]).not.toHaveProperty("action");
     expect(responseStreamParams[0].tools[0]).not.toHaveProperty("quality");
 
     expect(saveSettingsMock).toHaveBeenCalledWith(
@@ -170,6 +169,42 @@ describe("ImageGenerator OpenAI OAuth", () => {
       }),
     );
     expect(clearCacheMock).toHaveBeenCalled();
+  });
+
+  it("upgrades stale ChatGPT subscription image model settings to gpt-image-2", async () => {
+    const accessToken = createAccessToken("acct_test_oauth");
+    loadSettingsMock.mockReturnValue({
+      providerType: "openai",
+      openai: {
+        accessToken,
+        tokenExpiresAt: Date.now() + 600_000,
+        authMethod: "oauth",
+      },
+      imageGeneration: {
+        defaultProvider: "openai-codex",
+        defaultModel: "gpt-image-1.5",
+        openaiCodex: {
+          model: "gpt-image-1.5",
+        },
+      },
+    } as Any);
+    loadPiAiModuleMock.mockResolvedValue({
+      getModels: () => [{ id: "gpt-5.2" }],
+    });
+
+    const generator = new ImageGenerator({ path: tempDir } as Any);
+    const result = await generator.generate({
+      prompt: "draw a poster of a lighthouse in fog",
+      provider: "openai-codex",
+      filename: "poster",
+      imageSize: "1K",
+    });
+
+    expect(result).toMatchObject({ success: true, model: "gpt-image-2" });
+    expect(responseStreamParams[0].tools[0]).toMatchObject({
+      type: "image_generation",
+      model: "gpt-image-2",
+    });
   });
 
   it("removes already-written OAuth images when a later image fails", async () => {
@@ -197,7 +232,7 @@ describe("ImageGenerator OpenAI OAuth", () => {
       providerType: "openai",
       openai: {
         accessToken,
-        tokenExpiresAt: Date.now() + 60_000,
+        tokenExpiresAt: Date.now() + 600_000,
         authMethod: "oauth",
       },
     } as Any);
@@ -216,6 +251,10 @@ describe("ImageGenerator OpenAI OAuth", () => {
     });
 
     expect(result.success).toBe(false);
+    expect(responseStreamParams[0].tools[0]).toMatchObject({
+      type: "image_generation",
+      model: "gpt-image-2",
+    });
     expect(fs.existsSync(path.join(tempDir, "poster_1.png"))).toBe(false);
     expect(fs.existsSync(path.join(tempDir, "poster_2.png"))).toBe(false);
   });

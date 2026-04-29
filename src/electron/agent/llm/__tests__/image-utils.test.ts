@@ -23,6 +23,7 @@ describe("image-utils", () => {
   it("rejects unsupported providers", () => {
     const image = createImageContent("aGVsbG8=", "image/jpeg");
     expect(validateImageForProvider(image, "groq")).toMatch(/does not support inline images/i);
+    expect(validateImageForProvider(image, "gemini")).toMatch(/does not support inline images/i);
   });
 
   it("falls back unsupported image blocks to text", () => {

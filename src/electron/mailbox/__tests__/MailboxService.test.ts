@@ -845,7 +845,7 @@ describeWithSqlite("MailboxService", () => {
 
     expect(normalized).toHaveLength(1);
     expect(normalized[0]?.id).toBe(
-      "imap-thread:microsoft hesabınıza yeni uygulamalar bağlandı::account-security-noreply@accountprotection.microsoft.com",
+      "imap-thread:message:3090ad3d96cdf4b4925a38b1",
     );
     expect(normalized[0]?.participants).toEqual([
       {
@@ -869,6 +869,68 @@ describeWithSqlite("MailboxService", () => {
       imapUid: 901,
       rfcMessageId: "msg-901@example.com",
     });
+  });
+
+  it("keeps repeated standalone IMAP transactional emails as separate local threads", () => {
+    const normalized = (service as any).normalizeImapThreads("imap:user@msn.com", "user@msn.com", [
+      {
+        uid: 901,
+        messageId: "apple-invoice-march@example.com",
+        from: { name: "Apple", address: "no_reply@email.apple.com" },
+        to: [{ name: "Recipient", address: "user@msn.com" }],
+        subject: "Your invoice from Apple.",
+        text: "Invoice 28 March 2026",
+        date: "2026-03-28T23:06:26.000Z",
+        isRead: true,
+      },
+      {
+        uid: 902,
+        messageId: "apple-invoice-april@example.com",
+        from: { name: "Apple", address: "no_reply@email.apple.com" },
+        to: [{ name: "Recipient", address: "user@msn.com" }],
+        subject: "Your invoice from Apple.",
+        text: "Invoice 28 April 2026",
+        date: "2026-04-28T17:11:26.000Z",
+        isRead: true,
+      },
+    ]);
+
+    expect(normalized).toHaveLength(2);
+    expect(normalized.map((thread: any) => thread.messages)).toEqual([
+      [expect.objectContaining({ providerMessageId: "901" })],
+      [expect.objectContaining({ providerMessageId: "902" })],
+    ]);
+  });
+
+  it("groups IMAP replies when reference headers identify a conversation", () => {
+    const normalized = (service as any).normalizeImapThreads("imap:user@msn.com", "user@msn.com", [
+      {
+        uid: 901,
+        messageId: "root@example.com",
+        from: { name: "Sender", address: "sender@example.com" },
+        to: [{ name: "Recipient", address: "user@msn.com" }],
+        subject: "Project update",
+        text: "Root message",
+        date: "2026-04-28T10:00:00.000Z",
+        isRead: true,
+      },
+      {
+        uid: 902,
+        messageId: "reply@example.com",
+        inReplyTo: "root@example.com",
+        references: ["root@example.com"],
+        from: { name: "Sender", address: "sender@example.com" },
+        to: [{ name: "Recipient", address: "user@msn.com" }],
+        subject: "Re: Project update",
+        text: "Reply message",
+        date: "2026-04-28T10:05:00.000Z",
+        isRead: false,
+      },
+    ]);
+
+    expect(normalized).toHaveLength(1);
+    expect(normalized[0]?.id).toBe("imap-thread:conversation:7988c5c046ac0d336fdf3502");
+    expect(normalized[0]?.messages.map((message: any) => message.providerMessageId)).toEqual(["901", "902"]);
   });
 
   it("recovers a legacy IMAP message-id and marks the thread read", async () => {

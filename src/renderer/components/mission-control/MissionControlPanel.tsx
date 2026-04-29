@@ -6,6 +6,7 @@ import { MCOverviewTab } from "./MCOverviewTab";
 import { MCAgentsTab } from "./MCAgentsTab";
 import { MCBoardTab } from "./MCBoardTab";
 import { MCFeedTab } from "./MCFeedTab";
+import { MCIntelligenceTab } from "./MCIntelligenceTab";
 import { MCOpsTab } from "./MCOpsTab";
 import { MCDetailPanel } from "./MCDetailPanel";
 import { AgentRoleEditor } from "../AgentRoleEditor";
@@ -75,6 +76,7 @@ export function MissionControlPanel({
           {activeTab === "overview" && <MCOverviewTab data={data} />}
           {activeTab === "agents" && <MCAgentsTab data={data} />}
           {activeTab === "board" && <MCBoardTab data={data} />}
+          {activeTab === "intelligence" && <MCIntelligenceTab data={data} />}
           {activeTab === "feed" && <MCFeedTab data={data} />}
           {activeTab === "ops" && <MCOpsTab data={data} />}
         </div>

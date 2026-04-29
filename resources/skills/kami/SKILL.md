@@ -2,9 +2,12 @@
 
 ## Purpose
 
-Typeset professional documents with the Kami editorial design system: warm parchment canvas, one ink-blue accent, serif-led hierarchy, and restrained print-first spacing.
+Typeset professional documents with the Kami editorial design system only when
+the user explicitly asks for Kami, the Kami skill, or the Kami editorial design
+system by name. Generic presentation, document, report, resume, PDF, and
+PowerPoint requests should use the native artifact tools instead.
 
-This CoWork bundle ports the upstream [Kami](https://github.com/tw93/Kami) skill into a bundled skill with a workspace-local scaffold flow. The goal is to keep the strong visual system while avoiding edits to bundled templates under `resources/skills/`.
+This CoWork bundle ports the upstream [Kami](https://github.com/tw93/Kami) skill into a bundled skill with a workspace-local scaffold flow. The goal is to keep the strong visual system available on request while avoiding edits to bundled templates under `resources/skills/`.
 
 ## Licensing Note
 

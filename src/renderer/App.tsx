@@ -25,6 +25,7 @@ import type { SpreadsheetTurnContext } from "./components/SpreadsheetArtifactVie
 import { DocumentArtifactViewer } from "./components/DocumentArtifactViewer";
 import { PresentationArtifactViewer } from "./components/PresentationArtifactViewer";
 import { WebArtifactViewer } from "./components/WebArtifactViewer";
+import { BrowserWorkbenchView } from "./components/BrowserWorkbenchView";
 import { DisclaimerModal } from "./components/DisclaimerModal";
 import { Onboarding } from "./components/Onboarding";
 // TaskQueuePanel moved to RightPanel
@@ -145,6 +146,12 @@ const SPREADSHEET_SIDEBAR_MIN_WIDTH = 420;
 const SPREADSHEET_MAIN_MIN_WIDTH = 390;
 const SPREADSHEET_SIDEBAR_WIDTH_STORAGE_KEY = "cowork:spreadsheetSidebarWidth";
 type ActiveArtifactKind = "spreadsheet" | "document" | "presentation" | "webpage";
+type BrowserWorkbenchOpenRequest = {
+  requestId: string;
+  taskId: string;
+  sessionId: string;
+  url?: string;
+};
 
 function readPersistedSpreadsheetSidebarWidth(): number {
   try {
@@ -504,6 +511,7 @@ type SelectedTaskWorkspaceViewProps = {
   uiDensity: UiDensity;
   rendererPerfLoggingEnabled: boolean;
   effectiveRightCollapsed: boolean;
+  browserWorkbenchRequest: BrowserWorkbenchOpenRequest | null;
   rightPanelInput: {
     task: Task | undefined;
     workspace: Workspace | null;
@@ -521,6 +529,7 @@ type SelectedTaskWorkspaceViewProps = {
     message: string,
     images?: ImageAttachment[],
     quotedAssistantMessage?: QuotedAssistantMessage,
+    options?: { permissionMode?: PermissionMode; shellAccess?: boolean },
   ) => Promise<void>;
   onStartOnboarding: () => void;
   onCreateTask: (
@@ -581,6 +590,7 @@ const SelectedTaskWorkspaceView = memo(function SelectedTaskWorkspaceView({
   uiDensity,
   rendererPerfLoggingEnabled,
   effectiveRightCollapsed,
+  browserWorkbenchRequest,
   rightPanelInput,
   onSelectChildTask,
   onSelectTask,
@@ -607,6 +617,12 @@ const SelectedTaskWorkspaceView = memo(function SelectedTaskWorkspaceView({
     path: string;
     mode: "sidebar" | "fullscreen";
   } | null>(null);
+  const [browserWorkbench, setBrowserWorkbench] = useState<{
+    sessionId: string;
+    url?: string;
+    mode: "sidebar" | "fullscreen";
+    requestId?: string;
+  } | null>(null);
   const [lastSettledArtifactRefreshKey, setLastSettledArtifactRefreshKey] = useState<{
     path: string;
     key: string | null;
@@ -620,19 +636,26 @@ const SelectedTaskWorkspaceView = memo(function SelectedTaskWorkspaceView({
   );
   const [isSpreadsheetResizing, setIsSpreadsheetResizing] = useState(false);
   const openSpreadsheetArtifact = useCallback((path: string) => {
+    setBrowserWorkbench(null);
     setSpreadsheetArtifact({ kind: "spreadsheet", path, mode: "sidebar" });
   }, []);
   const openDocumentArtifact = useCallback((path: string) => {
+    setBrowserWorkbench(null);
     setSpreadsheetArtifact({ kind: "document", path, mode: "sidebar" });
   }, []);
   const openPresentationArtifact = useCallback((path: string) => {
+    setBrowserWorkbench(null);
     setSpreadsheetArtifact({ kind: "presentation", path, mode: "sidebar" });
   }, []);
   const openWebArtifact = useCallback((path: string) => {
+    setBrowserWorkbench(null);
     setSpreadsheetArtifact({ kind: "webpage", path, mode: "sidebar" });
   }, []);
   const closeSpreadsheetArtifact = useCallback(() => {
     setSpreadsheetArtifact(null);
+  }, []);
+  const closeBrowserWorkbench = useCallback(() => {
+    setBrowserWorkbench(null);
   }, []);
   const showSpreadsheetFullscreen = useCallback(() => {
     setSpreadsheetArtifact((current) =>
@@ -642,6 +665,21 @@ const SelectedTaskWorkspaceView = memo(function SelectedTaskWorkspaceView({
   const showSpreadsheetSidebar = useCallback(() => {
     setSpreadsheetArtifact((current) =>
       current ? { ...current, mode: "sidebar" } : current,
+    );
+  }, []);
+  const showBrowserFullscreen = useCallback(() => {
+    setBrowserWorkbench((current) =>
+      current ? { ...current, mode: "fullscreen" } : current,
+    );
+  }, []);
+  const showBrowserSidebar = useCallback(() => {
+    setBrowserWorkbench((current) =>
+      current ? { ...current, mode: "sidebar" } : current,
+    );
+  }, []);
+  const updateBrowserWorkbenchStatus = useCallback((status: { url?: string }) => {
+    setBrowserWorkbench((current) =>
+      current ? { ...current, url: status.url ?? current.url } : current,
     );
   }, []);
   const sendSpreadsheetFullscreenMessage = useCallback(
@@ -655,10 +693,34 @@ const SelectedTaskWorkspaceView = memo(function SelectedTaskWorkspaceView({
   );
   useEffect(() => {
     setSpreadsheetArtifact(null);
+    setBrowserWorkbench(null);
     setLastSettledArtifactRefreshKey(null);
     setSpreadsheetTurnStartedAt(null);
     setSpreadsheetOptimisticWorkingStartedAt(null);
   }, [selectedTaskId, workspace?.path]);
+  useEffect(() => {
+    if (!browserWorkbenchRequest || browserWorkbenchRequest.taskId !== selectedTaskId) return;
+    setSpreadsheetArtifact(null);
+    const containerWidth =
+      splitLayoutRef.current?.getBoundingClientRect().width || window.innerWidth;
+    const maxWidth = Math.max(
+      SPREADSHEET_SIDEBAR_MIN_WIDTH,
+      containerWidth - SPREADSHEET_MAIN_MIN_WIDTH,
+    );
+    const preferredBrowserWidth = Math.max(
+      SPREADSHEET_SIDEBAR_DEFAULT_WIDTH,
+      containerWidth - 460,
+    );
+    setSpreadsheetSidebarWidth(
+      Math.min(Math.max(preferredBrowserWidth, SPREADSHEET_SIDEBAR_MIN_WIDTH), maxWidth),
+    );
+    setBrowserWorkbench({
+      sessionId: browserWorkbenchRequest.sessionId || "default",
+      url: browserWorkbenchRequest.url,
+      mode: "sidebar",
+      requestId: browserWorkbenchRequest.requestId,
+    });
+  }, [browserWorkbenchRequest, selectedTaskId]);
   useEffect(() => {
     try {
       window.localStorage.setItem(
@@ -679,9 +741,16 @@ const SelectedTaskWorkspaceView = memo(function SelectedTaskWorkspaceView({
     return Math.min(Math.max(width, SPREADSHEET_SIDEBAR_MIN_WIDTH), maxWidth);
   }, []);
   useLayoutEffect(() => {
-    if (!spreadsheetArtifact || spreadsheetArtifact.mode !== "sidebar") return;
+    if (
+      !(
+        (spreadsheetArtifact && spreadsheetArtifact.mode === "sidebar") ||
+        (browserWorkbench && browserWorkbench.mode === "sidebar")
+      )
+    ) {
+      return;
+    }
     setSpreadsheetSidebarWidth((current) => clampSpreadsheetSidebarWidth(current));
-  }, [clampSpreadsheetSidebarWidth, spreadsheetArtifact]);
+  }, [browserWorkbench, clampSpreadsheetSidebarWidth, spreadsheetArtifact]);
   useEffect(() => {
     if (!isSpreadsheetResizing) return;
     const previousCursor = document.body.style.cursor;
@@ -799,6 +868,27 @@ const SelectedTaskWorkspaceView = memo(function SelectedTaskWorkspaceView({
       task,
     ],
   );
+  const browserTurnContext = useMemo(
+    () =>
+      browserWorkbench
+        ? buildSpreadsheetTurnContext({
+            task,
+            events: spreadsheetEvents,
+            filePath: browserWorkbench.url || "browser workbench",
+            isWorking: effectiveSpreadsheetTaskWorking,
+            durationLabel: spreadsheetWorkDuration,
+            turnStartedAt: activeSpreadsheetTurnStartedAt,
+          })
+        : null,
+    [
+      activeSpreadsheetTurnStartedAt,
+      browserWorkbench,
+      effectiveSpreadsheetTaskWorking,
+      spreadsheetEvents,
+      spreadsheetWorkDuration,
+      task,
+    ],
+  );
   const computedArtifactRefreshKey = useMemo(() => {
     if (!spreadsheetArtifact) return null;
     let latestTimestamp = 0;
@@ -854,6 +944,35 @@ const SelectedTaskWorkspaceView = memo(function SelectedTaskWorkspaceView({
         ? lastSettledArtifactRefreshKey.key
         : null
       : computedArtifactRefreshKey;
+
+  if (browserWorkbench?.mode === "fullscreen" && task) {
+    const selectedModelLabel =
+      availableModels.find((model) => model.key === selectedModel)?.displayName || selectedModel;
+    return (
+      <BrowserWorkbenchView
+        taskId={task.id}
+        sessionId={browserWorkbench.sessionId}
+        initialUrl={browserWorkbench.url}
+        workspaceId={workspace?.id}
+        workspacePath={workspace?.path}
+        mode="fullscreen"
+        onClose={closeBrowserWorkbench}
+        onFullscreen={showBrowserFullscreen}
+        onExitFullscreen={showBrowserSidebar}
+        onStatusChange={updateBrowserWorkbenchStatus}
+        onSendMessage={sendSpreadsheetFullscreenMessage}
+        selectedModelLabel={selectedModelLabel}
+        selectedModel={selectedModel}
+        selectedProvider={selectedProvider}
+        selectedReasoningEffort={selectedReasoningEffort}
+        availableModels={availableModels}
+        availableProviders={availableProviders}
+        onModelChange={onModelChange}
+        onOpenSettings={onOpenSettings}
+        turnContext={browserTurnContext}
+      />
+    );
+  }
 
   if (spreadsheetArtifact?.mode === "fullscreen" && workspace?.path) {
     const selectedModelLabel =
@@ -954,7 +1073,7 @@ const SelectedTaskWorkspaceView = memo(function SelectedTaskWorkspaceView({
   }
 
   const hasSpreadsheetSidebar =
-    Boolean(spreadsheetArtifact && workspace?.path && !remoteTaskView);
+    Boolean((spreadsheetArtifact || browserWorkbench) && workspace?.path && !remoteTaskView);
 
   return (
     <div
@@ -1007,13 +1126,13 @@ const SelectedTaskWorkspaceView = memo(function SelectedTaskWorkspaceView({
         onOpenPresentationArtifact={openPresentationArtifact}
         onOpenWebArtifact={openWebArtifact}
       />
-      {spreadsheetArtifact && workspace?.path && !remoteTaskView ? (
+      {(spreadsheetArtifact || browserWorkbench) && workspace?.path && !remoteTaskView ? (
         <>
           <div
             className="spreadsheet-sidebar-resize-handle"
             role="separator"
             aria-orientation="vertical"
-            aria-label="Resize spreadsheet sidebar"
+            aria-label="Resize workbench sidebar"
             aria-valuemin={SPREADSHEET_SIDEBAR_MIN_WIDTH}
             aria-valuenow={Math.round(spreadsheetSidebarWidth)}
             tabIndex={0}
@@ -1024,7 +1143,21 @@ const SelectedTaskWorkspaceView = memo(function SelectedTaskWorkspaceView({
             className="spreadsheet-resizable-sidebar"
             style={{ width: `${spreadsheetSidebarWidth}px` }}
           >
-            {spreadsheetArtifact.kind === "document" ? (
+            {browserWorkbench && task ? (
+              <BrowserWorkbenchView
+                taskId={task.id}
+                sessionId={browserWorkbench.sessionId}
+                initialUrl={browserWorkbench.url}
+                workspaceId={workspace.id}
+                workspacePath={workspace.path}
+                mode="sidebar"
+                onClose={closeBrowserWorkbench}
+                onFullscreen={showBrowserFullscreen}
+                onExitFullscreen={showBrowserSidebar}
+                onStatusChange={updateBrowserWorkbenchStatus}
+                onSendMessage={sendSpreadsheetFullscreenMessage}
+              />
+            ) : spreadsheetArtifact?.kind === "document" ? (
               <DocumentArtifactViewer
                 filePath={spreadsheetArtifact.path}
                 workspacePath={workspace.path}
@@ -1034,7 +1167,7 @@ const SelectedTaskWorkspaceView = memo(function SelectedTaskWorkspaceView({
                 onExitFullscreen={showSpreadsheetSidebar}
                 refreshKey={artifactRefreshKey}
               />
-            ) : spreadsheetArtifact.kind === "presentation" ? (
+            ) : spreadsheetArtifact?.kind === "presentation" ? (
               <PresentationArtifactViewer
                 filePath={spreadsheetArtifact.path}
                 workspacePath={workspace.path}
@@ -1044,7 +1177,7 @@ const SelectedTaskWorkspaceView = memo(function SelectedTaskWorkspaceView({
                 onExitFullscreen={showSpreadsheetSidebar}
                 refreshKey={artifactRefreshKey}
               />
-            ) : spreadsheetArtifact.kind === "webpage" ? (
+            ) : spreadsheetArtifact?.kind === "webpage" ? (
               <WebArtifactViewer
                 filePath={spreadsheetArtifact.path}
                 workspacePath={workspace.path}
@@ -1055,14 +1188,14 @@ const SelectedTaskWorkspaceView = memo(function SelectedTaskWorkspaceView({
                 refreshKey={artifactRefreshKey}
               />
             ) : (
-              <SpreadsheetArtifactViewer
+              spreadsheetArtifact ? <SpreadsheetArtifactViewer
                 filePath={spreadsheetArtifact.path}
                 workspacePath={workspace.path}
                 mode="sidebar"
                 onClose={closeSpreadsheetArtifact}
                 onFullscreen={showSpreadsheetFullscreen}
                 onExitFullscreen={showSpreadsheetSidebar}
-              />
+              /> : null
             )}
           </div>
         </>
@@ -1105,6 +1238,7 @@ const SelectedTaskWorkspaceView = memo(function SelectedTaskWorkspaceView({
   prev.uiDensity === next.uiDensity &&
   prev.rendererPerfLoggingEnabled === next.rendererPerfLoggingEnabled &&
   prev.effectiveRightCollapsed === next.effectiveRightCollapsed &&
+  prev.browserWorkbenchRequest?.requestId === next.browserWorkbenchRequest?.requestId &&
   prev.rightPanelInput === next.rightPanelInput
 );
 
@@ -1392,6 +1526,8 @@ export function App() {
   );
   const [missionControlInitialIssueId, setMissionControlInitialIssueId] = useState<string | null>(null);
   const [browserUrl, setBrowserUrl] = useState<string>("");
+  const [browserWorkbenchRequest, setBrowserWorkbenchRequest] =
+    useState<BrowserWorkbenchOpenRequest | null>(null);
   const [settingsTab, setSettingsTab] = useState<
     | "appearance"
     | "llm"
@@ -2143,6 +2279,18 @@ export function App() {
   useEffect(() => {
     currentWorkspaceRef.current = currentWorkspace;
   }, [currentWorkspace]);
+
+  useEffect(() => {
+    if (!window.electronAPI?.onBrowserWorkbenchOpenRequest) return;
+    return window.electronAPI.onBrowserWorkbenchOpenRequest((request) => {
+      if (!request?.taskId) return;
+      setCurrentView("main");
+      setSelectedTaskId(request.taskId);
+      setRemoteTaskView(null);
+      setRightSidebarCollapsed(false);
+      setBrowserWorkbenchRequest(request);
+    });
+  }, []);
 
   // Restore session auto-approve state from main process (survives HMR and renderer resets)
   useEffect(() => {
@@ -3395,6 +3543,7 @@ export function App() {
     message: string,
     images?: ImageAttachment[],
     quotedAssistantMessage?: QuotedAssistantMessage,
+    options?: { permissionMode?: PermissionMode; shellAccess?: boolean },
   ) => {
     if (!selectedTaskId) return;
 
@@ -3461,6 +3610,7 @@ export function App() {
           nextMessage,
           images,
           quotedAssistantMessage,
+          options,
         );
       }
     } catch (error: unknown) {
@@ -4424,6 +4574,7 @@ export function App() {
                 uiDensity={uiDensity}
                 rendererPerfLoggingEnabled={rendererPerfLoggingEnabled}
                 effectiveRightCollapsed={effectiveRightCollapsed}
+                browserWorkbenchRequest={browserWorkbenchRequest}
                 rightPanelInput={deferredRightPanelInput}
                 onSelectChildTask={handleSelectChildTaskFromMainContent}
                 onSelectTask={handleSelectTaskFromShell}

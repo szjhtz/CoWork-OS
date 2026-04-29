@@ -185,19 +185,47 @@ describe("PermissionEngine", () => {
       }).decision,
     ).toBe("allow");
 
-    expect(
-      evaluate({
-        toolName: "http_request",
-        approvalType: "data_export",
-        mode: "dont_ask",
+	    expect(
+	      evaluate({
+	        toolName: "http_request",
+	        approvalType: "data_export",
+	        mode: "dont_ask",
         toolInput: {
           url: "https://api.example.com/export",
           method: "POST",
           body: "payload",
         },
-      }).decision,
-    ).toBe("ask");
-  });
+	      }).decision,
+	    ).toBe("ask");
+	  });
+
+	  it("allows approval-gated actions in bypass-permissions mode", () => {
+	    const cases = [
+	      evaluate({
+	        toolName: "run_command",
+	        approvalType: "run_command",
+	        command: "npm run build",
+	        mode: "bypass_permissions",
+	      }),
+	      evaluate({
+	        toolName: "gmail_action",
+	        approvalType: "external_service",
+	        mode: "bypass_permissions",
+	      }),
+	      evaluate({
+	        toolName: "http_request",
+	        approvalType: "data_export",
+	        mode: "bypass_permissions",
+	        toolInput: {
+	          url: "https://api.example.com/export",
+	          method: "POST",
+	          body: "payload",
+	        },
+	      }),
+	    ];
+
+	    expect(cases.map((result) => result.decision)).toEqual(["allow", "allow", "allow"]);
+	  });
 
   it("allows safe commands and read-only tools in dangerous_only mode", () => {
     expect(

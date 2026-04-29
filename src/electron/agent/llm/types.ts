@@ -172,9 +172,9 @@ export const PROVIDER_IMAGE_CAPS: Record<string, LLMProviderImageCaps> = {
     supportedMimeTypes: ["image/jpeg", "image/png", "image/webp", "image/gif"],
   },
   gemini: {
-    supportsImages: true,
-    maxImageBytes: 20 * 1024 * 1024,
-    supportedMimeTypes: ["image/jpeg", "image/png", "image/gif", "image/webp"],
+    supportsImages: false,
+    maxImageBytes: 0,
+    supportedMimeTypes: [],
   },
   azure: {
     supportsImages: true,

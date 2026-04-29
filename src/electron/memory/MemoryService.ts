@@ -31,6 +31,7 @@ import {
 import { MarkdownMemoryIndexService } from "./MarkdownMemoryIndexService";
 import { MemoryTierService } from "./MemoryTierService";
 import { SupermemoryService } from "./SupermemoryService";
+import { MemoryObservationService } from "./MemoryObservationService";
 import type { CoreMemoryScopeKind } from "../../shared/types";
 import { MemoryFeaturesManager } from "../settings/memory-features-manager";
 import { createLogger } from "../utils/logger";
@@ -179,6 +180,7 @@ export class MemoryService {
     this.summaryRepo = new MemorySummaryRepository(db);
     this.settingsRepo = new MemorySettingsRepository(db);
     this.markdownIndex = new MarkdownMemoryIndexService(db);
+    MemoryObservationService.initialize(db);
     this.initialized = true;
 
     // Start periodic cleanup
@@ -257,6 +259,10 @@ export class MemoryService {
   ): Promise<Memory | null> {
     this.ensureInitialized();
 
+    if (this.containsNoMemoryDirective(content)) {
+      return null;
+    }
+
     // Check settings
     const settings = this.settingsRepo.getOrCreate(workspaceId);
     if (!settings.enabled || !settings.autoCapture) {
@@ -268,21 +274,26 @@ export class MemoryService {
       return null;
     }
 
+    const privacyPrepared = this.applyInlinePrivacy(content);
+
     // Check excluded patterns
-    if (this.shouldExclude(content, settings)) {
+    if (this.shouldExclude(privacyPrepared.content, settings)) {
       return null;
     }
 
     // Check for sensitive content
-    const containsSensitive = this.containsSensitiveData(content);
-    const finalIsPrivate = isPrivate || containsSensitive || settings.privacyMode === "strict";
+    const containsSensitive = this.containsSensitiveData(privacyPrepared.content);
+    const finalIsPrivate =
+      isPrivate || privacyPrepared.hadPrivateBlock || containsSensitive || settings.privacyMode === "strict";
 
     // Estimate tokens
-    const tokens = estimateTokens(content);
+    const tokens = estimateTokens(privacyPrepared.content);
 
     // Truncate very long content
     const truncatedContent =
-      content.length > 10000 ? content.slice(0, 10000) + "\n[... truncated]" : content;
+      privacyPrepared.content.length > 10000
+        ? privacyPrepared.content.slice(0, 10000) + "\n[... truncated]"
+        : privacyPrepared.content;
 
     // Create memory
     const memory = this.memoryRepo.create({
@@ -318,6 +329,26 @@ export class MemoryService {
     const localSummary = this.buildDeterministicSummary(truncatedContent);
     if (localSummary) {
       this.updateMemorySummary(memory, workspaceId, localSummary, true);
+    }
+
+    if (MemoryFeaturesManager.loadSettings().structuredObservationsEnabled !== false) {
+      MemoryObservationService.createForMemory(
+        {
+          ...memory,
+          summary: localSummary || memory.summary,
+          content: truncatedContent,
+          isPrivate: finalIsPrivate,
+        },
+        {
+          origin: options?.origin ?? (taskId ? "task" : "unknown"),
+          captureReason: options?.signalFamily || "memory_capture",
+          privacyState: finalIsPrivate
+            ? privacyPrepared.hadPrivateBlock
+              ? "redacted"
+              : "private"
+            : "normal",
+        },
+      );
     }
 
     // Queue a batched LLM digest only when the signal is worth it. Routine entries
@@ -751,7 +782,10 @@ export class MemoryService {
     this.ensureInitialized();
     return this.memoryRepo
       .getRecentForWorkspace(workspaceId, limit, true)
-      .filter((memory) => !this.isPromptRecallIgnoredContent(memory.content));
+      .filter((memory) =>
+        !this.isPromptRecallIgnoredContent(memory.content) &&
+        !MemoryObservationService.isPromptSuppressed(memory.id)
+      );
   }
 
   static searchForPromptRecall(workspaceId: string, query: string, limit = 20): MemorySearchResult[] {
@@ -762,7 +796,10 @@ export class MemoryService {
     const details = this.memoryRepo.getFullDetails(results.map((result) => result.id));
     const ignoredIds = new Set(
       details
-        .filter((memory) => this.isPromptRecallIgnoredContent(memory.content))
+        .filter((memory) =>
+          this.isPromptRecallIgnoredContent(memory.content) ||
+          MemoryObservationService.isPromptSuppressed(memory.id)
+        )
         .map((memory) => memory.id),
     );
     if (ignoredIds.size === 0) return results;
@@ -791,6 +828,19 @@ export class MemoryService {
     if (this.isPromptRecallIgnoredContent(content)) return content;
     const stripped = this.stripPromptRecallIgnoreMarker(content);
     return `${PROMPT_RECALL_IGNORE_MARKER}\n${stripped}`;
+  }
+
+  private static containsNoMemoryDirective(content: string): boolean {
+    return /<\s*no-memory\s*\/?\s*>/i.test(content);
+  }
+
+  private static applyInlinePrivacy(content: string): { content: string; hadPrivateBlock: boolean } {
+    let hadPrivateBlock = false;
+    const redacted = content.replace(/<\s*private\s*>[\s\S]*?<\s*\/\s*private\s*>/gi, () => {
+      hadPrivateBlock = true;
+      return "[private content redacted]";
+    });
+    return { content: redacted, hadPrivateBlock };
   }
 
   /**

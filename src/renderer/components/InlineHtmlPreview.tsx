@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { ExternalLink } from "lucide-react";
 import type { FileViewerResult } from "../../electron/preload";
 
 type InlineHtmlPreviewProps = {
@@ -117,13 +118,14 @@ export function InlineHtmlPreview({
               </div>
             </div>
             <div className="inline-html-header-actions">
-              <button className="inline-html-action-btn" onClick={handleOpen} title="Open preview">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <polyline points="15 3 21 3 21 9" />
-                  <polyline points="9 21 3 21 3 15" />
-                  <line x1="21" y1="3" x2="14" y2="10" />
-                  <line x1="3" y1="21" x2="10" y2="14" />
-                </svg>
+              <button
+                className="inline-html-action-btn"
+                type="button"
+                onClick={handleOpen}
+                title="Open preview"
+                aria-label="Open HTML preview"
+              >
+                <ExternalLink size={16} strokeWidth={2.25} aria-hidden="true" />
               </button>
             </div>
           </div>
@@ -132,7 +134,7 @@ export function InlineHtmlPreview({
             <iframe
               className="inline-html-frame"
               srcDoc={result.htmlContent}
-              sandbox=""
+              sandbox="allow-scripts"
               title={displayTitle}
             />
           </div>

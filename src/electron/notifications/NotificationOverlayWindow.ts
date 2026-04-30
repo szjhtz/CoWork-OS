@@ -2,7 +2,7 @@
  * NotificationOverlayWindow — macOS-style top-right notification banner
  *
  * Creates frameless, transparent, always-on-top BrowserWindows that display
- * pill-shaped banners aligned to the top-right of the display work area (same
+ * rounded notification banners aligned to the top-right of the display work area (same
  * region as system notifications). Follows the same pattern as QuickInputWindow
  * (data URL, console-message IPC).
  */
@@ -24,8 +24,8 @@ interface ActiveOverlay {
   index: number;
 }
 
-const NOTIFICATION_WIDTH = 340;
-const NOTIFICATION_HEIGHT = 82;
+const NOTIFICATION_WIDTH = 370;
+const NOTIFICATION_HEIGHT = 92;
 const GAP = 10;
 const MENU_BAR_GAP = 8;
 /** Inset from the work-area edge — matches typical macOS banner padding */
@@ -178,6 +178,8 @@ export class NotificationOverlayManager {
           this.onClickCallback(notification.id, notification.taskId);
         }
         this.dismiss(notification.id);
+      } else if (message === "__DISMISS__") {
+        this.dismiss(notification.id);
       }
     });
 
@@ -235,8 +237,6 @@ export class NotificationOverlayManager {
   private getHtml(notification: OverlayNotification): string {
     const title = this.escapeHtml(notification.title);
     const message = this.escapeHtml(notification.message);
-    const radius = NOTIFICATION_HEIGHT / 2;
-
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -260,20 +260,21 @@ export class NotificationOverlayManager {
     -webkit-user-select: none;
   }
 
-  /* Keep the blur on a clipped layer instead of the window root to avoid
-     Chromium showing the transparent window bounds as a faint rectangle. */
   #n {
-    position: relative;
+    position: absolute;
+    inset: 3px;
     display: flex;
-    align-items: center;
-    gap: 14px;
-    height: 100%;
-    padding: 0 22px 0 15px;
-    border-radius: ${radius}px;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 12px 36px 12px 13px;
+    border-radius: 18px;
     overflow: hidden;
     isolation: isolate;
-    animation: in 0.38s cubic-bezier(0.16, 1, 0.3, 1);
-    transform-origin: top center;
+    box-shadow:
+      0 18px 48px rgba(0, 0, 0, 0.32),
+      0 4px 14px rgba(0, 0, 0, 0.24);
+    animation: in 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+    transform-origin: top right;
   }
 
   #n::before {
@@ -281,9 +282,9 @@ export class NotificationOverlayManager {
     position: absolute;
     inset: 0;
     border-radius: inherit;
-    background: rgba(28, 28, 36, 0.92);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
+    background: rgba(38, 38, 42, 0.88);
+    backdrop-filter: blur(30px) saturate(170%);
+    -webkit-backdrop-filter: blur(30px) saturate(170%);
     z-index: -2;
   }
 
@@ -293,19 +294,19 @@ export class NotificationOverlayManager {
     inset: 0;
     border-radius: inherit;
     box-shadow:
-      inset 0 0 0 0.5px rgba(255, 255, 255, 0.12),
-      inset 0 1px 0 rgba(255, 255, 255, 0.08);
+      inset 0 0 0 0.5px rgba(255, 255, 255, 0.18),
+      inset 0 1px 0 rgba(255, 255, 255, 0.13);
     z-index: -1;
     pointer-events: none;
   }
 
   @keyframes in {
-    from { opacity: 0; transform: scaleX(0.72) scaleY(0.4); }
-    to   { opacity: 1; transform: scaleX(1)    scaleY(1); }
+    from { opacity: 0; transform: translateX(18px) scale(0.98); }
+    to   { opacity: 1; transform: translateX(0) scale(1); }
   }
 
   body:hover #n::before {
-    background: rgba(32, 32, 42, 0.95);
+    background: rgba(42, 42, 46, 0.92);
   }
 
   #n.out {
@@ -313,27 +314,30 @@ export class NotificationOverlayManager {
   }
 
   @keyframes out {
-    to { opacity: 0; transform: scaleY(0.5) scaleX(0.8); }
+    to { opacity: 0; transform: translateX(14px) scale(0.98); }
   }
 
-  .icon {
-    width: 52px;
-    height: 52px;
-    min-width: 52px;
-    border-radius: 50%;
-    background: linear-gradient(145deg, #0891b2 0%, #22d3ee 55%, #06b6d4 100%);
+  .app-icon {
+    width: 42px;
+    height: 42px;
+    min-width: 42px;
+    margin-top: 2px;
+    border-radius: 10px;
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.26), rgba(255, 255, 255, 0) 42%),
+      linear-gradient(145deg, #06b6d4 0%, #0891b2 100%);
     display: flex;
     align-items: center;
     justify-content: center;
     box-shadow:
-      0 2px 10px rgba(6, 182, 212, 0.4),
-      inset 0 1px 0 rgba(255, 255, 255, 0.3);
+      0 1px 2px rgba(0, 0, 0, 0.28),
+      inset 0 0 0 0.5px rgba(255, 255, 255, 0.22);
   }
 
-  .icon svg {
-    width: 26px;
-    height: 26px;
-    filter: drop-shadow(0 1px 2px rgba(0,0,0,0.3));
+  .app-icon svg {
+    width: 23px;
+    height: 23px;
+    filter: drop-shadow(0 1px 1px rgba(0,0,0,0.24));
   }
 
   .text {
@@ -342,35 +346,97 @@ export class NotificationOverlayManager {
     overflow: hidden;
   }
 
+  .meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    margin-bottom: 2px;
+  }
+
+  .app-name {
+    min-width: 0;
+    color: rgba(255, 255, 255, 0.82);
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.2;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    letter-spacing: 0;
+  }
+
+  .time {
+    color: rgba(255, 255, 255, 0.42);
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.2;
+    white-space: nowrap;
+  }
+
   .title {
-    font-size: 15px;
+    font-size: 14px;
     font-weight: 600;
     color: rgba(255, 255, 255, 0.96);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    letter-spacing: -0.2px;
-    line-height: 1.35;
-    text-shadow: 0 1px 3px rgba(0,0,0,0.4);
+    letter-spacing: 0;
+    line-height: 1.25;
   }
 
   .sub {
     font-size: 13px;
     font-weight: 400;
-    color: rgba(255, 255, 255, 0.5);
+    color: rgba(255, 255, 255, 0.68);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
     margin-top: 2px;
-    letter-spacing: -0.1px;
-    line-height: 1.35;
-    text-shadow: 0 1px 2px rgba(0,0,0,0.3);
+    letter-spacing: 0;
+    line-height: 1.3;
+  }
+
+  .dismiss {
+    position: absolute;
+    top: 9px;
+    right: 9px;
+    width: 18px;
+    height: 18px;
+    border: 0;
+    border-radius: 50%;
+    color: rgba(255, 255, 255, 0.62);
+    background: rgba(255, 255, 255, 0.12);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    opacity: 0;
+    cursor: default;
+    transition:
+      opacity 0.12s ease,
+      background 0.12s ease,
+      color 0.12s ease;
+  }
+
+  body:hover .dismiss {
+    opacity: 1;
+  }
+
+  .dismiss:hover {
+    background: rgba(255, 255, 255, 0.2);
+    color: rgba(255, 255, 255, 0.88);
+  }
+
+  .dismiss svg {
+    width: 11px;
+    height: 11px;
   }
 </style>
 </head>
 <body>
   <div id="n" onclick="console.log('__CLICK__')">
-    <div class="icon">
+    <div class="app-icon" aria-hidden="true">
       <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-linecap="round" stroke-linejoin="round">
         <rect x="2.2" y="7.1" width="19.6" height="9.4" rx="1.15" stroke-width="1.7"/>
         <path d="M4.3 16.9c0.45 1 1.25 1.45 2.55 1.45h10.3c1.3 0 2.1-0.45 2.55-1.45" stroke-width="1.5"/>
@@ -379,9 +445,18 @@ export class NotificationOverlayManager {
       </svg>
     </div>
     <div class="text">
+      <div class="meta">
+        <div class="app-name">CoWork OS</div>
+        <div class="time">now</div>
+      </div>
       <div class="title">${title}</div>
       <div class="sub">${message}</div>
     </div>
+    <button class="dismiss" type="button" aria-label="Dismiss" onclick="event.stopPropagation(); console.log('__DISMISS__')">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+        <path d="M4.5 4.5l7 7M11.5 4.5l-7 7" />
+      </svg>
+    </button>
   </div>
   <script>
     setTimeout(function(){

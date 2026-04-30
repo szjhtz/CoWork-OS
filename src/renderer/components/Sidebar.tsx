@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback, Fragment, useDeferredValue } from "react";
-import { ChevronDown, ChevronRight, SlidersHorizontal, EyeOff, AppWindow, Bell, HardDrive, Rows3, Search, Server, Workflow, HeartPulse, Lightbulb, Inbox, Users, UsersRound, ListFilter, EllipsisVertical } from "lucide-react";
+import { ChevronDown, ChevronRight, SlidersHorizontal, EyeOff, AppWindow, Bell, HardDrive, Rows3, Search, Server, Workflow, HeartPulse, Lightbulb, Inbox, Users, UsersRound, ListFilter, EllipsisVertical, Shapes } from "lucide-react";
 import { resolveTwinIcon } from "../utils/twin-icons";
 import { stripAllEmojis } from "../utils/emoji-replacer";
 import { Task, Workspace, UiDensity, InfraStatus, UpdateInfo } from "../../shared/types";
@@ -8,7 +8,7 @@ import { isAutomatedTaskLike } from "../../shared/automated-task-detection";
 import { VirtualList } from "./VirtualList";
 import { isPretextEnabled } from "../utils/pretext-adapter";
 
-const SIDEBAR_ITEM_HEIGHT = 36;
+const SIDEBAR_ITEM_HEIGHT = 26;
 const SIDEBAR_LOAD_MORE_THRESHOLD_PX = 320;
 
 interface AgentRoleInfo {
@@ -253,11 +253,22 @@ function isGenericSidebarTitle(value: string): boolean {
   return GENERIC_SESSION_TITLES.has(normalizeSidebarSessionSearch(value));
 }
 
+export function capitalizeSidebarSessionTitle(value: string): string {
+  const firstLowercaseLetterIndex = value.search(/\p{Ll}/u);
+  if (firstLowercaseLetterIndex < 0) return value;
+
+  const prefix = value.slice(0, firstLowercaseLetterIndex);
+  if (/\p{L}/u.test(prefix)) return value;
+
+  const letter = value[firstLowercaseLetterIndex];
+  return `${prefix}${letter.toLocaleUpperCase()}${value.slice(firstLowercaseLetterIndex + 1)}`;
+}
+
 export function getSidebarSessionTitle(node: Pick<TaskTreeNode, "displayTitle" | "task">): string {
   const primaryCandidates = [node.displayTitle, node.task.title];
   for (const candidate of primaryCandidates) {
     const normalized = normalizeSidebarTitleCandidate(candidate);
-    if (normalized && !isGenericSidebarTitle(normalized)) return normalized;
+    if (normalized && !isGenericSidebarTitle(normalized)) return capitalizeSidebarSessionTitle(normalized);
   }
 
   const fallbackCandidates = [
@@ -272,7 +283,7 @@ export function getSidebarSessionTitle(node: Pick<TaskTreeNode, "displayTitle" |
   ];
   for (const candidate of fallbackCandidates) {
     const normalized = normalizeSidebarTitleCandidate(candidate);
-    if (normalized) return normalized;
+    if (normalized) return capitalizeSidebarSessionTitle(normalized);
   }
 
   return "Untitled session";
@@ -1798,7 +1809,9 @@ export function Sidebar({
             <span className="cli-btn-text">
               <span className="terminal-only">more</span>
               <span className="modern-only cli-new-task-modern-label">
-                <span className="sidebar-home-btn-icon sidebar-more-dots" aria-hidden="true">•••</span>
+                <span className="sidebar-home-btn-icon sidebar-more-dots" aria-hidden="true" style={{ display: "flex" }}>
+                  <Shapes size={16} strokeWidth={2.1} style={{ display: "block" }} />
+                </span>
                 <span>More</span>
               </span>
             </span>

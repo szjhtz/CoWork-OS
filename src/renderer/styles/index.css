@@ -18312,12 +18312,8 @@ button {
 }
 
 .sidebar-more-dots {
+  align-items: center;
   justify-content: flex-start;
-  font-family: var(--font-ui);
-  font-size: 14px;
-  font-weight: 700;
-  letter-spacing: 0.5px;
-  line-height: 1;
 }
 
 .sidebar-more-items {
@@ -18679,7 +18675,7 @@ button {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 8px 5px 16px !important;
+  padding: 0 8px 0 16px !important;
   padding-left: var(--cli-task-padding-left, 16px) !important;
   border-radius: 0 !important;
   background: transparent !important;
@@ -19370,6 +19366,7 @@ button {
 .cli-task-title {
   display: block;
   font-size: 12px;
+  line-height: 1.25;
   color: var(--color-text-secondary);
   overflow: hidden;
   text-overflow: clip;
@@ -19399,7 +19396,7 @@ button {
   gap: 6px;
   flex-shrink: 0;
   margin-left: auto;
-  min-height: 28px;
+  min-height: 22px;
 }
 
 .cli-task-action-wrap {
@@ -19408,7 +19405,7 @@ button {
   justify-content: flex-end;
   flex-shrink: 0;
   margin-left: auto;
-  min-height: 28px;
+  min-height: 22px;
 }
 
 .cli-task-title-with-agent {
@@ -19483,7 +19480,7 @@ button {
 .cli-task-item:hover .cli-task-actions,
 .cli-task-item:focus-within .cli-task-actions,
 .cli-task-actions:has(.task-item-menu) {
-  width: 30px;
+  width: 26px;
   margin-left: 0;
   opacity: 1;
   pointer-events: auto;
@@ -19504,14 +19501,14 @@ button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   color: var(--color-text-muted);
   background: color-mix(in srgb, var(--color-accent) 6%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-accent) 42%, transparent);
   padding: 0;
   cursor: pointer;
-  border-radius: 10px;
+  border-radius: 8px;
   transition:
     background 0.15s ease,
     border-color 0.15s ease,
@@ -40218,7 +40215,7 @@ button {
 }
 
 .right-panel .cli-context-key {
-  font-weight: 550;
+  font-weight: 400;
 }
 
 .right-panel .cli-progress-item,
@@ -40384,7 +40381,7 @@ button {
 
 /* Task items: tight, clean, text-only feel */
 .density-focused .task-item {
-  padding: 4px 12px;
+  padding: 1px 12px;
   gap: 6px;
   font-family: var(--font-ui);
   border-radius: 8px;

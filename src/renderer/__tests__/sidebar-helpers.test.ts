@@ -5,6 +5,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Task } from "../../shared/types";
 import {
+  capitalizeSidebarSessionTitle,
   compareTasksByPinAndRecency,
   countHiddenFailedSessions,
   filterTaskTreeBySearch,
@@ -231,6 +232,16 @@ describe("normalizeSidebarSessionSearch", () => {
   });
 });
 
+describe("capitalizeSidebarSessionTitle", () => {
+  it("capitalizes a lower-case session title", () => {
+    expect(capitalizeSidebarSessionTitle("create a sample spreadsheet")).toBe("Create a sample spreadsheet");
+  });
+
+  it("keeps already-capitalized and acronym-leading titles unchanged", () => {
+    expect(capitalizeSidebarSessionTitle("VPN setup")).toBe("VPN setup");
+  });
+});
+
 describe("getSidebarSessionTitle", () => {
   it("uses a meaningful task title when present", () => {
     const title = getSidebarSessionTitle({
@@ -261,6 +272,14 @@ describe("getSidebarSessionTitle", () => {
     });
 
     expect(title).toBe("Create a customer follow-up checklist");
+  });
+
+  it("capitalizes lower-case sidebar titles for display", () => {
+    const title = getSidebarSessionTitle({
+      task: createTask({ title: "go to llmwizard.com and test", prompt: "Fallback prompt" }),
+    });
+
+    expect(title).toBe("Go to llmwizard.com and test");
   });
 });
 

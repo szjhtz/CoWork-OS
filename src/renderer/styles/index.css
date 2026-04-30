@@ -82,11 +82,9 @@ button:focus-visible,
 
   /* Typography - consistent font stacks */
   --font-ui:
-    -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI",
-    sans-serif;
+    "Source Sans 3", "Helvetica Neue", "Segoe UI", Helvetica, Arial, sans-serif;
   --font-content:
-    -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI",
-    sans-serif;
+    "Source Sans 3", "Helvetica Neue", "Segoe UI", Helvetica, Arial, sans-serif;
   --font-mono: "SF Mono", "Fira Code", "Consolas", monospace;
   --font-sans: var(--font-ui);
 
@@ -146,7 +144,7 @@ button:focus-visible,
   --radius-lg: 14px;
   --radius-xl: 18px;
   --font-content: "JetBrains Mono", "Fira Code", "Menlo", monospace;
-  --font-ui: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-ui: "Source Sans 3", "Helvetica Neue", "Segoe UI", Helvetica, Arial, sans-serif;
 }
 
 /* Modern Visual Theme (default visual style, same base colors) */
@@ -156,9 +154,9 @@ button:focus-visible,
   --radius-lg: 20px;
   --radius-xl: 24px;
   --font-content:
-    "Avenir Next", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    "Source Sans 3", "Helvetica Neue", "Segoe UI", Helvetica, Arial, sans-serif;
   --font-ui:
-    "Avenir Next", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    "Source Sans 3", "Helvetica Neue", "Segoe UI", Helvetica, Arial, sans-serif;
 }
 
 /* Hide CLI-specific decorations in modern style */

@@ -34,28 +34,28 @@ Ask Inbox uses a hybrid search pipeline implemented by `MailboxAgentSearchServic
 
 The pipeline is intentionally broad first, then selective:
 
-1. **Classify instruction/action intent**  
+1. **Classify instruction/action intent**
    Detect whether the prompt is a question, a safe mailbox action request, or a follow-up-draft instruction.
 
-2. **Plan mailbox search**  
+2. **Plan mailbox search**
    Extract entities, organization/sender hints, dates, payment/statement/invoice terms, attachment hints, and provider query variants.
 
-3. **Search local FTS**  
+3. **Search local FTS**
    Search the synced local mailbox text with normalized keyword variants.
 
-4. **Search semantic mailbox index**  
+4. **Search semantic mailbox index**
    Use the local mailbox embedding index for prompts where exact words differ from the email wording.
 
-5. **Search provider-native mail when available**  
+5. **Search provider-native mail when available**
    Ask connected Gmail or Outlook/Microsoft Graph providers for additive candidates. Provider search is best-effort; local search remains the fallback.
 
-6. **Extract/read attachments when relevant**  
+6. **Extract/read attachments when relevant**
    For invoices, statements, extracts, PDFs, payment notices, and related prompts, include attachment metadata and cached extracted text. Candidate attachment extraction is lazy and local-first.
 
-7. **Shortlist and read evidence**  
+7. **Shortlist and read evidence**
    Deduplicate by thread/message, read full body and relevant attachment text for top candidates, and rerank by lexical, semantic, provider, recency, entity, and attachment/body evidence signals.
 
-8. **Generate answer or create drafts**  
+8. **Generate answer or create drafts**
    If the prompt is an answerable question, generate a concise answer over the evidence. If it is a safe follow-up-draft request, create reviewable drafts instead of silently sending.
 
 The key behavior is that Ask Inbox can answer prompts such as:
@@ -146,4 +146,3 @@ UI regressions to protect:
 - streamed events update only the matching `runId`
 - matched email rows stay aligned across selected/unselected state and long titles
 - clicking matched evidence opens the corresponding mailbox thread
-

@@ -185,7 +185,7 @@ Chronicle should be treated as **context evidence**, not as an authority overrid
 
 - [Features](features.md)
 - [Getting Started](getting-started.md)
-- [Computer use (macOS)](computer-use.md)
+- [Computer use](computer-use.md)
 - [Mission Control](mission-control.md)
 - [Workspace Memory Flow](workspace-memory-flow.md)
 - [Operator Runtime Visibility](operator-runtime-visibility.md)

@@ -105,15 +105,15 @@ const TOOL_PROMPT_METADATA_BY_NAME: Record<string, LLMToolPromptMetadata> = {
   })),
   run_command: createPromptMetadata(() => ({
     appendDescription:
-      "Use for shell, test, build, packaging, git, and local CLI work. Prefer this over browser or web tools for local execution. Do not use this for native macOS GUI control when screenshot/click/type_text/keypress and related computer-use tools are available. If a test or build fails, inspect the output, fix the cause, then rerun.",
+      "Use for shell, test, build, packaging, git, and local CLI work. Prefer this over browser or web tools for local execution. Do not use this for native desktop GUI control when screenshot/click/type_text/keypress and related computer-use tools are available. If a test or build fails, inspect the output, fix the cause, then rerun.",
     compactDescription:
       "Use for shell, test, build, git, and local CLI execution. Do not use it for native GUI control when computer-use tools fit.",
   })),
   screenshot: createPromptMetadata(() => ({
     appendDescription:
-      "For native macOS computer use, call this first and rely on the latest screenshot only. Each successful computer-use action returns a fresh screenshot state; do not keep acting from stale captures or switch to run_command/run_applescript unless the computer-use lane is explicitly unavailable.",
+      "For native desktop computer use, call this first and rely on the latest screenshot only. Each successful computer-use action returns a fresh screenshot state; do not keep acting from stale captures or switch to run_command/run_applescript unless the computer-use lane is explicitly unavailable.",
     compactDescription:
-      "For native macOS computer use, call this first and always use the newest screenshot state.",
+      "For native desktop computer use, call this first and always use the newest screenshot state.",
   })),
   click: createPromptMetadata(() => ({
     appendDescription:

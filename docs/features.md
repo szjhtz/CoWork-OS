@@ -119,12 +119,12 @@ CoWork includes `llm-wiki` as a bundled first-class research-vault workflow insp
 
 See [LLM Wiki](llm-wiki.md) for command syntax, layout, modes, and analyzer behavior.
 
-### Computer use (macOS)
+### Computer use
 
-Desktop automation for **native apps** when MCP, browser automation, and shell are not enough. **Full guide:** [Computer use (macOS)](computer-use.md).
+Desktop automation for **native apps** on macOS and Windows when MCP, browser automation, and shell are not enough. **Full guide:** [Computer use](computer-use.md).
 
 - **Session lifecycle**: One active computer-use session at a time; global **Esc** abort; cleanup when the task finishes or the session ends.
-- **Helper-targeted permissions**: Accessibility and Screen Recording are granted to the bundled helper binary through inline bootstrap and surfaced in **Settings → Tools**; restarting the app may be needed after Screen Recording changes.
+- **Platform helpers**: macOS uses helper-targeted Accessibility and Screen Recording permissions; Windows v1 controls visible, non-minimized windows through a bundled Win32 helper.
 - **Built-in tools category**: Enable/disable and priority for the `computer_use` tool family alongside other built-in categories.
 - **Policy & planning**: Tool availability defers the computer-use lane unless the task signals native/desktop GUI intent; executor guidance treats computer use as last resort after integrations, `browser_*`, and shell. For native GUI tasks, routing prefers **`screenshot`**, **`click`**, **`type_text`**, **`keypress`**, and related tools (plus **`open_application`** when launching the app) over **`run_applescript`** / fragile shell GUI hacks.
 - **Tools**: `screenshot`, `click`, `double_click`, `move_mouse`, `drag`, `scroll`, `type_text`, `keypress`, `wait` (with blocklisted dangerous key chords).

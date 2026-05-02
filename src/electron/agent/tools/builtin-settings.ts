@@ -119,7 +119,7 @@ const DEFAULT_SETTINGS: BuiltinToolsSettings = {
     computer_use: {
       enabled: true,
       priority: "normal",
-      description: "Computer use tools (native mouse, keyboard, screenshot control — macOS only)",
+      description: "Computer use tools (native mouse, keyboard, screenshot control — macOS and Windows)",
     },
   },
   toolOverrides: {},

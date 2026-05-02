@@ -77,7 +77,7 @@ Operator Runtime Visibility is an observability and operator-experience upgrade,
 
 CoWork OS still centers on:
 
-- desktop control plane (including **macOS computer use**: governed `screenshot`/`click`/`type_text` sessions with helper-targeted permissions and **Esc** abort — see [Computer use (macOS)](computer-use.md))
+- desktop control plane (including **computer use**: governed `screenshot`/`click`/`type_text` sessions with platform helpers and **Esc** abort — see [Computer use](computer-use.md))
 - channels and inbox
 - devices and remote execution
 - governed automation and approvals
@@ -94,7 +94,7 @@ Chronicle is part of this visibility story:
 
 ## Related docs
 
-- [Computer use (macOS)](computer-use.md)
+- [Computer use](computer-use.md)
 - [Chronicle](chronicle.md)
 - [Features](features.md)
 - [Skills Runtime Model](skills-runtime-model.md)

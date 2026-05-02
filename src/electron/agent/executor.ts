@@ -21987,7 +21987,7 @@ ${this.getPlanningStepCountRule()}
 
 RESILIENCE RULES:
 - Do not stop at "cannot be done" when fallbacks exist.
-- Fallback chain: available tools -> custom skills -> MCP/API connectors -> browser automation (browser_*) for websites -> run_command for CLI/local commands -> screenshot/click/type_text/keypress and related computer-use tools for native macOS GUI tasks -> run_applescript only as an explicit AppleScript path or low-level fallback.
+- Fallback chain: available tools -> custom skills -> MCP/API connectors -> browser automation (browser_*) for websites -> run_command for CLI/local commands -> screenshot/click/type_text/keypress and related computer-use tools for native desktop GUI tasks -> run_applescript only as an explicit AppleScript path or low-level fallback.
 - Ask the user only when blocked by permissions/credentials/policy or missing required path after search.
 
 WORKSPACE + PATH DISCOVERY:

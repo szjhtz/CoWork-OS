@@ -5,16 +5,18 @@ import { access, chmod, mkdir, readFile, writeFile } from "fs/promises";
 import { constants as fsConstants } from "fs";
 import * as path from "path";
 import { getUserDataDir } from "../utils/user-data-dir";
+import type { ComputerUseProvider } from "./provider";
 
 type Any = any; // oxlint-disable-line typescript-eslint/no-explicit-any
 
 const HELPER_DIR = path.join(getUserDataDir(), "computer-use-helper");
-const HELPER_PATH = path.join(HELPER_DIR, "bridge");
+const HELPER_PATH = path.join(HELPER_DIR, process.platform === "win32" ? "bridge.ps1" : "bridge");
 const HELPER_STAMP_PATH = path.join(HELPER_DIR, "bridge.sha256");
 const HELPER_SETUP_TIMEOUT_MS = 60_000;
 const HELPER_COMMAND_TIMEOUT_MS = 20_000;
 
 export interface ComputerUseHelperStatus {
+  platform: NodeJS.Platform;
   helperPath: string;
   sourcePath: string | null;
   installed: boolean;
@@ -144,7 +146,10 @@ function normalizeError(error: unknown): Error {
 export function isRecoverableScreenshotError(error: unknown): boolean {
   return (
     error instanceof HelperCommandError &&
-    (error.code === "screenshot_timeout" || error.code === "window_not_found" || error.code === "screenshot_failed")
+    (error.code === "screenshot_timeout" ||
+      error.code === "window_not_found" ||
+      error.code === "window_not_foreground" ||
+      error.code === "screenshot_failed")
   );
 }
 
@@ -159,24 +164,28 @@ function isPackagedElectronApp(): boolean {
 }
 
 function getBundledHelperSourcePath(): string | null {
-  if (process.platform !== "darwin") return null;
+  if (process.platform !== "darwin" && process.platform !== "win32") return null;
+  const fileName = process.platform === "win32" ? "bridge.ps1" : "bridge.swift";
   const candidates: string[] = [];
   if (
     isPackagedElectronApp() &&
     typeof process.resourcesPath === "string" &&
     process.resourcesPath.length > 0
   ) {
-    candidates.push(path.join(process.resourcesPath, "computer-use", "bridge.swift"));
+    candidates.push(path.join(process.resourcesPath, "computer-use", fileName));
   }
   if (typeof process.cwd === "function") {
-    candidates.push(path.join(process.cwd(), "resources", "computer-use", "bridge.swift"));
+    candidates.push(path.join(process.cwd(), "resources", "computer-use", fileName));
   }
-  candidates.push(path.resolve(__dirname, "../../../resources/computer-use/bridge.swift"));
-  candidates.push(path.resolve(__dirname, "../../../../resources/computer-use/bridge.swift"));
+  candidates.push(path.resolve(__dirname, "../../../resources/computer-use", fileName));
+  candidates.push(path.resolve(__dirname, "../../../../resources/computer-use", fileName));
   return candidates.find((candidate) => existsSync(candidate)) ?? null;
 }
 
 async function isExecutable(filePath: string): Promise<boolean> {
+  if (process.platform === "win32") {
+    return existsSync(filePath);
+  }
   try {
     await access(filePath, fsConstants.X_OK);
     return true;
@@ -199,7 +208,14 @@ function sha256(buffer: Buffer): string {
   return createHash("sha256").update(buffer).digest("hex");
 }
 
-export class ComputerUseHelperRuntime {
+function resolvePowerShellCommand(): string {
+  if (process.env.COWORK_POWERSHELL_PATH) {
+    return process.env.COWORK_POWERSHELL_PATH;
+  }
+  return process.env.ComSpec ? "powershell.exe" : "powershell";
+}
+
+export class ComputerUseHelperRuntime implements ComputerUseProvider {
   private static instance: ComputerUseHelperRuntime | null = null;
 
   static getInstance(): ComputerUseHelperRuntime {
@@ -229,9 +245,13 @@ export class ComputerUseHelperRuntime {
 
   async getStatus(): Promise<ComputerUseHelperStatus> {
     const sourcePath = this.getHelperSourcePath();
-    const installed = await isExecutable(HELPER_PATH);
+    const installed =
+      process.platform === "win32"
+        ? Boolean(sourcePath || existsSync(HELPER_PATH))
+        : await isExecutable(HELPER_PATH);
     if (!installed) {
       return {
+        platform: process.platform,
         helperPath: HELPER_PATH,
         sourcePath,
         installed: false,
@@ -241,8 +261,12 @@ export class ComputerUseHelperRuntime {
     }
 
     try {
+      if (process.platform === "win32") {
+        await this.ensureHelperInstalled();
+      }
       const status = await this.checkPermissions();
       return {
+        platform: process.platform,
         helperPath: HELPER_PATH,
         sourcePath,
         installed: true,
@@ -251,6 +275,7 @@ export class ComputerUseHelperRuntime {
       };
     } catch (error) {
       return {
+        platform: process.platform,
         helperPath: HELPER_PATH,
         sourcePath,
         installed: true,
@@ -262,12 +287,14 @@ export class ComputerUseHelperRuntime {
   }
 
   async ensureReadyWithInteractivePermissions(): Promise<void> {
-    if (process.platform !== "darwin") {
-      throw new Error("Computer use is only supported on macOS.");
+    if (process.platform !== "darwin" && process.platform !== "win32") {
+      throw new Error("Computer use is only supported on macOS and Windows desktop builds.");
     }
     await this.ensureHelperInstalled();
     await this.ensureHelperProcess();
-    await this.ensurePermissionsInteractive();
+    if (process.platform === "darwin") {
+      await this.ensurePermissionsInteractive();
+    }
   }
 
   stop(): void {
@@ -500,15 +527,15 @@ export class ComputerUseHelperRuntime {
     await this.bridgeCommand("scrollAtPoint", args);
   }
 
-  async typeText(text: string, pid: number): Promise<void> {
+  async typeText(text: string, pid: number, windowId?: number): Promise<void> {
     await this.bridgeCommand(
       "typeText",
-      { text, pid },
+      { text, pid, ...(typeof windowId === "number" ? { windowId } : {}) },
       Math.min(90_000, Math.max(HELPER_COMMAND_TIMEOUT_MS, text.length * 25 + 4_000)),
     );
   }
 
-  async pressKeys(spec: ComputerUseHelperKeypressSpec): Promise<void> {
+  async pressKeys(spec: ComputerUseHelperKeypressSpec & { windowId?: number }): Promise<void> {
     await this.bridgeCommand("keyPress", { ...spec });
   }
 
@@ -558,6 +585,20 @@ export class ComputerUseHelperRuntime {
     await mkdir(HELPER_DIR, { recursive: true });
     const source = await readFile(sourcePath);
     const nextStamp = sha256(source);
+    if (process.platform === "win32") {
+      const currentStamp = existsSync(HELPER_STAMP_PATH)
+        ? await readFile(HELPER_STAMP_PATH, "utf8").catch(() => "")
+        : "";
+      const currentHelperStamp = existsSync(HELPER_PATH)
+        ? sha256(await readFile(HELPER_PATH))
+        : "";
+      if (currentHelperStamp === nextStamp && currentStamp.trim() === nextStamp) {
+        return;
+      }
+      await writeFile(HELPER_PATH, source, "utf8");
+      await writeFile(HELPER_STAMP_PATH, `${nextStamp}\n`, "utf8");
+      return;
+    }
     const currentStamp = existsSync(HELPER_STAMP_PATH)
       ? await readFile(HELPER_STAMP_PATH, "utf8").catch(() => "")
       : "";
@@ -608,7 +649,20 @@ export class ComputerUseHelperRuntime {
       throw new HelperTransportError(`Computer-use helper is missing at ${HELPER_PATH}.`);
     }
 
-    const child = spawn(HELPER_PATH, [], {
+    const child =
+      process.platform === "win32"
+        ? spawn(resolvePowerShellCommand(), [
+            "-NoLogo",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            HELPER_PATH,
+          ], {
+            stdio: ["pipe", "pipe", "pipe"],
+            windowsHide: true,
+          })
+        : spawn(HELPER_PATH, [], {
       stdio: ["pipe", "pipe", "pipe"],
     });
     child.stdout.setEncoding("utf8");

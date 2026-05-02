@@ -204,7 +204,7 @@ const SYSTEM_INTENT_PATTERN =
   /\b(clipboard|screenshot|finder|application|open app|open url|environment variable|env var|applescript|desktop automation)\b/i;
 /** Native / full-desktop control — last resort after MCP, browser, and shell. */
 const COMPUTER_USE_INTENT_PATTERN =
-  /\b(computer use|desktop automation|native app|native macos|macos app|control my (mac|screen|desktop)|not in browser|gui only|ios simulator|simulator|xcode|system preferences|menu bar)\b/i;
+  /\b(computer use|desktop automation|native app|native desktop|native macos|macos app|native windows|windows app|control my (mac|pc|screen|desktop)|not in browser|gui only|ios simulator|simulator|xcode|system preferences|system settings|windows settings|menu bar|taskbar|explorer|notepad|calculator|installer dialog)\b/i;
 const SCREEN_CONTEXT_INTENT_PATTERN =
   /\b(failing one|on screen|latest draft|same doc|what is this|why is this failing|screen context|right side|left side|top right|top left|bottom right|bottom left)\b/i;
 const EXPLICIT_APPLESCRIPT_INTENT_PATTERN =

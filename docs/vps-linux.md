@@ -82,7 +82,7 @@ ssh -N -L 28789:127.0.0.1:18789 user@your-vps
 - `http://127.0.0.1:18789/` (or `http://127.0.0.1:28789/` if you used 28789)
 - Paste the Control Plane token printed in step 3
 
-This quick start is great for first run/testing. For always-on production, continue with **Option A (Docker)** or **Option B (Systemd)** below.
+This quick start is great for first run/testing. For always-on production, continue with **Option A (Packaged Server Release)**, **Option B (Docker)**, or **Option C (Systemd from Source)** below.
 
 ### Common First-Run Errors
 
@@ -94,7 +94,69 @@ This quick start is great for first run/testing. For always-on production, conti
   You are likely on an older broken npm publish that missed daemon build artifacts. Upgrade and retry:
   `npm install cowork-os@latest --no-audit --no-fund`
 
-## Option A: Docker (Headless Electron)
+## Option A: Packaged Server Release (Node-Only)
+
+Use this path when you want a GitHub release artifact that does not require cloning the repo or building TypeScript on the server.
+
+1. Install OS deps (Debian/Ubuntu):
+
+```bash
+sudo apt-get update
+sudo apt-get install -y --no-install-recommends \
+  ca-certificates curl tar \
+  python3 make g++
+```
+
+2. Install Node.js 24 if it is not already installed:
+
+```bash
+curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
+sudo apt-get install -y nodejs
+node -v
+```
+
+3. Download the Linux server tarball and checksum from the GitHub release:
+
+```bash
+version=0.5.42
+curl -LO "https://github.com/CoWork-OS/CoWork-OS/releases/download/v${version}/cowork-os-server-linux-x64-v${version}.tar.gz"
+curl -LO "https://github.com/CoWork-OS/CoWork-OS/releases/download/v${version}/cowork-os-server-linux-x64-v${version}.tar.gz.sha256"
+sha256sum --check "cowork-os-server-linux-x64-v${version}.tar.gz.sha256"
+```
+
+Replace `0.5.42` with the version you are installing.
+
+4. Install under `/opt/cowork-os`:
+
+```bash
+sudo mkdir -p /opt/cowork-os
+sudo tar -xzf "cowork-os-server-linux-x64-v${version}.tar.gz" -C /opt/cowork-os --strip-components=1
+```
+
+5. Create a dedicated user + data dir:
+
+```bash
+sudo useradd -r -m -s /usr/sbin/nologin cowork || true
+sudo mkdir -p /var/lib/cowork-os /srv/cowork/workspace
+sudo chown -R cowork:cowork /var/lib/cowork-os /srv/cowork/workspace /opt/cowork-os
+```
+
+6. Install the systemd unit + env file templates:
+
+```bash
+sudo cp /opt/cowork-os/deploy/systemd/cowork-os.env.example /etc/cowork-os.env
+sudo $EDITOR /etc/cowork-os.env
+
+sudo cp /opt/cowork-os/deploy/systemd/cowork-os-node.service /etc/systemd/system/cowork-os-node.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now cowork-os-node
+
+sudo journalctl -u cowork-os-node -f
+```
+
+The packaged release uses `bin/coworkd-node.js` by default. It does not launch the desktop UI or require Xvfb.
+
+## Option B: Docker (Headless Electron)
 
 This repo includes a headless Docker image that runs CoWork OS as a daemon.
 
@@ -155,7 +217,7 @@ If you need to print it again later, restart with:
 - `COWORK_PRINT_CONTROL_PLANE_TOKEN=1` (env) or
 - `--print-control-plane-token` (flag)
 
-## Option B: Systemd (Node-Only Daemon)
+## Option C: Systemd from Source (Node-Only Daemon)
 
 This is the simplest non-Docker setup when you don’t want to install Xvfb/Electron GUI deps.
 
@@ -168,7 +230,7 @@ sudo apt-get install -y --no-install-recommends \
   python3 make g++
 ```
 
-2. Install Node.js (22+ recommended) and build CoWork OS:
+2. Install Node.js 24 and build CoWork OS:
 
 ```bash
 git clone https://github.com/CoWork-OS/CoWork-OS.git /opt/cowork-os
@@ -227,7 +289,7 @@ If you don’t need browser automation, you can ignore this and rely on `web_fet
 If you’re running under Docker and want Playwright inside the container, you’ll want a container image that includes
 the required libraries. (We can add an optional “Playwright-ready” Docker profile/image next.)
 
-## Option C: Systemd (Headless Electron)
+## Option D: Systemd from Source (Headless Electron)
 
 This is a good fit when you don’t want Docker.
 
@@ -250,7 +312,7 @@ sudo apt-get install -y --no-install-recommends \
   libexpat1 libglib2.0-0 libsecret-1-0
 ```
 
-2. Install Node.js (22+ recommended) and build CoWork OS:
+2. Install Node.js 24 and build CoWork OS:
 
 ```bash
 git clone https://github.com/CoWork-OS/CoWork-OS.git /opt/cowork-os

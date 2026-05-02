@@ -267,10 +267,145 @@ jobs:
             gh release upload "${release_tag}" "${artifact}" --repo "${GITHUB_REPOSITORY}" --clobber
           done
 
+  release-linux-server:
+    name: Release Linux server package
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    needs: hardening-release-gate
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Force HTTPS for GitHub git dependencies
+        run: |
+          git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+          git config --global url."https://github.com/".insteadOf "git@github.com:"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Resolve release metadata
+        id: release_metadata
+        shell: bash
+        run: |
+          npm_version="$(node -p "require('./package.json').version")"
+
+          if [ "${GITHUB_REF_NAME}" != "${npm_version}" ] && [ "${GITHUB_REF_NAME}" != "v${npm_version}" ]; then
+            echo "Tag mismatch: GITHUB_REF_NAME=${GITHUB_REF_NAME} but package.json is ${npm_version}" >&2
+            exit 1
+          fi
+
+          release_tag="v${npm_version}"
+          if [ "${GITHUB_REF_NAME}" = "${npm_version}" ]; then
+            release_tag="v${npm_version}"
+          fi
+
+          echo "npm_version=${npm_version}" >> "$GITHUB_OUTPUT"
+          echo "release_tag=${release_tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Generate release notes from changelog
+        shell: bash
+        run: |
+          node - <<'NODE'
+          const fs = require('fs');
+          const version = process.env.NPM_VERSION;
+          const changelog = fs.readFileSync('CHANGELOG.md', 'utf8');
+          const marker = `## [${version}]`;
+          const start = changelog.indexOf(marker);
+
+          if (start === -1) {
+            fs.writeFileSync(
+              'release-notes.md',
+              `## ${version}\n\nNo changelog entry found for ${version}.\n`
+            );
+            process.exit(0);
+          }
+
+          const tail = changelog.slice(start + marker.length);
+          const nextMatch = tail.match(/\n## \[/);
+          const end = nextMatch ? start + marker.length + nextMatch.index : changelog.length;
+          const entry = changelog.slice(start, end).trim();
+          fs.writeFileSync('release-notes.md', `${entry}\n`);
+          NODE
+        env:
+          NPM_VERSION: ${{ steps.release_metadata.outputs.npm_version }}
+
+      - name: Prepare draft GitHub release for packaging
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          release_tag="${{ steps.release_metadata.outputs.release_tag }}"
+          npm_version="${{ steps.release_metadata.outputs.npm_version }}"
+          release_title="Release ${npm_version}"
+
+          if gh release view "${release_tag}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "Found existing release tag: ${release_tag}"
+            gh release edit "${release_tag}" --repo "${GITHUB_REPOSITORY}" --title "${release_title}" --notes-file release-notes.md --draft=true
+          elif gh release create "${release_tag}" --repo "${GITHUB_REPOSITORY}" --target "${GITHUB_SHA}" --title "${release_title}" --notes-file release-notes.md --draft; then
+            echo "Created draft release: ${release_tag}"
+          else
+            echo "Release create failed (likely concurrent create); retrying edit."
+            gh release edit "${release_tag}" --repo "${GITHUB_REPOSITORY}" --title "${release_title}" --notes-file release-notes.md --draft=true
+          fi
+
+      - name: Package Linux server tarball
+        run: npm run package:linux:server
+
+      - name: Smoke test Linux server tarball
+        run: npm run package:linux:server:smoke
+
+      - name: Verify expected Linux server artifacts exist
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          server_artifacts=(release/cowork-os-server-linux-x64-v*.tar.gz)
+          server_checksums=(release/cowork-os-server-linux-x64-v*.tar.gz.sha256)
+          if [ "${#server_artifacts[@]}" -ne 1 ]; then
+            echo "Expected exactly one Linux server tarball in release/." >&2
+            exit 1
+          fi
+          if [ "${#server_checksums[@]}" -ne 1 ]; then
+            echo "Expected exactly one Linux server checksum in release/." >&2
+            exit 1
+          fi
+          (cd release && sha256sum --check "$(basename "${server_checksums[0]}")")
+          printf 'Linux server artifacts:\n'
+          printf '  %s\n' "${server_artifacts[@]}" "${server_checksums[@]}"
+
+      - name: Upload Linux server release artifacts
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          release_tag="${{ steps.release_metadata.outputs.release_tag }}"
+          artifacts=(release/cowork-os-server-linux-x64-v*.tar.gz release/cowork-os-server-linux-x64-v*.tar.gz.sha256)
+          if [ "${#artifacts[@]}" -eq 0 ]; then
+            echo "No Linux server release artifacts found to upload." >&2
+            exit 1
+          fi
+          for artifact in "${artifacts[@]}"; do
+            echo "Uploading ${artifact}"
+            gh release upload "${release_tag}" "${artifact}" --repo "${GITHUB_REPOSITORY}" --clobber
+          done
+
   publish-npm:
     name: Publish to npm
     runs-on: ubuntu-latest
-    needs: release
+    needs:
+      - release
+      - release-linux-server
     timeout-minutes: 45
     steps:
       - name: Checkout code
@@ -301,7 +436,9 @@ jobs:
   publish-github-packages:
     name: Publish to GitHub Packages
     runs-on: ubuntu-latest
-    needs: release
+    needs:
+      - release
+      - release-linux-server
     timeout-minutes: 45
     steps:
       - name: Checkout code
@@ -344,6 +481,7 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - release
+      - release-linux-server
       - publish-npm
       - publish-github-packages
     timeout-minutes: 15

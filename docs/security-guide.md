@@ -537,16 +537,17 @@ Ordinary uploaded-PDF reading uses the local `parse_document` extraction path. T
 
 High-autonomy modes and session "Approve all" do not silently bypass this export/egress lane.
 
-The computer-use family (`screenshot`, `click`, `type_text`, `keypress`, and related tools on macOS) is **not** low-risk read-only automation: it can drive arbitrary UI the operator can reach. Treat it as **high trust** and keep the `computer_use` built-in category disabled unless you need it. See [Computer use (macOS)](computer-use.md).
+The computer-use family (`screenshot`, `click`, `type_text`, `keypress`, and related tools on macOS and Windows) is **not** low-risk read-only automation: it can drive arbitrary UI the operator can reach. Treat it as **high trust** and keep the `computer_use` built-in category disabled unless you need it. See [Computer use](computer-use.md).
 
-### Computer use (macOS) security
+### Computer use security
 
 - **Helper-targeted macOS permissions**: Accessibility and Screen Recording are granted to the bundled helper runtime, with inline bootstrap at task time and settings shortcuts for recovery.
+- **Windows visible-window constraint**: Windows v1 only targets visible, non-minimized windows and may require comparable privilege for elevated apps.
 - **Safety UX**: Active sessions use a single-session lock, **Esc** abort, and shortcut guarding to reduce accidental cross-window effects and disruptive global hotkeys during automation.
 - **Tool gating**: Policy defers the computer-use lane unless the task signals **native desktop GUI intent**, so gateway and general tasks default to safer tool lanes.
 - **Key chord blocklist**: Certain OS-level shortcuts are rejected at the tool layer to avoid session or system disruption.
 
-Full operator and troubleshooting guidance: [Computer use (macOS)](computer-use.md).
+Full operator and troubleshooting guidance: [Computer use](computer-use.md).
 
 ### Monotonic Policy Precedence (Deny-Wins)
 

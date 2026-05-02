@@ -5916,6 +5916,7 @@ export interface ElectronAPI {
   }) => Promise<{ success: boolean; deleted?: number }>;
   getComputerUseStatus: () => Promise<{
     activeTaskId: string | null;
+    platform: string;
     helperPath: string;
     sourcePath: string | null;
     installed: boolean;

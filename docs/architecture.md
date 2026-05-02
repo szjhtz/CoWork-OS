@@ -6,7 +6,7 @@ CoWork OS is a local-first desktop runtime and AI workbench for task execution, 
 
 - **Electron main process**: task orchestration, agent runtime, heartbeat orchestration, IPC, and tool execution
 - **React renderer**: desktop UI, Mission Control, task timeline, settings, and monitoring surfaces
-- **Tool and connector layer**: file, shell, browser, web, native integrations, document generation/compilation tools including source-first LaTeX PDF compilation, MCP connectors, remote execution, and **macOS computer use** (`screenshot`, `click`, `type_text`, and related tools) as a governed desktop-GUI lane (helper-targeted permissions, single-session lock, policy-gated routing). See [Computer use (macOS)](computer-use.md).
+- **Tool and connector layer**: file, shell, browser, web, native integrations, document generation/compilation tools including source-first LaTeX PDF compilation, MCP connectors, remote execution, and **computer use** (`screenshot`, `click`, `type_text`, and related tools) as a governed desktop-GUI lane (platform helper, single-session lock, policy-gated routing). See [Computer use](computer-use.md).
 - **Composer mention layer**: the renderer and Electron preload expose a grouped `@` autocomplete for Agents, configured Integrations, and Files. Integration mentions are resolved locally, render as rich chips, persist in task/session metadata, and inject soft routing guidance into the executor without changing permissions or `allowedTools`. See [Composer Mentions](composer-mentions.md).
 - **Message shortcut layer**: the renderer exposes one `/` picker for deterministic app commands and skill-backed workflow shortcuts. Shared app command parsing handles `/schedule`, `/clear`, `/plan`, `/cost`, `/compact`, `/doctor`, and `/undo`; plugin-pack aliases resolve to target skill IDs before generic skill slash execution. See [Message Box Shortcuts](message-box-shortcuts.md).
 - **Chronicle screen-context lane**: desktop-only passive recent-screen capture, local ranking/OCR enrichment, source resolution, provenance-aware `screen_context_resolve` tool exposure, and promotion of task-used observations into workspace-backed `screen_context` evidence plus optional linked background memory generation. See [Chronicle](chronicle.md).
@@ -85,9 +85,9 @@ See [Skills Runtime Model](skills-runtime-model.md) for the detailed contract.
 - `docs/`: product and architecture documentation
 - `.cowork/`: local workspace operating context
 
-## Computer use (macOS)
+## Computer use
 
-Native GUI control is implemented in the main process (`src/electron/computer-use/`, `src/electron/agent/tools/computer-use-tools.ts`) with a persistent helper runtime, helper-targeted permission bootstrap, and a **singleton session** that coordinates single-task ownership plus **Esc** abort. Tool policy and the executor only expose the computer-use lane when **native desktop GUI intent** is detected so routine web and repo work stays on browser and shell paths. Product-level behavior, permissions, and troubleshooting are documented in [Computer use (macOS)](computer-use.md).
+Native GUI control is implemented in the main process (`src/electron/computer-use/`, `src/electron/agent/tools/computer-use-tools.ts`) with a persistent platform helper runtime and a **singleton session** that coordinates single-task ownership plus **Esc** abort. macOS uses helper-targeted permission bootstrap; Windows uses a bundled Win32 helper for visible, non-minimized windows. Tool policy and the executor only expose the computer-use lane when **native desktop GUI intent** is detected so routine web and repo work stays on browser and shell paths. Product-level behavior, permissions, and troubleshooting are documented in [Computer use](computer-use.md).
 
 ## Chronicle
 

@@ -9734,6 +9734,7 @@ function setupMCPHandlers(): void {
     const helperStatus = await ComputerUseHelperRuntime.getInstance().getStatus();
     return {
       activeTaskId: sm.getActiveTaskId(),
+      platform: helperStatus.platform,
       helperPath: helperStatus.helperPath,
       sourcePath: helperStatus.sourcePath,
       installed: helperStatus.installed,

@@ -3,8 +3,8 @@ import { Workspace } from "../../../shared/types";
 import { AgentDaemon } from "../daemon";
 import { LLMTool } from "../llm/types";
 import { ComputerUseSessionManager } from "../../computer-use/session-manager";
+import { getComputerUseProvider, type ComputerUseProvider } from "../../computer-use/provider";
 import {
-  ComputerUseHelperRuntime,
   type ComputerUseHelperApp,
   type ComputerUseHelperKeypressSpec,
   type ComputerUseHelperMouseButton,
@@ -26,6 +26,9 @@ const BLOCKED_KEY_COMBOS = new Set([
   "command+space",
   "cmd+q",
   "command+q",
+  "alt+f4",
+  "l+win",
+  "l+windows",
   "cmd+option+esc",
   "command+option+escape",
   "ctrl+alt+delete",
@@ -228,6 +231,10 @@ const MAC_VIRTUAL_KEY_CODES: Record<string, number> = {
 };
 
 function parseKeypressSpec(pid: number, keys: string[]): ComputerUseHelperKeypressSpec {
+  if (process.platform === "win32") {
+    return parseWindowsKeypressSpec(pid, keys);
+  }
+
   const modifiers: string[] = [];
   let keyText: string | null = null;
   let keyCode: number | null = null;
@@ -325,6 +332,43 @@ function parseKeypressSpec(pid: number, keys: string[]): ComputerUseHelperKeypre
   };
 }
 
+function parseWindowsKeypressSpec(pid: number, keys: string[]): ComputerUseHelperKeypressSpec {
+  const modifiers: string[] = [];
+  let keyText: string | null = null;
+
+  for (const key of keys) {
+    const trimmed = key.trim();
+    const lower = trimmed.toLowerCase();
+    if (lower === "cmd" || lower === "command" || lower === "win" || lower === "windows") {
+      modifiers.push("windows");
+      continue;
+    }
+    if (lower === "ctrl" || lower === "control") {
+      modifiers.push("control");
+      continue;
+    }
+    if (lower === "alt" || lower === "option") {
+      modifiers.push("alt");
+      continue;
+    }
+    if (lower === "shift") {
+      modifiers.push("shift");
+      continue;
+    }
+    keyText = trimmed;
+  }
+
+  if (!keyText) {
+    throw new Error(`Could not resolve key combination: ${keys.join("+")}`);
+  }
+
+  return {
+    pid,
+    keyText,
+    ...(modifiers.length > 0 ? { modifiers } : {}),
+  };
+}
+
 /**
  * Pi-style computer-use tools:
  * - stateful target window chosen by screenshot()
@@ -351,8 +395,8 @@ export class ComputerUseTools {
     this.workspace = workspace;
   }
 
-  private helper(): ComputerUseHelperRuntime {
-    return ComputerUseHelperRuntime.getInstance();
+  private helper(): ComputerUseProvider {
+    return getComputerUseProvider();
   }
 
   private session(): ComputerUseSessionManager {
@@ -367,8 +411,8 @@ export class ComputerUseTools {
   }
 
   private async ensureReady(): Promise<void> {
-    if (process.platform !== "darwin") {
-      throw new Error("Computer use is only supported on macOS.");
+    if (process.platform !== "darwin" && process.platform !== "win32") {
+      throw new Error("Computer use is only supported on macOS and Windows desktop builds.");
     }
     this.session().acquire(this.taskId, this.daemon);
     this.session().checkNotAborted();
@@ -967,7 +1011,7 @@ export class ComputerUseTools {
       if (focused.exists && focused.canSetValue && !focused.isSecure && focused.elementRef) {
         await this.helper().setValue(focused.elementRef, text);
       } else {
-        let focusedTextInput: Awaited<ReturnType<ComputerUseHelperRuntime["axFocusTextInput"]>>;
+        let focusedTextInput: Awaited<ReturnType<ComputerUseProvider["axFocusTextInput"]>>;
         try {
           focusedTextInput = await this.helper().axFocusTextInput({
             pid: target.pid,
@@ -984,7 +1028,7 @@ export class ComputerUseTools {
         ) {
           await this.helper().setValue(focusedTextInput.elementRef, text);
         } else {
-          await this.helper().typeText(text, target.pid);
+          await this.helper().typeText(text, target.pid, target.windowId);
         }
       }
       return await this.captureTarget("type_text");
@@ -1016,7 +1060,7 @@ export class ComputerUseTools {
     });
     await this.bringTargetToFront(target);
     try {
-      await this.helper().pressKeys(parseKeypressSpec(target.pid, keys));
+      await this.helper().pressKeys({ ...parseKeypressSpec(target.pid, keys), windowId: target.windowId });
       return await this.captureTarget("keypress");
     } catch (error) {
       this.daemon.logEvent(this.taskId, "tool_error", {
@@ -1041,7 +1085,7 @@ export class ComputerUseTools {
   }
 
   static getToolDefinitions(options?: { headless?: boolean }): LLMTool[] {
-    if (options?.headless || process.platform !== "darwin") {
+    if (options?.headless || (process.platform !== "darwin" && process.platform !== "win32")) {
       return [];
     }
 
@@ -1049,7 +1093,7 @@ export class ComputerUseTools {
       {
         name: "screenshot",
         description:
-          "Capture the current controlled window in a native macOS app. Call this first. " +
+          "Capture the current controlled window in a native desktop app. Call this first. " +
           "Passing app and/or windowTitle retargets control to that window. Returns a fresh captureId and PNG image.",
         input_schema: {
           type: "object",
@@ -1187,7 +1231,7 @@ export class ComputerUseTools {
       {
         name: "keypress",
         description:
-          "Send a key or key chord to the current controlled window. Modifier keys: cmd/command, ctrl/control, alt/option, shift. Returns a fresh screenshot.",
+          "Send a key or key chord to the current controlled window. Modifier keys: cmd/command on macOS, win/windows on Windows, ctrl/control, alt/option, shift. Returns a fresh screenshot.",
         input_schema: {
           type: "object",
           properties: {

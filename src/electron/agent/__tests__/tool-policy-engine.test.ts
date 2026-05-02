@@ -133,6 +133,14 @@ describe("evaluateToolAvailability computer_use", () => {
     expect(r.decision).toBe("allow");
   });
 
+  it("allows computer-use tools for Windows native app prompts", () => {
+    const r = evaluateToolAvailability("click", {
+      ...baseCtx,
+      taskText: "Open Notepad on Windows and click inside the editor.",
+    });
+    expect(r.decision).toBe("allow");
+  });
+
   it("still allows click when browser-ish text appears elsewhere in the prompt context", () => {
     const r = evaluateToolAvailability("click", {
       ...baseCtx,

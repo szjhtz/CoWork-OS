@@ -1232,7 +1232,7 @@ export class ToolRegistry {
       });
     }
 
-    // Computer use tools (native mouse/keyboard/screenshot — macOS only, not headless)
+    // Computer use tools (native mouse/keyboard/screenshot — desktop platforms only, not headless)
     allTools.push(...ComputerUseTools.getToolDefinitions({ headless }));
 
     // Batch image processing tools — only when image generation is available

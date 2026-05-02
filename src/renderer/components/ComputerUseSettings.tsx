@@ -5,6 +5,7 @@ type ScreenStatus = "granted" | "denied" | "not-determined" | "unknown";
 
 interface ComputerUseStatus {
   activeTaskId: string | null;
+  platform: string;
   helperPath: string;
   sourcePath: string | null;
   installed: boolean;
@@ -26,7 +27,7 @@ function screenStatusLabel(s: ScreenStatus): string {
     case "not-determined":
       return "Not determined — open System Settings to allow";
     default:
-      return "Unknown (macOS only)";
+      return "Unknown";
   }
 }
 
@@ -38,6 +39,7 @@ export function ComputerUseSettings() {
   const [error, setError] = useState<string | null>(null);
 
   const isMac = platform === "darwin";
+  const isWindows = platform === "win32";
 
   const refresh = useCallback(async () => {
     try {
@@ -109,18 +111,26 @@ export function ComputerUseSettings() {
           Computer use
         </h3>
         <p className="settings-description">
-          Pi-style native desktop control for macOS. The agent targets one controlled window at a time
-          through `screenshot()`, and macOS permissions apply to the bundled helper binary rather than
-          to individual apps.
+          Pi-style native desktop control for macOS and Windows. The agent targets one
+          controlled window at a time through `screenshot()`, then uses screenshot-relative
+          mouse, keyboard, scroll, and typing actions.
         </p>
       </div>
 
       {error ? <div className="settings-error">{error}</div> : null}
 
-      {!isMac ? (
+      {!isMac && !isWindows ? (
         <div className="computer-use-platform-note">
-          Computer use is available on <strong>macOS</strong> only. On this platform the controls
-          below reflect limited or unavailable permission APIs.
+          Computer use is available on <strong>macOS</strong> and <strong>Windows</strong> desktop
+          builds only. On this platform the controls below reflect limited or unavailable
+          permission APIs.
+        </div>
+      ) : null}
+
+      {isWindows ? (
+        <div className="computer-use-platform-note">
+          Windows computer use supports visible, non-minimized native windows in v1. It may fall
+          back to foreground input for apps that block background capture or control.
         </div>
       ) : null}
 
@@ -136,19 +146,21 @@ export function ComputerUseSettings() {
         </div>
 
         <div className="computer-use-status-card">
-          <div className="computer-use-status-title">Accessibility</div>
+          <div className="computer-use-status-title">{isWindows ? "Input control" : "Accessibility"}</div>
           <div
             className={`computer-use-status-value ${status?.accessibilityTrusted ? "ok" : "bad"}`}
           >
             {statusLabel(Boolean(status?.accessibilityTrusted))}
           </div>
-          <button type="button" className="button-secondary" onClick={() => void openAccessibility()}>
-            Open Accessibility settings
-          </button>
+          {isMac ? (
+            <button type="button" className="button-secondary" onClick={() => void openAccessibility()}>
+              Open Accessibility settings
+            </button>
+          ) : null}
         </div>
 
         <div className="computer-use-status-card">
-          <div className="computer-use-status-title">Screen Recording</div>
+          <div className="computer-use-status-title">{isWindows ? "Window capture" : "Screen Recording"}</div>
           <div
             className={`computer-use-status-value ${
               status?.screenCaptureStatus === "granted" ? "ok" : "bad"
@@ -156,9 +168,11 @@ export function ComputerUseSettings() {
           >
             {screenStatusLabel(status?.screenCaptureStatus ?? "unknown")}
           </div>
-          <button type="button" className="button-secondary" onClick={() => void openScreen()}>
-            Open Screen Recording settings
-          </button>
+          {isMac ? (
+            <button type="button" className="button-secondary" onClick={() => void openScreen()}>
+              Open Screen Recording settings
+            </button>
+          ) : null}
         </div>
       </div>
 

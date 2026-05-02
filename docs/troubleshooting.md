@@ -50,13 +50,15 @@ If you see `Killed: 9` during `npm run setup`, macOS terminated a native build d
 npm run setup
 ```
 
-## Computer use (macOS) issues
+## Computer use issues
 
-If **screenshots fail or time out**, grant **Screen Recording** for the helper path shown in **Settings → Tools → Computer use**, then **quit and restart** the app. If **clicks or typing do nothing**, enable **Accessibility** for that helper path the same way.
+If **screenshots fail or time out** on macOS, grant **Screen Recording** for the helper path shown in **Settings → Tools → Computer use**, then **quit and restart** the app. If **clicks or typing do nothing**, enable **Accessibility** for that helper path the same way.
+
+On Windows, keep the target window visible and non-minimized. If the target app is running as administrator, run CoWork with comparable privileges; protected apps may block capture or input.
 
 If the agent **never uses** the computer-use tools, confirm **Settings → Tools → Built-in tools** includes the **computer use** category, and phrase tasks as **native app / window / dialog** work (not pure browser or CLI tasks).
 
-See the full guide: [Computer use (macOS)](computer-use.md).
+See the full guide: [Computer use](computer-use.md).
 
 ## Inbox Agent issues
 
@@ -338,7 +340,7 @@ Look for lines such as:
 - `Chronicle initialized (enabled=true, mode=hybrid)`
 - `screen_context_resolve`
 
-If those never appear, see [Chronicle](chronicle.md) and [Computer use (macOS)](computer-use.md).
+If those never appear, see [Chronicle](chronicle.md) and [Computer use](computer-use.md).
 
 ## Windows native setup fails (`better-sqlite3`)
 

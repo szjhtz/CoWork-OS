@@ -2,6 +2,7 @@
 
 CoWork OS supports **Linux headless/server deployments**. This is intended for:
 
+- Packaged Linux server releases from GitHub Releases
 - VPS installs (systemd)
 - Docker installs (single host)
 - “No desktop UI required” operation
@@ -35,6 +36,7 @@ Pick one of these. They all run the same underlying agent runtime, DB, and setti
 
 | Option | Best For | What You Get | What You Don’t |
 |---|---|---|---|
+| **Packaged server release** | Production VPS installs | Prebuilt Node-only daemon tarball, systemd templates, no source build | Linux x64/glibc only in the first release |
 | **Node-only daemon** (recommended) | VPS/headless | No GUI deps, simplest ops | Desktop-only features (Live Canvas, clipboard, desktop screenshots, etc.) |
 | **Headless Electron daemon** | Max parity with desktop runtime | More desktop parity | Heavier deps (Electron + Xvfb on Linux) |
 | **Docker** (Node-only or Electron) | “Just run it” installs | Easy persistence via volumes | You still access it via Control Plane (web/CLI) |

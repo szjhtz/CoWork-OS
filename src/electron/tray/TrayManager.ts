@@ -37,12 +37,12 @@ import {
 } from "../../shared/types";
 import { SecureSettingsRepository } from "../database/SecureSettingsRepository";
 import { getUserDataDir } from "../utils/user-data-dir";
-import { pruneTempWorkspaces } from "../utils/temp-workspace";
 import {
-  createScopedTempWorkspaceIdentity,
-  isTempWorkspaceInScope,
-  sanitizeTempWorkspaceKey,
-} from "../utils/temp-workspace-scope";
+  createUniqueScopedTempWorkspaceDirectorySync,
+  ensureTempWorkspaceDirectoryPathSync,
+  pruneTempWorkspaces,
+} from "../utils/temp-workspace";
+import { isTempWorkspaceInScope } from "../utils/temp-workspace-scope";
 import { getActiveTempWorkspaceLeases, touchTempWorkspaceLease } from "../utils/temp-workspace-lease";
 import { ChronicleCaptureService, ChronicleMemoryService, ChronicleSettingsManager } from "../chronicle";
 import {
@@ -381,9 +381,11 @@ export class TrayManager {
       workspacePath: string,
       existing?: Workspace,
     ): Workspace => {
-      if (!fs.existsSync(workspacePath)) {
-        fs.mkdirSync(workspacePath, { recursive: true });
-      }
+      const tempWorkspaceRoot = path.join(os.tmpdir(), TEMP_WORKSPACE_ROOT_DIR_NAME);
+      const safeWorkspacePath = ensureTempWorkspaceDirectoryPathSync(
+        tempWorkspaceRoot,
+        workspacePath,
+      );
 
       const createdAt = existing?.createdAt ?? Date.now();
       const lastUsedAt = Date.now();
@@ -409,7 +411,7 @@ export class TrayManager {
       stmt.run(
         workspaceId,
         TEMP_WORKSPACE_NAME,
-        workspacePath,
+        safeWorkspacePath,
         createdAt,
         lastUsedAt,
         JSON.stringify(permissions),
@@ -418,7 +420,7 @@ export class TrayManager {
       return {
         id: workspaceId,
         name: TEMP_WORKSPACE_NAME,
-        path: workspacePath,
+        path: safeWorkspacePath,
         createdAt,
         lastUsedAt,
         permissions,
@@ -433,11 +435,11 @@ export class TrayManager {
     if (existing) {
       workspace = ensureTempWorkspace(existing.id, existing.path, existing);
     } else {
-      const key = sanitizeTempWorkspaceKey(`session-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`);
-      const identity = createScopedTempWorkspaceIdentity("tray", key);
-      const workspaceId = identity.workspaceId;
-      const tempDir = path.join(os.tmpdir(), TEMP_WORKSPACE_ROOT_DIR_NAME, identity.slug);
-      workspace = ensureTempWorkspace(workspaceId, tempDir);
+      const created = createUniqueScopedTempWorkspaceDirectorySync(
+        path.join(os.tmpdir(), TEMP_WORKSPACE_ROOT_DIR_NAME),
+        "tray",
+      );
+      workspace = ensureTempWorkspace(created.workspaceId, created.path);
     }
 
     try {

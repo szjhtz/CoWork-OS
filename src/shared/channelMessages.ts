@@ -186,99 +186,30 @@ const CHANNEL_UI_COPY: Record<ChannelUiKey, string> = {
   responseFailed: "❌ Failed to process response.",
   helpCompact: `📚 *Commands*
 
-*Basics*
-/start - Start onboarding flow
-/workspaces - Select workspace
+*Core*
+/commands - Browse all commands
 /status - Current status
-/newtask - Fresh start
-/help - Show command list
-/version - Version information
+/workspaces - Select workspace
+/new or /newtask - Fresh task
+/new temp - Fresh temp folder session
+/stop or /cancel - Stop current task
+/pause and /resume - Control current task
 
-*WhatsApp shortcuts (no slash needed)*
-help - /help
-start - /start
-status - /status
-version - /version
-workspaces - /workspaces
-new task - /newtask
-start over - /newtask
-workspace <name> - /workspace <name>
-open workspace <name> - /workspace <name>
-task status - /task
-pause - /pause
-resume - /resume
-continue - /resume
-hold on - /pause
-add workspace <path> - /addworkspace <path>
-remove workspace <name> - /removeworkspace <name>
-clear - /newtask
-brief - /brief
-brief schedule morning/today/tomorrow/week - /brief schedule ...
-brief list - /brief list
-brief unschedule - /brief unschedule ...
-inbox - /inbox
-simplify - /simplify
-batch - /batch
-schedule - /schedule
-digest - /digest
-followups / follow ups - /followups
-settings - /settings
-providers - /providers
-provider <name> - /provider <name>
-models - /models
-model <name> - /model <name>
-skills - /skills
-skill <name> - /skill <name>
-feedback - /feedback
-approve - /yes
-no - /no
-queue - /queue
-clear queue - /queue clear
-history - /history
-retry - /retry
-cancel - /cancel
-debug - /debug
-selfchat on|off - /selfchat on|off
-ambient on|off - /ambient on|off
-ingest on|off - /ingest on|off
-prefix <text> - /prefix <text|off>
-numbers - /numbers
-allow - /allow <number>
-disallow - /disallow <number>
-shell on|off - /shell on|off
-pair <code> - /pair <code>
-agent <name|id|clear> - /agent <...>
-agents - /agent
-settings - /settings
-
-*Tasks*
-/cancel - Stop task
-/retry - Retry failed task
-/pause - Pause current task
-/resume - Resume paused task
-/approve or /yes - Approve action
-/deny or /no - Reject action
+*Task flow*
+/queue <message> - Add a follow-up to current task
+/steer <guidance> - Guide the running task
+/background <prompt> - Start a separate task
 /task - Show current task snapshot
 
-*Agents*
-/agent - List available agent roles
-/agent <name|id> - Set preferred role for this chat
-/agent clear - Reset agent preference for this chat
+*Common*
+/brief, /inbox, /schedule, /digest, /followups
+/skills, /skill <id>, or /skill-slug args
+/models, /providers, /agent
 
-*Settings*
-/shell on|off - Shell access
-/models - Change AI model
-/activation [all|mention|commands] - WhatsApp group routing mode
-/selfchat on|off - WhatsApp self-chat mode
-/ambient on|off - WhatsApp ambient mode
-/ingest on|off - Ingest non-self chats in self-chat mode
-/prefix <text|off> - Set WhatsApp response prefix
-/numbers - View WhatsApp allowed number list
-/allow <number> - Add allowed number
-/disallow <number> - Remove allowed number
+WhatsApp shortcuts work too: “new”, “stop”, “queue ...”, “steer ...”, “btw ...”.
 
 ━━━━━━━━━━━━━━━
-💡 Just send your task directly!
+💡 Just send your task directly.
 Example: "Add a login form"`,
   helpFull: `📚 *Available Commands*
 
@@ -432,92 +363,26 @@ const PERSONA_CHANNEL_UI_OVERRIDES: Partial<
     responseFailed: "I couldn't process that response.",
     helpCompact: `📚 *Commands*
 
-*Basics*
-/start - Start
-/workspaces - Select workspace
+*Core*
+/commands - Browse all commands
 /status - Current status
-/newtask - Fresh start
-/help - Help
-/version - Version
+/workspaces - Select workspace
+/new or /newtask - Fresh task
+/new temp - Fresh temp folder session
+/stop or /cancel - Stop current task
+/pause and /resume - Control current task
 
-*WhatsApp shortcuts (no slash needed)*
-help - /help
-start - /start
-status - /status
-version - /version
-workspaces - /workspaces
-new task - /newtask
-start over - /newtask
-workspace <name> - /workspace <name>
-task status - /task
-pause - /pause
-resume - /resume
-continue - /resume
-hold on - /pause
-add workspace <path> - /addworkspace <path>
-remove workspace <name> - /removeworkspace <name>
-open workspace <name> - /workspace <name>
-start over - /newtask
-model <name> - /model <name>
-provider <name> - /provider <name>
-providers - /providers
-models - /models
-skills - /skills
-skill <name> - /skill <name>
-settings - /settings
-feedback - /feedback
-debug - /debug
-pair <code> - /pair <code>
-agent <name|id|clear> - /agent <...>
-queue - /queue
-clear queue - /queue clear
-history - /history
-brief - /brief
-inbox - /inbox
-digest - /digest
-followups - /followups
-approve / yes - /yes
-no / deny - /no
-selfchat on|off - /selfchat on|off
-ambient on|off - /ambient on|off
-ingest on|off - /ingest on|off
-prefix <text> - /prefix <text|off>
-numbers - /numbers
-allow - /allow <number>
-disallow - /disallow <number>
+*Task flow*
+/queue <message> - Add a follow-up to current task
+/steer <guidance> - Guide the running task
+/background <prompt> - Start a separate task
 
-*Tasks*
-/cancel - Stop task
-/retry - Retry failed task
-/pause - Pause current task
-/resume - Resume paused task
-/task - Show current task snapshot
-/brief - Brief summary (morning/today/tomorrow/week)
-/inbox - Inbox manager (DM only)
-/simplify - Simplify current or specified work
-/batch - Run parallel batch workflow
-/schedule - Schedule a task
-/digest - Recent chat digest
-/followups - Follow-ups/commitments
-/feedback - Leave feedback
-/approve or /yes - Approve action
-/deny or /no - Reject action
-/queue - View/clear queue
+*Common*
+/brief, /inbox, /schedule, /digest, /followups
+/skills, /skill <id>, or /skill-slug args
+/models, /providers, /agent
 
-*Settings*
-/shell on|off - Shell access
-/models - Change AI model
-/activation [all|mention|commands] - WhatsApp group routing mode
-/selfchat on|off - WhatsApp self-chat mode
-/ambient on|off - WhatsApp ambient mode
-/ingest on|off - Ingest non-self chats in self-chat mode
-/prefix <text|off> - Set WhatsApp response prefix
-/numbers - View WhatsApp allowed number list
-/allow <number> - Add allowed number
-/disallow <number> - Remove allowed number
-
-*Tools*
-/version - Check app version
+WhatsApp shortcuts work too: “new”, “stop”, “queue ...”, “steer ...”, “btw ...”.
 
 ━━━━━━━━━━━━━━━
 💡 Just send your task directly.

@@ -1946,6 +1946,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     workspacePath: string;
     filename?: string;
     includeDataUrl?: boolean;
+    fullPage?: boolean;
   }) =>
     ipcRenderer.invoke(IPC_CHANNELS.BROWSER_WORKBENCH_SCREENSHOT, data) as Promise<{
       success: boolean;
@@ -2269,6 +2270,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   selectWorkspace: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_SELECT, id),
   getTempWorkspace: (options?: { createNew?: boolean }) =>
     ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_GET_TEMP, options),
+  pruneTempWorkspaces: (options?: { dryRun?: boolean }) =>
+    ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_PRUNE_TEMP, options),
   touchWorkspace: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_TOUCH, id),
   updateWorkspacePermissions: (id: string, permissions: { shell?: boolean; network?: boolean }) =>
     ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_UPDATE_PERMISSIONS, id, permissions),
@@ -4541,6 +4544,7 @@ export interface ElectronAPI {
     workspacePath: string;
     filename?: string;
     includeDataUrl?: boolean;
+    fullPage?: boolean;
   }) => Promise<{
     success: boolean;
     path?: string;
@@ -4799,6 +4803,15 @@ export interface ElectronAPI {
   listWorkspaces: () => Promise<Workspace[]>;
   selectWorkspace: (id: string) => Promise<Workspace>;
   getTempWorkspace: (options?: { createNew?: boolean }) => Promise<Workspace | null>;
+  pruneTempWorkspaces: (options?: { dryRun?: boolean }) => Promise<{
+    removedDirs: number;
+    removedRows: number;
+    candidateWorkspaceIds: string[];
+    candidateDirPaths: string[];
+    checkedRows: number;
+    checkedDirs: number;
+    dryRun: boolean;
+  }>;
   touchWorkspace: (id: string) => Promise<Any>;
   updateWorkspacePermissions: (
     id: string,

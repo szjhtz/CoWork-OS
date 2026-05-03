@@ -93,8 +93,8 @@ export class AmbientMonitoringService {
 
   async start(): Promise<void> {
     this.startFileWatchers();
-    await this.pollGit().catch(() => {});
-    await this.pollCalendars().catch(() => {});
+    void this.pollGit().catch(() => {});
+    void this.pollCalendars().catch(() => {});
     this.gitTimer = setInterval(() => {
       void this.pollGit().catch(() => {});
     }, GIT_POLL_MS);

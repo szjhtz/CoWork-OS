@@ -41,6 +41,26 @@ import {
   normalizeEmailProtocol,
 } from "../../utils/loom";
 import { getUnsupportedManualEmailSetupMessage } from "../../../shared/email-provider-support";
+import { createLogger } from "../../utils/logger";
+
+const logger = createLogger("Email");
+
+function maskEmailIdentity(value: string | undefined): string {
+  const raw = value?.trim();
+  if (!raw) return "unknown";
+  const atIndex = raw.indexOf("@");
+  if (atIndex > 0) {
+    const local = raw.slice(0, atIndex);
+    const domain = raw.slice(atIndex + 1);
+    const [domainName, ...suffixParts] = domain.split(".");
+    const suffix = suffixParts.length > 0 ? `.${suffixParts.at(-1)}` : "";
+    const maskedLocal = `${local.slice(0, 1)}***`;
+    const maskedDomain = domainName ? `${domainName.slice(0, 1)}***${suffix}` : "***";
+    return `${maskedLocal}@${maskedDomain}`;
+  }
+  if (raw.length <= 4) return "***";
+  return `${raw.slice(0, 2)}***${raw.slice(-2)}`;
+}
 
 function getEmailHeader(email: EmailMessage, headerName: string): string {
   const headers = email.headers;
@@ -256,7 +276,7 @@ export class EmailAdapter implements ChannelAdapter {
       });
 
       this.client.on("connected", () => {
-        console.log("Email client connected");
+        logger.debug("Email client connected");
       });
 
       this.client.on("disconnected", () => {
@@ -277,7 +297,7 @@ export class EmailAdapter implements ChannelAdapter {
       }
 
       this.setStatus("connected");
-      console.log(`Email adapter connected as ${this._botUsername}`);
+      console.log(`Email adapter connected as ${maskEmailIdentity(this._botUsername)}`);
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
       this.setStatus("error", err);

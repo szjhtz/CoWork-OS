@@ -15,6 +15,7 @@ import {
   ElevenLabsVoice,
   DEFAULT_VOICE_SETTINGS,
 } from "../../shared/types";
+import { createLogger } from "../utils/logger";
 
 // ElevenLabs API configuration
 const ELEVENLABS_API_BASE = "https://api.elevenlabs.io/v1";
@@ -22,6 +23,7 @@ const OPENAI_API_BASE = "https://api.openai.com/v1";
 
 // Default ElevenLabs voice (Rachel - conversational)
 const DEFAULT_ELEVENLABS_VOICE_ID = "21m00Tcm4TlvDq8ikWAM";
+const logger = createLogger("VoiceService");
 
 export interface VoiceServiceOptions {
   settings?: Partial<VoiceSettings>;
@@ -52,10 +54,13 @@ export class VoiceService extends EventEmitter {
    * Initialize the voice service
    */
   async initialize(): Promise<void> {
-    console.log("[VoiceService] Initializing...");
+    logger.debug("Initializing...");
     this.updateState({ isActive: this.settings.enabled });
-    console.log("[VoiceService] Initialized with settings:", {
-      enabled: this.settings.enabled,
+    if (!this.settings.enabled) {
+      logger.info("VoiceService disabled");
+      return;
+    }
+    logger.info("Initialized", {
       ttsProvider: this.settings.ttsProvider,
       sttProvider: this.settings.sttProvider,
     });

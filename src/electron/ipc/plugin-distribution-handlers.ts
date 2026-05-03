@@ -17,6 +17,12 @@ import { loadPolicies } from "../admin/policies";
  * Set up Plugin Pack Distribution IPC handlers
  */
 export function setupPluginDistributionHandlers(): void {
+  const ensureRegistryInitialized = async () => {
+    const registry = PluginRegistry.getInstance();
+    await registry.initialize();
+    return registry;
+  };
+
   // Scaffold a new plugin pack
   ipcMain.handle(
     IPC_CHANNELS.PLUGIN_PACK_SCAFFOLD,
@@ -57,7 +63,7 @@ export function setupPluginDistributionHandlers(): void {
       // If successful, trigger discovery to pick up the new pack
       if (result.success) {
         try {
-          const registry = PluginRegistry.getInstance();
+          const registry = await ensureRegistryInitialized();
           await registry.discoverNewPlugins();
         } catch (error) {
           console.warn(
@@ -88,7 +94,7 @@ export function setupPluginDistributionHandlers(): void {
     // If successful, trigger discovery to register the new pack
     if (result.success) {
       try {
-        const registry = PluginRegistry.getInstance();
+        const registry = await ensureRegistryInitialized();
         await registry.discoverNewPlugins();
       } catch (error) {
         console.warn(
@@ -118,7 +124,7 @@ export function setupPluginDistributionHandlers(): void {
     // If successful, trigger discovery to register the new pack
     if (result.success) {
       try {
-        const registry = PluginRegistry.getInstance();
+        const registry = await ensureRegistryInitialized();
         await registry.discoverNewPlugins();
       } catch (error) {
         console.warn(
@@ -142,7 +148,7 @@ export function setupPluginDistributionHandlers(): void {
     // If successful, unload from registry
     if (result.success) {
       try {
-        const registry = PluginRegistry.getInstance();
+        const registry = await ensureRegistryInitialized();
         const canonicalPackName = result.packName || packName;
         try {
           await registry.unloadPlugin(canonicalPackName);
@@ -183,7 +189,7 @@ export function setupPluginDistributionHandlers(): void {
 
   // Check for pack updates against remote registry
   ipcMain.handle(IPC_CHANNELS.PLUGIN_PACK_CHECK_UPDATES, async () => {
-    const pluginRegistry = PluginRegistry.getInstance();
+    const pluginRegistry = await ensureRegistryInitialized();
     const packs = pluginRegistry.getPluginsByType("pack");
     const installedPacks = packs.map((p) => ({
       name: p.manifest.name,

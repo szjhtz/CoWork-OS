@@ -188,6 +188,8 @@ Plugin aliases are resolved before direct skill IDs when an enabled alias and a 
 
 See [Message Box Shortcuts](message-box-shortcuts.md) for picker ordering, app command behavior, plugin alias resolution, and the bundled CoWork Shortcuts pack.
 
+Gateway channels use the same additive skill execution model when a user sends `/<skill-slug> args`. The remote command registry handles command ownership first, `/skill <id>` remains the toggle command, and enabled skill slugs are forwarded as deterministic skill invocations rather than ordinary chat text. See [Gateway Message Lifecycle](gateway-message-lifecycle.md).
+
 ## Planner and Execution Alignment
 
 The planner, preflight framing, and step execution now consume the same canonical task prompt and the same applied-skill list. This prevents drift between:

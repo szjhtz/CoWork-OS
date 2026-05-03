@@ -38,7 +38,7 @@ Pick one of these. They all run the same underlying agent runtime, DB, and setti
 | Option | Best For | What You Get | What You Don’t |
 |---|---|---|---|
 | **Packaged server release** (recommended) | Production VPS installs | Prebuilt Linux x64 tarball, Node daemon entrypoint, systemd templates, full resources/connectors, no source build | Linux x64/glibc only in the first release; not a desktop app package |
-| **Node-only daemon from source/npm** | VPS/headless | No desktop window or Xvfb, source-build flexibility | Desktop-only features (Live Canvas, clipboard, desktop screenshots, etc.) |
+| **Node-only daemon from source/npm** | VPS/headless | No desktop window or Xvfb, source-build flexibility | Desktop-only features (Live Canvas, visible Browser V2 Workbench, clipboard, desktop screenshots, etc.) |
 | **Headless Electron daemon** | Max parity with desktop runtime | More desktop parity | Heavier deps (Electron + Xvfb on Linux) |
 | **Docker** (Node-only or Electron) | “Just run it” installs | Easy persistence via volumes | You still access it via Control Plane (web/CLI) |
 
@@ -93,7 +93,7 @@ Works well:
 
 Expected limitations:
 
-- Desktop UI features are not available in Node-only mode (Live Canvas, visual annotator UI, clipboard integration, “open in Finder”, etc.)
+- Desktop UI features are not available in Node-only mode (Live Canvas, visible Browser V2 Workbench, visual annotator UI, clipboard integration, “open in Finder”, etc.). Browser tools can still use Playwright-local fallback when installed and explicitly needed.
 - Some channels are inherently macOS-tied:
   - iMessage requires Apple Messages / macOS
   - BlueBubbles requires a macOS relay

@@ -274,6 +274,7 @@ const PRINT_CONTROL_PLANE_TOKEN = shouldPrintControlPlaneTokenFromArgsOrEnv();
 const IMPORT_ENV_SETTINGS = shouldImportEnvSettingsFromArgsOrEnv();
 const IMPORT_ENV_SETTINGS_MODE = getEnvSettingsImportModeFromArgsOrEnv();
 const logger = createLogger("Main");
+const cronLogger = createLogger("Cron");
 const TRANSIENT_MAIN_PROCESS_ERROR_RE =
   /(ECONNRESET|ETIMEDOUT|EPIPE|ENOTFOUND|ENETUNREACH|EHOSTUNREACH|socket hang up|Timed Out|Connection Closed)/i;
 let processErrorGuardsInstalled = false;
@@ -857,6 +858,18 @@ function installDevelopmentBranding(): void {
   }
 }
 
+function logCron(
+  level: "debug" | "info" | "warn" | "error",
+  msg: string,
+  data?: unknown,
+): void {
+  if (data === undefined) {
+    cronLogger[level](msg);
+    return;
+  }
+  cronLogger[level](msg, data);
+}
+
 const RESETTABLE_SECURE_SETTINGS_CATEGORIES: SettingsCategory[] = [
   "subconscious-migration-v1",
   "autonomy-chief-of-staff",
@@ -1262,13 +1275,30 @@ if (!gotTheLock) {
         `Startup phase "${name}" completed in ${Date.now() - phaseStartedAt} ms`,
       );
     };
-    let mcpStartupSummary = {
-      enabled: 0,
-      attempted: 0,
-      connected: 0,
-      failed: 0,
+    const deferredStartupTasks: Array<{
+      name: string;
+      task: () => Promise<void>;
+    }> = [];
+    const deferStartupTask = (name: string, task: () => Promise<void>): void => {
+      deferredStartupTasks.push({ name, task });
     };
-    let pluginStartupSummary = { loaded: 0, enabled: 0 };
+    const runDeferredStartupTasks = (): void => {
+      deferredStartupTasks.forEach(({ name, task }, index) => {
+        const timer = setTimeout(() => {
+          const startedAt = Date.now();
+          void task()
+            .then(() => {
+              logger.info(
+                `Deferred startup task "${name}" completed in ${Date.now() - startedAt} ms`,
+              );
+            })
+            .catch((error) => {
+              logger.error(`Deferred startup task "${name}" failed:`, error);
+            });
+        }, 250 + index * 50);
+        timer.unref?.();
+      });
+    };
 
     const resolvedUserDataDir = startupUserDataDir || applyStableUserDataPath();
     const activeProfileId = getActiveProfileId();
@@ -1670,20 +1700,29 @@ if (!gotTheLock) {
       // Don't fail app startup if KG init fails
     }
 
-    // Initialize MCP Client Manager - auto-connects enabled servers on startup
-    try {
+    const initializeMcpClientManager = async (): Promise<void> => {
       const mcpInitStartedAt = Date.now();
       const mcpClientManager = MCPClientManager.getInstance();
       await mcpClientManager.initialize();
-      mcpStartupSummary = mcpClientManager.getStartupStats();
+      const mcpStartupSummary = mcpClientManager.getStartupStats();
       logger.info(
         `MCP summary: enabled=${mcpStartupSummary.enabled}, attempted=${mcpStartupSummary.attempted}, connected=${mcpStartupSummary.connected}, failed=${mcpStartupSummary.failed}`,
       );
       logger.info("MCP Client Manager initialized");
       logPhase("mcp-init", mcpInitStartedAt);
-    } catch (error) {
-      logger.error("Failed to initialize MCP Client Manager:", error);
-      // Don't fail app startup if MCP init fails
+    };
+
+    // Initialize MCP Client Manager in the background for desktop startup.
+    // IPC settings handlers are already registered before first paint; network
+    // handshakes do not need to block the first window.
+    if (HEADLESS) {
+      try {
+        await initializeMcpClientManager();
+      } catch (error) {
+        logger.error("Failed to initialize MCP Client Manager:", error);
+      }
+    } else {
+      deferStartupTask("mcp-auto-connect", initializeMcpClientManager);
     }
 
     // Initialize Infrastructure Manager - restores wallet, configures providers
@@ -2195,10 +2234,10 @@ if (!gotTheLock) {
           }
         },
         log: {
-          debug: (msg, data) => console.log(`[Cron] ${msg}`, data ?? ""),
-          info: (msg, data) => console.log(`[Cron] ${msg}`, data ?? ""),
-          warn: (msg, data) => console.warn(`[Cron] ${msg}`, data ?? ""),
-          error: (msg, data) => console.error(`[Cron] ${msg}`, data ?? ""),
+          debug: (msg, data) => logCron("debug", msg, data),
+          info: (msg, data) => logCron("info", msg, data),
+          warn: (msg, data) => logCron("warn", msg, data),
+          error: (msg, data) => logCron("error", msg, data),
         },
       });
       setCronService(cronService);
@@ -2223,13 +2262,24 @@ if (!gotTheLock) {
       // Don't fail app startup if cron init fails
     }
 
-    // Initialize extension/plugin system — auto-discovers and loads plugins
-    try {
+    const initializeCustomSkillLoader = async (): Promise<void> => {
+      const skillInitStartedAt = Date.now();
+      const skillLoader = getCustomSkillLoader();
+      await skillLoader.initialize();
+      const skills = skillLoader.getLoadStats();
+      logger.info(
+        `Skills summary: total=${skills.total}, bundled=${skills.bundled}, external=${skills.external}, managed=${skills.managed}, workspace=${skills.workspace}, overrides=${skills.overridden}`,
+      );
+      logPhase("skills-init", skillInitStartedAt);
+    };
+
+    const initializePluginRegistry = async (): Promise<void> => {
+      await initializeCustomSkillLoader();
       const pluginInitStartedAt = Date.now();
       const pluginRegistry = getPluginRegistry();
       await pluginRegistry.initialize();
       const plugins = pluginRegistry.getPlugins();
-      pluginStartupSummary = {
+      const pluginStartupSummary = {
         loaded: plugins.length,
         enabled: plugins.filter((plugin: Any) => plugin.state === "enabled")
           .length,
@@ -2239,14 +2289,24 @@ if (!gotTheLock) {
       );
       logger.info(`Plugin registry initialized (${plugins.length} plugins)`);
       logPhase("plugin-init", pluginInitStartedAt);
-    } catch (error) {
-      logger.error("Failed to initialize Plugin Registry:", error);
-      // Don't fail app startup if plugin init fails
+    };
+
+    // Plugin discovery can involve filesystem and package metadata reads. Keep it
+    // off the first-window path; handlers initialize it on demand if opened first.
+    if (HEADLESS) {
+      try {
+        await initializePluginRegistry();
+      } catch (error) {
+        logger.error("Failed to initialize Plugin Registry:", error);
+      }
+    } else {
+      deferStartupTask("skill-loader", initializeCustomSkillLoader);
+      deferStartupTask("plugin-registry", initializePluginRegistry);
     }
 
     // Initialize channel gateway with agent daemon for task processing
     channelGateway = new ChannelGateway(dbManager.getDatabase(), {
-      autoConnect: true, // Auto-connect enabled channels on startup
+      autoConnect: HEADLESS,
       agentDaemon,
     });
 
@@ -2259,18 +2319,6 @@ if (!gotTheLock) {
       setupSubconsciousHandlers(subconsciousLoopService);
       setupImprovementHandlers(subconsciousLoopService);
     }
-    void getCustomSkillLoader()
-      .initialize()
-      .then(() => {
-        const skills = getCustomSkillLoader().getLoadStats();
-        logger.info(
-          `Skills summary: total=${skills.total}, bundled=${skills.bundled}, external=${skills.external}, managed=${skills.managed}, workspace=${skills.workspace}, overrides=${skills.overridden}`,
-        );
-      })
-      .catch((error) => {
-        logger.debug("Skills summary unavailable:", error);
-      });
-
     const startXMentionBridge = () => {
       if (!xMentionBridgeService) {
         xMentionBridgeService = initializeXMentionBridgeService(agentDaemon, {
@@ -2655,16 +2703,16 @@ if (!gotTheLock) {
       logger.error("Failed to initialize Strategic Planner:", error);
     }
 
-    // Initialize Persona Templates (Digital Twins) service — independent of heartbeat
+    // Register Persona Template handlers; templates are loaded lazily when the
+    // Digital Twins UI requests them.
     try {
       const db = dbManager.getDatabase();
       const agentRoleRepo = new AgentRoleRepository(db);
       const personaTemplateService = getPersonaTemplateService(agentRoleRepo);
-      await personaTemplateService.initialize();
       setupPersonaTemplateHandlers({ personaTemplateService });
-      logger.info("Persona Template service initialized");
+      logger.debug("Persona Template handlers initialized");
     } catch (error) {
-      logger.error("Failed to initialize Persona Templates:", error);
+      logger.error("Failed to initialize Persona Template handlers:", error);
     }
 
     // Initialize Plugin Pack handlers (Customize panel)
@@ -2794,7 +2842,6 @@ if (!gotTheLock) {
 
     // Create window
     createWindow();
-    installDevelopmentBranding();
 
     // Initialize gateway with main window reference
     if (mainWindow) {
@@ -2816,15 +2863,24 @@ if (!gotTheLock) {
       await channelGateway.initialize(mainWindow);
       const channelStats = channelGateway.getStartupStats();
       logger.info(
-        `Channels summary: loaded=${channelStats.loaded}, enabled=${channelStats.enabled}, connected=${channelStats.connected}`,
+        `Channels summary: loaded=${channelStats.loaded}, enabled=${channelStats.enabled}, connected=${channelStats.connected}, autoConnect=deferred`,
       );
       logPhase("channel-gateway-ui", channelInitStartedAt);
-      startXMentionBridge();
+      deferStartupTask("channel-auto-connect", async () => {
+        await channelGateway.connectEnabledChannels();
+        const connectedStats = channelGateway.getStartupStats();
+        logger.info(
+          `Channels auto-connect complete: loaded=${connectedStats.loaded}, enabled=${connectedStats.enabled}, connected=${connectedStats.connected}`,
+        );
+        startXMentionBridge();
+      });
       // Initialize update manager with main window reference
       updateManager.setMainWindow(mainWindow);
 
-      // Restore persisted canvas sessions from disk
-      await CanvasManager.getInstance().restoreSessions();
+      // Restore persisted canvas sessions after the first window is ready.
+      deferStartupTask("canvas-session-restore", async () => {
+        await CanvasManager.getInstance().restoreSessions();
+      });
 
       // Initialize control plane (WebSocket gateway)
       setupControlPlaneHandlers(mainWindow, {
@@ -3151,8 +3207,7 @@ if (!gotTheLock) {
             tags,
           });
         },
-        log: (...args: unknown[]) =>
-          console.log("[AmbientMonitoring]", ...args),
+        log: (...args: unknown[]) => console.log(...args),
       });
       await ambientMonitoringService.start();
 
@@ -3233,25 +3288,40 @@ if (!gotTheLock) {
         },
         db,
       );
+      const activeDailyBriefingService = dailyBriefingService;
       setupBriefingHandlers(dailyBriefingService, {
         onConfigSaved: async (workspaceId, config) => {
           await syncDailyBriefingCronJob(cronService, workspaceId, config);
         },
       });
-      for (const workspace of workspaceRepo
-        .findAll()
-        .filter(
-          (entry) =>
-            !entry.isTemp &&
-            !isTempWorkspaceId(entry.id) &&
-            !isManagedScheduledWorkspacePath(entry.path, getUserDataDir()),
-        )) {
-        await syncDailyBriefingCronJob(
-          cronService,
-          workspace.id,
-          dailyBriefingService.getConfig(workspace.id),
+      deferStartupTask("daily-briefing-schedule-sync", async () => {
+        if (!cronService) return;
+        const configuredRows = db
+          .prepare("SELECT workspace_id FROM briefing_config")
+          .all() as Array<{ workspace_id: string }>;
+        const targetWorkspaceIds = new Set(
+          configuredRows
+            .map((row) => row.workspace_id)
+            .filter((workspaceId) => typeof workspaceId === "string" && workspaceId.length > 0),
         );
-      }
+        const jobs = await cronService.list({ includeDisabled: true });
+        for (const job of jobs) {
+          if (
+            (job.name.startsWith("Daily Briefing:") ||
+              (job.description || "").includes(DAILY_BRIEFING_MARKER)) &&
+            job.workspaceId
+          ) {
+            targetWorkspaceIds.add(job.workspaceId);
+          }
+        }
+        for (const workspaceId of targetWorkspaceIds) {
+          await syncDailyBriefingCronJob(
+            cronService,
+            workspaceId,
+            activeDailyBriefingService.getConfig(workspaceId),
+          );
+        }
+      });
 
       // File Hub
       const fileHubService = new FileHubService(
@@ -3601,6 +3671,7 @@ if (!gotTheLock) {
     }
 
     logger.info(`Startup complete in ${Date.now() - startupStartedAt} ms`);
+    runDeferredStartupTasks();
 
     app.on("activate", () => {
       if (revealWindow(mainWindow)) {
@@ -3821,6 +3892,7 @@ if (!gotTheLock) {
       workspacePath: data.workspacePath,
       filename: typeof data.filename === "string" ? data.filename : undefined,
       includeDataUrl: data.includeDataUrl === true,
+      fullPage: data.fullPage === true,
     });
     if (!result) return { success: false, error: "No active browser workbench session" };
     return { success: true, ...result };

@@ -42,6 +42,18 @@ hero:
       text: Message Box Shortcuts
       link: /message-box-shortcuts
     - theme: alt
+      text: Gateway Lifecycle
+      link: /gateway-message-lifecycle
+    - theme: alt
+      text: Gateway User Guide
+      link: /gateway-user-guide
+    - theme: alt
+      text: Channel User Guides
+      link: /channel-user-guides
+    - theme: alt
+      text: Dedicated Channel Guides
+      link: /channel-guides/
+    - theme: alt
       text: Ask Inbox Architecture
       link: /ask-inbox-architecture
     - theme: alt
@@ -71,6 +83,9 @@ hero:
     - theme: alt
       text: Browser Workbench
       link: /browser-workbench
+    - theme: alt
+      text: Browser V2 Architecture
+      link: /browser-v2-architecture
     - theme: alt
       text: Chronicle
       link: /chronicle

@@ -50,9 +50,10 @@ Behavior:
 ## Desktop and Gateway Behavior
 
 - Supported in desktop and gateway channels.
-- Gateway routes `/simplify` and `/batch` into desktop task execution as normalized slash command text.
+- Gateway routes `/simplify` and `/batch` through the shared remote command registry, then into task execution as normalized slash command text.
 - Invalid command shapes return usage/help text in-channel.
 - Help text across channel variants includes both commands.
+- Recognized gateway slash commands are never queued or forwarded as ordinary task follow-up text.
 
 ## Inline Chaining
 
@@ -109,6 +110,8 @@ Common WhatsApp phrases map to slash commands:
 
 - `simplify this`, `run simplify ...` -> `/simplify ...`
 - `batch migrate ...`, `run batch ...` -> `/batch ...`
+
+See [Gateway Message Lifecycle](gateway-message-lifecycle.md) for active-task handling, unknown slash command behavior, and direct `/<skill-slug> args` invocation from gateway channels.
 
 ## Validation and Tests
 

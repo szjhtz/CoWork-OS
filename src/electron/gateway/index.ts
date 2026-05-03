@@ -618,6 +618,17 @@ export class ChannelGateway {
   }
 
   /**
+   * Connect enabled channel adapters after the gateway has loaded them.
+   * Used by desktop startup to keep network handshakes off the first-window path.
+   */
+  async connectEnabledChannels(): Promise<void> {
+    if (!this.initialized) {
+      await this.initialize();
+    }
+    await this.router.connectAll();
+  }
+
+  /**
    * Set the main window for IPC communication
    */
   setMainWindow(window: BrowserWindow): void {

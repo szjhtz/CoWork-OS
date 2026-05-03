@@ -532,7 +532,9 @@ async function main(): Promise<void> {
             params.channelId,
             message,
             {
+              channelDbId: params.channelDbId,
               parseMode: "markdown",
+              idempotencyKey: params.idempotencyKey,
             },
           );
           console.log(
@@ -543,6 +545,7 @@ async function main(): Promise<void> {
             `[Cron] Failed to deliver to ${params.channelType}:${params.channelId}:`,
             err,
           );
+          throw err;
         }
       },
       onEvent: async (evt) => {

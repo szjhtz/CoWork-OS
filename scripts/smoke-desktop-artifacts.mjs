@@ -11,6 +11,7 @@ const ROOT = path.resolve(import.meta.dirname, "..");
 const DEFAULT_RELEASE_DIR = path.join(ROOT, "release");
 const MIN_DMG_BYTES = 50 * 1024 * 1024;
 const MIN_EXE_BYTES = 100 * 1024 * 1024;
+const MAC_LAUNCH_MS = 8_000;
 const WINDOWS_LAUNCH_MS = 20_000;
 
 function parseArgs(argv) {
@@ -19,6 +20,7 @@ function parseArgs(argv) {
     releaseDir: DEFAULT_RELEASE_DIR,
     expectedVersion: undefined,
     skipLaunch: false,
+    allowUnsigned: false,
     help: false,
   };
 
@@ -30,6 +32,10 @@ function parseArgs(argv) {
     }
     if (arg === "--skip-launch") {
       args.skipLaunch = true;
+      continue;
+    }
+    if (arg === "--allow-unsigned") {
+      args.allowUnsigned = true;
       continue;
     }
     if (arg === "--platform" && argv[i + 1]) {
@@ -71,6 +77,7 @@ Options:
   --release-dir=<path>          Release artifact directory. Default: ./release.
   --expected-version=<version>  Expected app/package version. Default: package.json version.
   --skip-launch                 Windows only: install/uninstall without launch hold.
+  --allow-unsigned              macOS only: accept a valid ad hoc signed app bundle.
   --help                        Show this help.
 `);
 }
@@ -103,6 +110,23 @@ function run(command, args, options = {}) {
     throw new Error(`${command} ${args.join(" ")} failed with exit code ${result.status ?? 1}`);
   }
   return result;
+}
+
+function runStatus(command, args, options = {}) {
+  const result = spawnSync(command, args, {
+    cwd: options.cwd ?? ROOT,
+    env: options.env ?? process.env,
+    encoding: options.encoding ?? "utf8",
+    stdio: "pipe",
+    shell: options.shell ?? process.platform === "win32",
+  });
+
+  if (result.error) throw result.error;
+  return {
+    status: result.status ?? 1,
+    stdout: String(result.stdout || ""),
+    stderr: String(result.stderr || ""),
+  };
 }
 
 async function listFiles(dir) {
@@ -193,7 +217,102 @@ function plistValue(plistPath, key) {
   return String(result.stdout || "").trim();
 }
 
-async function smokeMac({ releaseDir, expectedVersion }) {
+function summarizeCommandOutput(result) {
+  return [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
+}
+
+function assertMacCodeSignature(appPath, allowUnsigned) {
+  const verify = runStatus("codesign", ["--verify", "--deep", "--strict", "--verbose=2", appPath], {
+    shell: false,
+  });
+  if (verify.status !== 0) {
+    throw new Error(
+      `macOS app bundle has an invalid code signature:\n${summarizeCommandOutput(verify)}`,
+    );
+  }
+
+  const display = runStatus("codesign", ["-dvvv", appPath], { shell: false });
+  const details = summarizeCommandOutput(display);
+  if (display.status !== 0) {
+    throw new Error(`Failed to inspect macOS app code signature:\n${details}`);
+  }
+
+  const isAdHoc = /\bSignature=adhoc\b/.test(details);
+  const teamMatch = details.match(/^TeamIdentifier=(.+)$/m);
+  const teamIdentifier = teamMatch?.[1]?.trim();
+  const hasTeamIdentifier = Boolean(teamIdentifier && teamIdentifier !== "not set");
+
+  if (allowUnsigned) {
+    if (!isAdHoc) {
+      throw new Error("Expected an unsigned macOS app to be ad hoc signed, but it was not.");
+    }
+    const entitlements = runStatus("codesign", ["-d", "--entitlements", ":-", appPath], {
+      shell: false,
+    });
+    const entitlementDetails = summarizeCommandOutput(entitlements);
+    if (/com\.apple\.developer\./.test(entitlementDetails)) {
+      throw new Error(
+        `Unsigned macOS app contains restricted developer entitlements:\n${entitlementDetails}`,
+      );
+    }
+    console.log("[desktop-smoke] macOS app is validly ad hoc signed for unsigned distribution.");
+    return;
+  }
+
+  if (isAdHoc || !hasTeamIdentifier) {
+    throw new Error(
+      "macOS app is not Developer ID signed. Re-run with --allow-unsigned only for unsigned fallback artifacts.",
+    );
+  }
+
+  const gatekeeper = runStatus("spctl", ["-a", "-vv", appPath], { shell: false });
+  if (gatekeeper.status !== 0) {
+    throw new Error(`macOS Gatekeeper assessment failed:\n${summarizeCommandOutput(gatekeeper)}`);
+  }
+}
+
+async function smokeLaunchMac(executablePath) {
+  let spawnError = null;
+  let output = "";
+  const child = spawn(executablePath, [], {
+    env: {
+      ...process.env,
+      COWORK_DESKTOP_SMOKE: "1",
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  child.on("error", (error) => {
+    spawnError = error;
+  });
+  child.stdout.on("data", (chunk) => {
+    output += chunk;
+  });
+  child.stderr.on("data", (chunk) => {
+    output += chunk;
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, MAC_LAUNCH_MS));
+  if (spawnError) {
+    throw spawnError;
+  }
+  if (child.exitCode !== null && child.exitCode !== 0) {
+    throw new Error(
+      `macOS app exited during smoke launch with code ${child.exitCode}:\n${output.trim()}`,
+    );
+  }
+  if (child.exitCode === 0) {
+    return;
+  }
+
+  child.kill("SIGTERM");
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  if (child.exitCode === null) {
+    child.kill("SIGKILL");
+  }
+}
+
+async function smokeMac({ releaseDir, expectedVersion, allowUnsigned }) {
   const dmg = await findSingleVersionedFile(
     releaseDir,
     (file) => file.name.endsWith(".dmg") && !file.name.endsWith(".blockmap"),
@@ -231,6 +350,8 @@ async function smokeMac({ releaseDir, expectedVersion }) {
 
     const executablePath = path.join(appPath, "Contents", "MacOS", executableName);
     await fs.access(executablePath, fsConstants.X_OK);
+    assertMacCodeSignature(appPath, allowUnsigned);
+    await smokeLaunchMac(executablePath);
     console.log(`[desktop-smoke] macOS DMG passed: ${dmg.name} (${path.basename(appPath)})`);
   } finally {
     if (mounted) {
@@ -385,7 +506,11 @@ async function main() {
   const expectedVersion = args.expectedVersion || readPackageVersion();
 
   if (platform === "mac") {
-    await smokeMac({ releaseDir: args.releaseDir, expectedVersion });
+    await smokeMac({
+      releaseDir: args.releaseDir,
+      expectedVersion,
+      allowUnsigned: args.allowUnsigned,
+    });
   } else {
     await smokeWindows({
       releaseDir: args.releaseDir,

@@ -491,7 +491,7 @@ describe("CronService", () => {
       }
       expect(mockCreateTask).toHaveBeenCalledWith(
         expect.objectContaining({
-          prompt: "Run this task",
+          prompt: expect.stringContaining("Run this task"),
           workspaceId: "ws-1",
           allowUserInput: false,
         }),
@@ -518,7 +518,7 @@ describe("CronService", () => {
 
       expect(mockCreateTask).toHaveBeenCalledWith(
         expect.objectContaining({
-          prompt: "Hello bar",
+          prompt: expect.stringContaining("Hello bar"),
         }),
       );
     });
@@ -734,6 +734,59 @@ describe("CronService", () => {
       expect(deliverToChannel).toHaveBeenCalledTimes(1);
       const call = deliverToChannel.mock.calls[0]?.[0] as Any;
       expect(call?.idempotencyKey).toBe("job-1:1000000:task-123:telegram:chat-1");
+    });
+
+    it("adds scheduled delivery guidance to the task prompt", async () => {
+      service = createService({
+        nowMs: () => 1000000,
+        deliverToChannel: vi.fn().mockResolvedValue({ messageId: "msg-1" }),
+      });
+      await service.start();
+
+      await service.add({
+        name: "Prompt Guidance Job",
+        enabled: true,
+        workspaceId: "ws-1",
+        taskPrompt: "Produce the report",
+        schedule: { kind: "at", atMs: 900000 },
+        state: { nextRunAtMs: 900000 },
+        delivery: {
+          enabled: true,
+          channelType: "whatsapp" as Any,
+          channelId: "chat-1",
+        },
+      });
+
+      await service.run("job-1", "force");
+
+      const call = (mockCreateTask as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as Any;
+      expect(call.prompt).toContain("Scheduled task delivery:");
+      expect(call.prompt).toContain(
+        "Do not call channel, messaging, or notification tools to message the user yourself.",
+      );
+      expect(call.prompt).toContain("Produce the report");
+    });
+
+    it("does not add delivery guidance when channel delivery is not configured", async () => {
+      service = createService({
+        nowMs: () => 1000000,
+      });
+      await service.start();
+
+      await service.add({
+        name: "Local Scheduled Job",
+        enabled: true,
+        workspaceId: "ws-1",
+        taskPrompt: "Write the local report",
+        schedule: { kind: "at", atMs: 900000 },
+        state: { nextRunAtMs: 900000 },
+      });
+
+      await service.run("job-1", "force");
+
+      const call = (mockCreateTask as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as Any;
+      expect(call.prompt).not.toContain("Scheduled task delivery:");
+      expect(call.prompt).toContain("Write the local report");
     });
 
     it("should return not-found for non-existent job", async () => {

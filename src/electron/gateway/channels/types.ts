@@ -733,6 +733,13 @@ export interface ChannelAdapter {
   editMessage?(chatId: string, messageId: string, text: string): Promise<void>;
 
   /**
+   * Send typing/composing indicator when supported.
+   * @param chatId Chat ID
+   * @param threadId Optional thread ID
+   */
+  sendTyping?(chatId: string, threadId?: string): Promise<void>;
+
+  /**
    * Delete a message
    * @param chatId Chat ID
    * @param messageId Message ID to delete

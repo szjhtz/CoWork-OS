@@ -21,6 +21,10 @@ import {
   MessageAttachment,
 } from "./types";
 
+export function mapSlackSlashCommandToText(commandName: string, text?: string): string {
+  return `/${String(commandName || "").replace(/^\//, "")} ${String(text || "")}`.trim();
+}
+
 export class SlackAdapter implements ChannelAdapter {
   readonly type = "slack" as const;
 
@@ -132,7 +136,7 @@ export class SlackAdapter implements ChannelAdapter {
           userName: command.user_name,
           chatId: command.channel_id,
           isGroup,
-          text: `/${command.command.replace("/", "")} ${command.text}`.trim(),
+          text: mapSlackSlashCommandToText(command.command, command.text),
           timestamp: new Date(),
           raw: command,
         };
@@ -302,10 +306,11 @@ export class SlackAdapter implements ChannelAdapter {
       throw new Error("Slack bot is not connected");
     }
 
+    const processedText = this.convertMarkdownForSlack(text);
     await this.app.client.chat.update({
       channel: chatId,
       ts: messageId,
-      text,
+      text: processedText,
     });
   }
 

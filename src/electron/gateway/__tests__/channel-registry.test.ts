@@ -82,4 +82,13 @@ describe("ChannelRegistry", () => {
     expect(result.valid).toBe(true);
     expect(result.errors).toEqual([]);
   });
+
+  it("marks Telegram, Discord, and Slack as edit-capable with explicit support flags", () => {
+    expect(registry.getMetadata("telegram")?.capabilities.supportsEditMessage).toBe(true);
+    expect(registry.getMetadata("telegram")?.capabilities.supportsTyping).toBe(true);
+    expect(registry.getMetadata("discord")?.capabilities.supportsEditMessage).toBe(true);
+    expect(registry.getMetadata("discord")?.capabilities.supportsTyping).toBe(true);
+    expect(registry.getMetadata("slack")?.capabilities.supportsEditMessage).toBe(true);
+    expect(registry.getMetadata("slack")?.capabilities.supportsTyping).toBe(false);
+  });
 });

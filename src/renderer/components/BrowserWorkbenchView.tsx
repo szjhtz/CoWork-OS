@@ -1,10 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import {
+  Activity,
   ArrowUp,
+  Camera,
   ChevronDown,
+  Download,
   Mic,
+  PencilLine,
+  Plus,
+  ScanLine,
   Square,
+  X,
 } from "lucide-react";
 import type {
   ImageAttachment,
@@ -34,6 +41,11 @@ type BrowserCursorState = {
   pulse?: boolean;
   at: number;
 } | null;
+type BrowserWorkbenchTab = {
+  id: string;
+  url: string;
+  title: string;
+};
 
 type BrowserWorkbenchViewProps = {
   taskId: string;
@@ -123,6 +135,14 @@ export function BrowserWorkbenchView({
   const [urlText, setUrlText] = useState(initialUrl || "");
   const [activeUrl, setActiveUrl] = useState(initialUrl || "");
   const [title, setTitle] = useState("");
+  const [tabs, setTabs] = useState<BrowserWorkbenchTab[]>(() => [
+    {
+      id: "active",
+      url: initialUrl || "",
+      title: "",
+    },
+  ]);
+  const [activeTabId, setActiveTabId] = useState("active");
   const [isLoading, setIsLoading] = useState(false);
   const [webviewSize, setWebviewSize] = useState<{ width: number; height: number } | null>(null);
   const [message, setMessage] = useState("");
@@ -135,7 +155,13 @@ export function BrowserWorkbenchView({
   const [annotationError, setAnnotationError] = useState("");
   const [turnContextExpanded, setTurnContextExpanded] = useState(false);
   const [browserCursor, setBrowserCursor] = useState<BrowserCursorState>(null);
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+  const [snapshotOverlay, setSnapshotOverlay] = useState(false);
   const partition = useMemo(() => getPartition(workspaceId), [workspaceId]);
+  const activeTab = useMemo(
+    () => tabs.find((tab) => tab.id === activeTabId) || tabs[0],
+    [activeTabId, tabs],
+  );
   const displayTitle = title || getDomain(activeUrl) || "Browser";
   const tabLabel = title || getDomain(activeUrl) || "about:blank";
   const fullscreenLabel = mode === "fullscreen" ? "Exit full screen" : "Open browser workbench in full screen";
@@ -195,6 +221,13 @@ export function BrowserWorkbenchView({
     setUrlText(initialUrl);
     setActiveUrl(initialUrl);
     activeUrlRef.current = initialUrl;
+    setTabs((current) =>
+      current.map((tab, index) =>
+        index === 0
+          ? { ...tab, url: initialUrl }
+          : tab,
+      ),
+    );
   }, [initialUrl]);
 
   const getReadyWebContentsId = useCallback((webview: Any): number | undefined => {
@@ -245,6 +278,59 @@ export function BrowserWorkbenchView({
     onStatusChangeRef.current?.({ url: nextUrl, title: nextTitle });
   }, [getReadyWebContentsId, sessionId, taskId]);
 
+  const updateActiveTab = useCallback((patch: Partial<BrowserWorkbenchTab>) => {
+    setTabs((current) =>
+      current.map((tab) =>
+        tab.id === activeTabId
+          ? {
+              ...tab,
+              ...patch,
+            }
+          : tab,
+      ),
+    );
+  }, [activeTabId]);
+
+  const openTab = useCallback((url = "") => {
+    const id = `tab-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const normalized = url ? normalizeUrl(url) : "";
+    setTabs((current) => [...current, { id, url: normalized, title: "" }]);
+    setActiveTabId(id);
+    setUrlText(normalized);
+    setActiveUrl(normalized);
+    activeUrlRef.current = normalized;
+    titleRef.current = "";
+    setTitle("");
+  }, []);
+
+  const switchTab = useCallback((tab: BrowserWorkbenchTab) => {
+    setActiveTabId(tab.id);
+    setUrlText(tab.url);
+    setActiveUrl(tab.url);
+    setTitle(tab.title);
+    activeUrlRef.current = tab.url;
+    titleRef.current = tab.title;
+  }, []);
+
+  const closeTab = useCallback((tabId: string) => {
+    setTabs((current) => {
+      if (current.length <= 1) return current;
+      const next = current.filter((tab) => tab.id !== tabId);
+      if (tabId === activeTabId) {
+        const fallback = next[next.length - 1] || next[0];
+        if (fallback) {
+          setActiveTabId(fallback.id);
+          setUrlText(fallback.url);
+          setActiveUrl(fallback.url);
+          setTitle(fallback.title);
+          activeUrlRef.current = fallback.url;
+          titleRef.current = fallback.title;
+        }
+      }
+      return next;
+    });
+  }, [activeTabId]);
+
   const applyWebviewBounds = useCallback((size = webviewSize) => {
     const webview = webviewRef.current;
     if (!webview || !size || size.width <= 0 || size.height <= 0) return;
@@ -273,12 +359,14 @@ export function BrowserWorkbenchView({
       activeUrlRef.current = nextUrl;
       setUrlText(nextUrl);
       setActiveUrl(nextUrl);
+      updateActiveTab({ url: nextUrl });
       notifyStatus();
     };
     const handleTitle = (event: Any) => {
       const nextTitle = event?.title || webview.getTitle?.() || "";
       titleRef.current = nextTitle;
       setTitle(nextTitle);
+      updateActiveTab({ title: nextTitle });
       notifyStatus();
     };
     const handleLoadingStart = () => setIsLoading(true);
@@ -291,12 +379,18 @@ export function BrowserWorkbenchView({
       applyWebviewBounds();
       registerSession();
     };
+    const handleNewWindow = (event: Any) => {
+      const nextUrl = event?.url || "";
+      event?.preventDefault?.();
+      if (nextUrl) openTab(nextUrl);
+    };
     webview.addEventListener("dom-ready", handleDomReady);
     webview.addEventListener("did-navigate", handleNavigate);
     webview.addEventListener("did-navigate-in-page", handleNavigate);
     webview.addEventListener("page-title-updated", handleTitle);
     webview.addEventListener("did-start-loading", handleLoadingStart);
     webview.addEventListener("did-stop-loading", handleLoadingStop);
+    webview.addEventListener("new-window", handleNewWindow);
     return () => {
       const webContentsId = registeredWebContentsIdRef.current;
       if (typeof webContentsId === "number") {
@@ -314,8 +408,9 @@ export function BrowserWorkbenchView({
       webview.removeEventListener("page-title-updated", handleTitle);
       webview.removeEventListener("did-start-loading", handleLoadingStart);
       webview.removeEventListener("did-stop-loading", handleLoadingStop);
+      webview.removeEventListener("new-window", handleNewWindow);
     };
-  }, [notifyStatus, registerSession, sessionId, taskId]);
+  }, [applyWebviewBounds, notifyStatus, openTab, registerSession, sessionId, taskId, updateActiveTab]);
 
   const navigate = useCallback((nextUrl = urlText) => {
     const normalized = normalizeUrl(nextUrl);
@@ -323,7 +418,8 @@ export function BrowserWorkbenchView({
     activeUrlRef.current = normalized;
     setUrlText(normalized);
     setActiveUrl(normalized);
-  }, [urlText]);
+    updateActiveTab({ url: normalized });
+  }, [updateActiveTab, urlText]);
 
   const runWebviewCommand = useCallback((command: "goBack" | "goForward" | "reload") => {
     const webview = webviewRef.current;
@@ -568,10 +664,44 @@ export function BrowserWorkbenchView({
       <header className="browser-workbench-header">
         <div className="browser-workbench-tabs">
           <span className="browser-workbench-summary">Summary</span>
-          <span className="browser-workbench-tab" title={displayTitle}>
-            <span className="browser-workbench-tab-icon" aria-hidden="true" />
-            <span>{tabLabel}</span>
-          </span>
+          {tabs.map((tab) => (
+            <div
+              key={tab.id}
+              className={`browser-workbench-tab-shell ${tab.id === activeTabId ? "is-active" : ""}`}
+            >
+              <button
+                type="button"
+                className="browser-workbench-tab"
+                title={tab.title || tab.url || "New tab"}
+                onClick={() => switchTab(tab)}
+              >
+                <span className="browser-workbench-tab-icon" aria-hidden="true" />
+                <span className="browser-workbench-tab-label">{tab.id === activeTabId ? tabLabel : tab.title || getDomain(tab.url) || "New tab"}</span>
+              </button>
+              {tabs.length > 1 && (
+                <button
+                  type="button"
+                  className="browser-workbench-tab-close"
+                  aria-label="Close tab"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    closeTab(tab.id);
+                  }}
+                >
+                  <X size={12} aria-hidden="true" />
+                </button>
+              )}
+            </div>
+          ))}
+          <button
+            type="button"
+            className="browser-workbench-tab-add"
+            title="New tab"
+            aria-label="New tab"
+            onClick={() => openTab()}
+          >
+            <Plus size={14} aria-hidden="true" />
+          </button>
         </div>
         <div className="browser-workbench-header-actions">
           <button
@@ -627,26 +757,45 @@ export function BrowserWorkbenchView({
           />
         </form>
         <div className="browser-workbench-right-actions">
+          <span className="browser-workbench-profile" title={activeTab?.url || activeUrl || "Workspace browser"}>
+            {activeUrl.startsWith("https://") ? "https" : activeUrl ? "http" : "workspace"}
+          </span>
           {toolbarNotice && <span className="browser-workbench-toolbar-notice">{toolbarNotice}</span>}
           <button
             type="button"
-            className="browser-workbench-nav-btn browser-workbench-action-btn"
-            data-symbol="▣"
-            onClick={() => void captureScreenshot("screenshot")}
-            title="Take screenshot"
-            aria-label="Take screenshot"
+            className={`browser-workbench-nav-btn browser-workbench-action-btn ${snapshotOverlay ? "is-active" : ""}`}
+            onClick={() => setSnapshotOverlay((current) => !current)}
+            title="Snapshot overlay"
+            aria-label="Snapshot overlay"
           >
-            <span className="browser-workbench-glyph" aria-hidden="true">▣</span>
+            <ScanLine className="browser-workbench-lucide-icon" size={16} strokeWidth={2.2} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className={`browser-workbench-nav-btn browser-workbench-action-btn ${diagnosticsOpen ? "is-active" : ""}`}
+            onClick={() => setDiagnosticsOpen((current) => !current)}
+            title="Diagnostics"
+            aria-label="Diagnostics"
+          >
+            <Activity className="browser-workbench-lucide-icon" size={16} strokeWidth={2.2} aria-hidden="true" />
           </button>
           <button
             type="button"
             className="browser-workbench-nav-btn browser-workbench-action-btn"
-            data-symbol="✎"
+            onClick={() => void captureScreenshot("screenshot")}
+            title="Take screenshot"
+            aria-label="Take screenshot"
+          >
+            <Camera className="browser-workbench-lucide-icon" size={16} strokeWidth={2.2} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className="browser-workbench-nav-btn browser-workbench-action-btn"
             onClick={() => void captureScreenshot("annotation")}
             title="Annotate screenshot"
             aria-label="Annotate screenshot"
           >
-            <span className="browser-workbench-glyph" aria-hidden="true">✎</span>
+            <PencilLine className="browser-workbench-lucide-icon" size={16} strokeWidth={2.2} aria-hidden="true" />
           </button>
         </div>
       </div>
@@ -687,7 +836,35 @@ export function BrowserWorkbenchView({
             )}
           </div>
         )}
+        {snapshotOverlay && (
+          <div className="browser-workbench-snapshot-overlay" aria-hidden="true">
+            <div className="browser-workbench-snapshot-box box-primary">
+              <span>ref</span>
+            </div>
+            <div className="browser-workbench-snapshot-box box-secondary">
+              <span>ref</span>
+            </div>
+          </div>
+        )}
       </div>
+      {diagnosticsOpen && (
+        <div className="browser-workbench-diagnostics">
+          <div className="browser-workbench-diagnostics-tabs">
+            <button type="button" className="is-active">Console</button>
+            <button type="button">Network</button>
+            <button type="button">
+              <Download size={13} aria-hidden="true" />
+              Downloads
+            </button>
+            <button type="button">Storage</button>
+            <button type="button">Trace</button>
+          </div>
+          <div className="browser-workbench-diagnostics-body">
+            <span>{displayTitle}</span>
+            <span>{activeUrl || "about:blank"}</span>
+          </div>
+        </div>
+      )}
       {annotationDraft && (
         <div className="browser-annotation-overlay" role="dialog" aria-modal="true" aria-label="Annotate browser screenshot">
           <div className="browser-annotation-panel">

@@ -6,7 +6,7 @@ This page documents the current web artifact concept for generated `.html` / `.h
 
 Web page artifacts are one surface of the broader [Everything Workbench](everything-workbench.md): generated knowledge-work files open in-place, can be reviewed in context, and keep the follow-up composer beside the artifact.
 
-Live website testing uses a related but separate surface: the [Browser Workbench](browser-workbench.md). Prompts such as "go to llmwizard.com and test the application as a normal user" open a visible browser session in the resizable right sidebar so the agent and user share the same page. Generated `.html` files remain durable web page artifacts; live URLs use browser automation.
+Live website testing uses a related but separate surface: the [Browser Workbench](browser-workbench.md). Prompts such as "go to llmwizard.com and test the application as a normal user" open a visible Browser V2 session in the resizable right sidebar so the agent and user share the same page, snapshot refs, diagnostics, and cursor movement. Generated `.html` files remain durable web page artifacts; live URLs use browser automation.
 
 ## Supported Outputs
 
@@ -115,14 +115,14 @@ Use web page artifacts when the task produced a local output file that should be
 Web page artifacts and browser-use testing are intentionally different:
 
 - **Web page artifacts** are local files created or updated by a task. They open from artifact cards into a sandboxed iframe preview and refresh only after the relevant output changes or the follow-up task completes.
-- **Browser workbench sessions** are live websites or local app URLs being used, clicked, filled, tested, or screenshotted by the agent. They open in a visible Electron webview in the same resizable right sidebar and use a persistent workspace browser profile.
-- Browser Workbench controls include URL navigation, back/forward/reload, fullscreen, close, screenshot capture, and screenshot annotation.
-- Browser Workbench automation shows visible cursor movement and action pulses while the agent clicks, fills, types, selects, waits, reads, scrolls, and navigates.
+- **Browser workbench sessions** are live websites or local app URLs being used, clicked, filled, tested, diagnosed, uploaded/downloaded through, or screenshotted by the agent. They open in a visible Electron webview in the same resizable right sidebar and use a persistent workspace browser profile.
+- Browser Workbench controls include URL navigation, tabs, profile/security indicator, back/forward/reload, fullscreen, close, screenshot capture, screenshot annotation, diagnostics, and Browser V2 snapshot overlay.
+- Browser Workbench automation shows visible cursor movement and action pulses while the agent snapshots, clicks, fills, types, selects, waits, reads, scrolls, uploads, downloads, and navigates.
 - `Open in browser` on a web artifact still means the external system browser.
 - Browser-use prompts can load a generated page into the browser workbench when the user explicitly asks to test it as a live site, but the default artifact-card open path remains the iframe artifact viewer.
-- Signed-in external Chrome control remains explicit through Chrome DevTools attach or profile options. The embedded workbench does not silently reuse system Chrome cookies.
+- Signed-in external Chrome/Edge control remains explicit through Chrome DevTools attach or profile options plus real-browser consent. The embedded workbench does not silently reuse system Chrome cookies.
 
-See [Browser Workbench](browser-workbench.md) for the full live-browser behavior, fallback rules, cursor overlay, and annotation flow.
+See [Browser Workbench](browser-workbench.md) for live-browser behavior and [Browser V2 Architecture](browser-v2-architecture.md) for the session manager, snapshot refs, fallback rules, diagnostics, safety, and verification contract.
 
 ## Implementation Files
 
@@ -134,7 +134,7 @@ See [Browser Workbench](browser-workbench.md) for the full live-browser behavior
 - `src/electron/preload.ts`: optional `webPreview` field on `FileViewerResult.data`.
 - `src/renderer/components/WebArtifactCard.tsx`: task-feed web artifact card and dropdown.
 - `src/renderer/components/WebArtifactViewer.tsx`: sidebar/fullscreen web viewer, iframe preview, actions, and fullscreen composer integration.
-- `src/renderer/components/BrowserWorkbenchView.tsx`: visible browser workbench for live URL testing and browser automation.
+- `src/renderer/components/BrowserWorkbenchView.tsx`: visible Browser V2 workbench for live URL testing, browser automation, tabs, diagnostics, snapshot overlay, and screenshot annotation.
 - `src/renderer/App.tsx`: shared artifact sidebar/fullscreen state, persisted sidebar width, and follow-up refresh behavior.
 - `src/renderer/components/MainContent.tsx`: generated-output detection and inline web artifact card rendering.
 - `src/renderer/styles/index.css`: artifact card/viewer and web preview styling.

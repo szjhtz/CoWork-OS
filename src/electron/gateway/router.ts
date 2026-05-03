@@ -53,6 +53,7 @@ import {
   recordLlmCallSuccess,
 } from "../agent/llm/usage-telemetry";
 import { getCustomSkillLoader } from "../agent/custom-skill-loader";
+import { resolveSkillSlashAlias } from "../agent/skill-slash-aliases";
 import { PersonalityManager } from "../settings/personality-manager";
 import {
   describeSchedule,
@@ -78,7 +79,11 @@ import { formatChatTranscriptForPrompt } from "./chat-transcript";
 import { evaluateWorkspaceRouterRules } from "./router-rules";
 import { applyResearchChatRouting } from "./router-research-routing";
 import { extractJsonValues } from "../utils/json-utils";
-import { pruneTempWorkspaces } from "../utils/temp-workspace";
+import {
+  createUniqueScopedTempWorkspaceDirectorySync,
+  ensureTempWorkspaceDirectoryPathSync,
+  pruneTempWorkspaces,
+} from "../utils/temp-workspace";
 import {
   createScopedTempWorkspaceIdentity,
   isTempWorkspaceInScope,
@@ -113,6 +118,14 @@ import {
   normalizeWhatsAppNaturalCommand,
   stripWhatsAppCommandPreamble,
 } from "./whatsapp-command-utils";
+import { ChannelDeliveryService } from "./channel-delivery-service";
+import {
+  getCanonicalRemoteCommand,
+  listRemoteCommandCategories,
+  listRemoteCommands,
+  normalizeRemoteCommandName,
+} from "./remote-command-registry";
+import { normalizeRemoteIncomingCommand } from "./remote-command-normalizer";
 import { writeKitFileWithSnapshot } from "../context/kit-revisions";
 export type { RouterConfig } from "./router-helpers";
 
@@ -156,6 +169,11 @@ export class MessageRouter {
   private taskRepo: TaskRepository;
   private artifactRepo: ArtifactRepository;
   private agentRoleRepo: AgentRoleRepository;
+  private deliveryService: ChannelDeliveryService;
+  private rawAdapterSendMessages: WeakMap<
+    ChannelAdapter,
+    ChannelAdapter["sendMessage"]
+  > = new WeakMap();
 
   // Track pending responses for tasks
   private pendingTaskResponses: Map<
@@ -171,6 +189,7 @@ export class MessageRouter {
       lastChannelMessageId?: string;
       progressMessageId?: string;
       lastProgressMessageText?: string;
+      sessionGeneration?: number;
     }
   > = new Map();
 
@@ -236,6 +255,9 @@ export class MessageRouter {
   // finalize helpers from sending a brand new message when no draft exists (e.g., if called
   // defensively on pause/follow-up events).
   private telegramDraftStreamTouchedTasks: Set<string> = new Set();
+  private remoteSessionGenerations: Map<string, number> = new Map();
+  private suppressedTaskUpdateIds: Set<string> = new Set();
+  private detachedTaskResponseIds: Set<string> = new Set();
   // Destination-scoped cache for recently-sent idempotent messages.
   private sentIdempotencyKeys: Map<
     string,
@@ -260,6 +282,51 @@ export class MessageRouter {
     this.taskRepo = new TaskRepository(db);
     this.artifactRepo = new ArtifactRepository(db);
     this.agentRoleRepo = new AgentRoleRepository(db);
+    this.deliveryService = new ChannelDeliveryService({
+      getAdapter: (channelType, channelId) =>
+        channelId
+          ? this.getAdapterByChannelId(channelId) || this.adapters.get(channelType)
+          : this.adapters.get(channelType),
+      getChannel: (channelType, channelId) =>
+        channelId
+          ? this.channelRepo.findById(channelId) || undefined
+          : this.channelRepo.findByType(channelType) || undefined,
+      cleanupIdempotencyCache: () => this.cleanupIdempotencyCache(),
+      getIdempotencyCacheKey: (channelType, message, channelId) =>
+        this.getIdempotencyCacheKey(channelType, message, channelId),
+      getCachedIdempotentMessage: (cacheKey) =>
+        this.sentIdempotencyKeys.get(cacheKey),
+      setCachedIdempotentMessage: (cacheKey, messageId) => {
+        this.sentIdempotencyKeys.set(cacheKey, {
+          messageId,
+          sentAtMs: Date.now(),
+        });
+      },
+      sendRawMessage: (adapter, message) => {
+        const rawSend = this.rawAdapterSendMessages.get(adapter);
+        return rawSend ? rawSend(message) : adapter.sendMessage(message);
+      },
+      logOutgoingMessage: (input) => {
+        this.messageRepo.create({
+          channelId: input.channelId,
+          channelMessageId: input.channelMessageId,
+          chatId: input.chatId,
+          direction: "outgoing",
+          content: input.content,
+          attachments: this.toDbAttachments(input.attachments),
+          timestamp: Date.now(),
+        });
+      },
+      emitMessageSent: (input) => {
+        this.emitEvent({
+          type: "message:sent",
+          channel: input.channelType,
+          timestamp: new Date(),
+          data: { chatId: input.chatId, messageId: input.messageId },
+        });
+      },
+      warn: (message, error) => console.warn(message, error),
+    });
 
     // Initialize managers
     this.securityManager = new SecurityManager(db);
@@ -316,6 +383,29 @@ export class MessageRouter {
       );
     }
     return DEFAULT_CHANNEL_CONTEXT;
+  }
+
+  private getRemoteSessionGeneration(sessionId: string): number {
+    return this.remoteSessionGenerations.get(sessionId) || 0;
+  }
+
+  private bumpRemoteSessionGeneration(sessionId: string): number {
+    const next = this.getRemoteSessionGeneration(sessionId) + 1;
+    this.remoteSessionGenerations.set(sessionId, next);
+    return next;
+  }
+
+  private isPendingTaskResponseCurrent(
+    pending: NonNullable<
+      MessageRouter["pendingTaskResponses"] extends Map<string, infer T>
+        ? T
+        : never
+    >,
+  ): boolean {
+    return (
+      pending.sessionGeneration === undefined ||
+      pending.sessionGeneration === this.getRemoteSessionGeneration(pending.sessionId)
+    );
   }
 
   private normalizeSimpleChannelMessage(
@@ -702,8 +792,15 @@ export class MessageRouter {
     text: string,
   ): string {
     const trimmed = text.trim();
-    if (!trimmed || trimmed.startsWith("/")) {
-      return trimmed;
+    if (!trimmed) {
+      return "";
+    }
+
+    if (trimmed.startsWith("/")) {
+      return normalizeRemoteIncomingCommand({
+        channelType,
+        text: trimmed,
+      }).text;
     }
 
     if (channelType !== "whatsapp") {
@@ -714,7 +811,11 @@ export class MessageRouter {
 
     const commandFromReply = normalizeWhatsAppNaturalCommand(replyStrippedText);
     if (commandFromReply) {
-      return commandFromReply;
+      return normalizeRemoteIncomingCommand({
+        channelType,
+        text: replyStrippedText,
+        naturalCommandText: commandFromReply,
+      }).text;
     }
 
     const preambleStrippedText =
@@ -722,12 +823,23 @@ export class MessageRouter {
     if (preambleStrippedText !== replyStrippedText) {
       const commandFromPreamble =
         normalizeWhatsAppNaturalCommand(preambleStrippedText);
-      return commandFromPreamble ?? preambleStrippedText;
+      if (commandFromPreamble) {
+        return normalizeRemoteIncomingCommand({
+          channelType,
+          text: preambleStrippedText,
+          naturalCommandText: commandFromPreamble,
+        }).text;
+      }
+      return preambleStrippedText;
     }
 
     const command = normalizeWhatsAppNaturalCommand(trimmed);
     if (command) {
-      return command;
+      return normalizeRemoteIncomingCommand({
+        channelType,
+        text: trimmed,
+        naturalCommandText: command,
+      }).text;
     }
 
     return trimmed;
@@ -768,9 +880,10 @@ export class MessageRouter {
     workspacePath: string,
     existing?: Workspace,
   ): Workspace {
-    if (!fs.existsSync(workspacePath)) {
-      fs.mkdirSync(workspacePath, { recursive: true });
-    }
+    const safeWorkspacePath = ensureTempWorkspaceDirectoryPathSync(
+      path.join(os.tmpdir(), TEMP_WORKSPACE_ROOT_DIR_NAME),
+      workspacePath,
+    );
 
     const createdAt = existing?.createdAt ?? Date.now();
     const lastUsedAt = Date.now();
@@ -796,7 +909,7 @@ export class MessageRouter {
     stmt.run(
       workspaceId,
       TEMP_WORKSPACE_NAME,
-      workspacePath,
+      safeWorkspacePath,
       createdAt,
       lastUsedAt,
       JSON.stringify(permissions),
@@ -805,7 +918,7 @@ export class MessageRouter {
     return {
       id: workspaceId,
       name: TEMP_WORKSPACE_NAME,
-      path: workspacePath,
+      path: safeWorkspacePath,
       createdAt,
       lastUsedAt,
       permissions,
@@ -816,18 +929,51 @@ export class MessageRouter {
   private isPersistedWorkspaceId(workspaceId: string | undefined): boolean {
     if (!workspaceId || isTempWorkspaceId(workspaceId)) return false;
     const workspace = this.workspaceRepo.findById(workspaceId);
-    return !!workspace && !workspace.isTemp && !isTempWorkspaceId(workspace.id);
+    return !!workspace && this.isUserSelectableWorkspace(workspace);
+  }
+
+  private isUserSelectableWorkspace(workspace: Workspace | undefined): boolean {
+    if (!workspace) return false;
+    if (workspace.isTemp || isTempWorkspaceId(workspace.id)) return false;
+
+    const workspacePath =
+      typeof workspace.path === "string" ? workspace.path.trim() : "";
+    if (workspacePath) {
+      const tempRoot = path.resolve(os.tmpdir(), TEMP_WORKSPACE_ROOT_DIR_NAME);
+      const resolvedPath = path.resolve(workspacePath);
+      if (
+        resolvedPath === tempRoot ||
+        resolvedPath.startsWith(`${tempRoot}${path.sep}`)
+      ) {
+        return false;
+      }
+    }
+
+    return true;
   }
 
   /**
    * Get or create a temp workspace.
    * When a session ID is provided, each session gets its own dedicated temp folder.
    */
-  private getOrCreateTempWorkspace(sessionId?: string): Workspace {
+  private getOrCreateTempWorkspace(
+    sessionId?: string,
+    options?: { createNew?: boolean },
+  ): Workspace {
+    const createNew = options?.createNew === true;
     let workspace: Workspace;
     if (sessionId) {
-      const key = sanitizeTempWorkspaceKey(sessionId);
-      const identity = createScopedTempWorkspaceIdentity("gateway", key);
+      const tempRoot = path.join(os.tmpdir(), TEMP_WORKSPACE_ROOT_DIR_NAME);
+      const identity = createNew
+        ? createUniqueScopedTempWorkspaceDirectorySync(
+            tempRoot,
+            "gateway",
+            sanitizeTempWorkspaceKey(sessionId),
+          )
+        : createScopedTempWorkspaceIdentity(
+            "gateway",
+            sanitizeTempWorkspaceKey(sessionId),
+          );
       const workspaceId = identity.workspaceId;
       const existing = this.workspaceRepo.findById(workspaceId);
       if (existing) {
@@ -837,35 +983,28 @@ export class MessageRouter {
           existing,
         );
       } else {
-        const workspacePath = path.join(
-          os.tmpdir(),
-          TEMP_WORKSPACE_ROOT_DIR_NAME,
-          identity.slug,
-        );
+        const workspacePath =
+          "path" in identity
+            ? identity.path
+            : path.join(tempRoot, identity.slug);
         workspace = this.ensureTempWorkspaceRecord(workspaceId, workspacePath);
       }
     } else {
       const existingTemp = this.workspaceRepo
         .findAll()
         .find((candidate) => isTempWorkspaceInScope(candidate.id, "gateway"));
-      if (existingTemp) {
+      if (existingTemp && !createNew) {
         workspace = this.ensureTempWorkspaceRecord(
           existingTemp.id,
           existingTemp.path,
           existingTemp,
         );
       } else {
-        const key = sanitizeTempWorkspaceKey(
-          `session-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`,
+        const created = createUniqueScopedTempWorkspaceDirectorySync(
+          path.join(os.tmpdir(), TEMP_WORKSPACE_ROOT_DIR_NAME),
+          "gateway",
         );
-        const identity = createScopedTempWorkspaceIdentity("gateway", key);
-        const workspaceId = identity.workspaceId;
-        const workspacePath = path.join(
-          os.tmpdir(),
-          TEMP_WORKSPACE_ROOT_DIR_NAME,
-          identity.slug,
-        );
-        workspace = this.ensureTempWorkspaceRecord(workspaceId, workspacePath);
+        workspace = this.ensureTempWorkspaceRecord(created.workspaceId, created.path);
       }
     }
 
@@ -910,6 +1049,13 @@ export class MessageRouter {
     if (channelId) {
       this.adaptersByChannelId.set(channelId, adapter);
       this.adapterChannelIds.set(adapter, channelId);
+    }
+
+    if (!this.rawAdapterSendMessages.has(adapter)) {
+      const rawSend = adapter.sendMessage.bind(adapter);
+      this.rawAdapterSendMessages.set(adapter, rawSend);
+      adapter.sendMessage = (message: OutgoingMessage) =>
+        this.sendMessage(adapter.type, message, channelId);
     }
 
     // Set up message handler
@@ -1105,6 +1251,7 @@ export class MessageRouter {
         requestingUserId,
         requestingUserName,
         lastChannelMessageId,
+        sessionGeneration: this.getRemoteSessionGeneration(session.id),
       });
 
       // Ensure draft-streaming state is available even after restarts.
@@ -1381,72 +1528,16 @@ export class MessageRouter {
     message: OutgoingMessage,
     channelId?: string,
   ): Promise<string> {
-    this.cleanupIdempotencyCache();
-    const cacheKey = this.getIdempotencyCacheKey(
-      channelType,
-      message,
-      channelId,
-    );
-    if (cacheKey) {
-      const existing = this.sentIdempotencyKeys.get(cacheKey);
-      if (existing) {
-        return existing.messageId;
-      }
-    }
+    return this.deliveryService.sendMessage(channelType, message, channelId);
+  }
 
-    const adapter = channelId
-      ? this.getAdapterByChannelId(channelId) || this.adapters.get(channelType)
-      : this.adapters.get(channelType);
-    if (!adapter) {
-      const suffix = channelId ? ` (channel ${channelId})` : "";
-      throw new Error(
-        `No adapter registered for channel type: ${channelType}${suffix}`,
-      );
-    }
-
-    if (adapter.status !== "connected") {
-      throw new Error(`Adapter ${channelType} is not connected`);
-    }
-
-    const messageId = await adapter.sendMessage(message);
-    if (cacheKey) {
-      this.sentIdempotencyKeys.set(cacheKey, {
-        messageId,
-        sentAtMs: Date.now(),
-      });
-    }
-
-    // Best-effort logging: never fail delivery because persistence failed.
-    try {
-      const channel = channelId
-        ? this.channelRepo.findById(channelId)
-        : this.channelRepo.findByType(channelType);
-      if (channel) {
-        this.messageRepo.create({
-          channelId: channel.id,
-          channelMessageId: messageId,
-          chatId: message.chatId,
-          direction: "outgoing",
-          content: message.text,
-          attachments: this.toDbAttachments(message.attachments),
-          timestamp: Date.now(),
-        });
-
-        this.emitEvent({
-          type: "message:sent",
-          channel: channelType,
-          timestamp: new Date(),
-          data: { chatId: message.chatId, messageId },
-        });
-      }
-    } catch (logError) {
-      console.warn(
-        `[Router] Failed to log outgoing message (${channelType}):`,
-        logError,
-      );
-    }
-
-    return messageId;
+  private async sendAdapterMessage(
+    adapter: ChannelAdapter,
+    message: OutgoingMessage,
+    channelId?: string,
+  ): Promise<string> {
+    const resolvedChannelId = channelId || this.getChannelForAdapter(adapter)?.id;
+    return this.sendMessage(adapter.type, message, resolvedChannelId);
   }
 
   private cleanupIdempotencyCache(): void {
@@ -2198,10 +2289,7 @@ export class MessageRouter {
         } else if (pendingSelection.type === "workspace") {
           const workspaces = this.workspaceRepo
             .findAll()
-            .filter(
-              (workspace) =>
-                !workspace.isTemp && !isTempWorkspaceId(workspace.id),
-            );
+            .filter((workspace) => this.isUserSelectableWorkspace(workspace));
           const isNumeric = /^[0-9]+$/.test(text);
           const num = parseInt(text, 10);
           let workspace: Workspace | undefined;
@@ -2227,15 +2315,13 @@ export class MessageRouter {
 
           if (workspace) {
             this.sessionManager.setSessionWorkspace(sessionId, workspace.id);
-            if (!workspace.isTemp && !isTempWorkspaceId(workspace.id)) {
-              try {
-                this.workspaceRepo.updateLastUsedAt(workspace.id);
-              } catch (error) {
-                console.warn(
-                  "Failed to update workspace last used time:",
-                  error,
-                );
-              }
+            try {
+              this.workspaceRepo.updateLastUsedAt(workspace.id);
+            } catch (error) {
+              console.warn(
+                "Failed to update workspace last used time:",
+                error,
+              );
             }
             this.sessionManager.updateSessionContext(sessionId, {
               pendingSelection: undefined,
@@ -2315,21 +2401,17 @@ export class MessageRouter {
       // Check if this looks like workspace selection (number or short name)
       const workspaces = this.workspaceRepo
         .findAll()
-        .filter(
-          (workspace) => !workspace.isTemp && !isTempWorkspaceId(workspace.id),
-        );
+        .filter((workspace) => this.isUserSelectableWorkspace(workspace));
       if (workspaces.length > 0) {
         // Try to match by number
         const num = parseInt(text, 10);
         if (!isNaN(num) && num > 0 && num <= workspaces.length) {
           const workspace = workspaces[num - 1];
           this.sessionManager.setSessionWorkspace(sessionId, workspace.id);
-          if (!workspace.isTemp && !isTempWorkspaceId(workspace.id)) {
-            try {
-              this.workspaceRepo.updateLastUsedAt(workspace.id);
-            } catch (error) {
-              console.warn("Failed to update workspace last used time:", error);
-            }
+          try {
+            this.workspaceRepo.updateLastUsedAt(workspace.id);
+          } catch (error) {
+            console.warn("Failed to update workspace last used time:", error);
           }
           const selectedText = this.getUiCopy("workspaceSelected", {
             workspaceName: workspace.name,
@@ -2507,19 +2589,56 @@ export class MessageRouter {
     sessionId: string,
     securityContext?: MessageSecurityContext,
   ): Promise<void> {
-    const [command, ...args] = message.text.trim().split(/\s+/);
+    const [rawCommand, ...args] = message.text.trim().split(/\s+/);
+    const commandName = normalizeRemoteCommandName(rawCommand);
+    const canonicalCommand = getCanonicalRemoteCommand(rawCommand);
 
-    switch (command.toLowerCase()) {
+    if (!canonicalCommand) {
+      const skillSlash = this.resolveRemoteSkillSlash(commandName);
+      if (skillSlash?.error) {
+        await this.sendAdapterMessage(adapter, {
+          chatId: message.chatId,
+          text: skillSlash.error,
+          parseMode: "markdown",
+          replyTo: message.messageId,
+        });
+        return;
+      }
+      if (skillSlash?.skillId) {
+        await this.handleGenericSkillSlashCommand(
+          adapter,
+          message,
+          sessionId,
+          skillSlash.skillId,
+          args,
+          securityContext,
+        );
+        return;
+      }
+
+      await this.sendAdapterMessage(adapter, {
+        chatId: message.chatId,
+        text: this.getUiCopy("unknownCommand", { command: rawCommand }),
+        replyTo: message.messageId,
+      });
+      return;
+    }
+
+    switch (canonicalCommand) {
       case "/start":
         await this.handleStartCommand(adapter, message, sessionId);
         break;
 
       case "/help":
-        await adapter.sendMessage({
+        await this.sendAdapterMessage(adapter, {
           chatId: message.chatId,
           text: this.getHelpText(adapter.type),
           parseMode: "markdown",
         });
+        break;
+
+      case "/commands":
+        await this.handleCommandsCommand(adapter, message, args);
         break;
 
       case "/status":
@@ -2635,7 +2754,21 @@ export class MessageRouter {
 
       case "/newtask":
         // Start a new task (unlink current session)
-        await this.handleNewTaskCommand(adapter, message, sessionId);
+        await this.handleNewTaskCommand(adapter, message, sessionId, args);
+        break;
+
+      case "/background":
+        await this.handleBackgroundCommand(
+          adapter,
+          message,
+          sessionId,
+          args,
+          securityContext,
+        );
+        break;
+
+      case "/steer":
+        await this.handleSteerCommand(adapter, message, sessionId, args);
         break;
 
       case "/fork":
@@ -2704,7 +2837,7 @@ export class MessageRouter {
         break;
 
       case "/queue":
-        await this.handleQueueCommand(adapter, message, args);
+        await this.handleQueueCommand(adapter, message, sessionId, args);
         break;
 
       case "/removeworkspace":
@@ -2791,10 +2924,160 @@ export class MessageRouter {
       default:
         await adapter.sendMessage({
           chatId: message.chatId,
-          text: this.getUiCopy("unknownCommand", { command }),
+          text: this.getUiCopy("unknownCommand", { command: rawCommand }),
           replyTo: message.messageId,
         });
     }
+  }
+
+  private resolveRemoteSkillSlash(commandName: string): {
+    skillId?: string;
+    error?: string;
+  } | null {
+    if (!commandName || commandName === "skill") {
+      return null;
+    }
+
+    const skillId = resolveSkillSlashAlias(commandName);
+    if (!skillId) {
+      return null;
+    }
+
+    const loader = getCustomSkillLoader();
+    const skill = loader.getSkill(skillId);
+    if (!skill) {
+      return {
+        error: `Unknown skill \`/${commandName}\`. Use \`/skills\` to see available skills.`,
+      };
+    }
+    if (skill.enabled === false) {
+      return {
+        error: `Skill \`${skillId}\` is disabled. Use \`/skill ${skillId}\` to enable it, then try \`/${commandName}\` again.`,
+      };
+    }
+    if (skill.invocation?.userInvocable === false) {
+      return {
+        error: `Skill \`${skillId}\` cannot be invoked manually.`,
+      };
+    }
+
+    return { skillId };
+  }
+
+  private async handleGenericSkillSlashCommand(
+    adapter: ChannelAdapter,
+    message: IncomingMessage,
+    sessionId: string,
+    skillId: string,
+    args: string[],
+    securityContext?: MessageSecurityContext,
+  ): Promise<void> {
+    const synthetic: IncomingMessage = {
+      ...message,
+      text: [`/${skillId}`, args.join(" ").trim()].filter(Boolean).join(" "),
+    };
+    await this.forwardToDesktopApp(
+      adapter,
+      synthetic,
+      sessionId,
+      securityContext,
+    );
+  }
+
+  private formatRemoteCommandLine(command: {
+    name: string;
+    aliases?: string[];
+    description: string;
+    argsHint?: string;
+  }): string {
+    const names = [`/${command.name}`, ...(command.aliases || []).map((alias) => `/${alias}`)];
+    const usage = `${names.join(" or ")}${command.argsHint ? ` ${command.argsHint}` : ""}`;
+    return `• \`${usage}\` - ${command.description}`;
+  }
+
+  private async handleCommandsCommand(
+    adapter: ChannelAdapter,
+    message: IncomingMessage,
+    args: string[],
+  ): Promise<void> {
+    const selector = args.join(" ").trim().toLowerCase();
+    const commands = listRemoteCommands();
+    const categories = listRemoteCommandCategories();
+
+    if (!selector || selector === "help") {
+      const highlights = commands.filter((command) =>
+        [
+          "help",
+          "commands",
+          "status",
+          "newtask",
+          "cancel",
+          "queue",
+          "steer",
+          "background",
+          "workspaces",
+          "skills",
+          "schedule",
+        ].includes(command.name),
+      );
+      const text = [
+        "📚 *Commands*",
+        "",
+        ...highlights.map((command) => this.formatRemoteCommandLine(command)),
+        "",
+        `Categories: ${categories.map((category) => `\`${category.toLowerCase()}\``).join(", ")}`,
+        "",
+        "Use `/commands <category>` or `/commands <page>`.",
+      ].join("\n");
+      await this.sendAdapterMessage(adapter, {
+        chatId: message.chatId,
+        text,
+        parseMode: "markdown",
+        replyTo: message.messageId,
+      });
+      return;
+    }
+
+    const category = categories.find(
+      (candidate) => candidate.toLowerCase() === selector,
+    );
+    if (category) {
+      const text = [
+        `📚 *${category} Commands*`,
+        "",
+        ...commands
+          .filter((command) => (command.category || "Other") === category)
+          .map((command) => this.formatRemoteCommandLine(command)),
+      ].join("\n");
+      await this.sendAdapterMessage(adapter, {
+        chatId: message.chatId,
+        text,
+        parseMode: "markdown",
+        replyTo: message.messageId,
+      });
+      return;
+    }
+
+    const pageSize = 12;
+    const pageCount = Math.max(1, Math.ceil(commands.length / pageSize));
+    const page = Math.max(
+      1,
+      Math.min(pageCount, Number.parseInt(selector, 10) || 1),
+    );
+    const pageCommands = commands.slice((page - 1) * pageSize, page * pageSize);
+    const text = [
+      `📚 *Commands ${page}/${pageCount}*`,
+      "",
+      ...pageCommands.map((command) => this.formatRemoteCommandLine(command)),
+      "",
+      `Use \`/commands ${Math.min(page + 1, pageCount)}\` for more, or \`/commands <category>\`.`,
+    ].join("\n");
+    await this.sendAdapterMessage(adapter, {
+      chatId: message.chatId,
+      text,
+      parseMode: "markdown",
+      replyTo: message.messageId,
+    });
   }
 
   private isSessionTaskController(
@@ -4416,6 +4699,7 @@ export class MessageRouter {
       requestingUserId: message.userId,
       requestingUserName: message.userName,
       lastChannelMessageId: message.messageId,
+      sessionGeneration: this.getRemoteSessionGeneration(sessionId),
     });
 
     // Start draft streaming for real-time response preview (Telegram).
@@ -4464,6 +4748,135 @@ export class MessageRouter {
       });
       this.pendingTaskResponses.delete(task.id);
     }
+  }
+
+  private async startBackgroundTask(
+    adapter: ChannelAdapter,
+    message: IncomingMessage,
+    sessionId: string,
+    params: { title: string; prompt: string },
+    securityContext?: MessageSecurityContext,
+  ): Promise<void> {
+    if (!this.agentDaemon) {
+      await adapter.sendMessage({
+        chatId: message.chatId,
+        text: this.getUiCopy("agentUnavailable"),
+        replyTo: message.messageId,
+      });
+      return;
+    }
+
+    let session = this.sessionRepo.findById(sessionId);
+    if (!session?.workspaceId) {
+      const tempWorkspace = this.getOrCreateTempWorkspace(sessionId);
+      this.sessionManager.setSessionWorkspace(sessionId, tempWorkspace.id);
+      session = this.sessionRepo.findById(sessionId);
+    }
+
+    const workspace = session?.workspaceId
+      ? this.workspaceRepo.findById(session.workspaceId)
+      : undefined;
+    if (!workspace) {
+      await adapter.sendMessage({
+        chatId: message.chatId,
+        text: this.getUiCopy("workspaceMissingForTask"),
+        replyTo: message.messageId,
+      });
+      return;
+    }
+
+    const dmOnlyChannels: ChannelType[] = ["email", "imessage", "bluebubbles"];
+    const inferredIsGroup =
+      message.isGroup ??
+      (dmOnlyChannels.includes(adapter.type)
+        ? false
+        : message.chatId !== message.userId);
+    const contextType =
+      securityContext?.contextType ?? (inferredIsGroup ? "group" : "dm");
+    const gatewayContext = contextType === "group" ? "group" : "private";
+    const toolRestrictions = this.buildTaskToolRestrictions(
+      adapter.type,
+      securityContext?.deniedTools?.filter(
+        (t) => typeof t === "string" && t.trim().length > 0,
+      ),
+    );
+
+    const task = this.taskRepo.create({
+      workspaceId: workspace.id,
+      title: params.title,
+      prompt: params.prompt,
+      status: "pending",
+      agentConfig: {
+        gatewayContext,
+        ...(toolRestrictions.length > 0 ? { toolRestrictions } : {}),
+        originChannel: adapter.type,
+      },
+    });
+
+    const routedChannel = this.getChannelForAdapter(adapter);
+    if (!routedChannel) {
+      console.error(`No channel configuration found for ${adapter.type}`);
+      return;
+    }
+
+    this.pendingTaskResponses.set(task.id, {
+      adapter,
+      channelId: routedChannel.id,
+      chatId: message.chatId,
+      sessionId,
+      originalMessageId: message.messageId,
+      requestingUserId: message.userId,
+      requestingUserName: message.userName,
+      lastChannelMessageId: message.messageId,
+      sessionGeneration: this.getRemoteSessionGeneration(sessionId),
+    });
+
+    await adapter.sendMessage({
+      chatId: message.chatId,
+      text: "🧵 Started that as a background task.",
+      replyTo: message.messageId,
+    });
+
+    try {
+      await this.agentDaemon.startTask(task);
+    } catch (error) {
+      console.error("Error starting background task:", error);
+      await adapter.sendMessage({
+        chatId: message.chatId,
+        text: this.getUiCopy("taskStartFailed", {
+          error: error instanceof Error ? error.message : "Unknown error",
+        }),
+      });
+      this.pendingTaskResponses.delete(task.id);
+    }
+  }
+
+  private async handleBackgroundCommand(
+    adapter: ChannelAdapter,
+    message: IncomingMessage,
+    sessionId: string,
+    args: string[],
+    securityContext?: MessageSecurityContext,
+  ): Promise<void> {
+    const prompt = args.join(" ").trim();
+    if (!prompt) {
+      await adapter.sendMessage({
+        chatId: message.chatId,
+        text: "Usage: `/background <prompt>` (aliases: `/bg`, `/btw`)",
+        parseMode: "markdown",
+        replyTo: message.messageId,
+      });
+      return;
+    }
+
+    const title = prompt.length > 50 ? `${prompt.slice(0, 50)}...` : prompt;
+    await this.startBackgroundTask(
+      adapter,
+      message,
+      sessionId,
+      { title, prompt },
+      securityContext,
+    );
   }
 
   private async handleDigestCommand(
@@ -5615,9 +6028,7 @@ export class MessageRouter {
   ): Promise<void> {
     const workspaces = this.workspaceRepo
       .findAll()
-      .filter(
-        (workspace) => !workspace.isTemp && !isTempWorkspaceId(workspace.id),
-      );
+      .filter((workspace) => this.isUserSelectableWorkspace(workspace));
 
     if (workspaces.length === 0) {
       await adapter.sendMessage({
@@ -5733,9 +6144,7 @@ export class MessageRouter {
 
     const workspaces = this.workspaceRepo
       .findAll()
-      .filter(
-        (workspace) => !workspace.isTemp && !isTempWorkspaceId(workspace.id),
-      );
+      .filter((workspace) => this.isUserSelectableWorkspace(workspace));
     const selector = args.join(" ");
     let workspace;
 
@@ -5760,12 +6169,10 @@ export class MessageRouter {
 
     // Update session workspace
     this.sessionManager.setSessionWorkspace(sessionId, workspace.id);
-    if (!workspace.isTemp && !isTempWorkspaceId(workspace.id)) {
-      try {
-        this.workspaceRepo.updateLastUsedAt(workspace.id);
-      } catch (error) {
-        console.warn("Failed to update workspace last used time:", error);
-      }
+    try {
+      this.workspaceRepo.updateLastUsedAt(workspace.id);
+    } catch (error) {
+      console.warn("Failed to update workspace last used time:", error);
     }
 
     await adapter.sendMessage({
@@ -6730,7 +7137,7 @@ export class MessageRouter {
               const statusMsg = isActive
                 ? "💬 Got it — adding that to the current task..."
                 : "💬 Picking up where we left off...";
-              await adapter.sendMessage({
+              await this.sendAdapterMessage(adapter, {
                 chatId: message.chatId,
                 text: statusMsg,
                 replyTo: message.messageId,
@@ -6753,6 +7160,7 @@ export class MessageRouter {
                 requestingUserId,
                 requestingUserName,
                 lastChannelMessageId: message.messageId,
+                sessionGeneration: this.getRemoteSessionGeneration(sessionId),
               });
 
               await this.agentDaemon.sendMessage(
@@ -6761,7 +7169,7 @@ export class MessageRouter {
               );
             } catch (error) {
               console.error("Error sending follow-up message:", error);
-              await adapter.sendMessage({
+              await this.sendAdapterMessage(adapter, {
                 chatId: message.chatId,
                 text: this.getUiCopy("taskContinueFailed"),
               });
@@ -6865,6 +7273,7 @@ export class MessageRouter {
       requestingUserId: message.userId,
       requestingUserName: message.userName,
       lastChannelMessageId: message.messageId,
+      sessionGeneration: this.getRemoteSessionGeneration(sessionId),
     });
 
     // Register inbound attachments as artifacts on the newly created task (optional, best-effort).
@@ -6947,6 +7356,13 @@ export class MessageRouter {
       // This is expected for tasks started from the UI (not via Telegram)
       return;
     }
+    if (
+      this.suppressedTaskUpdateIds.has(taskId) ||
+      this.detachedTaskResponseIds.has(taskId) ||
+      !this.isPendingTaskResponseCurrent(pending)
+    ) {
+      return;
+    }
 
     try {
       const trimmed = (text || "").trim();
@@ -7006,7 +7422,13 @@ export class MessageRouter {
           existing.timeoutHandle = setTimeout(() => {
             const buffer = this.streamingUpdateBuffers.get(taskId);
             const latestPending = this.pendingTaskResponses.get(taskId);
-            if (!buffer || !latestPending) {
+            if (
+              !buffer ||
+              !latestPending ||
+              this.suppressedTaskUpdateIds.has(taskId) ||
+              this.detachedTaskResponseIds.has(taskId) ||
+              !this.isPendingTaskResponseCurrent(latestPending)
+            ) {
               if (buffer?.timeoutHandle) {
                 clearTimeout(buffer.timeoutHandle);
               }
@@ -7071,11 +7493,27 @@ export class MessageRouter {
         pendingEntry.progressMessageId &&
         typeof pendingEntry.adapter.editMessage === "function"
       ) {
-        await pendingEntry.adapter.editMessage(
-          pendingEntry.chatId,
-          pendingEntry.progressMessageId,
-          normalizedText,
-        );
+        try {
+          await pendingEntry.adapter.editMessage(
+            pendingEntry.chatId,
+            pendingEntry.progressMessageId,
+            normalizedText,
+          );
+        } catch (error) {
+          console.warn(
+            "[Router] Failed to edit progress message; sending a replacement:",
+            error,
+          );
+          pendingEntry.progressMessageId = await this.sendMessage(
+            pendingEntry.adapter.type,
+            {
+              chatId: pendingEntry.chatId,
+              text: normalizedText,
+              parseMode: "markdown",
+            },
+            pendingEntry.channelId,
+          );
+        }
       } else {
         pendingEntry.progressMessageId = await this.sendMessage(
           pendingEntry.adapter.type,
@@ -7146,6 +7584,16 @@ export class MessageRouter {
 
     const pending = this.pendingTaskResponses.get(taskId);
     if (!pending) return;
+    if (
+      this.suppressedTaskUpdateIds.has(taskId) ||
+      this.detachedTaskResponseIds.has(taskId) ||
+      !this.isPendingTaskResponseCurrent(pending)
+    ) {
+      this.clearStreamingUpdate(taskId);
+      this.pendingTaskResponses.delete(taskId);
+      this.detachedTaskResponseIds.delete(taskId);
+      return;
+    }
     await this.sendPreparedTaskUpdate(pending, trimmed, {
       allowEditableProgressRelay: false,
     });
@@ -7167,6 +7615,16 @@ export class MessageRouter {
   ): Promise<void> {
     const pending = this.pendingTaskResponses.get(taskId);
     if (!pending) return;
+    if (
+      this.suppressedTaskUpdateIds.has(taskId) ||
+      this.detachedTaskResponseIds.has(taskId) ||
+      !this.isPendingTaskResponseCurrent(pending)
+    ) {
+      this.clearStreamingUpdate(taskId);
+      this.pendingTaskResponses.delete(taskId);
+      this.detachedTaskResponseIds.delete(taskId);
+      return;
+    }
     if (!(pending.adapter instanceof TelegramAdapter)) return;
     if (!this.telegramDraftStreamTouchedTasks.has(taskId)) return;
 
@@ -7230,8 +7688,15 @@ export class MessageRouter {
   async sendTypingIndicator(taskId: string): Promise<void> {
     const pending = this.pendingTaskResponses.get(taskId);
     if (!pending) return;
+    if (
+      this.suppressedTaskUpdateIds.has(taskId) ||
+      this.detachedTaskResponseIds.has(taskId) ||
+      !this.isPendingTaskResponseCurrent(pending)
+    ) {
+      return;
+    }
 
-    if (pending.adapter instanceof TelegramAdapter) {
+    if (typeof pending.adapter.sendTyping === "function") {
       await pending.adapter.sendTyping(pending.chatId);
     }
   }
@@ -7255,7 +7720,22 @@ export class MessageRouter {
    */
   async handleTaskCompletion(taskId: string, result?: string): Promise<void> {
     const pending = this.pendingTaskResponses.get(taskId);
-    if (!pending) return;
+    if (!pending) {
+      this.suppressedTaskUpdateIds.delete(taskId);
+      this.detachedTaskResponseIds.delete(taskId);
+      return;
+    }
+    if (
+      this.suppressedTaskUpdateIds.has(taskId) ||
+      this.detachedTaskResponseIds.has(taskId) ||
+      !this.isPendingTaskResponseCurrent(pending)
+    ) {
+      this.clearStreamingUpdate(taskId);
+      this.pendingTaskResponses.delete(taskId);
+      this.suppressedTaskUpdateIds.delete(taskId);
+      this.detachedTaskResponseIds.delete(taskId);
+      return;
+    }
 
     this.clearStreamingUpdate(taskId);
     await this.clearProgressRelayMessage(taskId);
@@ -7350,6 +7830,8 @@ export class MessageRouter {
       console.error("Error sending task completion:", error);
     } finally {
       this.pendingTaskResponses.delete(taskId);
+      this.suppressedTaskUpdateIds.delete(taskId);
+      this.detachedTaskResponseIds.delete(taskId);
     }
   }
 
@@ -7512,7 +7994,22 @@ export class MessageRouter {
    */
   async handleTaskFailure(taskId: string, error: string): Promise<void> {
     const pending = this.pendingTaskResponses.get(taskId);
-    if (!pending) return;
+    if (!pending) {
+      this.suppressedTaskUpdateIds.delete(taskId);
+      this.detachedTaskResponseIds.delete(taskId);
+      return;
+    }
+    if (
+      this.suppressedTaskUpdateIds.has(taskId) ||
+      this.detachedTaskResponseIds.has(taskId) ||
+      !this.isPendingTaskResponseCurrent(pending)
+    ) {
+      this.clearStreamingUpdate(taskId);
+      this.pendingTaskResponses.delete(taskId);
+      this.suppressedTaskUpdateIds.delete(taskId);
+      this.detachedTaskResponseIds.delete(taskId);
+      return;
+    }
 
     this.clearStreamingUpdate(taskId);
     await this.clearProgressRelayMessage(taskId);
@@ -7552,6 +8049,8 @@ export class MessageRouter {
       console.error("Error sending task failure:", err);
     } finally {
       this.pendingTaskResponses.delete(taskId);
+      this.suppressedTaskUpdateIds.delete(taskId);
+      this.detachedTaskResponseIds.delete(taskId);
     }
   }
 
@@ -7567,6 +8066,17 @@ export class MessageRouter {
       if (session) {
         this.sessionManager.unlinkSessionFromTask(session.id);
       }
+      this.suppressedTaskUpdateIds.delete(taskId);
+      this.detachedTaskResponseIds.delete(taskId);
+      return;
+    }
+    if (
+      this.detachedTaskResponseIds.has(taskId) ||
+      !this.isPendingTaskResponseCurrent(pending)
+    ) {
+      this.clearStreamingUpdate(taskId);
+      this.pendingTaskResponses.delete(taskId);
+      this.detachedTaskResponseIds.delete(taskId);
       return;
     }
 
@@ -7612,6 +8122,8 @@ export class MessageRouter {
       console.error("Error sending task cancelled message:", err);
     } finally {
       this.pendingTaskResponses.delete(taskId);
+      this.suppressedTaskUpdateIds.delete(taskId);
+      this.detachedTaskResponseIds.delete(taskId);
     }
   }
 
@@ -7828,6 +8340,7 @@ export class MessageRouter {
       requestingUserId: opts.requestingUserId,
       requestingUserName: opts.requestingUserName,
       lastChannelMessageId: opts.lastChannelMessageId,
+      sessionGeneration: this.getRemoteSessionGeneration(opts.sessionId),
     });
 
     // Enable Telegram draft streaming for the follow-up thread.
@@ -7847,6 +8360,101 @@ export class MessageRouter {
     }
 
     await this.agentDaemon.sendMessage(opts.taskId, trimmed);
+  }
+
+  private async sendCommandFollowupToCurrentTask(
+    adapter: ChannelAdapter,
+    message: IncomingMessage,
+    sessionId: string,
+    text: string,
+    statusText: string,
+  ): Promise<boolean> {
+    const session = this.sessionRepo.findById(sessionId);
+    const taskId = session?.taskId;
+    if (!taskId) {
+      await adapter.sendMessage({
+        chatId: message.chatId,
+        text: "No active task in this chat.",
+        replyTo: message.messageId,
+      });
+      return false;
+    }
+
+    const task = this.taskRepo.findById(taskId);
+    if (
+      !task ||
+      ["failed", "cancelled"].includes(task.status)
+    ) {
+      await adapter.sendMessage({
+        chatId: message.chatId,
+        text: "No active task in this chat.",
+        replyTo: message.messageId,
+      });
+      return false;
+    }
+
+    if (
+      message.isGroup &&
+      !this.isSessionTaskController(session, message.userId)
+    ) {
+      const requesterName =
+        this.resolveTaskRequesterFromSessionContext(session).requestingUserName;
+      const who = requesterName ? `*${requesterName}*` : "the task owner";
+      await adapter.sendMessage({
+        chatId: message.chatId,
+        parseMode: "markdown",
+        text: `⚠️ Only ${who} can update this task in a group chat.`,
+        replyTo: message.messageId,
+      });
+      return false;
+    }
+
+    const requester = this.resolveTaskRequesterFromSessionContext(session);
+    await this.sendFollowupToTaskFromGateway({
+      taskId,
+      adapter,
+      channelId: session.channelId,
+      chatId: message.chatId,
+      sessionId,
+      requestingUserId: requester.requestingUserId ?? message.userId,
+      requestingUserName: requester.requestingUserName ?? message.userName,
+      lastChannelMessageId: requester.lastChannelMessageId ?? message.messageId,
+      statusText,
+      text,
+    });
+    return true;
+  }
+
+  private async handleSteerCommand(
+    adapter: ChannelAdapter,
+    message: IncomingMessage,
+    sessionId: string,
+    args: string[],
+  ): Promise<void> {
+    const text = args.join(" ").trim();
+    if (!text) {
+      await adapter.sendMessage({
+        chatId: message.chatId,
+        text: "Usage: `/steer <guidance>`",
+        parseMode: "markdown",
+        replyTo: message.messageId,
+      });
+      return;
+    }
+
+    await this.sendCommandFollowupToCurrentTask(
+      adapter,
+      message,
+      sessionId,
+      [
+        "STEERING UPDATE",
+        "",
+        "Use this as high-priority guidance for the current task.",
+        "",
+        text,
+      ].join("\n"),
+      "🧭 Steering update sent to the current task.",
+    );
   }
 
   private async handleFeedbackCommand(
@@ -8205,10 +8813,11 @@ export class MessageRouter {
   private async handleQueueCommand(
     adapter: ChannelAdapter,
     message: IncomingMessage,
+    sessionId: string,
     args: string[],
   ): Promise<void> {
     if (!this.agentDaemon) {
-      await adapter.sendMessage({
+      await this.sendAdapterMessage(adapter, {
         chatId: message.chatId,
         text: this.getUiCopy("agentUnavailable"),
       });
@@ -8220,14 +8829,14 @@ export class MessageRouter {
     if (subcommand === "clear" || subcommand === "reset") {
       // Clear stuck tasks (also properly cancels running tasks to clean up browser sessions)
       const result = await this.agentDaemon.clearStuckTasks();
-      await adapter.sendMessage({
+      await this.sendAdapterMessage(adapter, {
         chatId: message.chatId,
         text: this.getUiCopy("queueCleared", {
           running: result.clearedRunning,
           queued: result.clearedQueued,
         }),
       });
-    } else {
+    } else if (subcommand === "status" || args.length === 0) {
       // Show queue status
       const status = this.agentDaemon.getQueueStatus();
       const statusText = `📊 *Queue Status*
@@ -8240,13 +8849,22 @@ ${status.queuedCount > 0 ? `Queued task IDs: ${status.queuedTaskIds.join(", ")}`
 
 *Commands:*
 • \`/queue\` - Show this status
-• \`/queue clear\` - Clear stuck tasks`;
+• \`/queue clear\` - Clear stuck tasks
+• \`/queue <message>\` - Add a follow-up to the current task`;
 
-      await adapter.sendMessage({
+      await this.sendAdapterMessage(adapter, {
         chatId: message.chatId,
         text: this.getUiCopy("queueStatus", { statusText }),
         parseMode: "markdown",
       });
+    } else {
+      await this.sendCommandFollowupToCurrentTask(
+        adapter,
+        message,
+        sessionId,
+        args.join(" ").trim(),
+        "📥 Queued that for the current task.",
+      );
     }
   }
 
@@ -8302,10 +8920,10 @@ ${status.queuedCount > 0 ? `Queued task IDs: ${status.queuedTaskIds.join(", ")}`
       const task = this.taskRepo.findById(taskId);
       if (!task || ["completed", "failed", "cancelled"].includes(task.status)) {
         // No active task to cancel.
-        await adapter.sendMessage({
-          chatId: message.chatId,
-          text: this.getUiCopy("cancelNoActive"),
-        });
+          await this.sendAdapterMessage(adapter, {
+            chatId: message.chatId,
+            text: this.getUiCopy("cancelNoActive"),
+          });
         return;
       }
 
@@ -8313,10 +8931,12 @@ ${status.queuedCount > 0 ? `Queued task IDs: ${status.queuedTaskIds.join(", ")}`
       // When the daemon is present, it will emit task_cancelled, and handleTaskCancelled performs the cleanup + user message.
       if (this.agentDaemon) {
         try {
+          this.suppressedTaskUpdateIds.add(taskId);
           await this.agentDaemon.cancelTask(taskId);
         } catch (error) {
+          this.suppressedTaskUpdateIds.delete(taskId);
           console.error("Error cancelling task:", error);
-          await adapter.sendMessage({
+          await this.sendAdapterMessage(adapter, {
             chatId: message.chatId,
             text: `❌ Failed to cancel task: ${error instanceof Error ? error.message : "Unknown error"}`,
           });
@@ -8339,13 +8959,13 @@ ${status.queuedCount > 0 ? `Queued task IDs: ${status.queuedTaskIds.join(", ")}`
       } else {
         this.sessionManager.unlinkSessionFromTask(sessionId);
         this.pendingTaskResponses.delete(taskId);
-        await adapter.sendMessage({
+        await this.sendAdapterMessage(adapter, {
           chatId: message.chatId,
           text: this.getUiCopy("cancelled"),
         });
       }
     } else {
-      await adapter.sendMessage({
+      await this.sendAdapterMessage(adapter, {
         chatId: message.chatId,
         text: this.getUiCopy("cancelNoActive"),
       });
@@ -8359,16 +8979,38 @@ ${status.queuedCount > 0 ? `Queued task IDs: ${status.queuedTaskIds.join(", ")}`
     adapter: ChannelAdapter,
     message: IncomingMessage,
     sessionId: string,
+    args: string[] = [],
   ): Promise<void> {
     const session = this.sessionRepo.findById(sessionId);
+    const mode = String(args[0] || "").trim().toLowerCase();
+    const useFreshTempWorkspace = ["temp", "temporary", "scratch"].includes(
+      mode,
+    );
 
     if (session?.taskId) {
       // Unlink current task from session
+      this.bumpRemoteSessionGeneration(sessionId);
+      this.detachedTaskResponseIds.add(session.taskId);
+      this.suppressedTaskUpdateIds.add(session.taskId);
+      this.clearStreamingUpdate(session.taskId);
       this.sessionManager.unlinkSessionFromTask(sessionId);
       this.pendingTaskResponses.delete(session.taskId);
     }
 
-    await adapter.sendMessage({
+    if (useFreshTempWorkspace) {
+      const tempWorkspace = this.getOrCreateTempWorkspace(sessionId, {
+        createNew: true,
+      });
+      this.sessionManager.setSessionWorkspace(sessionId, tempWorkspace.id);
+      await this.sendAdapterMessage(adapter, {
+        chatId: message.chatId,
+        text: "🆕 Ready for a new temporary session.\n\nSend me a message describing what you want to do.",
+        parseMode: "markdown",
+      });
+      return;
+    }
+
+    await this.sendAdapterMessage(adapter, {
       chatId: message.chatId,
       text: this.getUiCopy("newTaskReady"),
     });
@@ -8604,12 +9246,12 @@ ${status.queuedCount > 0 ? `Queued task IDs: ${status.queuedTaskIds.join(", ")}`
         for (const skill of categorySkills) {
           const status = skill.enabled !== false ? "✅" : "❌";
           text += `${skill.icon || "⚡"} ${skill.name} ${status}\n`;
-          text += `   \`/skill ${skill.id}\` to toggle\n`;
+          text += `   \`/${skill.id}\` to run, \`/skill ${skill.id}\` to toggle\n`;
         }
         text += "\n";
       }
 
-      text += "_Use `/skill <name>` to toggle a skill on/off_";
+      text += "_Enabled skills can be run as `/skill-slug args`._";
 
       await adapter.sendMessage({
         chatId: message.chatId,

@@ -49,6 +49,12 @@ const READ_PARALLEL_TOOLS = new Set([
   "supermemory_profile",
   "supermemory_search",
   "scratchpad_read",
+  "browser_snapshot",
+  "browser_tabs",
+  "browser_console",
+  "browser_network",
+  "browser_downloads",
+  "browser_storage",
   "browser_get_content",
   "browser_get_text",
   "browser_screenshot",
@@ -156,6 +162,12 @@ function inferReadOnly(toolName: string, concurrencyClass: RuntimeToolConcurrenc
     return (
       toolName === "browser_get_content" ||
       toolName === "browser_get_text" ||
+      toolName === "browser_snapshot" ||
+      toolName === "browser_tabs" ||
+      toolName === "browser_console" ||
+      toolName === "browser_network" ||
+      toolName === "browser_downloads" ||
+      toolName === "browser_storage" ||
       toolName === "browser_screenshot" ||
       toolName === "browser_wait"
     );

@@ -62,7 +62,7 @@ export class DatabaseManager {
 
     // Check if old directory exists
     if (!fs.existsSync(oldDataPath)) {
-      schemaLogger.info("No legacy directory found at:", oldDataPath);
+      schemaLogger.debug("No legacy directory found at:", oldDataPath);
       return; // No legacy data to migrate
     }
 

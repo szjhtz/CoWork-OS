@@ -85,16 +85,20 @@ CoWork OS is a **security-first personal AI assistant platform** with multi-chan
 - [x] Located: `src/electron/agent/search/`
 
 #### Browser Automation
-- [x] Playwright integration
-- [x] Visible Browser Workbench for interactive browser-use tasks
-- [x] Right-sidebar/fullscreen webview routing with persistent workspace browser profile
+- [x] Browser V2 session manager with visible workbench default
+- [x] Electron Workbench CDP control through renderer-owned webview
+- [x] Playwright local fallback for forced headless/background runs
+- [x] External CDP attach path gated by explicit real-browser consent
+- [x] Right-sidebar/fullscreen workbench routing with persistent workspace browser profile
+- [x] Accessibility snapshots with short-lived refs and stale-ref validation
 - [x] Visible cursor movement for agent browser actions
 - [x] Screenshot capture and screenshot annotation
+- [x] Console, network, downloads, storage, dialog, emulation, and trace diagnostics
 - [x] Navigation, screenshots, PDF export
-- [x] Click, fill, type, press keys
+- [x] Ref-aware click, fill, type, read, hover, drag, upload, and press-key actions
 - [x] Content extraction (text, links, forms)
 - [x] Scroll, wait for elements
-- [x] Located: `src/electron/agent/browser/`
+- [x] Located: `src/electron/browser/`, `src/electron/agent/browser/`, and `src/electron/agent/tools/browser-tools.ts`
 
 #### Channel Integrations
 - [x] WhatsApp bot with QR code pairing and self-chat mode
@@ -139,19 +143,41 @@ CoWork OS is a **security-first personal AI assistant platform** with multi-chan
 - [x] Folder Organizer - By type/date
 - [x] Kami - Editorial PDFs, resumes, one-pagers, diagrams, and slide decks with workspace-local scaffolding
 
-#### Browser Tools (12 tools)
+#### Browser Tools (34 tools)
 - [x] browser_navigate
+- [x] browser_snapshot
 - [x] browser_screenshot
 - [x] browser_save_pdf
 - [x] browser_click
+- [x] browser_hover
+- [x] browser_drag
 - [x] browser_fill
 - [x] browser_type
 - [x] browser_press
 - [x] browser_get_content
-- [x] browser_get_links
-- [x] browser_get_forms
+- [x] browser_get_text
 - [x] browser_scroll
 - [x] browser_wait
+- [x] browser_select
+- [x] browser_upload_file
+- [x] browser_handle_dialog
+- [x] browser_tabs
+- [x] browser_switch_tab
+- [x] browser_close_tab
+- [x] browser_console
+- [x] browser_network
+- [x] browser_downloads
+- [x] browser_storage
+- [x] browser_emulate
+- [x] browser_trace_start
+- [x] browser_trace_stop
+- [x] browser_evaluate
+- [x] browser_back
+- [x] browser_forward
+- [x] browser_reload
+- [x] browser_attach
+- [x] browser_act_batch
+- [x] browser_close
 
 #### Search Tools
 - [x] web_search - Multi-provider web search
@@ -323,11 +349,12 @@ cowork-os/
 │   │   │   ├── executor-lifecycle-mutex.ts
 │   │   │   ├── llm/           # 30+ providers and compatible gateways
 │   │   │   ├── search/        # 4 providers
-│   │   │   ├── browser/       # Playwright service
+│   │   │   ├── browser/       # Legacy Playwright fallback service
 │   │   │   ├── tools/         # All tool implementations + git tools
 │   │   │   ├── skills/        # Document skills
 │   │   │   └── guardrails/    # Safety limits
 │   │   ├── git/               # Git worktree & comparison service
+│   │   ├── browser/           # Browser V2 session manager and workbench bridge
 │   │   ├── agents/            # Agent teams, thoughts, capability matcher
 │   │   ├── gateway/           # WhatsApp, Telegram, Discord & Slack
 │   │   ├── settings/          # Personality manager

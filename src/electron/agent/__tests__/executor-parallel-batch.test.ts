@@ -233,6 +233,53 @@ describe("TaskExecutor parallel tool batches", () => {
     expect(result?.toolResults[1]?.is_error).toBe(true);
   });
 
+  it("emits terminal cancellation metadata for a queued sibling lane", () => {
+    const { executor, events } = createParallelExecutorFixture();
+    executor.cancelled = true;
+
+    const result = (executor as Any).finalizeCancelledToolExecution({
+      toolName: "web_search",
+      toolUseId: "use-2",
+      correlation: {
+        toolUseId: "use-2",
+        toolCallIndex: 2,
+        toolBatchPhase: "step",
+        groupId: "tools:step:test:1",
+      },
+    }) as { toolResult: LLMToolResult };
+
+    expect(result.toolResult.tool_use_id).toBe("use-2");
+    expect(result.toolResult.is_error).toBe(true);
+    expect(result.toolResult.content).toContain("Task was cancelled");
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "tool_error",
+        payload: expect.objectContaining({
+          tool: "web_search",
+          toolUseId: "use-2",
+          cancelled: true,
+        }),
+      }),
+    );
+    expect(executor.emitToolLaneFinished).toHaveBeenCalledWith(
+      "web_search",
+      expect.objectContaining({ toolUseId: "use-2" }),
+      "cancelled",
+      "Task was cancelled",
+    );
+  });
+
+  it("treats abort-like image results on a cancelled task as cancellation", () => {
+    const { executor } = createParallelExecutorFixture();
+    executor.cancelled = true;
+
+    expect(
+      (executor as Any).isCancelledToolOutcome({
+        result: { success: false, error: "This operation was aborted" },
+      }),
+    ).toBe(true);
+  });
+
   it("emits follow-up correlation metadata for lane events with stable indices", async () => {
     const { executor, events } = createParallelExecutorFixture();
     const params = makeParallelParams([

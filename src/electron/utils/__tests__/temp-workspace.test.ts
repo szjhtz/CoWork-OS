@@ -3,7 +3,11 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { TEMP_WORKSPACE_ID_PREFIX, TEMP_WORKSPACE_NAME } from "../../../shared/types";
-import { pruneTempWorkspaces } from "../temp-workspace";
+import {
+  createUniqueScopedTempWorkspaceDirectorySync,
+  ensureTempWorkspaceDirectoryPathSync,
+  pruneTempWorkspaces,
+} from "../temp-workspace";
 
 type WorkspaceRow = {
   id: string;
@@ -312,6 +316,143 @@ describe("pruneTempWorkspaces", () => {
     expect(result.removedDirs).toBe(1);
     expect(fs.existsSync(orphanDir)).toBe(false);
     expect(fs.existsSync(freshOrphanDir)).toBe(true);
+  });
+
+  it("creates unique scoped temp workspace directories as private direct children", () => {
+    const root = createTempRoot();
+
+    const first = createUniqueScopedTempWorkspaceDirectorySync(root, "ui");
+    const second = createUniqueScopedTempWorkspaceDirectorySync(root, "ui");
+
+    expect(first.workspaceId).toBe(`${TEMP_WORKSPACE_ID_PREFIX}${first.slug}`);
+    expect(second.workspaceId).toBe(`${TEMP_WORKSPACE_ID_PREFIX}${second.slug}`);
+    expect(first.path).not.toBe(second.path);
+    expect(path.dirname(first.path)).toBe(path.resolve(root));
+    expect(path.dirname(second.path)).toBe(path.resolve(root));
+    expect(fs.lstatSync(first.path).isDirectory()).toBe(true);
+
+    if (process.platform !== "win32") {
+      expect(fs.statSync(first.path).mode & 0o077).toBe(0);
+    }
+  });
+
+  it("rejects symlinked temp workspace directories", () => {
+    const root = createTempRoot();
+    const external = createTempRoot();
+    const linkPath = path.join(root, "linked");
+    try {
+      fs.symlinkSync(external, linkPath, "dir");
+    } catch {
+      return;
+    }
+
+    expect(() => ensureTempWorkspaceDirectoryPathSync(root, linkPath)).toThrow(
+      /not a safe directory/,
+    );
+    expect(fs.existsSync(external)).toBe(true);
+  });
+
+  it("does not follow or delete symlinked stale workspace paths", () => {
+    const db = new MockDb();
+    const root = createTempRoot();
+    const external = createTempRoot();
+    const nowMs = 7_000_000;
+    const linkPath = path.join(root, "linked-stale");
+    try {
+      fs.symlinkSync(external, linkPath, "dir");
+    } catch {
+      return;
+    }
+
+    db.workspaces.push({
+      id: `${TEMP_WORKSPACE_ID_PREFIX}linked-stale`,
+      name: TEMP_WORKSPACE_NAME,
+      path: linkPath,
+      created_at: nowMs - 100_000,
+      last_used_at: nowMs - 100_000,
+      permissions: "{}",
+    });
+
+    const result = pruneTempWorkspaces({
+      db: db as Any,
+      tempWorkspaceRoot: root,
+      nowMs,
+      keepRecent: 0,
+      maxAgeMs: 1_000,
+      hardLimit: 10,
+      targetAfterPrune: 8,
+    });
+
+    expect(result.removedRows).toBe(1);
+    expect(result.removedDirs).toBe(0);
+    expect(fs.lstatSync(linkPath).isSymbolicLink()).toBe(true);
+    expect(fs.existsSync(external)).toBe(true);
+  });
+
+  it("can report unused temp workspaces and orphan directories without deleting them", () => {
+    const db = new MockDb();
+    const root = createTempRoot();
+    const nowMs = Date.now();
+
+    const staleWorkspace = insertTempWorkspace(db, root, "stale-report", nowMs - 30_000);
+    const orphanDir = path.join(root, "orphan-report");
+    fs.mkdirSync(orphanDir, { recursive: true });
+    const oldDate = new Date(nowMs - 30_000);
+    fs.utimesSync(orphanDir, oldDate, oldDate);
+
+    const result = pruneTempWorkspaces({
+      db: db as Any,
+      tempWorkspaceRoot: root,
+      nowMs,
+      keepRecent: 0,
+      maxAgeMs: 1_000,
+      hardLimit: 50,
+      targetAfterPrune: 40,
+      dryRun: true,
+    });
+
+    expect(result.dryRun).toBe(true);
+    expect(result.removedRows).toBe(0);
+    expect(result.removedDirs).toBe(0);
+    expect(result.checkedRows).toBe(1);
+    expect(result.checkedDirs).toBe(2);
+    expect(result.candidateWorkspaceIds).toEqual([staleWorkspace.id]);
+    expect(result.candidateDirPaths).toEqual(expect.arrayContaining([staleWorkspace.dir, orphanDir]));
+    expect(fs.existsSync(staleWorkspace.dir)).toBe(true);
+    expect(fs.existsSync(orphanDir)).toBe(true);
+    expect(db.workspaces.some((workspace) => workspace.id === staleWorkspace.id)).toBe(true);
+  });
+
+  it("does not over-report hard-cap candidates in dry run after simulated stale row removal", () => {
+    const db = new MockDb();
+    const root = createTempRoot();
+    const nowMs = 8_000_000;
+
+    const stale = Array.from({ length: 3 }, (_, index) =>
+      insertTempWorkspace(db, root, `stale-${index}`, nowMs - 20_000),
+    );
+    const fresh = Array.from({ length: 2 }, (_, index) =>
+      insertTempWorkspace(db, root, `fresh-${index}`, nowMs - index * 100),
+    );
+
+    const result = pruneTempWorkspaces({
+      db: db as Any,
+      tempWorkspaceRoot: root,
+      nowMs,
+      keepRecent: 0,
+      maxAgeMs: 1_000,
+      hardLimit: 4,
+      targetAfterPrune: 3,
+      minAgeForHardPruneMs: 0,
+      dryRun: true,
+    });
+
+    expect(result.candidateWorkspaceIds).toEqual(stale.map((workspace) => workspace.id));
+    expect(result.candidateDirPaths).toEqual(stale.map((workspace) => workspace.dir));
+    for (const workspace of [...stale, ...fresh]) {
+      expect(fs.existsSync(workspace.dir)).toBe(true);
+      expect(db.workspaces.some((row) => row.id === workspace.id)).toBe(true);
+    }
   });
 
   it("does not treat wildcard-like IDs as temp workspace IDs", () => {

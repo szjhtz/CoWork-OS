@@ -377,6 +377,46 @@ describe("MessageRouter external channel task updates", () => {
     );
   });
 
+  it("falls back to a replacement message when editable progress update fails", async () => {
+    const db = createMockDb();
+    const router = new MessageRouter(db, {}, undefined);
+    const adapter = createChatAdapter("whatsapp");
+    adapter.editMessage = vi.fn().mockRejectedValueOnce(new Error("edit failed"));
+
+    (router as Any).adapters.set("whatsapp", adapter);
+    (router as Any).channelRepo.findById = vi.fn().mockReturnValue({
+      id: "wa-1",
+      config: { progressRelayMode: "curated" },
+    });
+    (router as Any).channelRepo.findByType = vi.fn().mockReturnValue({ id: "wa-1" });
+    (router as Any).messageRepo.create = vi.fn();
+    (router as Any).pendingTaskResponses.set("task-wa-edit-fallback", {
+      adapter,
+      channelId: "wa-1",
+      chatId: "chat-1",
+      sessionId: "session-1",
+      progressMessageId: "old-progress",
+      lastProgressMessageText: "Planning the work.",
+    });
+
+    await router.sendTaskUpdate(
+      "task-wa-edit-fallback",
+      "Completed step 1: Inspect the codebase",
+    );
+
+    expect(adapter.editMessage).toHaveBeenCalledWith(
+      "chat-1",
+      "old-progress",
+      "Completed: Inspect the codebase",
+    );
+    expect(adapter.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chatId: "chat-1",
+        text: "Completed: Inspect the codebase",
+      }),
+    );
+  });
+
   it("keeps streamed assistant text as regular Slack output even in curated mode", async () => {
     vi.useFakeTimers();
 

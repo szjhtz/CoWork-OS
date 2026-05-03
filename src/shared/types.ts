@@ -1413,8 +1413,14 @@ export type ToolType =
   | "voice_call"
   | "browser_navigate"
   | "browser_screenshot"
+  | "browser_snapshot"
+  | "browser_tabs"
+  | "browser_switch_tab"
+  | "browser_close_tab"
   | "browser_get_content"
   | "browser_click"
+  | "browser_hover"
+  | "browser_drag"
   | "browser_fill"
   | "browser_type"
   | "browser_press"
@@ -1423,6 +1429,15 @@ export type ToolType =
   | "browser_select"
   | "browser_get_text"
   | "browser_evaluate"
+  | "browser_upload_file"
+  | "browser_handle_dialog"
+  | "browser_console"
+  | "browser_network"
+  | "browser_downloads"
+  | "browser_storage"
+  | "browser_emulate"
+  | "browser_trace_start"
+  | "browser_trace_stop"
   | "browser_back"
   | "browser_forward"
   | "browser_reload"
@@ -1607,8 +1622,14 @@ export const TOOL_GROUPS = {
     "sharepoint_action",
     "browser_navigate",
     "browser_screenshot",
+    "browser_snapshot",
+    "browser_tabs",
+    "browser_switch_tab",
+    "browser_close_tab",
     "browser_get_content",
     "browser_click",
+    "browser_hover",
+    "browser_drag",
     "browser_fill",
     "browser_type",
     "browser_press",
@@ -1617,6 +1638,15 @@ export const TOOL_GROUPS = {
     "browser_select",
     "browser_get_text",
     "browser_evaluate",
+    "browser_upload_file",
+    "browser_handle_dialog",
+    "browser_console",
+    "browser_network",
+    "browser_downloads",
+    "browser_storage",
+    "browser_emulate",
+    "browser_trace_start",
+    "browser_trace_stop",
     "browser_back",
     "browser_forward",
     "browser_reload",
@@ -1726,13 +1756,28 @@ export const TOOL_RISK_LEVELS: Record<ToolType, ToolRiskLevel> = {
   voice_call: "network",
   browser_navigate: "network",
   browser_screenshot: "network",
+  browser_snapshot: "network",
+  browser_tabs: "network",
+  browser_switch_tab: "network",
+  browser_close_tab: "network",
   browser_get_content: "network",
   browser_click: "network",
+  browser_hover: "network",
+  browser_drag: "network",
   browser_fill: "network",
   browser_type: "network",
   browser_press: "network",
   browser_wait: "network",
   browser_scroll: "network",
+  browser_upload_file: "network",
+  browser_handle_dialog: "network",
+  browser_console: "network",
+  browser_network: "network",
+  browser_downloads: "network",
+  browser_storage: "network",
+  browser_emulate: "network",
+  browser_trace_start: "network",
+  browser_trace_stop: "network",
   browser_select: "network",
   browser_get_text: "network",
   browser_evaluate: "network",
@@ -6780,6 +6825,7 @@ export const IPC_CHANNELS = {
   WORKSPACE_UPDATE_PERMISSIONS: "workspace:updatePermissions",
   WORKSPACE_TOUCH: "workspace:touch",
   WORKSPACE_GET_TEMP: "workspace:getTemp", // Get or create temp workspace
+  WORKSPACE_PRUNE_TEMP: "workspace:pruneTemp", // Check or delete unused temp workspaces
 
   // Approval operations
   APPROVAL_RESPOND: "approval:respond",

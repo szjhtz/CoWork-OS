@@ -3,9 +3,9 @@
  * Runs `npm run build` then `electron-builder --mac` after loading optional
  * `.env.mac` from the repo root (gitignored).
  *
- * By default this creates the unsigned DMG/ZIP used for public fallback builds.
- * It disables certificate auto-discovery so a local personal Developer ID is not
- * picked up accidentally. To produce a signed + notarized build, configure
+ * By default this creates an unsigned DMG/ZIP with an ad hoc signed app bundle.
+ * This keeps the app structurally valid for macOS while still requiring a user
+ * Gatekeeper override. To produce a signed + notarized build, configure
  * CSC_NAME or CSC_LINK in `.env.mac`.
  *
  * Copy `scripts/mac-notarize.env.example` → `.env.mac` and fill in secrets.
@@ -38,12 +38,38 @@ function hasExplicitSigningIdentity() {
   return Boolean(process.env.CSC_NAME || process.env.CSC_LINK);
 }
 
+function hasNotarizationCredentials() {
+  const hasAppleIdCredentials = Boolean(
+    process.env.APPLE_ID &&
+      process.env.APPLE_APP_SPECIFIC_PASSWORD &&
+      process.env.APPLE_TEAM_ID,
+  );
+  const hasApiKeyCredentials = Boolean(
+    process.env.APPLE_API_KEY &&
+      process.env.APPLE_API_KEY_ID &&
+      process.env.APPLE_API_ISSUER,
+  );
+  const hasKeychainProfile = Boolean(process.env.APPLE_KEYCHAIN_PROFILE);
+  return hasAppleIdCredentials || hasApiKeyCredentials || hasKeychainProfile;
+}
+
 function configureSigningMode() {
   if (isTrueEnv(process.env.COWORK_MAC_UNSIGNED) || !hasExplicitSigningIdentity()) {
     process.env.COWORK_MAC_UNSIGNED = "1";
     process.env.CSC_IDENTITY_AUTO_DISCOVERY = "false";
-    log("Unsigned macOS packaging enabled; Developer ID auto-discovery is disabled.");
+    log("Unsigned macOS packaging enabled with ad hoc app signing; Developer ID auto-discovery is disabled.");
     return;
+  }
+
+  if (!hasNotarizationCredentials()) {
+    process.stderr.write(
+      [
+        "[package:mac] Refusing to create a signed macOS package without notarization credentials.",
+        "[package:mac] Configure APPLE_ID credentials, App Store Connect API key credentials, or APPLE_KEYCHAIN_PROFILE in .env.mac, or run npm run package:mac:unsigned.",
+        "",
+      ].join("\n"),
+    );
+    process.exit(1);
   }
 
   log("Signed macOS packaging enabled from explicit signing identity.");
@@ -112,4 +138,14 @@ if (alignStatus !== 0) {
 }
 
 const verifyStatus = run(process.execPath, ["scripts/release-artifact-names.mjs", "--check"]);
-process.exit(verifyStatus);
+if (verifyStatus !== 0) {
+  process.exit(verifyStatus);
+}
+
+log("Running macOS artifact smoke check …");
+const smokeArgs = ["scripts/smoke-desktop-artifacts.mjs", "--platform=mac"];
+if (process.env.COWORK_MAC_UNSIGNED === "1") {
+  smokeArgs.push("--allow-unsigned");
+}
+const smokeStatus = run(process.execPath, smokeArgs);
+process.exit(smokeStatus);

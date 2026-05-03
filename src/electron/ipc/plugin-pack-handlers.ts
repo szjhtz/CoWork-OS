@@ -113,9 +113,13 @@ function resolveConnectorIcon(server: { id: string; name: string }): string {
  */
 export function setupPluginPackHandlers(): void {
   const registry = PluginRegistry.getInstance();
+  const ensureRegistryInitialized = async (): Promise<void> => {
+    await registry.initialize();
+  };
 
   // List all plugin packs with their contents
   ipcMain.handle(IPC_CHANNELS.PLUGIN_PACK_LIST, async () => {
+    await ensureRegistryInitialized();
     const packs = registry.getPluginsByType("pack");
     return packs.map((p): PluginPackData => {
       const m = p.manifest;
@@ -164,6 +168,7 @@ export function setupPluginPackHandlers(): void {
 
   // Get a single plugin pack by name
   ipcMain.handle(IPC_CHANNELS.PLUGIN_PACK_GET, async (_, name: string) => {
+    await ensureRegistryInitialized();
     if (!name || typeof name !== "string") {
       throw new Error("Pack name is required");
     }
@@ -212,6 +217,7 @@ export function setupPluginPackHandlers(): void {
 
   // Toggle a plugin pack on/off
   ipcMain.handle(IPC_CHANNELS.PLUGIN_PACK_TOGGLE, async (_, name: string, enabled: boolean) => {
+    await ensureRegistryInitialized();
     if (!name || typeof name !== "string") {
       throw new Error("Pack name is required");
     }
@@ -247,6 +253,7 @@ export function setupPluginPackHandlers(): void {
   ipcMain.handle(
     IPC_CHANNELS.PLUGIN_PACK_TOGGLE_SKILL,
     async (_, packName: string, skillId: string, enabled: boolean) => {
+      await ensureRegistryInitialized();
       if (!packName || !skillId) {
         throw new Error("Pack name and skill ID are required");
       }
@@ -273,6 +280,7 @@ export function setupPluginPackHandlers(): void {
 
   // Get active context (connected MCP servers + enabled skills)
   ipcMain.handle(IPC_CHANNELS.PLUGIN_PACK_GET_CONTEXT, async (): Promise<ActiveContextData> => {
+    await ensureRegistryInitialized();
     const connectors: ActiveContextData["connectors"] = [];
     const skills: ActiveContextData["skills"] = [];
 
@@ -299,6 +307,7 @@ export function setupPluginPackHandlers(): void {
     // Get enabled skills from active packs
     try {
       const skillLoader = getCustomSkillLoader();
+      await skillLoader.initialize();
       const allSkills = skillLoader.listTaskSkills();
       for (const s of allSkills.slice(0, 50)) {
         skills.push({

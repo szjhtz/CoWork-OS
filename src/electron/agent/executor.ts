@@ -1424,7 +1424,7 @@ export class TaskExecutor {
   private emitToolLaneFinished(
     toolName: string,
     correlation: ToolBatchCorrelationMeta,
-    status: "completed" | "failed",
+    status: "completed" | "failed" | "cancelled",
     message?: string,
   ): void {
     if (!correlation.groupId) return;
@@ -1443,11 +1443,70 @@ export class TaskExecutor {
         groupId: correlation.groupId,
         actor: "tool",
         status,
-        legacyType: status === "failed" ? "step_failed" : "step_completed",
+        legacyType:
+          status === "failed" || status === "cancelled"
+            ? "step_failed"
+            : "step_completed",
         message:
           message ||
-          (status === "failed" ? `${toolName} finished with issues` : `${toolName} completed`),
+          (status === "failed" || status === "cancelled"
+            ? `${toolName} finished with issues`
+            : `${toolName} completed`),
       },
+    );
+  }
+
+  private finalizeCancelledToolExecution(params: {
+    toolName: string;
+    toolUseId: string;
+    correlation: ToolBatchCorrelationMeta;
+  }): { toolResult: LLMToolResult } {
+    const message = this.cancelled ? "Task was cancelled" : "Task already completed";
+    this.emitEvent(
+      "tool_error",
+      this.attachToolCorrelationMetadata(
+        {
+          tool: params.toolName,
+          error: message,
+          cancelled: true,
+        },
+        params.correlation,
+      ),
+    );
+    this.emitToolLaneFinished(
+      params.toolName,
+      params.correlation,
+      "cancelled",
+      message,
+    );
+    return {
+      toolResult: buildCancellationToolResultUtil({
+        toolUseId: params.toolUseId,
+        cancelled: this.cancelled,
+      }),
+    };
+  }
+
+  private isCancelledToolOutcome(rawOutcome: {
+    metadata?: Record<string, unknown>;
+    error?: unknown;
+    result?: Any;
+  }): boolean {
+    if (rawOutcome.metadata?.cancelled === true) return true;
+    if (!this.cancelled && !this.taskCompleted) return false;
+    const error = rawOutcome.error as Any;
+    const errorMessage = String(error?.message || error || "").toLowerCase();
+    const result = rawOutcome.result;
+    const resultMessage =
+      result && typeof result === "object"
+        ? String(result.error || result.message || "").toLowerCase()
+        : String(result || "").toLowerCase();
+    return (
+      error?.name === "AbortError" ||
+      errorMessage.includes("abort") ||
+      errorMessage.includes("cancel") ||
+      resultMessage.includes("abort") ||
+      resultMessage.includes("cancel")
     );
   }
 
@@ -2038,6 +2097,7 @@ export class TaskExecutor {
         },
       })),
       maxParallel: this.toolBatchParallelMax,
+      shouldContinue: () => !this.cancelled && !this.taskCompleted,
       summarizeBatch: (_batch, reports) =>
         this.summarizeToolBatch(params.phase, reports, params.assistantText),
       prepareCall: async (scheduledCall) => {
@@ -2073,6 +2133,14 @@ export class TaskExecutor {
                 (rawOutcome.result && rawOutcome.result.success === false
                   ? this.getToolFailureReason(rawOutcome.result, "unknown error")
                   : "");
+
+              if (this.isCancelledToolOutcome(rawOutcome)) {
+                return this.finalizeCancelledToolExecution({
+                  toolName,
+                  toolUseId: String(job.correlation.toolUseId || ""),
+                  correlation: job.correlation,
+                });
+              }
 
               if (rawOutcome.error) {
                 this.releaseBatchCreatedPathReservation(
@@ -19764,6 +19832,9 @@ You are continuing a previous conversation. The context from the previous conver
       trigger,
     };
 
+    logger.info(
+      `${this.logTag} Deterministically invoking skill '${skillId}' via ${trigger} (${invocationLabel})`,
+    );
     this.emitEvent("tool_call", { tool: "Skill", input });
     const result = await this.toolRegistry.executeTool("Skill", input);
     this.emitEvent("tool_result", { tool: "Skill", result });
@@ -19783,6 +19854,9 @@ You are continuing a previous conversation. The context from the previous conver
     if (!applied) {
       throw new Error(`Failed to apply hidden skill context for ${invocationLabel}.`);
     }
+    logger.info(
+      `${this.logTag} Skill '${skillId}' applied as hidden context via ${trigger}`,
+    );
     return "applied";
   }
 
@@ -24786,6 +24860,7 @@ Return ONLY a JSON object:
                 this.toolBatchParallelEnabled && this.toolBatchParallelMax > 1
                   ? this.toolBatchParallelMax
                   : 1,
+              shouldContinue: () => !this.cancelled && !this.taskCompleted,
               summarizeBatch: (_batch, reports) =>
                 this.summarizeToolBatch("step", reports, assistantText || step.description),
               prepareCall: async (scheduledCall) => {
@@ -25817,6 +25892,14 @@ Return ONLY a JSON object:
                           phase: "step",
                           groupId: this.currentToolBatchGroupId,
                         });
+
+                      if (this.isCancelledToolOutcome(rawOutcome)) {
+                        return this.finalizeCancelledToolExecution({
+                          toolName: content.name,
+                          toolUseId: String(content.id || ""),
+                          correlation: effectiveCorrelation,
+                        });
+                      }
 
                       if (rawOutcome.error) {
                         const failureMessage =
@@ -31341,6 +31424,7 @@ Return ONLY a JSON object:
                 this.toolBatchParallelEnabled && this.toolBatchParallelMax > 1
                   ? this.toolBatchParallelMax
                   : 1,
+              shouldContinue: () => !this.cancelled && !this.taskCompleted,
               summarizeBatch: (_batch, reports) =>
                 this.summarizeToolBatch(
                   "follow_up",
@@ -31957,6 +32041,14 @@ Return ONLY a JSON object:
                             phase: "follow_up",
                             groupId: this.currentToolBatchGroupId,
                           });
+
+                        if (this.isCancelledToolOutcome(rawOutcome)) {
+                          return this.finalizeCancelledToolExecution({
+                            toolName: content.name,
+                            toolUseId: String(content.id || ""),
+                            correlation: effectiveCorrelation,
+                          });
+                        }
 
                         if (rawOutcome.error) {
                           const failureMessage =

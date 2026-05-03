@@ -57,6 +57,8 @@ When a plugin alias exists, the backend resolves the visible command token to th
 
 Unknown slash commands and invalid slash tokens are ignored by the generic skill resolver.
 
+Remote channel slash commands use the gateway command registry instead of the desktop picker. There, recognized commands are handled by the gateway and unknown slash commands return an explicit in-channel unknown-command reply. See [Gateway Message Lifecycle](gateway-message-lifecycle.md).
+
 ## Parameter Behavior
 
 Selecting a skill-backed shortcut follows the same skill parameter rules everywhere:

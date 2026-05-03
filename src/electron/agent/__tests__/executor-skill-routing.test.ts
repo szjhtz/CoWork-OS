@@ -298,6 +298,68 @@ describe("TaskExecutor skill shortlist routing", () => {
     );
   });
 
+  it("auto-applies explicitly requested hyphenated skill ids from the task prompt", async () => {
+    listSkills.mockReturnValue([
+      {
+        id: "imagegen-frontend-web",
+        name: "Imagegen Frontend Web",
+        description: "Generate frontend website section reference images.",
+        enabled: true,
+      },
+    ]);
+
+    const prompt =
+      "Use imagegen-frontend-web skill and with that skill generate images for a website.";
+    const executor = createExecutor(prompt);
+    executor.toolRegistry.executeTool.mockImplementation(async (name: string, input: Any) => {
+      expect(name).toBe("Skill");
+      expect(input).toEqual({
+        skill: "imagegen-frontend-web",
+        args: "",
+        trigger: "explicit_hint",
+      });
+      const invocationId = "skill-invocation-imagegen";
+      executor.__resolvedInvocations.set(invocationId, {
+        skillId: "imagegen-frontend-web",
+        skillName: "Imagegen Frontend Web",
+        trigger: "explicit_hint",
+        args: "",
+        parameters: {},
+        content: "Expanded imagegen frontend web instructions",
+        reason: "Applied as additive skill context while preserving the original task.",
+        appliedAt: Date.now(),
+      });
+      return {
+        success: true,
+        skill: "imagegen-frontend-web",
+        skill_name: "Imagegen Frontend Web",
+        skill_invocation_id: invocationId,
+        message: "Loaded skill 'Imagegen Frontend Web' for this task.",
+      };
+    });
+
+    const handled = await (
+      TaskExecutor as Any
+    ).prototype.maybeAutoApplyExplicitSkillInvocation.call(
+      executor,
+      executor.task.prompt,
+      "task",
+      "the explicitly requested task skill",
+    );
+
+    expect(handled).toBe(true);
+    expect(executor.appliedSkills).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          skillId: "imagegen-frontend-web",
+          skillName: "Imagegen Frontend Web",
+          trigger: "explicit_hint",
+          content: "Expanded imagegen frontend web instructions",
+        }),
+      ]),
+    );
+  });
+
   it("deterministically routes natural research-vault prompts into llm-wiki", async () => {
     listSkills.mockReturnValue([
       {

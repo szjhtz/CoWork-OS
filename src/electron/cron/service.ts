@@ -1010,6 +1010,20 @@ export class CronService {
       rendered = rendered.split(`{{${k}}}`).join(v);
     }
 
+    const hasEnabledChannelDelivery =
+      job.delivery?.enabled === true &&
+      Boolean(job.delivery.channelType && job.delivery.channelId && deps.deliverToChannel);
+    if (hasEnabledChannelDelivery) {
+      rendered = [
+        "Scheduled task delivery:",
+        "- Produce the final result in your assistant response.",
+        "- Do not call channel, messaging, or notification tools to message the user yourself.",
+        "- The scheduler will deliver your final response through the configured channel.",
+        "",
+        rendered,
+      ].join("\n");
+    }
+
     if (workspaceContext?.runWorkspacePath) {
       const workspacePath = workspaceContext.workspacePath || "";
       const relativePath = workspaceContext.runWorkspaceRelativePath

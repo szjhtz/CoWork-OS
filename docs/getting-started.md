@@ -99,7 +99,7 @@ After the app is configured, try tasks that produce or use visible work surfaces
 - `create a simple HTML landing page`
 - `go to example.com and test the website as a normal user`
 
-Generated documents, spreadsheets, presentations, and web pages appear as artifact cards and open in the right sidebar or fullscreen workbench. Live website testing opens the [Browser Workbench](browser-workbench.md), where the agent and user share the same in-app browser, with visible cursor movement, screenshots, annotation, and follow-up controls.
+Generated documents, spreadsheets, presentations, and web pages appear as artifact cards and open in the right sidebar or fullscreen workbench. Live website testing opens the [Browser Workbench](browser-workbench.md), where the agent and user share the same Browser V2 in-app browser, with visible cursor movement, accessibility snapshot refs, diagnostics, screenshots, annotation, and follow-up controls.
    - Changes to tracked kit files keep revision snapshots under `.cowork/**/.history/`
    - You can validate kit health, freshness, and secret/missing-file warnings locally with `npm run kit:lint`
 
@@ -278,6 +278,8 @@ Title: Screenshot a webpage
 Description: Navigate to https://example.com and take a screenshot. Save it as example-screenshot.png.
 ```
 
+Interactive browser tasks use the visible Browser Workbench by default. For form testing or JavaScript-heavy apps, the agent should navigate, call `browser_snapshot`, and then use refs for click/fill/type/read actions. Real signed-in Chrome/Edge control is explicit opt-in through `browser_attach`; the default workspace browser profile does not reuse system Chrome cookies.
+
 ## Understanding the UI
 
 ### Sidebar (Left)
@@ -390,6 +392,8 @@ Web search works immediately via the built-in DuckDuckGo provider (free, no API 
 6. Once connected, enable **Self-Chat Mode** if using your personal number
 7. Set a **Response Prefix** (e.g., "🤖") to distinguish bot messages
 
+After connection, WhatsApp uses the shared gateway message lifecycle: send normal text to start or follow up on a task, `/new` for a fresh next task, `/new temp` for a scratch temporary session, `/stop` to cancel, and `/commands` for the current remote command catalog. See [Using CoWork from WhatsApp and Other Channels](gateway-user-guide.md) for examples and best practices.
+
 #### Telegram Bot
 1. Create bot with [@BotFather](https://t.me/BotFather)
 2. Open **Settings** > **Channels** > **Telegram**
@@ -494,7 +498,7 @@ src/
 │   ├── agent/        # AI agent logic
 │   │   ├── llm/      # LLM providers
 │   │   ├── search/   # Search providers
-│   │   ├── browser/  # Playwright
+│   │   ├── browser/  # Browser V2 session manager and workbench bridge
 │   │   ├── tools/    # Tool implementations
 │   │   └── skills/   # Document skills
 │   ├── gateway/      # WhatsApp, Telegram, Discord & Slack

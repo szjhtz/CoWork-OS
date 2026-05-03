@@ -144,6 +144,35 @@ describe("AmbientMonitoringService", () => {
     expect(wakeHeartbeats).toHaveBeenCalled();
   });
 
+  it("does not block startup on initial external probes", async () => {
+    watchMock.mockReturnValue({
+      on: vi.fn(),
+      close: vi.fn().mockResolvedValue(undefined),
+    });
+    execFileMock.mockImplementation(() => {
+      // Simulate a slow git or calendar process. start() should still resolve.
+    });
+
+    const { AmbientMonitoringService } = await import("../AmbientMonitoringService");
+    const workspacePath = createWorkspaceDir("slow-probes");
+    const service = new AmbientMonitoringService({
+      listWorkspaces: () => [{ workspaceId: "ws-1", workspacePath, name: "Workspace" }],
+      getDefaultWorkspaceId: () => "ws-1",
+      recordActivity: vi.fn(),
+      emitTrigger: vi.fn(),
+      wakeHeartbeats: vi.fn(),
+    });
+
+    await expect(
+      Promise.race([
+        service.start().then(() => "started"),
+        new Promise((resolve) => setTimeout(() => resolve("timed-out"), 25)),
+      ]),
+    ).resolves.toBe("started");
+
+    await service.stop();
+  });
+
   it("emits calendar signals when connected calendars change", async () => {
     watchMock.mockReturnValue({
       on: vi.fn(),

@@ -43,7 +43,7 @@
 
 - **Personal Agentic OS** — CoWork OS is still a local-first operating system for personal AI agents: tasks, memory, skills, providers, approvals, channels, devices, and automations are governed in one workspace.
 - **Everything Workbench** — Chat, tasks, documents, spreadsheets, presentations, web pages, PDFs, and file outputs live in one local-first workspace. Generate an artifact, open it in the app, review or edit it, and ask for follow-up changes with fewer switches into separate office apps. [Learn more](docs/everything-workbench.md)
-- **Browser Workbench** — Test live websites and local apps in a visible in-app browser. The agent clicks, fills, scrolls, screenshots, annotates, and shows cursor movement in the same right-sidebar/fullscreen browser the user can see. [Learn more](docs/browser-workbench.md)
+- **Browser Workbench / Browser V2** — Test live websites and local apps in a visible in-app browser by default. The agent uses the same right-sidebar/fullscreen browser the user can see, with CDP-backed Browser V2 automation, accessibility snapshot refs, tabs, downloads/uploads, diagnostics, screenshots, annotation, and explicit opt-in for real signed-in Chrome/Edge control. [Learn more](docs/browser-workbench.md) · [Architecture](docs/browser-v2-architecture.md)
 - **Coding, web design, and knowledge work** — Use the same agentic workspace for repository work, frontend/product design, research, docs, spreadsheets, presentations, web pages, PDFs, and long-running operational tasks.
 - **Inbox Agent** — local-first email workspace with Classic and Today modes, AI triage, an Ask Inbox sidebar with live mailbox-agent steps and hybrid evidence search, `@Inbox` main-composer routing, manual reply/reply-all/forward, editable AI drafts, sender cleanup, commitments, and background sync.
 - **Workflow Intelligence** — Always-on cognition is now framed as one reviewable loop: Memory is the source of truth, Heartbeat schedules reflection, Reflection evaluates evidence internally, and Suggestions are the user-facing output.
@@ -92,7 +92,7 @@ Stable workflow entry points for the newest high-impact capabilities.
 - **Spreadsheet artifacts** — task-created spreadsheet files render as compact artifact cards. Excel workbooks and CSV/TSV files open in the editable right-sidebar viewer; native Numbers, Google Sheets shortcut, ODS, XLSB, and other recognized spreadsheet outputs still get the same card and external-app/folder actions. Fullscreen mode expands editable sheets across the app with cell/range/row/column selection, copy, zoom, add row/column, save, model picker, voice input, attachments, and follow-up task context. [Learn more](docs/spreadsheet-artifacts.md)
 - **Presentation artifacts** — generated `.pptx` decks render as compact artifact cards and open by default in the resizable right-sidebar presentation viewer. The viewer shows thumbnails, slide navigation, zoom, a white slide canvas, speaker notes, text-first fast loading, cached rendered slide images, fullscreen follow-up context, and background refresh after requested deck edits. Legacy PowerPoint formats are recognized with external-app/folder actions. [Learn more](docs/pptx-generation-and-preview.md)
 - **Web page artifacts** — generated `.html` / `.htm` pages and built React output such as `dist/index.html`, `build/index.html`, or `out/index.html` render as compact artifact cards and open by default in a resizable right-sidebar sandboxed iframe preview. Fullscreen mode keeps the functional follow-up composer and refreshes after the relevant file or build output changes. React-style source projects without build output show a clear build-output-needed state instead of auto-starting a dev server. [Learn more](docs/web-page-artifacts.md)
-- **Browser Workbench** — live website testing opens a visible in-app browser in the right sidebar by default. Browser-use tools target that shared webview, show cursor movement during actions, support screenshots and annotation, and can expand to fullscreen with the normal follow-up composer. [Learn more](docs/browser-workbench.md)
+- **Browser Workbench / Browser V2** — live website testing opens a visible in-app browser in the right sidebar by default. Browser-use tools target that shared webview through Browser V2, show cursor movement during actions, prefer accessibility snapshot refs over selectors, expose console/network/download/storage diagnostics, support screenshots and annotation, and can expand to fullscreen with the normal follow-up composer. [Learn more](docs/browser-workbench.md)
 - **Image generation** — configurable provider ordering across Gemini, OpenAI, Azure OpenAI, and OpenRouter.
 - **Video generation** — text-to-video and image-to-video routing with polling tools and inline preview.
 - **Programmatic technical video** — bundled `manim-video` skill for Manim CE explainers, equation walkthroughs, algorithm visualizations, and animated architecture/data stories. [Learn more](docs/skills/manim-video.md)
@@ -247,7 +247,7 @@ Agent-driven visual workspace for interactive HTML/CSS/JS content, data visualiz
 
 ### Multichannel Gateway
 
-Unified AI gateway across 17 channels with security modes, rate limiting, ambient mode, scheduled tasks, and chat commands. Slack now supports multiple workspaces, Telegram supports group-routing policies and allowlists, Discord can be limited to specific guilds, and Feishu/Lark plus WeCom are now first-class channels. [Learn more](docs/channels.md)
+Unified AI gateway across 17 channels with security modes, rate limiting, ambient mode, scheduled tasks, and a shared message lifecycle for commands, active-task follow-ups, cancellations, progress delivery, skill slashes, and scheduled outputs. WhatsApp supports `/new`, `/new temp`, `/stop`, editable progress updates, and hidden temporary scratch workspaces; Slack supports multiple workspaces, Telegram supports group-routing policies and allowlists, Discord can be limited to specific guilds, and Feishu/Lark plus WeCom are first-class channels. [Learn more](docs/channels.md) | [Per-channel guides](docs/channel-user-guides.md) | [User guide](docs/gateway-user-guide.md) | [Message lifecycle](docs/gateway-message-lifecycle.md)
 
 ### Inbox Agent
 
@@ -476,10 +476,15 @@ See [CHANGELOG.md](CHANGELOG.md) for the full history of completed features.
 | [Use Case Showcase](docs/showcase.md) | Comprehensive guide to what you can build and automate |
 | [Features](docs/features.md) | Complete feature reference |
 | [Everything Workbench](docs/everything-workbench.md) | Unified in-app artifact model for docs, sheets, decks, web pages, PDFs, and live browser sessions |
-| [Browser Workbench](docs/browser-workbench.md) | Visible in-app browser for website testing, screenshots, annotation, and browser-use automation |
+| [Browser Workbench](docs/browser-workbench.md) | Visible in-app browser for website testing, screenshots, annotation, diagnostics, and Browser V2 automation |
+| [Browser V2 Architecture](docs/browser-v2-architecture.md) | Unified browser session manager, adapters, snapshot refs, diagnostics, safety, and verification contract |
 | [Chat Mode](docs/chat-mode.md) | Direct chat mode, same-session follow-ups, and the narrow PDF-attachment read-only analysis exception |
 | [Platform Updates](docs/integration-skill-bootstrap-lifecycle.md) | Detailed implementation notes for integration setup, skill proposals, workspace-kit contracts, and bootstrap lifecycle |
 | [Channels](docs/channels.md) | Messaging channel setup (17 channels) |
+| [Channel User Guides](docs/channel-user-guides.md) | End-user features and best practices across all messaging channels |
+| [Dedicated Channel Guides](docs/channel-guides/index.md) | Separate user guide pages for WhatsApp, Telegram, Discord, Slack, Teams, Google Chat, Signal, Email, and more |
+| [Gateway User Guide](docs/gateway-user-guide.md) | End-user guide and best practices for using CoWork from WhatsApp and other channels |
+| [Gateway Message Lifecycle](docs/gateway-message-lifecycle.md) | Remote command routing, active-task policy, skill slashes, delivery, and scheduled channel outputs |
 | [X Mention Triggers](docs/x-mention-triggers.md) | Configure `do:` mention-triggered task ingress on desktop and headless |
 | [Providers](docs/providers.md) | LLM and search provider configuration, costs, and fallback chains |
 | [Migration Guide](docs/migration.md) | Migration checklist and compatibility notes |

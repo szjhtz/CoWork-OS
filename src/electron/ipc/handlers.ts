@@ -327,13 +327,13 @@ import {
   getXMentionTriggerStatus,
 } from "../x-mentions";
 import { getCouncilService } from "../council";
-import { pruneTempWorkspaces } from "../utils/temp-workspace";
-import type { TriggerEvent } from "../triggers/types";
 import {
-  createScopedTempWorkspaceIdentity,
-  isTempWorkspaceInScope,
-  sanitizeTempWorkspaceKey,
-} from "../utils/temp-workspace-scope";
+  createUniqueScopedTempWorkspaceDirectorySync,
+  ensureTempWorkspaceDirectoryPathSync,
+  pruneTempWorkspaces,
+} from "../utils/temp-workspace";
+import type { TriggerEvent } from "../triggers/types";
+import { isTempWorkspaceInScope } from "../utils/temp-workspace-scope";
 import {
   getActiveTempWorkspaceLeases,
   touchTempWorkspaceLease,
@@ -1625,7 +1625,10 @@ export async function setupIpcHandlers(
     workspacePath: string,
     existing?: Workspace,
   ): Promise<Workspace> => {
-    await fs.mkdir(workspacePath, { recursive: true });
+    const safeWorkspacePath = ensureTempWorkspaceDirectoryPathSync(
+      tempWorkspaceRoot,
+      workspacePath,
+    );
     const createdAt = existing?.createdAt ?? Date.now();
     const lastUsedAt = Date.now();
     const permissions = normalizeTempPermissions(existing);
@@ -1642,7 +1645,7 @@ export async function setupIpcHandlers(
     stmt.run(
       workspaceId,
       TEMP_WORKSPACE_NAME,
-      workspacePath,
+      safeWorkspacePath,
       createdAt,
       lastUsedAt,
       JSON.stringify(permissions),
@@ -1651,18 +1654,13 @@ export async function setupIpcHandlers(
     return {
       id: workspaceId,
       name: TEMP_WORKSPACE_NAME,
-      path: workspacePath,
+      path: safeWorkspacePath,
       createdAt,
       lastUsedAt,
       permissions,
       isTemp: true,
     };
   };
-
-  const buildTempWorkspaceKey = (): string =>
-    sanitizeTempWorkspaceKey(
-      `session-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`,
-    );
 
   // Temp workspace management
   // Creates isolated temp workspaces so each new session can use its own folder.
@@ -1683,20 +1681,18 @@ export async function setupIpcHandlers(
           existingTemp,
         );
       } else {
-        await fs.mkdir(tempWorkspaceRoot, { recursive: true });
-        const key = buildTempWorkspaceKey();
-        const identity = createScopedTempWorkspaceIdentity("ui", key);
-        const workspaceId = identity.workspaceId;
-        const workspacePath = path.join(tempWorkspaceRoot, identity.slug);
-        workspace = await ensureTempWorkspace(workspaceId, workspacePath);
+        const created = createUniqueScopedTempWorkspaceDirectorySync(
+          tempWorkspaceRoot,
+          "ui",
+        );
+        workspace = await ensureTempWorkspace(created.workspaceId, created.path);
       }
     } else {
-      await fs.mkdir(tempWorkspaceRoot, { recursive: true });
-      const key = buildTempWorkspaceKey();
-      const identity = createScopedTempWorkspaceIdentity("ui", key);
-      const workspaceId = identity.workspaceId;
-      const workspacePath = path.join(tempWorkspaceRoot, identity.slug);
-      workspace = await ensureTempWorkspace(workspaceId, workspacePath);
+      const created = createUniqueScopedTempWorkspaceDirectorySync(
+        tempWorkspaceRoot,
+        "ui",
+      );
+      workspace = await ensureTempWorkspace(created.workspaceId, created.path);
     }
 
     touchTempWorkspaceLease(workspace.id);
@@ -3763,6 +3759,18 @@ export async function setupIpcHandlers(
     },
   );
 
+  ipcMain.handle(
+    IPC_CHANNELS.WORKSPACE_PRUNE_TEMP,
+    async (_, options?: { dryRun?: boolean }) => {
+      return pruneTempWorkspaces({
+        db,
+        tempWorkspaceRoot,
+        protectedWorkspaceIds: getActiveTempWorkspaceLeases(),
+        dryRun: options?.dryRun === true,
+      });
+    },
+  );
+
   ipcMain.handle(IPC_CHANNELS.WORKSPACE_SELECT, async (_, id: string) => {
     const workspace = workspaceRepo.findById(id);
     if (workspace) {
@@ -4986,31 +4994,34 @@ export async function setupIpcHandlers(
   };
   let skillsConfig = loadSkillsConfig();
   customSkillLoader.updateConfig(skillsConfig);
-
-  // Initialize custom skill loader
-  customSkillLoader.initialize().catch((error) => {
-    logger.error("[IPC] Failed to initialize custom skill loader:", error);
-  });
+  const ensureCustomSkillLoaderInitialized = async (): Promise<void> => {
+    await customSkillLoader.initialize();
+  };
 
   ipcMain.handle(IPC_CHANNELS.CUSTOM_SKILL_LIST, async () => {
+    await ensureCustomSkillLoaderInitialized();
     return customSkillLoader.listSkills();
   });
 
   ipcMain.handle(IPC_CHANNELS.CUSTOM_SKILL_LIST_TASKS, async () => {
+    await ensureCustomSkillLoaderInitialized();
     return customSkillLoader.listTaskSkills();
   });
 
   ipcMain.handle(IPC_CHANNELS.CUSTOM_SKILL_LIST_GUIDELINES, async () => {
+    await ensureCustomSkillLoaderInitialized();
     return customSkillLoader.listGuidelineSkills();
   });
 
   ipcMain.handle(IPC_CHANNELS.CUSTOM_SKILL_GET, async (_, id: string) => {
+    await ensureCustomSkillLoaderInitialized();
     return customSkillLoader.getSkill(id);
   });
 
   ipcMain.handle(
     IPC_CHANNELS.CUSTOM_SKILL_CREATE,
     async (_, skillData: Omit<CustomSkill, "filePath">) => {
+      await ensureCustomSkillLoaderInitialized();
       return customSkillLoader.createSkill(skillData);
     },
   );
@@ -5018,15 +5029,18 @@ export async function setupIpcHandlers(
   ipcMain.handle(
     IPC_CHANNELS.CUSTOM_SKILL_UPDATE,
     async (_, id: string, updates: Partial<CustomSkill>) => {
+      await ensureCustomSkillLoaderInitialized();
       return customSkillLoader.updateSkill(id, updates);
     },
   );
 
   ipcMain.handle(IPC_CHANNELS.CUSTOM_SKILL_DELETE, async (_, id: string) => {
+    await ensureCustomSkillLoaderInitialized();
     return customSkillLoader.deleteSkill(id);
   });
 
   ipcMain.handle(IPC_CHANNELS.CUSTOM_SKILL_RELOAD, async () => {
+    await ensureCustomSkillLoaderInitialized();
     return customSkillLoader.reloadSkills();
   });
 
@@ -5050,6 +5064,7 @@ export async function setupIpcHandlers(
       secureSettingsRepo.save("skills", skillsConfig);
       customSkillLoader.updateConfig(skillsConfig);
       customSkillLoader.clearEligibilityCache();
+      await ensureCustomSkillLoaderInitialized();
       await customSkillLoader.reloadSkills();
       return skillsConfig;
     },
@@ -5101,6 +5116,7 @@ export async function setupIpcHandlers(
       const result = await skillRegistry.install(skillId, version);
       if (result.success) {
         // Reload skills to pick up the new one
+        await ensureCustomSkillLoaderInitialized();
         await customSkillLoader.reloadSkills();
         // Clear eligibility cache in case new dependencies were installed
         customSkillLoader.clearEligibilityCache();
@@ -5114,6 +5130,7 @@ export async function setupIpcHandlers(
     async (_, identifierOrUrl: string) => {
       const result = await skillRegistry.installFromClawHub(identifierOrUrl);
       if (result.success) {
+        await ensureCustomSkillLoaderInitialized();
         await customSkillLoader.reloadSkills();
         customSkillLoader.clearEligibilityCache();
       }
@@ -5126,6 +5143,7 @@ export async function setupIpcHandlers(
     async (_, url: string) => {
       const result = await skillRegistry.installFromUrl(url);
       if (result.success) {
+        await ensureCustomSkillLoaderInitialized();
         await customSkillLoader.reloadSkills();
         customSkillLoader.clearEligibilityCache();
       }
@@ -5138,6 +5156,7 @@ export async function setupIpcHandlers(
     async (_, gitUrl: string) => {
       const result = await skillRegistry.installFromGit(gitUrl);
       if (result.success) {
+        await ensureCustomSkillLoaderInitialized();
         await customSkillLoader.reloadSkills();
         customSkillLoader.clearEligibilityCache();
       }
@@ -5150,6 +5169,7 @@ export async function setupIpcHandlers(
     async (_, skillId: string, version?: string) => {
       const result = await skillRegistry.update(skillId, version);
       if (result.success) {
+        await ensureCustomSkillLoaderInitialized();
         await customSkillLoader.reloadSkills();
         customSkillLoader.clearEligibilityCache();
       }
@@ -5159,6 +5179,7 @@ export async function setupIpcHandlers(
 
   ipcMain.handle(IPC_CHANNELS.SKILL_REGISTRY_UPDATE_ALL, async () => {
     const result = await skillRegistry.updateAll();
+    await ensureCustomSkillLoaderInitialized();
     await customSkillLoader.reloadSkills();
     customSkillLoader.clearEligibilityCache();
     return result;
@@ -5169,6 +5190,7 @@ export async function setupIpcHandlers(
     async (_, skillId: string) => {
       const result = skillRegistry.uninstall(skillId);
       if (result.success) {
+        await ensureCustomSkillLoaderInitialized();
         await customSkillLoader.reloadSkills();
       }
       return result;
@@ -13103,6 +13125,11 @@ function setupMemoryHandlers(): void {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   // oxlint-disable-next-line typescript-eslint(no-require-imports)
   const { getPluginRegistry } = require("../extensions/registry");
+  const ensurePluginRegistryInitialized = async (): Promise<Any> => {
+    const registry = getPluginRegistry();
+    await registry.initialize();
+    return registry;
+  };
   const normalizePluginAuthor = (author?: string): string | undefined => {
     if (typeof author !== "string") return undefined;
     const trimmed = author.trim();
@@ -13113,7 +13140,7 @@ function setupMemoryHandlers(): void {
   // List all extensions
   ipcMain.handle(IPC_CHANNELS.EXTENSIONS_LIST, async () => {
     try {
-      const registry = getPluginRegistry();
+      const registry = await ensurePluginRegistryInitialized();
       const plugins = registry.getPlugins();
       return plugins.map((p: Any) => ({
         name: p.manifest.name,
@@ -13138,7 +13165,7 @@ function setupMemoryHandlers(): void {
   // Get single extension
   ipcMain.handle(IPC_CHANNELS.EXTENSIONS_GET, async (_, name: string) => {
     try {
-      const registry = getPluginRegistry();
+      const registry = await ensurePluginRegistryInitialized();
       const plugin = registry.getPlugin(name);
       if (!plugin) return null;
       return {
@@ -13164,7 +13191,7 @@ function setupMemoryHandlers(): void {
   // Enable extension
   ipcMain.handle(IPC_CHANNELS.EXTENSIONS_ENABLE, async (_, name: string) => {
     try {
-      const registry = getPluginRegistry();
+      const registry = await ensurePluginRegistryInitialized();
       await registry.enablePlugin(name);
       return { success: true };
     } catch (error: Any) {
@@ -13176,7 +13203,7 @@ function setupMemoryHandlers(): void {
   // Disable extension
   ipcMain.handle(IPC_CHANNELS.EXTENSIONS_DISABLE, async (_, name: string) => {
     try {
-      const registry = getPluginRegistry();
+      const registry = await ensurePluginRegistryInitialized();
       await registry.disablePlugin(name);
       return { success: true };
     } catch (error: Any) {
@@ -13188,7 +13215,7 @@ function setupMemoryHandlers(): void {
   // Reload extension
   ipcMain.handle(IPC_CHANNELS.EXTENSIONS_RELOAD, async (_, name: string) => {
     try {
-      const registry = getPluginRegistry();
+      const registry = await ensurePluginRegistryInitialized();
       await registry.reloadPlugin(name);
       return { success: true };
     } catch (error: Any) {
@@ -13202,7 +13229,7 @@ function setupMemoryHandlers(): void {
     IPC_CHANNELS.EXTENSIONS_GET_CONFIG,
     async (_, name: string) => {
       try {
-        const registry = getPluginRegistry();
+        const registry = await ensurePluginRegistryInitialized();
         return registry.getPluginConfig(name) || {};
       } catch (error) {
         logger.error("[Extensions] Failed to get config:", error);
@@ -13216,7 +13243,7 @@ function setupMemoryHandlers(): void {
     IPC_CHANNELS.EXTENSIONS_SET_CONFIG,
     async (_, data: { name: string; config: Record<string, unknown> }) => {
       try {
-        const registry = getPluginRegistry();
+        const registry = await ensurePluginRegistryInitialized();
         await registry.setPluginConfig(data.name, data.config);
         return { success: true };
       } catch (error: Any) {
@@ -13229,8 +13256,7 @@ function setupMemoryHandlers(): void {
   // Discover extensions (re-scan directories for new plugins)
   ipcMain.handle(IPC_CHANNELS.EXTENSIONS_DISCOVER, async () => {
     try {
-      const registry = getPluginRegistry();
-      await registry.initialize(); // no-op if already initialized at startup
+      const registry = await ensurePluginRegistryInitialized();
       await registry.discoverNewPlugins(); // scan for newly-added plugins
       const plugins = registry.getPlugins();
       return plugins.map((p: Any) => ({

@@ -28,6 +28,8 @@ export function ControlPlaneSettings() {
   const [connectionMode, setConnectionMode] = useState<ControlPlaneConnectionMode>("local");
   const [showToken, setShowToken] = useState(false);
   const [localToken, setLocalToken] = useState("");
+  const [showNodeToken, setShowNodeToken] = useState(false);
+  const [localNodeToken, setLocalNodeToken] = useState("");
   const [showRemoteToken, setShowRemoteToken] = useState(false);
   const [allowLAN, setAllowLAN] = useState(false);
   const remoteConfigDirtyRef = useRef(false);
@@ -183,6 +185,9 @@ export function ControlPlaneSettings() {
       if (result?.ok && result.token) {
         setLocalToken(result.token);
       }
+      if (result?.ok && result.nodeToken) {
+        setLocalNodeToken(result.nodeToken);
+      }
       await loadData();
     } catch (error) {
       console.error("Failed to regenerate token:", error);
@@ -201,6 +206,16 @@ export function ControlPlaneSettings() {
     return token;
   }, [localToken]);
 
+  const ensureLocalNodeToken = useCallback(async (): Promise<string> => {
+    if (localNodeToken) return localNodeToken;
+    const result = await window.electronAPI?.getControlPlaneToken?.();
+    const token = result?.ok ? result.nodeToken || "" : "";
+    if (token) {
+      setLocalNodeToken(token);
+    }
+    return token;
+  }, [localNodeToken]);
+
   const handleToggleTokenVisibility = async () => {
     if (!showToken) {
       await ensureLocalToken();
@@ -210,6 +225,18 @@ export function ControlPlaneSettings() {
 
   const handleCopyLocalToken = async () => {
     const token = await ensureLocalToken();
+    copyToClipboard(token);
+  };
+
+  const handleToggleNodeTokenVisibility = async () => {
+    if (!showNodeToken) {
+      await ensureLocalNodeToken();
+    }
+    setShowNodeToken((value) => !value);
+  };
+
+  const handleCopyNodeToken = async () => {
+    const token = await ensureLocalNodeToken();
     copyToClipboard(token);
   };
 
@@ -585,7 +612,7 @@ export function ControlPlaneSettings() {
           {/* Token Management */}
           {settings?.enabled && (
             <div className="settings-subsection">
-              <h3>Authentication Token</h3>
+              <h3>Operator Token</h3>
               <div className="token-display">
                 <input
                   type={showToken ? "text" : "password"}
@@ -608,11 +635,34 @@ export function ControlPlaneSettings() {
                   Copy
                 </button>
               </div>
+              <h3>Mobile Companion Token</h3>
+              <div className="token-display">
+                <input
+                  type={showNodeToken ? "text" : "password"}
+                  value={showNodeToken ? localNodeToken : settings.nodeToken || ""}
+                  readOnly
+                  className="token-input"
+                />
+                <button
+                  className="btn-icon"
+                  onClick={handleToggleNodeTokenVisibility}
+                  title={showNodeToken ? "Hide" : "Show"}
+                >
+                  {showNodeToken ? "Hide" : "Show"}
+                </button>
+                <button
+                  className="btn-icon"
+                  onClick={handleCopyNodeToken}
+                  title="Copy"
+                >
+                  Copy
+                </button>
+              </div>
               <button onClick={handleRegenerateToken} disabled={saving} className="btn-secondary">
-                Regenerate Token
+                Regenerate Tokens
               </button>
               <p className="hint">
-                Warning: Regenerating the token will disconnect all existing clients.
+                Warning: Regenerating tokens will disconnect all existing clients.
               </p>
             </div>
           )}

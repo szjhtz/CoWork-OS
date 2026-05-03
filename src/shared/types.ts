@@ -9183,6 +9183,7 @@ export interface ControlPlaneSettingsData {
   port: number;
   host: string;
   token: string; // Will be masked in UI
+  nodeToken: string; // Will be masked in UI
   handshakeTimeoutMs: number;
   heartbeatIntervalMs: number;
   maxPayloadBytes: number;

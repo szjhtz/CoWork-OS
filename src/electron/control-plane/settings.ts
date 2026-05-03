@@ -40,6 +40,8 @@ export interface ControlPlaneSettings {
   host: string;
   /** Authentication token */
   token: string;
+  /** Node authentication token for read-scoped companion clients */
+  nodeToken: string;
   /** Handshake timeout in milliseconds */
   handshakeTimeoutMs: number;
   /** Heartbeat interval in milliseconds */
@@ -73,6 +75,7 @@ export const DEFAULT_CONTROL_PLANE_SETTINGS: ControlPlaneSettings = {
   port: 18789,
   host: "127.0.0.1",
   token: "",
+  nodeToken: "",
   handshakeTimeoutMs: 10000,
   heartbeatIntervalMs: 30000,
   maxPayloadBytes: 10 * 1024 * 1024, // 10MB
@@ -253,6 +256,7 @@ export class ControlPlaneSettingsManager {
 
         // Decrypt any existing encrypted values
         merged.token = decryptSecret(merged.token) || "";
+        merged.nodeToken = decryptSecret(merged.nodeToken) || "";
         if (parsed.remote) {
           merged.remote = {
             ...DEFAULT_REMOTE_GATEWAY_CONFIG,
@@ -311,6 +315,10 @@ export class ControlPlaneSettingsManager {
               ...stored.tailscale,
             },
           };
+          if (merged.token && !merged.nodeToken) {
+            merged.nodeToken = generateControlPlaneToken();
+            repository.save("controlplane", merged);
+          }
           if (stored.remote) {
             merged.remote = {
               ...DEFAULT_REMOTE_GATEWAY_CONFIG,
@@ -408,6 +416,9 @@ export class ControlPlaneSettingsManager {
       activeManagedDeviceId:
         updates.activeManagedDeviceId ?? settings.activeManagedDeviceId ?? LOCAL_MANAGED_DEVICE_ID,
     };
+    if (updated.token && !updated.nodeToken) {
+      updated.nodeToken = generateControlPlaneToken();
+    }
     this.saveSettings(updated);
     return updated;
   }
@@ -419,6 +430,9 @@ export class ControlPlaneSettingsManager {
     const settings = this.loadSettings();
     if (!settings.token) {
       settings.token = generateControlPlaneToken();
+    }
+    if (!settings.nodeToken) {
+      settings.nodeToken = generateControlPlaneToken();
     }
     settings.enabled = true;
     this.saveSettings(settings);
@@ -441,6 +455,7 @@ export class ControlPlaneSettingsManager {
   static regenerateToken(): string {
     const settings = this.loadSettings();
     settings.token = generateControlPlaneToken();
+    settings.nodeToken = generateControlPlaneToken();
     this.saveSettings(settings);
     return settings.token;
   }

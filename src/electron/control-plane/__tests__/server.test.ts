@@ -5,7 +5,9 @@
  * These tests focus on configuration and type validation.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+import { ControlPlaneClient } from "../client";
+import { Methods, createRequestFrame } from "../protocol";
 
 describe("ControlPlaneServer module", () => {
   it("should export ControlPlaneServer class", async () => {
@@ -182,5 +184,86 @@ describe("Default configuration values", () => {
     expect(expectedDefaults.handshakeTimeoutMs).toBe(10000);
     expect(expectedDefaults.heartbeatIntervalMs).toBe(30000);
     expect(expectedDefaults.maxPayloadBytes).toBe(10485760);
+  });
+});
+
+describe("ControlPlaneServer security boundaries", () => {
+  const createClient = () => {
+    const sent: string[] = [];
+    const socket = {
+      readyState: 1,
+      send: vi.fn((payload: string) => {
+        sent.push(payload);
+      }),
+      close: vi.fn(),
+    };
+    const client = new ControlPlaneClient(socket as Any, "127.0.0.1");
+    return { client, socket, sent };
+  };
+
+  it("does not allow the node token to self-select operator privileges", async () => {
+    const { ControlPlaneServer } = await import("../server");
+    const server = new ControlPlaneServer({
+      token: "operator-token",
+      nodeToken: "node-token",
+    });
+    const { client, socket, sent } = createClient();
+
+    await (server as Any).handleConnect(
+      client,
+      createRequestFrame(Methods.CONNECT, { token: "node-token" }),
+    );
+
+    expect(client.isAuthenticated).toBe(false);
+    expect(socket.close).toHaveBeenCalledWith(4001, "Authentication failed");
+    const response = JSON.parse(sent.at(-1) || "{}");
+    expect(response.ok).toBe(false);
+    expect(response.error?.code).toBe("UNAUTHORIZED");
+  });
+
+  it("grants only read scope when authenticating with the node role and node token", async () => {
+    const { ControlPlaneServer } = await import("../server");
+    const server = new ControlPlaneServer({
+      token: "operator-token",
+      nodeToken: "node-token",
+    });
+    const { client, sent } = createClient();
+
+    await (server as Any).handleConnect(
+      client,
+      createRequestFrame(Methods.CONNECT, {
+        token: "node-token",
+        role: "node",
+        client: { displayName: "Phone", platform: "ios", version: "1.0.0" },
+      }),
+    );
+
+    expect(client.isAuthenticated).toBe(true);
+    expect(client.isNode).toBe(true);
+    expect(client.hasScope("read")).toBe(true);
+    expect(client.hasScope("operator")).toBe(false);
+    const response = sent.map((payload) => JSON.parse(payload)).find((frame) => frame.ok);
+    expect(response.payload.scopes).toEqual(["read"]);
+  });
+
+  it("requires operator scope before invoking node commands", async () => {
+    const { ControlPlaneServer } = await import("../server");
+    const server = new ControlPlaneServer({
+      token: "operator-token",
+      nodeToken: "node-token",
+    });
+    const handler = (server as Any).methods.get(Methods.NODE_INVOKE);
+    const { client } = createClient();
+    client.authenticate(["read"], "read-client");
+
+    await expect(
+      handler(client, {
+        nodeId: "phone",
+        command: "camera.snap",
+      }),
+    ).rejects.toMatchObject({
+      code: "UNAUTHORIZED",
+      message: "Missing required scope: operator",
+    });
   });
 });

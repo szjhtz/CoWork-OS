@@ -48,6 +48,8 @@ export interface ControlPlaneConfig {
   trustProxy?: boolean;
   /** Authentication token */
   token: string;
+  /** Node authentication token for read-scoped companion clients */
+  nodeToken?: string;
   /** Handshake timeout in milliseconds (default: 10000) */
   handshakeTimeoutMs?: number;
   /** Heartbeat interval in milliseconds (default: 30000) */
@@ -110,6 +112,7 @@ export class ControlPlaneServer {
       host: config.host ?? "127.0.0.1",
       trustProxy: config.trustProxy ?? false,
       token: config.token,
+      nodeToken: config.nodeToken ?? "",
       handshakeTimeoutMs: config.handshakeTimeoutMs ?? 10000,
       heartbeatIntervalMs: config.heartbeatIntervalMs ?? 30000,
       cleanupIntervalMs: config.cleanupIntervalMs ?? 60000,
@@ -527,9 +530,26 @@ export class ControlPlaneServer {
         }
       | undefined;
 
-    // Verify token
+    const requestedRole = params?.role;
+    if (
+      requestedRole !== undefined &&
+      requestedRole !== "operator" &&
+      requestedRole !== "node"
+    ) {
+      this.recordFailedAuth(remoteAddress);
+      client.reject();
+      client.send(createErrorResponse(request.id, ErrorCodes.UNAUTHORIZED, "Invalid role"));
+      client.close(4001, "Authentication failed");
+      return;
+    }
+
+    // Check if this is a node (mobile companion) connection
+    const isNode = requestedRole === "node";
+
+    // Verify the token against the server-owned credential for the selected role.
     const providedToken = params?.token || "";
-    if (!this.verifyToken(providedToken)) {
+    const expectedToken = isNode ? this.config.nodeToken : this.config.token;
+    if (!this.verifyToken(providedToken, expectedToken)) {
       // Track failed attempt
       this.recordFailedAuth(remoteAddress);
 
@@ -541,9 +561,6 @@ export class ControlPlaneServer {
 
     // Clear auth attempts on success
     this.authAttempts.delete(remoteAddress);
-
-    // Check if this is a node (mobile companion) connection
-    const isNode = params?.role === "node";
 
     if (isNode) {
       // Authenticate as a node
@@ -689,10 +706,10 @@ export class ControlPlaneServer {
   /**
    * Verify authentication token
    */
-  private verifyToken(provided: string): boolean {
-    if (!this.config.token || !provided) return false;
+  private verifyToken(provided: string, expectedToken: string): boolean {
+    if (!expectedToken || !provided) return false;
 
-    const expected = Buffer.from(this.config.token);
+    const expected = Buffer.from(expectedToken);
     const actual = Buffer.from(provided);
     if (expected.length !== actual.length) return false;
 
@@ -716,12 +733,16 @@ export class ControlPlaneServer {
     }));
 
     // Status
-    this.registerMethod(Methods.STATUS, async () => this.getStatus());
+    this.registerMethod(Methods.STATUS, async (client) => {
+      this.requireScope(client, "read");
+      return this.getStatus();
+    });
 
     // ===== Node (Mobile Companion) Methods =====
 
     // List connected nodes
-    this.registerMethod(Methods.NODE_LIST, async () => {
+    this.registerMethod(Methods.NODE_LIST, async (client) => {
+      this.requireScope(client, "read");
       return {
         nodes: this.clients.getNodeInfoList(),
       };
@@ -729,6 +750,7 @@ export class ControlPlaneServer {
 
     // Describe a specific node
     this.registerMethod(Methods.NODE_DESCRIBE, async (client, params) => {
+      this.requireScope(client, "read");
       const { nodeId } = params as { nodeId?: string };
       if (!nodeId) {
         throw { code: ErrorCodes.INVALID_PARAMS, message: "nodeId is required" };
@@ -744,6 +766,7 @@ export class ControlPlaneServer {
 
     // Invoke a command on a node
     this.registerMethod(Methods.NODE_INVOKE, async (client, params) => {
+      this.requireScope(client, "operator");
       const {
         nodeId,
         command,
@@ -825,6 +848,15 @@ export class ControlPlaneServer {
 
       return { ok: true };
     });
+  }
+
+  private requireScope(client: ControlPlaneClient, scope: ClientScope): void {
+    if (!client.hasScope(scope)) {
+      throw {
+        code: ErrorCodes.UNAUTHORIZED,
+        message: `Missing required scope: ${scope}`,
+      };
+    }
   }
 
   /**

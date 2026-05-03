@@ -2272,6 +2272,7 @@ export async function startControlPlaneFromSettings(
         port: settings.port,
         host: settings.host,
         token: settings.token,
+        nodeToken: settings.nodeToken,
         handshakeTimeoutMs: settings.handshakeTimeoutMs,
         heartbeatIntervalMs: settings.heartbeatIntervalMs,
         maxPayloadBytes: settings.maxPayloadBytes,
@@ -2484,12 +2485,6 @@ function registerCanvasMethods(server: ControlPlaneServer): void {
     return;
   }
 
-  const requireAuth = (client: any) => {
-    if (!client.isAuthenticated) {
-      throw { code: ErrorCodes.UNAUTHORIZED, message: "Authentication required" };
-    }
-  };
-
   const requireString = (value: unknown, field: string): string => {
     if (typeof value !== "string" || !value.trim()) {
       throw { code: ErrorCodes.INVALID_PARAMS, message: `${field} is required` };
@@ -2499,7 +2494,7 @@ function registerCanvasMethods(server: ControlPlaneServer): void {
 
   // canvas.list — list all active canvas sessions
   server.registerMethod(Methods.CANVAS_LIST, async (client, params) => {
-    requireAuth(client);
+    requireScope(client, "read");
     const p = (params || {}) as { taskId?: string };
     let sessions = manager.listAllSessions();
     if (p.taskId) {
@@ -2520,7 +2515,7 @@ function registerCanvasMethods(server: ControlPlaneServer): void {
 
   // canvas.get — get session details
   server.registerMethod(Methods.CANVAS_GET, async (client, params) => {
-    requireAuth(client);
+    requireScope(client, "read");
     const p = params as { sessionId?: string } | undefined;
     const sessionId = requireString(p?.sessionId, "sessionId");
     const session = manager.getSession(sessionId);
@@ -2543,7 +2538,7 @@ function registerCanvasMethods(server: ControlPlaneServer): void {
 
   // canvas.snapshot — take a screenshot of a canvas session
   server.registerMethod(Methods.CANVAS_SNAPSHOT, async (client, params) => {
-    requireAuth(client);
+    requireScope(client, "read");
     const p = params as { sessionId?: string } | undefined;
     const sessionId = requireString(p?.sessionId, "sessionId");
     const snapshot = await manager.takeSnapshot(sessionId);
@@ -2552,7 +2547,7 @@ function registerCanvasMethods(server: ControlPlaneServer): void {
 
   // canvas.content — get the HTML/CSS/JS files of a canvas session
   server.registerMethod(Methods.CANVAS_CONTENT, async (client, params) => {
-    requireAuth(client);
+    requireScope(client, "read");
     const p = params as { sessionId?: string } | undefined;
     const sessionId = requireString(p?.sessionId, "sessionId");
     const files = await manager.getSessionContent(sessionId);
@@ -2561,7 +2556,7 @@ function registerCanvasMethods(server: ControlPlaneServer): void {
 
   // canvas.push — push content to a canvas session
   server.registerMethod(Methods.CANVAS_PUSH, async (client, params) => {
-    requireAuth(client);
+    requireScope(client, "operator");
     const p = (params || {}) as { sessionId?: string; content?: string; filename?: string };
     const sessionId = requireString(p.sessionId, "sessionId");
     const content = requireString(p.content, "content");
@@ -2572,7 +2567,7 @@ function registerCanvasMethods(server: ControlPlaneServer): void {
 
   // canvas.eval — execute JavaScript in a canvas session
   server.registerMethod(Methods.CANVAS_EVAL, async (client, params) => {
-    requireAuth(client);
+    requireScope(client, "operator");
     const p = (params || {}) as { sessionId?: string; script?: string };
     const sessionId = requireString(p.sessionId, "sessionId");
     const script = requireString(p.script, "script");
@@ -2582,7 +2577,7 @@ function registerCanvasMethods(server: ControlPlaneServer): void {
 
   // canvas.checkpoint.save — save a named checkpoint
   server.registerMethod(Methods.CANVAS_CHECKPOINT_SAVE, async (client, params) => {
-    requireAuth(client);
+    requireScope(client, "operator");
     const p = (params || {}) as { sessionId?: string; label?: string };
     const sessionId = requireString(p.sessionId, "sessionId");
     const checkpoint = await manager.saveCheckpoint(sessionId, p.label);
@@ -2597,7 +2592,7 @@ function registerCanvasMethods(server: ControlPlaneServer): void {
 
   // canvas.checkpoint.list — list checkpoints for a session
   server.registerMethod(Methods.CANVAS_CHECKPOINT_LIST, async (client, params) => {
-    requireAuth(client);
+    requireScope(client, "read");
     const p = params as { sessionId?: string } | undefined;
     const sessionId = requireString(p?.sessionId, "sessionId");
     const checkpoints = manager.listCheckpoints(sessionId);
@@ -2612,7 +2607,7 @@ function registerCanvasMethods(server: ControlPlaneServer): void {
 
   // canvas.checkpoint.restore — restore a session to a checkpoint
   server.registerMethod(Methods.CANVAS_CHECKPOINT_RESTORE, async (client, params) => {
-    requireAuth(client);
+    requireScope(client, "operator");
     const p = (params || {}) as { sessionId?: string; checkpointId?: string };
     const sessionId = requireString(p.sessionId, "sessionId");
     const checkpointId = requireString(p.checkpointId, "checkpointId");
@@ -2628,7 +2623,7 @@ function registerCanvasMethods(server: ControlPlaneServer): void {
 
   // canvas.checkpoint.delete — delete a checkpoint
   server.registerMethod(Methods.CANVAS_CHECKPOINT_DELETE, async (client, params) => {
-    requireAuth(client);
+    requireScope(client, "operator");
     const p = (params || {}) as { sessionId?: string; checkpointId?: string };
     const sessionId = requireString(p.sessionId, "sessionId");
     const checkpointId = requireString(p.checkpointId, "checkpointId");
@@ -3570,11 +3565,12 @@ export function setupControlPlaneHandlers(
     async (): Promise<{
       ok: boolean;
       token?: string;
+      nodeToken?: string;
       error?: string;
     }> => {
       try {
         const settings = ControlPlaneSettingsManager.enable();
-        return { ok: true, token: settings.token };
+        return { ok: true, token: settings.token, nodeToken: settings.nodeToken };
       } catch (error: any) {
         return { ok: false, error: error.message || String(error) };
       }
@@ -3648,6 +3644,7 @@ export function setupControlPlaneHandlers(
           port: settings.port,
           host: settings.host,
           token: settings.token,
+          nodeToken: settings.nodeToken,
           handshakeTimeoutMs: settings.handshakeTimeoutMs,
           heartbeatIntervalMs: settings.heartbeatIntervalMs,
           maxPayloadBytes: settings.maxPayloadBytes,
@@ -3782,12 +3779,13 @@ export function setupControlPlaneHandlers(
   // Get raw token for local display/copy actions
   ipcMain.handle(
     IPC_CHANNELS.CONTROL_PLANE_GET_TOKEN,
-    async (): Promise<{ ok: boolean; token?: string; remoteToken?: string; error?: string }> => {
+    async (): Promise<{ ok: boolean; token?: string; nodeToken?: string; remoteToken?: string; error?: string }> => {
       try {
         const settings = ControlPlaneSettingsManager.loadSettings();
         return {
           ok: true,
           token: settings.token || "",
+          nodeToken: settings.nodeToken || "",
           remoteToken: settings.remote?.token || "",
         };
       } catch (error: any) {
@@ -3802,6 +3800,7 @@ export function setupControlPlaneHandlers(
     async (): Promise<{
       ok: boolean;
       token?: string;
+      nodeToken?: string;
       error?: string;
     }> => {
       try {
@@ -3820,6 +3819,7 @@ export function setupControlPlaneHandlers(
             port: settings.port,
             host: settings.host,
             token: settings.token,
+            nodeToken: settings.nodeToken,
             handshakeTimeoutMs: settings.handshakeTimeoutMs,
             heartbeatIntervalMs: settings.heartbeatIntervalMs,
             maxPayloadBytes: settings.maxPayloadBytes,
@@ -3845,7 +3845,8 @@ export function setupControlPlaneHandlers(
           await controlPlaneServer.startWithTailscale();
         }
 
-        return { ok: true, token: newToken };
+        const settings = ControlPlaneSettingsManager.loadSettings();
+        return { ok: true, token: newToken, nodeToken: settings.nodeToken };
       } catch (error: any) {
         return { ok: false, error: error.message || String(error) };
       }
@@ -3896,6 +3897,7 @@ export function setupControlPlaneHandlers(
             port: settings.port,
             host: settings.host,
             token: settings.token,
+            nodeToken: settings.nodeToken,
             handshakeTimeoutMs: settings.handshakeTimeoutMs,
             heartbeatIntervalMs: settings.heartbeatIntervalMs,
             maxPayloadBytes: settings.maxPayloadBytes,

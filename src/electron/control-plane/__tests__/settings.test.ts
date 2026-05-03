@@ -93,6 +93,7 @@ describe("DEFAULT_CONTROL_PLANE_SETTINGS", () => {
     expect(DEFAULT_CONTROL_PLANE_SETTINGS.port).toBe(18789);
     expect(DEFAULT_CONTROL_PLANE_SETTINGS.host).toBe("127.0.0.1");
     expect(DEFAULT_CONTROL_PLANE_SETTINGS.token).toBe("");
+    expect(DEFAULT_CONTROL_PLANE_SETTINGS.nodeToken).toBe("");
     expect(DEFAULT_CONTROL_PLANE_SETTINGS.handshakeTimeoutMs).toBe(10000);
     expect(DEFAULT_CONTROL_PLANE_SETTINGS.heartbeatIntervalMs).toBe(30000);
     expect(DEFAULT_CONTROL_PLANE_SETTINGS.maxPayloadBytes).toBe(10 * 1024 * 1024);
@@ -147,6 +148,7 @@ describe("ControlPlaneSettingsManager", () => {
       expect(settings.port).toBe(9999);
       expect(settings.host).toBe("0.0.0.0");
       expect(settings.token).toBe("test-token");
+      expect(settings.nodeToken).toHaveLength(64);
       expect(settings.tailscale.mode).toBe("serve");
       expect(settings.tailscale.resetOnExit).toBe(false);
     });
@@ -236,16 +238,19 @@ describe("ControlPlaneSettingsManager", () => {
 
       expect(settings.enabled).toBe(true);
       expect(settings.token).toBeDefined();
+      expect(settings.nodeToken).toBeDefined();
       expect(settings.token.length).toBe(64);
+      expect(settings.nodeToken.length).toBe(64);
     });
 
-    it("should preserve existing token", () => {
-      mockStoredSettings = { token: "existing-token" };
+    it("should preserve existing tokens", () => {
+      mockStoredSettings = { token: "existing-token", nodeToken: "existing-node-token" };
       ControlPlaneSettingsManager.clearCache();
 
       const settings = ControlPlaneSettingsManager.enable();
 
       expect(settings.token).toBe("existing-token");
+      expect(settings.nodeToken).toBe("existing-node-token");
     });
   });
 
@@ -278,6 +283,7 @@ describe("ControlPlaneSettingsManager", () => {
 
       expect(newToken).not.toBe("old-token");
       expect(newToken.length).toBe(64);
+      expect((mockStoredSettings as Any).nodeToken).toHaveLength(64);
     });
 
     it("should save the new token", () => {

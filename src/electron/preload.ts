@@ -1158,6 +1158,7 @@ interface ControlPlaneSettingsData {
   port: number;
   host: string;
   token: string;
+  nodeToken: string;
   handshakeTimeoutMs: number;
   heartbeatIntervalMs: number;
   maxPayloadBytes: number;
@@ -6032,7 +6033,7 @@ export interface ElectronAPI {
   saveControlPlaneSettings: (
     settings: Partial<ControlPlaneSettingsData>,
   ) => Promise<{ ok: boolean; error?: string }>;
-  enableControlPlane: () => Promise<{ ok: boolean; token?: string; error?: string }>;
+  enableControlPlane: () => Promise<{ ok: boolean; token?: string; nodeToken?: string; error?: string }>;
   disableControlPlane: () => Promise<{ ok: boolean; error?: string }>;
   startControlPlane: () => Promise<{
     ok: boolean;
@@ -6045,10 +6046,11 @@ export interface ElectronAPI {
   getControlPlaneToken: () => Promise<{
     ok: boolean;
     token?: string;
+    nodeToken?: string;
     remoteToken?: string;
     error?: string;
   }>;
-  regenerateControlPlaneToken: () => Promise<{ ok: boolean; token?: string; error?: string }>;
+  regenerateControlPlaneToken: () => Promise<{ ok: boolean; token?: string; nodeToken?: string; error?: string }>;
   onControlPlaneEvent: (callback: (event: ControlPlaneEvent) => void) => () => void;
 
   // Tailscale

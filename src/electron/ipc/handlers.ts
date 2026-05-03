@@ -21,6 +21,7 @@ import {
   runOcrFromImagePath,
   shouldRunImageOcr,
 } from "./image-viewer-ocr";
+import { resolveRealPathWithinWorkspace } from "./viewer-path-security";
 import { buildWebPagePreviewFromPath } from "../utils/web-preview";
 import {
   PptxPreviewService,
@@ -1315,7 +1316,7 @@ export async function setupIpcHandlers(
     filePath: string,
     workspacePath?: string,
     options?: { requireWorkspaceContainment?: boolean },
-  ): Promise<{ resolvedPath: string | null; attemptedPaths: string[] }> => {
+  ): Promise<{ resolvedPath: string | null; realPath: string | null; attemptedPaths: string[] }> => {
     const requireWorkspaceContainment =
       options?.requireWorkspaceContainment === true;
     const candidates = buildViewerPathCandidates(filePath, workspacePath);
@@ -1336,10 +1337,15 @@ export async function setupIpcHandlers(
       attemptedPaths.push(candidate);
       try {
         await fs.access(candidate);
-        return { resolvedPath: candidate, attemptedPaths };
       } catch {
         // Continue trying fallback candidates.
+        continue;
       }
+      const realPath =
+        requireWorkspaceContainment && workspaceRoot
+          ? await resolveRealPathWithinWorkspace(candidate, workspaceRoot)
+          : await fs.realpath(candidate);
+      return { resolvedPath: candidate, realPath, attemptedPaths };
     }
 
     if (
@@ -1350,7 +1356,7 @@ export async function setupIpcHandlers(
       throw new Error("Access denied: file path is outside the workspace");
     }
 
-    return { resolvedPath: null, attemptedPaths };
+    return { resolvedPath: null, realPath: null, attemptedPaths };
   };
 
   const listFilesRecursiveSync = (
@@ -1718,7 +1724,7 @@ export async function setupIpcHandlers(
         throw new Error("Workspace path is required for file operations");
       }
 
-      const { resolvedPath } = await resolveExistingPathForViewer(
+      const { resolvedPath, realPath } = await resolveExistingPathForViewer(
         filePath,
         workspacePath,
         {
@@ -1729,7 +1735,7 @@ export async function setupIpcHandlers(
         return "File not found";
       }
 
-      return shell.openPath(resolvedPath);
+      return shell.openPath(realPath || resolvedPath);
     },
   );
 
@@ -1755,7 +1761,7 @@ export async function setupIpcHandlers(
         throw new Error("Unsupported application");
       }
 
-      const { resolvedPath } = await resolveExistingPathForViewer(
+      const { resolvedPath, realPath } = await resolveExistingPathForViewer(
         filePath,
         workspacePath,
         {
@@ -1766,14 +1772,15 @@ export async function setupIpcHandlers(
         return "File not found";
       }
 
+      const fileOpenPath = realPath || resolvedPath;
       if (process.platform === "darwin") {
-        await execFileAsync("/usr/bin/open", ["-a", appName, resolvedPath], {
+        await execFileAsync("/usr/bin/open", ["-a", appName, fileOpenPath], {
           timeout: 10_000,
         });
         return "";
       }
 
-      return shell.openPath(resolvedPath);
+      return shell.openPath(fileOpenPath);
     },
   );
 
@@ -1785,7 +1792,7 @@ export async function setupIpcHandlers(
         throw new Error("Workspace path is required for file operations");
       }
 
-      const { resolvedPath } = await resolveExistingPathForViewer(
+      const { resolvedPath, realPath } = await resolveExistingPathForViewer(
         filePath,
         workspacePath,
         {
@@ -1796,7 +1803,7 @@ export async function setupIpcHandlers(
         throw new Error("File not found");
       }
 
-      shell.showItemInFolder(resolvedPath);
+      shell.showItemInFolder(realPath || resolvedPath);
     },
   );
 
@@ -1926,7 +1933,7 @@ export async function setupIpcHandlers(
         throw new Error("Workspace path is required for file preview operations");
       }
 
-      const { resolvedPath, attemptedPaths } =
+      const { resolvedPath, realPath, attemptedPaths } =
         await resolveExistingPathForViewer(filePath, workspacePath, {
           requireWorkspaceContainment: true,
         });
@@ -1940,11 +1947,12 @@ export async function setupIpcHandlers(
           error: `File not found: ${filePath}${attempted}`,
         };
       }
+      const fileReadPath = realPath || resolvedPath;
 
       // Get file stats
-      const stats = await fs.stat(resolvedPath);
-      const extension = path.extname(resolvedPath).toLowerCase();
-      const fileName = path.basename(resolvedPath);
+      const stats = await fs.stat(fileReadPath);
+      const extension = path.extname(fileReadPath).toLowerCase();
+      const fileName = path.basename(fileReadPath);
 
       // Determine file type
       const getFileType = (
@@ -2053,7 +2061,7 @@ export async function setupIpcHandlers(
         fileType = "html";
       } else if (fileName === "package.json") {
         try {
-          const packageJsonText = await fs.readFile(resolvedPath, "utf-8");
+          const packageJsonText = await fs.readFile(fileReadPath, "utf-8");
           const packageJson = JSON.parse(packageJsonText) as {
             dependencies?: Record<string, unknown>;
             devDependencies?: Record<string, unknown>;
@@ -2170,35 +2178,35 @@ export async function setupIpcHandlers(
           case "code":
           case "text":
           case "json": {
-            content = await fs.readFile(resolvedPath, "utf-8");
+            content = await fs.readFile(fileReadPath, "utf-8");
             break;
           }
 
           case "csv": {
-            content = await fs.readFile(resolvedPath, "utf-8");
+            content = await fs.readFile(fileReadPath, "utf-8");
             spreadsheetPreview = buildDelimitedSpreadsheetPreview(content, {
               delimiter: extension === ".tsv" ? "\t" : ",",
-              sheetName: path.basename(resolvedPath, extension),
+              sheetName: path.basename(fileReadPath, extension),
             });
             break;
           }
 
           case "docx": {
-            documentPreview = await buildDocumentPreviewFromFile(resolvedPath);
+            documentPreview = await buildDocumentPreviewFromFile(fileReadPath);
             htmlContent = documentPreview.htmlContent;
             content = documentPreview.text || null;
             break;
           }
 
           case "document": {
-            documentPreview = await buildDocumentPreviewFromFile(resolvedPath);
+            documentPreview = await buildDocumentPreviewFromFile(fileReadPath);
             htmlContent = documentPreview.htmlContent;
             content = documentPreview.text || null;
             break;
           }
 
           case "pdf": {
-            const pdfReview = await extractPdfReviewData(resolvedPath, {
+            const pdfReview = await extractPdfReviewData(fileReadPath, {
               maxPages: 12,
               maxCharsPerPage: 1800,
               maxOcrPages: 4,
@@ -2207,9 +2215,9 @@ export async function setupIpcHandlers(
             content = pdfReview.content;
             pdfReviewSummary = pdfReview;
             pdfThumbnailDataUrl =
-              await renderPdfFirstPageThumbnail(resolvedPath);
+              await renderPdfFirstPageThumbnail(fileReadPath);
             if (includePdfBase64 && stats.size <= MAX_PDF_BASE64_SIZE) {
-              const buffer = await fs.readFile(resolvedPath);
+              const buffer = await fs.readFile(fileReadPath);
               pdfDataBase64 = buffer.toString("base64");
             }
             break;
@@ -2228,7 +2236,7 @@ export async function setupIpcHandlers(
             };
 
             if (includeImageContent) {
-              const buffer = await fs.readFile(resolvedPath);
+              const buffer = await fs.readFile(fileReadPath);
               const mimeType = mimeTypes[extension] || "image/png";
               content = `data:${mimeType};base64,${buffer.toString("base64")}`;
             }
@@ -2236,7 +2244,7 @@ export async function setupIpcHandlers(
             if (shouldAttemptImageOcr) {
               const requestOcrChars = resolveImageOcrChars(imageOcrMaxChars);
               ocrText =
-                (await runOcrFromImagePath(resolvedPath, requestOcrChars)) ??
+                (await runOcrFromImagePath(fileReadPath, requestOcrChars)) ??
                 undefined;
             }
             break;
@@ -2244,7 +2252,7 @@ export async function setupIpcHandlers(
 
           case "audio": {
             mimeType =
-              ((mime.lookup(resolvedPath) || undefined) as
+              ((mime.lookup(fileReadPath) || undefined) as
                 | string
                 | undefined) || undefined;
             if (!mimeType || !mimeType.startsWith("audio/")) {
@@ -2262,7 +2270,7 @@ export async function setupIpcHandlers(
               return { success: false, error: "Unsupported audio type" };
             }
             if (stats.size <= MAX_INLINE_AUDIO_DATA_URL_SIZE) {
-              const buffer = await fs.readFile(resolvedPath);
+              const buffer = await fs.readFile(fileReadPath);
               playbackUrl = `data:${mimeType};base64,${buffer.toString("base64")}`;
             } else {
               if (!workspacePath || workspacePath.trim().length === 0) {
@@ -2272,7 +2280,7 @@ export async function setupIpcHandlers(
                 };
               }
               playbackUrl = createMediaPlaybackUrl({
-                resolvedPath,
+                resolvedPath: fileReadPath,
                 workspaceRoot: workspacePath,
                 mimeType,
               });
@@ -2283,7 +2291,7 @@ export async function setupIpcHandlers(
 
           case "video": {
             mimeType =
-              ((mime.lookup(resolvedPath) || undefined) as
+              ((mime.lookup(fileReadPath) || undefined) as
                 | string
                 | undefined) || undefined;
             if (
@@ -2295,7 +2303,7 @@ export async function setupIpcHandlers(
             if (mimeType === "video/mp4") {
               const transcodedPreviewUrl =
                 await generateTranscodedVideoPreviewDataUrl(
-                  resolvedPath,
+                  fileReadPath,
                   stats,
                 );
               if (transcodedPreviewUrl) {
@@ -2305,7 +2313,7 @@ export async function setupIpcHandlers(
               }
             }
             if (stats.size <= MAX_INLINE_VIDEO_DATA_URL_SIZE) {
-              const buffer = await fs.readFile(resolvedPath);
+              const buffer = await fs.readFile(fileReadPath);
               playbackUrl = `data:${mimeType};base64,${buffer.toString("base64")}`;
             } else {
               if (!workspacePath || workspacePath.trim().length === 0) {
@@ -2315,7 +2323,7 @@ export async function setupIpcHandlers(
                 };
               }
               playbackUrl = createMediaPlaybackUrl({
-                resolvedPath,
+                resolvedPath: fileReadPath,
                 workspaceRoot: workspacePath,
                 mimeType,
               });
@@ -2325,7 +2333,7 @@ export async function setupIpcHandlers(
           }
 
           case "html": {
-            webPreview = await buildWebPagePreviewFromPath(resolvedPath, workspacePath);
+            webPreview = await buildWebPagePreviewFromPath(fileReadPath, workspacePath);
             htmlContent = webPreview.htmlContent;
             content = null; // HTML content is in htmlContent
             break;
@@ -2333,7 +2341,7 @@ export async function setupIpcHandlers(
 
           case "pptx": {
             presentationPreview = await getSharedPptxPreviewService().buildPreview({
-              filePath: resolvedPath,
+              filePath: fileReadPath,
               workspaceRoot: workspacePath,
               renderMode: presentationRenderMode,
             });
@@ -2342,7 +2350,7 @@ export async function setupIpcHandlers(
           }
 
           case "xlsx": {
-            spreadsheetPreview = await buildSpreadsheetPreviewFromFile(resolvedPath);
+            spreadsheetPreview = await buildSpreadsheetPreviewFromFile(fileReadPath);
             content = spreadsheetPreviewToTsv(spreadsheetPreview);
             break;
           }
@@ -2403,7 +2411,7 @@ export async function setupIpcHandlers(
         return { success: false, error: "Spreadsheet data is missing" };
       }
 
-      const { resolvedPath, attemptedPaths } = await resolveExistingPathForViewer(
+      const { resolvedPath, realPath, attemptedPaths } = await resolveExistingPathForViewer(
         filePath,
         workspacePath,
         {
@@ -2418,8 +2426,9 @@ export async function setupIpcHandlers(
           error: `File not found: ${filePath}${attempted}`,
         };
       }
+      const fileWritePath = realPath || resolvedPath;
 
-      const extension = path.extname(resolvedPath).toLowerCase();
+      const extension = path.extname(fileWritePath).toLowerCase();
       if (
         extension !== ".xlsx" &&
         extension !== ".xls" &&
@@ -2437,20 +2446,20 @@ export async function setupIpcHandlers(
         const isDelimitedSpreadsheet = extension === ".csv" || extension === ".tsv";
         const spreadsheetPreview = isDelimitedSpreadsheet
           ? await writeDelimitedSpreadsheetPreviewToFile(
-              resolvedPath,
+              fileWritePath,
               preview,
               extension === ".tsv" ? "\t" : ",",
             )
-          : await writeSpreadsheetPreviewToFile(resolvedPath, preview);
+          : await writeSpreadsheetPreviewToFile(fileWritePath, preview);
         return {
           success: true,
           data: {
             path: resolvedPath,
-            fileName: path.basename(resolvedPath),
+            fileName: path.basename(fileWritePath),
             fileType: isDelimitedSpreadsheet ? ("csv" as const) : ("xlsx" as const),
             content: spreadsheetPreviewToTsv(spreadsheetPreview),
             spreadsheetPreview,
-            size: (await fs.stat(resolvedPath)).size,
+            size: (await fs.stat(fileWritePath)).size,
           },
         };
       } catch (error: Any) {
@@ -2480,7 +2489,7 @@ export async function setupIpcHandlers(
         return { success: false, error: "Document edit data is missing" };
       }
 
-      const { resolvedPath, attemptedPaths } = await resolveExistingPathForViewer(
+      const { resolvedPath, realPath, attemptedPaths } = await resolveExistingPathForViewer(
         filePath,
         workspacePath,
         { requireWorkspaceContainment: true },
@@ -2493,8 +2502,9 @@ export async function setupIpcHandlers(
           error: `File not found: ${filePath}${attempted}`,
         };
       }
+      const fileWritePath = realPath || resolvedPath;
 
-      const extension = path.extname(resolvedPath).toLowerCase();
+      const extension = path.extname(fileWritePath).toLowerCase();
       if (extension !== ".docx") {
         return {
           success: false,
@@ -2503,18 +2513,18 @@ export async function setupIpcHandlers(
       }
 
       try {
-        await writeEditableDocumentBlocksToDocxFile(resolvedPath, blocks);
-        const documentPreview = await buildDocumentPreviewFromFile(resolvedPath);
+        await writeEditableDocumentBlocksToDocxFile(fileWritePath, blocks);
+        const documentPreview = await buildDocumentPreviewFromFile(fileWritePath);
         return {
           success: true,
           data: {
             path: resolvedPath,
-            fileName: path.basename(resolvedPath),
+            fileName: path.basename(fileWritePath),
             fileType: "docx" as const,
             content: documentPreview.text || null,
             htmlContent: documentPreview.htmlContent,
             documentPreview,
-            size: (await fs.stat(resolvedPath)).size,
+            size: (await fs.stat(fileWritePath)).size,
           },
         };
       } catch (error: Any) {

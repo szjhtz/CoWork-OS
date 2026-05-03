@@ -64,6 +64,7 @@ export class PluginRegistry extends EventEmitter {
 
   /** Whether the registry has been initialized */
   private initialized = false;
+  private initializationPromise: Promise<void> | null = null;
 
   /** Persisted pack toggle states */
   private packStates: Map<string, boolean> = new Map();
@@ -207,20 +208,29 @@ export class PluginRegistry extends EventEmitter {
     if (this.initialized) {
       return;
     }
-
-    // Discover plugins
-    const discovered = await discoverPlugins(extensionDirs);
-
-    // Load and register each plugin
-    for (const { path: pluginPath, manifest, securityReport } of discovered) {
-      await this.loadAndRegister(pluginPath, manifest, securityReport || undefined);
+    if (this.initializationPromise) {
+      return this.initializationPromise;
     }
 
-    this.initialized = true;
+    this.initializationPromise = (async () => {
+      // Discover plugins
+      const discovered = await discoverPlugins(extensionDirs);
 
-    if (this.plugins.size > 0) {
-      logger.info(`Initialized with ${this.plugins.size} plugins`);
-    }
+      // Load and register each plugin
+      for (const { path: pluginPath, manifest, securityReport } of discovered) {
+        await this.loadAndRegister(pluginPath, manifest, securityReport || undefined);
+      }
+
+      this.initialized = true;
+
+      if (this.plugins.size > 0) {
+        logger.info(`Initialized with ${this.plugins.size} plugins`);
+      }
+    })().finally(() => {
+      this.initializationPromise = null;
+    });
+
+    return this.initializationPromise;
   }
 
   /**

@@ -33101,6 +33101,8 @@ button {
   align-items: center;
   gap: 8px;
   min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
 }
 
 .browser-workbench-summary {
@@ -33109,7 +33111,7 @@ button {
   color: var(--color-text-secondary);
 }
 
-.browser-workbench-tab {
+.browser-workbench-tab-shell {
   max-width: min(360px, 42vw);
   min-width: 0;
   height: 26px;
@@ -33122,13 +33124,63 @@ button {
   color: color-mix(in srgb, var(--color-accent) 72%, var(--color-text));
   font-size: 13px;
   font-weight: 600;
+  border: 0;
+  cursor: pointer;
 }
 
-.browser-workbench-tab span:last-child {
+.browser-workbench-tab-shell.is-active {
+  background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+  color: color-mix(in srgb, var(--color-accent) 82%, var(--color-text));
+}
+
+.browser-workbench-tab {
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 auto;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.browser-workbench-tab-label {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.browser-workbench-tab-close {
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  color: currentColor;
+}
+
+.browser-workbench-tab-close:hover {
+  background: color-mix(in srgb, currentColor 14%, transparent);
+}
+
+.browser-workbench-tab-add {
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  background: var(--color-bg);
+  color: var(--color-text-secondary);
+  cursor: pointer;
 }
 
 .browser-workbench-tab-icon {
@@ -33156,8 +33208,8 @@ button {
 
 .browser-workbench-nav-controls,
 .browser-workbench-right-actions {
-  width: 156px;
-  flex: 0 0 156px;
+  width: 206px;
+  flex: 0 0 206px;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -33179,6 +33231,23 @@ button {
   white-space: nowrap;
 }
 
+.browser-workbench-profile {
+  max-width: 72px;
+  height: 22px;
+  padding: 0 7px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .browser-workbench-icon-btn {
   width: 34px;
   height: 34px;
@@ -33188,13 +33257,13 @@ button {
   align-items: center;
   justify-content: center;
   background: var(--color-bg);
-  color: #111827;
+  color: var(--color-text);
   cursor: pointer;
   position: relative;
 }
 
 .browser-workbench-icon-btn:hover {
-  color: #111827;
+  color: var(--color-text);
   border-color: var(--color-border);
 }
 
@@ -33207,13 +33276,13 @@ button {
   align-items: center;
   justify-content: center;
   background: transparent;
-  color: #111827;
+  color: var(--color-text);
   cursor: pointer;
   position: relative;
 }
 
 .browser-workbench-nav-btn:hover {
-  color: #111827;
+  color: var(--color-text);
   background: var(--color-bg-subtle);
 }
 
@@ -33223,8 +33292,8 @@ button {
   justify-content: center;
   width: 18px;
   height: 18px;
-  color: #111827 !important;
-  -webkit-text-fill-color: #111827;
+  color: currentColor !important;
+  -webkit-text-fill-color: currentColor;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Symbol", "Apple Symbols", sans-serif;
   font-size: 18px;
   font-weight: 600;
@@ -33251,8 +33320,8 @@ button {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #111827 !important;
-  -webkit-text-fill-color: #111827;
+  color: currentColor !important;
+  -webkit-text-fill-color: currentColor;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Symbol", "Apple Symbols", sans-serif;
   font-size: 18px;
   font-weight: 600;
@@ -33275,24 +33344,46 @@ button {
 .browser-workbench-action-btn {
   border: 1px solid var(--color-border-subtle);
   background: var(--color-bg);
-  color: #111827;
+  color: var(--color-text);
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
 }
 
 .browser-workbench-action-btn:hover {
   border-color: var(--color-border);
   background: var(--color-bg-elevated);
-  color: #111827;
+  color: var(--color-text);
+}
+
+.browser-workbench-action-btn.is-active {
+  background: color-mix(in srgb, var(--color-accent) 14%, var(--color-bg));
+  color: color-mix(in srgb, var(--color-accent) 72%, var(--color-text));
 }
 
 .browser-workbench-action-btn svg {
   display: block;
   width: 17px;
   height: 17px;
-  color: #4b5563 !important;
-  stroke: #4b5563 !important;
+  color: currentColor !important;
+  stroke: currentColor !important;
   opacity: 1 !important;
   visibility: visible !important;
+}
+
+.browser-workbench-action-btn .browser-workbench-lucide-icon {
+  display: block;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  color: currentColor !important;
+  stroke: currentColor !important;
+  fill: none !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+  pointer-events: none;
+}
+
+.browser-workbench-action-btn.is-active .browser-workbench-lucide-icon {
+  color: currentColor !important;
 }
 
 .browser-workbench-url-form {
@@ -33365,42 +33456,147 @@ button {
 
 .browser-workbench-cursor-pointer {
   display: block;
-  width: 22px;
-  height: 28px;
-  transform: translate(-2px, -1px);
-  background: #111827;
-  clip-path: polygon(0 0, 0 24px, 7px 18px, 12px 28px, 17px 25px, 12px 16px, 22px 16px);
+  width: 18px;
+  height: 23px;
+  transform: translate(-1px, -1px);
+  background: #172033;
+  clip-path: polygon(0 0, 0 20px, 6px 15px, 10px 23px, 14px 21px, 10px 13px, 18px 13px);
   filter:
     drop-shadow(0 1px 0 #fff)
-    drop-shadow(0 2px 6px rgba(15, 23, 42, 0.28));
+    drop-shadow(0 2px 5px rgba(15, 23, 42, 0.24));
 }
 
 .browser-workbench-cursor-label {
   position: absolute;
-  left: 20px;
-  top: 22px;
+  left: 17px;
+  top: 18px;
   min-width: max-content;
-  padding: 5px 8px;
+  padding: 4px 7px;
   border: 1px solid rgba(148, 163, 184, 0.34);
   border-radius: 999px;
   background: rgba(17, 24, 39, 0.92);
   color: #fff;
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 700;
   line-height: 1;
-  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.22);
+  box-shadow: 0 5px 14px rgba(15, 23, 42, 0.2);
 }
 
 .browser-workbench-cursor.is-pulsing::after {
   content: "";
   position: absolute;
-  left: -11px;
-  top: -11px;
-  width: 36px;
-  height: 36px;
-  border: 2px solid #2563eb;
+  left: -8px;
+  top: -8px;
+  width: 30px;
+  height: 30px;
+  border: 1.5px solid #2563eb;
   border-radius: 999px;
   animation: browser-workbench-cursor-pulse 620ms ease-out;
+}
+
+.browser-workbench-snapshot-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 9;
+  pointer-events: none;
+}
+
+.browser-workbench-snapshot-box {
+  position: absolute;
+  border: 2px solid #2563eb;
+  border-radius: 6px;
+  background: rgba(37, 99, 235, 0.08);
+}
+
+.browser-workbench-snapshot-box span {
+  position: absolute;
+  left: -2px;
+  top: -22px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  background: #2563eb;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.browser-workbench-snapshot-box.box-primary {
+  left: 9%;
+  top: 16%;
+  width: 28%;
+  height: 12%;
+}
+
+.browser-workbench-snapshot-box.box-secondary {
+  right: 12%;
+  bottom: 22%;
+  width: 24%;
+  height: 10%;
+  border-color: #0f766e;
+  background: rgba(15, 118, 110, 0.08);
+}
+
+.browser-workbench-snapshot-box.box-secondary span {
+  background: #0f766e;
+}
+
+.browser-workbench-diagnostics {
+  flex: 0 0 148px;
+  border-top: 1px solid var(--color-border-subtle);
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  overflow: hidden;
+}
+
+.browser-workbench-diagnostics-tabs {
+  height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.browser-workbench-diagnostics-tabs button {
+  height: 24px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.browser-workbench-diagnostics-tabs button.is-active {
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+.browser-workbench-diagnostics-body {
+  min-width: 0;
+  height: 114px;
+  padding: 10px 12px;
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono, "SFMono-Regular", Consolas, monospace);
+  font-size: 12px;
+}
+
+.browser-workbench-diagnostics-body span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 @keyframes browser-workbench-cursor-pulse {

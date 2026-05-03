@@ -2,9 +2,9 @@
 
 ## Multi-Channel AI Gateway
 
-17 messaging channels with unified operations. See [Channel Integrations](channels.md) for setup details.
+17 messaging channels with unified operations. See [Channel Integrations](channels.md) for setup details, [Channel User Guides](channel-user-guides.md) for per-channel features and best practices, [Dedicated Channel Guides](channel-guides/) for separate channel pages, [Using CoWork from WhatsApp and Other Channels](gateway-user-guide.md) for end-user workflows, and [Gateway Message Lifecycle](gateway-message-lifecycle.md) for remote command routing, active-task behavior, delivery, and scheduled outputs.
 
-- **WhatsApp**: QR code pairing, self-chat mode, markdown support
+- **WhatsApp**: QR code pairing, self-chat mode, markdown support, `/new` and `/new temp` task resets, `/stop` cancellation, editable progress delivery, and hidden temporary scratch workspaces
 - **Telegram**: Bot commands, streaming responses, workspace selection, group routing modes, and allowed-group allowlists
 - **Discord**: Slash commands, DM support, guild integration, guild allowlists, embeds/polls/select menus, live message fetch and attachment download
 - **Slack**: Socket Mode, channel mentions, file uploads, multiple workspace installations in one app profile, and optional curated middle-step progress relays
@@ -32,7 +32,7 @@
 - **Ideas Panel**: Curated launch panel accessible from the sidebar above Sessions. Pre-written prompts organized by category let you start common workflows in one click. See [Ideas Panel: Supported Capabilities](ideas-capabilities.md) for the full list of tools each prompt uses and their graceful fallbacks.
 - **Personal Agentic OS and Everything App**: CoWork OS is a local-first personal agentic workspace for coding, web design, research, knowledge work, documents, spreadsheets, presentations, automations, channels, devices, and long-running tasks.
 - **Everything Workbench**: Generated documents, spreadsheets, presentations, web pages, PDFs, and previews share one artifact model: compact output card, sidebar open, fullscreen artifact workspace, follow-up composer, and refresh after the agent completes requested edits. This reduces the need to switch into separate office apps for generated review and light editing while keeping external app actions available for advanced native workflows. See [Everything Workbench](everything-workbench.md).
-- **Browser Workbench**: live website and local-app testing opens in a visible right-sidebar/fullscreen browser by default. Browser-use tools target the same webview the user can see, with functional navigation controls, screenshots, annotation, and visible cursor movement during agent actions. See [Browser Workbench](browser-workbench.md).
+- **Browser Workbench / Browser V2**: live website and local-app testing opens in a visible right-sidebar/fullscreen browser by default. Browser-use tools target the same webview the user can see through Browser V2, with accessibility snapshot refs, CDP-backed actions, tabs, diagnostics, screenshots, annotation, and visible cursor movement during agent actions. See [Browser Workbench](browser-workbench.md) and [Browser V2 Architecture](browser-v2-architecture.md).
 - **Task-Based Workflow**: Multi-step execution with plan-execute-observe loops
 - **Task Overflow Actions**: task view title menus expose supported task actions in place: pin/unpin, rename, archive, copy working directory, copy task ID, copy `cowork://tasks/<taskId>` deeplink, copy Markdown, fork session, view outputs, and create a scheduled automation from the current task. See [Task Automations](task-automations.md).
 - **Managed Agents**: versioned managed agents, reusable local environments, and durable managed sessions exposed through the control plane, with backing tasks and team runs still visible in the normal app surfaces. See [Managed Agents](managed-agents.md).
@@ -57,7 +57,7 @@
 - **Spreadsheet Artifact Workbench**: task-created spreadsheet files use compact artifact cards in the task feed. `.xlsx`, `.xls`, `.xlsm`, `.csv`, and `.tsv` open a resizable right-sidebar spreadsheet viewer with sheet tabs, sticky headers, working zoom, cell/range/row/column selection, copy with a short `Copied` flash, inline editing, add row/column, and save back to the file. `.numbers`, `.gsheet`, `.ods`, and `.xlsb` are recognized as spreadsheet artifacts and use external-app/folder actions. Fullscreen mode expands editable sheets across the app and keeps a functional follow-up composer with the main task model picker, voice input, attachments, and send behavior. See [Spreadsheet Artifacts](spreadsheet-artifacts.md).
 - **Presentation Artifact Workbench**: PPTX artifacts render as compact task-feed cards and open by default in the resizable right-sidebar presentation viewer. The viewer includes slide thumbnails, previous/next controls, zoom, a white slide canvas, extracted slide text, speaker notes, fast text-first loading, cached rendered slide images, fullscreen follow-up context, external-app/folder actions, and preview refresh after follow-up edits. Legacy PowerPoint formats are recognized with external actions. See [Presentation Artifacts and PPTX Preview](pptx-generation-and-preview.md).
 - **Web Page Artifact Workbench**: generated `.html` / `.htm` files and built React output entrypoints render as compact task-feed cards and open by default in the resizable right-sidebar web viewer. The viewer uses a sandboxed iframe with local assets inlined where possible, browser/folder/copy actions, fullscreen follow-up context, and preview refresh after matching file/build-output updates. React-style projects without built output show a build-output-needed state instead of auto-starting a dev server. See [Web Page Artifacts](web-page-artifacts.md).
-- **Browser Workbench**: live browser-use prompts such as "go to this site and test it as a normal user" open a shared in-app browser session beside the task. The agent can navigate, click, fill, type, scroll, inspect, screenshot, and annotate while the user watches the visible cursor and page state. See [Browser Workbench](browser-workbench.md).
+- **Browser Workbench / Browser V2**: live browser-use prompts such as "go to this site and test it as a normal user" open a shared in-app browser session beside the task. The agent can navigate, snapshot, click, fill, type, scroll, inspect diagnostics, upload/download files, screenshot, and annotate while the user watches the visible cursor and page state. See [Browser Workbench](browser-workbench.md).
 - **Persistent Memory**: Cross-session context with curated hot memory, searchable archive recall, session transcript recall, topic packs, privacy-aware observation capture, and an optional Supermemory external provider lane
 - **Chronicle (Desktop Research Preview)**: opt-in local recent-screen context for vague prompts like `this`, `that`, `what is this`, `latest draft`, or `why is this failing`, with Memory Hub controls, pause/resume, promoted `screen_context` evidence, and optional linked background memory generation. See [Chronicle](chronicle.md).
 - **Knowledge Graph**: SQLite-backed entity/relationship memory with FTS5 search, graph traversal, and auto-extraction
@@ -961,7 +961,7 @@ PPTX outputs also participate in the artifact workbench. Task completion cards, 
 
 Web page outputs also participate in the artifact workbench. Task completion cards, `file_created`, `file_modified`, `artifact_created` events, and assistant summaries can show an inline web page card for generated `.html` / `.htm` files. Built React/Vite/Next output entrypoints such as `dist/index.html`, `build/index.html`, and `out/index.html` preview in the same sandboxed iframe surface. React-style source projects without built output return a structured build-output-needed state; CoWork does not auto-run dev servers from the artifact viewer. See [Web Page Artifacts](web-page-artifacts.md).
 
-Live website testing uses the Browser Workbench instead of the generated web artifact iframe. Browser-use prompts open a visible right-sidebar/fullscreen webview with a persistent workspace profile, functional navigation controls, screenshots, annotation, and cursor movement for agent actions. See [Browser Workbench](browser-workbench.md).
+Live website testing uses the Browser Workbench instead of the generated web artifact iframe. Browser-use prompts open a visible right-sidebar/fullscreen webview with a persistent workspace profile, Browser V2 snapshot refs, functional navigation controls, diagnostics, screenshots, annotation, and cursor movement for agent actions. See [Browser Workbench](browser-workbench.md).
 
 ---
 
@@ -1105,23 +1105,25 @@ See [Live Canvas](live-canvas.md) for the full guide.
 
 ## Browser Automation
 
-Three-tier web interaction stack — from lightweight HTTP fetching to visible in-app browser automation to anti-bot scraping — all as native agent tools with no external CLI dependencies.
+Three-tier web interaction stack — from lightweight HTTP fetching to visible in-app Browser V2 automation to anti-bot scraping — all as native agent tools with no external CLI dependencies.
 
 ### In-App Browser Workbench
 
-Interactive browser-use tasks open inside CoWork OS by default. When a user asks the agent to go to a site and test, use, click through, or inspect it as a normal user, `browser_navigate` opens a visible browser workbench in the resizable right sidebar. The agent controls the same webview the user can see, using a persistent per-workspace browser profile that is isolated from system Chrome.
+Interactive browser-use tasks open inside CoWork OS by default. When a user asks the agent to go to a site and test, use, click through, or inspect it as a normal user, `browser_navigate` opens a visible browser workbench in the resizable right sidebar. Browser V2 controls the same webview the user can see through a main-process session manager and CDP-backed actions, using a persistent per-workspace browser profile that is isolated from system Chrome.
 
 The browser workbench supports:
 
 - right-sidebar placement with the same persisted width behavior as document, spreadsheet, presentation, and web artifact workbenches
-- URL bar, back, forward, reload, fullscreen, and close controls
-- visible routing for `browser_navigate`, `browser_click`, `browser_fill`, `browser_type`, `browser_press`, `browser_scroll`, `browser_wait`, `browser_get_content`, `browser_get_text`, `browser_evaluate`, and screenshots
+- tab strip, URL bar, profile/security indicator, back, forward, reload, fullscreen, and close controls
+- visible routing for navigation, snapshots, ref-aware actions, keyboard/scroll/select actions, content extraction, evaluation, diagnostics, downloads/uploads, dialogs, emulation, traces, and screenshots
+- compact accessibility snapshots with short-lived refs for precise click, fill, type, read, hover, drag, and upload actions
 - visible cursor movement and action pulses for agent clicks, fills, typing, selects, waits, reads, scrolls, and navigation
+- diagnostics drawer and tools for console, network, downloads, storage, and trace state
 - workspace screenshot capture plus in-app screenshot annotation that can be saved or sent back to the agent as an image attachment
 - fullscreen mode with the same follow-up composer and latest-turn/working context frame used by artifact workbenches
-- optional fallback to forced headless Playwright or explicit Chrome DevTools attach for background runs and signed-in system Chrome sessions
+- optional fallback to forced headless Playwright or explicit Chrome DevTools attach for background runs and signed-in system Chrome/Edge sessions
 
-Use `web_fetch` for reading a known static URL. Use the browser workbench for interactive websites, JavaScript-heavy pages, forms, app testing, and visual checks. See [Browser Workbench](browser-workbench.md) for the full behavior and implementation notes.
+Use `web_fetch` for reading a known static URL. Use the browser workbench for interactive websites, JavaScript-heavy pages, forms, app testing, and visual checks. See [Browser Workbench](browser-workbench.md) for user behavior and [Browser V2 Architecture](browser-v2-architecture.md) for the implementation contract.
 
 ### Web Search (6 providers, always available)
 
@@ -1143,31 +1145,46 @@ Paid providers are tried first in configured order. DuckDuckGo is automatically 
 ```
 Tier 0: web_search                   (multi-provider search — always available)
 Tier 1: web_fetch / http_request     (no browser — fastest)
-Tier 2: browser_* tools              (visible in-app browser workbench by default, Playwright fallback)
+Tier 2: browser_* tools              (visible in-app Browser V2 workbench by default, Playwright/external-CDP fallback)
 Tier 3: scrape_* tools               (Scrapling — anti-bot bypass)
 ```
 
 The agent auto-selects the appropriate tier: `web_search` for discovering information, `web_fetch` for reading known URLs, `browser_*` when interaction, JS rendering, or visible app testing is needed, and `scrape_*` for anti-bot-protected sites.
 
-### Browser Tools (19 tools — visible workbench + native Playwright fallback)
+### Browser Tools (34 tools — visible Browser V2 workbench + native Playwright/external-CDP fallback)
 
-Browser tools first target the active visible browser workbench for the selected task. If no renderer/webview is available, or the task explicitly requests `force_headless`, `profile`, `browser_channel`, or `debugger_url`, the tools fall back to the existing native Playwright browser service. The legacy `headless` flag is compatibility-only and does not override visible browser workbench routing for normal site testing.
+Browser tools first target the active visible browser workbench for the selected task. If no renderer/webview is available, or the task explicitly requests `force_headless`, `profile`, `browser_channel`, or `debugger_url`, the tools fall back to native Playwright or explicit external CDP. The legacy `headless` flag is compatibility-only and does not override visible browser workbench routing for normal site testing.
 
 | Tool | Description |
 |------|-------------|
-| `browser_attach` | Attach to existing Chrome via Chrome DevTools Protocol (signed-in sessions). See [Chrome DevTools attach](#chrome-devtools-attach-mode) below. |
+| `browser_attach` | Attach to existing Chrome/Edge via Chrome DevTools Protocol after explicit real-browser consent. See [Chrome DevTools attach](#chrome-devtools-attach-mode) below. |
 | `browser_act_batch` | Execute batched actions (click, fill, type, press, wait, scroll) in sequence with optional delays |
 | `browser_navigate` | Navigate to URL with configurable wait states; opens the visible in-app browser workbench by default |
-| `browser_screenshot` | Capture viewport or full-page screenshots |
+| `browser_snapshot` | Return compact accessibility nodes with short-lived refs, focus state, console summary, and network summary |
+| `browser_screenshot` | Capture viewport, full-page, or supported element/ref screenshots |
 | `browser_get_content` | Extract text, links, and form data from current page |
-| `browser_click` | Click elements via CSS selectors |
-| `browser_fill` | Fill form fields (clears existing text) |
-| `browser_type` | Type text character-by-character (triggers autocomplete/key events) |
+| `browser_click` | Click by Browser V2 ref or legacy selector |
+| `browser_hover` | Move pointer over an element by ref or selector |
+| `browser_drag` | Drag from one snapshot ref to another |
+| `browser_fill` | Fill form fields by ref or selector |
+| `browser_type` | Type text character-by-character by ref or selector |
 | `browser_press` | Press keyboard keys (Enter, Tab, Escape, shortcuts) |
 | `browser_wait` | Wait for element visibility with timeout |
 | `browser_scroll` | Scroll page (up, down, top, bottom) |
 | `browser_select` | Select dropdown options |
-| `browser_get_text` | Extract text from specific elements |
+| `browser_get_text` | Extract text from a specific ref or selector |
+| `browser_upload_file` | Upload a workspace-readable file into a file input |
+| `browser_handle_dialog` | Accept or dismiss the latest JavaScript dialog |
+| `browser_tabs` | List tabs for the active browser session |
+| `browser_switch_tab` | Switch to a tab by tab id |
+| `browser_close_tab` | Close a tab by tab id where supported |
+| `browser_console` | Return recent redacted console messages |
+| `browser_network` | Return recent redacted network requests, responses, and failures |
+| `browser_downloads` | Return recent browser downloads |
+| `browser_storage` | Return redacted local/session storage for the current page |
+| `browser_emulate` | Set viewport/device emulation for responsive testing |
+| `browser_trace_start` | Start lightweight browser tracing |
+| `browser_trace_stop` | Stop lightweight browser tracing |
 | `browser_evaluate` | Execute JavaScript in browser context |
 | `browser_back` | Navigate browser history back |
 | `browser_forward` | Navigate browser history forward |
@@ -1186,18 +1203,19 @@ Lightweight HTTP without browser overhead — preferred for reading known URLs.
 
 ### Chrome DevTools Attach Mode
 
-Attach to an existing Chrome instance to control a signed-in browser session (e.g. Gmail, social media). Uses the Chrome DevTools Protocol.
+Attach to an existing Chrome/Edge instance to control a signed-in browser session (e.g. Gmail, social media). Uses the Chrome DevTools Protocol and requires explicit real-browser consent before control.
 
 **Setup:**
 
 1. Launch Chrome with remote debugging: `chrome --remote-debugging-port=9222` (or add `--remote-debugging-port=9222` to your Chrome shortcut).
 2. Visit [chrome://inspect/#devices](chrome://inspect/#devices) to verify the endpoint.
-3. The agent uses `browser_attach` with `debugger_url: "http://localhost:9222"` (or the WebSocket URL from the version endpoint).
-4. After attach, `browser_navigate` and other browser tools operate on the attached session.
+3. The agent asks for explicit consent showing the target browser/profile/tab/domain.
+4. The agent uses `browser_attach` with `debugger_url: "http://localhost:9222"` (or the WebSocket URL from the version endpoint) and `confirm_real_browser_control: true`.
+5. After attach, `browser_navigate` and other browser tools operate on the attached session.
 
 See [Chrome Remote Debugging](https://developer.chrome.com/docs/devtools/remote-debugging/) for full setup guides.
 
-**Profile presets vs attach mode:** Use `browser_attach` with `debugger_url` when you want to control an **already running** signed-in Chrome session. Use `profile="user"` when you want to **launch a new** Chrome instance with your system profile — but Chrome must not already be running with that profile (profile lock). For existing sessions, attach mode is the correct choice.
+**Profile presets vs attach mode:** Use `browser_attach` with `debugger_url` when you want to control an **already running** signed-in Chrome/Edge session after consent. Use `profile="user"` when you want to **launch a new** Chrome instance with your system profile — but Chrome must not already be running with that profile (profile lock). For existing sessions, attach mode is the correct choice.
 
 **Note:** If you close the Chrome window while attached, subsequent browser actions will fail with "Target closed". Re-attach with `browser_attach` after relaunching Chrome.
 
@@ -1206,11 +1224,15 @@ See [Chrome Remote Debugging](https://developer.chrome.com/docs/devtools/remote-
 | Feature | Description |
 |---------|-------------|
 | **Multi-Browser** | Chromium (bundled), Chrome (system), Brave (auto-discovered) |
-| **Visible Workbench** | Default browser-use surface inside the task sidebar/fullscreen workbench |
+| **Visible Workbench** | Default Browser V2 surface inside the task sidebar/fullscreen workbench |
 | **Workspace Browser Profile** | Embedded webview uses a persistent workspace partition isolated from system Chrome |
+| **Accessibility Snapshot Refs** | `browser_snapshot` returns compact nodes with short-lived refs used by click/fill/type/read/hover/drag/upload actions |
+| **CDP-Backed Workbench Actions** | Main-process automation controls the renderer-owned webview through Electron debugger/CDP rather than DOM-script-first control |
+| **Diagnostics Drawer** | Console, network, downloads, storage, and trace state are visible in-app and available through tools |
 | **Visible Cursor** | Agent browser actions render cursor movement and click/action pulses over the in-app webview |
 | **Screenshot Annotation** | Capture, mark up, save, and send browser screenshots back to the agent as image attachments |
-| **Profile Presets** | `user` (launch new Chrome with system profile — fails if Chrome is already running), `chrome-relay` (extension relay), `workspace` (workspace default). For existing signed-in sessions, use `browser_attach` instead. |
+| **Real-Browser Consent** | System Chrome/Edge profile control requires explicit approval; default workbench never silently reuses system cookies |
+| **Profile Presets** | `user` (launch new Chrome with system profile after consent — fails if Chrome is already running), `chrome-relay` (extension relay), `workspace` (workspace default). For existing signed-in sessions, use `browser_attach` instead. |
 | **Persistent Profiles** | Cookies and storage persist across tasks in `.cowork/browser-profiles/` |
 | **Consent Auto-Dismiss** | 40+ pattern detectors for cookie/GDPR consent popups |
 | **Retry Logic** | 2-attempt retry with per-attempt timeout calculation |
@@ -1223,29 +1245,29 @@ See [Chrome Remote Debugging](https://developer.chrome.com/docs/devtools/remote-
 
 | Capability | ClawHub Agent Browser | CoWork OS Browser |
 |---|---|---|
-| **Architecture** | External Rust CLI, commands via Bash shell | Native Playwright API, in-process (no spawning) |
-| **Performance** | CLI process spawn per command + JSON serialization | Direct API calls, persistent browser instance |
+| **Architecture** | External Rust CLI, commands via Bash shell | Browser V2 session manager with visible Electron-workbench default plus Playwright/external-CDP adapters |
+| **Performance** | CLI process spawn per command + JSON serialization | Persistent browser session, CDP-backed workbench actions, fallback adapters only when needed |
 | **Navigation** | `open`, `back`, `forward`, `reload` | `browser_navigate`, `browser_back`, `browser_forward`, `browser_reload` |
-| **Element interaction** | 12 commands (click, fill, type, hover, drag, check, select, etc.) | 6 tools (click, fill, type, press, scroll, select) |
-| **Page analysis** | Accessibility tree snapshots with `@ref` identifiers | Content extraction (text + links + forms), element text |
-| **Screenshots/PDF** | Screenshot + full-page + PDF export | `browser_screenshot` (viewport/full) + `browser_save_pdf` |
+| **Element interaction** | 12 commands (click, fill, type, hover, drag, check, select, etc.) | Ref-aware click, fill, type, read, hover, drag, upload, press, scroll, and select tools |
+| **Page analysis** | Accessibility tree snapshots with `@ref` identifiers | `browser_snapshot` compact accessibility refs plus content extraction and element text |
+| **Screenshots/PDF** | Screenshot + full-page + PDF export | `browser_screenshot` viewport/full/element where supported + `browser_save_pdf` |
 | **JavaScript** | `eval "expression"` | `browser_evaluate` (full JS execution) |
-| **Wait strategies** | Element, text, URL, network idle, JS condition | Element visibility with timeout |
-| **Tabs/frames** | Tab management, iframe switching | Single-page focus |
+| **Wait strategies** | Element, text, URL, network idle, JS condition | Element visibility plus navigation wait states and snapshot refresh after page updates |
+| **Tabs/frames** | Tab management, iframe switching | Workbench tabs and active-tab tool routing; iframe support follows backend snapshot/action support |
 | **State management** | `state save/load` JSON files | Persistent browser profiles (automatic) |
-| **Network interception** | Route, mock, block requests | Not exposed as tools |
-| **Video recording** | `record start/stop` to WebM | Not available |
-| **Device emulation** | Presets ("iPhone 14"), geolocation, viewport | Viewport configurable |
-| **Cookies/storage** | Manual cookie and localStorage management | Automatic via persistent profiles |
+| **Network interception** | Route, mock, block requests | Network diagnostics exposed; request mutation remains guarded/internal |
+| **Video recording** | `record start/stop` to WebM | Lightweight trace tooling; video capture is not a core Browser V2 tool |
+| **Device emulation** | Presets ("iPhone 14"), geolocation, viewport | Viewport/device metrics through `browser_emulate` |
+| **Cookies/storage** | Manual cookie and localStorage management | Workspace profile persistence plus redacted storage diagnostics |
 | **Anti-bot bypass** | None | Scrapling integration (TLS fingerprinting, Cloudflare bypass) |
 | **Consent popups** | None | Auto-dismissal with 40+ pattern detectors |
 | **Retry on failure** | None (single attempt) | 2-attempt retry with diagnostics |
 | **Domain guardrails** | None | Whitelist enforcement |
 | **Lightweight fetch** | None (always launches browser) | `web_fetch` for reads without browser overhead |
 | **Multi-browser** | Playwright only | Chromium, Chrome, Brave |
-| **Integration** | Loose (CLI → Bash → agent) | Tight (in-process, daemon logging, artifact registry) |
+| **Integration** | Loose (CLI → Bash → agent) | Tight (session manager, visible workbench, IPC, daemon logging, artifact registry, diagnostics drawer) |
 
-**Key advantage:** CoWork OS's in-process Playwright approach avoids the overhead of spawning a CLI process per command while providing tighter integration with the agent runtime (retry logic, failure diagnostics, domain guardrails, consent auto-dismiss). The three-tier architecture also means the agent doesn't launch a browser when a simple HTTP fetch suffices.
+**Key advantage:** CoWork OS's Browser V2 approach keeps normal website testing in the visible app surface while using a shared session manager for automation, diagnostics, guardrails, and fallback adapters. The tiered architecture also means the agent does not launch or control a browser when a simple HTTP fetch is enough.
 
 ---
 
@@ -1529,10 +1551,11 @@ Schedule recurring tasks with cron expressions and optional channel delivery.
 - Create from an existing task with task view `... > Add automation...`
 - Task-sourced jobs preserve a source task title, task ID, and `cowork://tasks/<taskId>` deeplink in the scheduled prompt/description
 - Run mode presets: `Chat` for no-shell unattended work, `Local` for shell-enabled workspace work; task worktree mode is shown disabled until cron jobs can preserve worktree context
-- Channel delivery to any of the 17 channels
+- Channel delivery to any of the 17 channels through the shared gateway delivery path, with idempotency, formatting, chunking, and outbox retry behavior aligned with normal chat replies
 - Conditional delivery (`deliverOnlyIfResult`)
 - Template variables: `{{today}}`, `{{tomorrow}}`, `{{week_end}}`, `{{now}}`
 - Chat context variables: `{{chat_messages}}`, `{{chat_since}}`, etc.
+- Scheduled task prompts should produce the final result as task output; the scheduler delivers that output to the selected channel
 - Run history with status and duration
 
 | Schedule | Expression |

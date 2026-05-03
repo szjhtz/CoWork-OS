@@ -1,12 +1,15 @@
 import * as os from "os";
+import * as fs from "fs/promises";
 import * as path from "path";
 import { Workspace } from "../../../shared/types";
 import { AgentDaemon } from "../daemon";
 import { BrowserService } from "../browser/browser-service";
+import { GuardrailManager } from "../../guardrails/guardrail-manager";
 import {
   BrowserWorkbenchService,
   getBrowserWorkbenchService,
 } from "../../browser/browser-workbench-service";
+import { normalizeBrowserUrl } from "../../browser/browser-session-manager";
 
 // oxlint-disable-next-line typescript-eslint/no-explicit-any
 type Any = any;
@@ -73,6 +76,77 @@ export class BrowserTools {
     return typeof toolInput.session_id === "string" && toolInput.session_id.trim()
       ? toolInput.session_id.trim()
       : undefined;
+  }
+
+  private ensureVisibleNavigationAllowed(rawUrl: unknown): string {
+    const url = normalizeBrowserUrl(rawUrl);
+    if (!url) {
+      throw new Error("url is required");
+    }
+    if (!this.workspace.permissions?.network) {
+      throw new Error("Workspace does not have network permission for browser navigation");
+    }
+    if (!GuardrailManager.isDomainAllowed(url)) {
+      const settings = GuardrailManager.loadSettings();
+      const allowedDomainsStr =
+        settings.allowedDomains.length > 0
+          ? settings.allowedDomains.join(", ")
+          : "(none configured)";
+      throw new Error(
+        `Domain not allowed: "${url}"\n` +
+          `Allowed domains: ${allowedDomainsStr}\n` +
+          `You can modify allowed domains in Settings > Guardrails.`,
+      );
+    }
+    return url;
+  }
+
+  private hasExplicitRealBrowserConsent(input: unknown): boolean {
+    const toolInput = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+    return (
+      toolInput.confirm_real_browser_control === true ||
+      toolInput.real_browser_consent === true ||
+      toolInput.user_confirmed === true
+    );
+  }
+
+  private isSystemBrowserProfileRequest(input: unknown): boolean {
+    const toolInput = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+    return typeof toolInput.profile === "string" && toolInput.profile.trim().toLowerCase() === "user";
+  }
+
+  private async realpathIfExists(candidatePath: string): Promise<string | null> {
+    try {
+      return await fs.realpath(candidatePath);
+    } catch {
+      return null;
+    }
+  }
+
+  private async resolveWorkspaceReadablePath(rawPath: unknown): Promise<string> {
+    const value = typeof rawPath === "string" ? rawPath.trim() : "";
+    if (!value) throw new Error("file_path is required");
+    const resolved = path.resolve(this.workspace.path, value);
+    const realResolved = await this.realpathIfExists(resolved);
+    if (!realResolved) {
+      throw new Error("Upload file not found");
+    }
+    const allowedRootCandidates = [
+      this.workspace.path,
+      ...((this.workspace.permissions?.allowedPaths || []) as string[]),
+    ];
+    const allowedRoots = (
+      await Promise.all(
+        allowedRootCandidates.map((item) => this.realpathIfExists(path.resolve(item))),
+      )
+    ).filter((item): item is string => typeof item === "string" && item.length > 0);
+    const isAllowed =
+      this.workspace.permissions?.unrestrictedFileAccess === true ||
+      allowedRoots.some((root) => realResolved === root || realResolved.startsWith(`${root}${path.sep}`));
+    if (!this.workspace.permissions?.read || !isAllowed) {
+      throw new Error("Read permission not granted for this upload path");
+    }
+    return realResolved;
   }
 
   private shouldPreferVisibleWorkbench(input: unknown): boolean {
@@ -220,8 +294,13 @@ export class BrowserTools {
               description:
                 "Chrome DevTools endpoint (e.g. http://localhost:9222 or ws://127.0.0.1:9222/... from chrome://inspect)",
             },
+            confirm_real_browser_control: {
+              type: "boolean",
+              description:
+                "Required explicit user consent flag for controlling a real signed-in browser. Must be true.",
+            },
           },
-          required: ["debugger_url"],
+          required: ["debugger_url", "confirm_real_browser_control"],
         },
       },
       {
@@ -269,6 +348,11 @@ export class BrowserTools {
               enum: ["chromium", "chrome", "brave"],
               description:
                 'Which browser binary to use (default: chromium). "chrome" requires Google Chrome; "brave" requires Brave (or BRAVE_PATH).',
+            },
+            confirm_real_browser_control: {
+              type: "boolean",
+              description:
+                "Required only when profile='user' asks CoWork to control the system Chrome profile.",
             },
             session_id: {
               type: "string",
@@ -319,6 +403,63 @@ export class BrowserTools {
         },
       },
       {
+        name: "browser_snapshot",
+        description:
+          "Get a compact accessibility snapshot of the current browser tab. Prefer refs from this snapshot for browser_click, browser_fill, browser_type, browser_get_text, browser_hover, browser_drag, and browser_upload_file.",
+        input_schema: {
+          type: "object" as const,
+          properties: {
+            session_id: {
+              type: "string",
+              description: "Optional visible in-app browser workbench session id.",
+            },
+          },
+        },
+      },
+      {
+        name: "browser_tabs",
+        description: "List tabs for the active browser session",
+        input_schema: {
+          type: "object" as const,
+          properties: {
+            session_id: {
+              type: "string",
+              description: "Optional visible in-app browser workbench session id.",
+            },
+          },
+        },
+      },
+      {
+        name: "browser_switch_tab",
+        description: "Switch to a browser tab by tab id",
+        input_schema: {
+          type: "object" as const,
+          properties: {
+            tab_id: { type: "string", description: "Tab id from browser_tabs" },
+            session_id: {
+              type: "string",
+              description: "Optional visible in-app browser workbench session id.",
+            },
+          },
+          required: ["tab_id"],
+        },
+      },
+      {
+        name: "browser_close_tab",
+        description: "Close a browser tab by tab id",
+        input_schema: {
+          type: "object" as const,
+          properties: {
+            tab_id: { type: "string", description: "Tab id from browser_tabs" },
+            session_id: {
+              type: "string",
+              description: "Optional visible in-app browser workbench session id.",
+            },
+          },
+          required: ["tab_id"],
+        },
+      },
+      {
         name: "browser_get_content",
         description:
           "Get the text content, links, and forms from the current page. " +
@@ -341,6 +482,10 @@ export class BrowserTools {
         input_schema: {
           type: "object" as const,
           properties: {
+            ref: {
+              type: "string",
+              description: "Preferred Browser V2 ref from browser_snapshot",
+            },
             selector: {
               type: "string",
               description:
@@ -355,7 +500,37 @@ export class BrowserTools {
               description: "Optional visible in-app browser workbench session id.",
             },
           },
-          required: ["selector"],
+        },
+      },
+      {
+        name: "browser_hover",
+        description: "Move the browser pointer over an element, preferably by browser_snapshot ref",
+        input_schema: {
+          type: "object" as const,
+          properties: {
+            ref: { type: "string", description: "Preferred Browser V2 ref from browser_snapshot" },
+            selector: { type: "string", description: "CSS selector fallback" },
+            session_id: {
+              type: "string",
+              description: "Optional visible in-app browser workbench session id.",
+            },
+          },
+        },
+      },
+      {
+        name: "browser_drag",
+        description: "Drag from one Browser V2 snapshot ref to another",
+        input_schema: {
+          type: "object" as const,
+          properties: {
+            from_ref: { type: "string", description: "Drag start ref from browser_snapshot" },
+            to_ref: { type: "string", description: "Drag end ref from browser_snapshot" },
+            session_id: {
+              type: "string",
+              description: "Optional visible in-app browser workbench session id.",
+            },
+          },
+          required: ["from_ref", "to_ref"],
         },
       },
       {
@@ -364,6 +539,10 @@ export class BrowserTools {
         input_schema: {
           type: "object" as const,
           properties: {
+            ref: {
+              type: "string",
+              description: "Preferred Browser V2 ref from browser_snapshot",
+            },
             selector: {
               type: "string",
               description:
@@ -382,7 +561,7 @@ export class BrowserTools {
               description: "Optional visible in-app browser workbench session id.",
             },
           },
-          required: ["selector", "value"],
+          required: ["value"],
         },
       },
       {
@@ -391,6 +570,10 @@ export class BrowserTools {
         input_schema: {
           type: "object" as const,
           properties: {
+            ref: {
+              type: "string",
+              description: "Preferred Browser V2 ref from browser_snapshot",
+            },
             selector: {
               type: "string",
               description: "CSS selector for the input field",
@@ -412,7 +595,7 @@ export class BrowserTools {
               description: "Optional visible in-app browser workbench session id.",
             },
           },
-          required: ["selector", "text"],
+          required: ["text"],
         },
       },
       {
@@ -506,6 +689,10 @@ export class BrowserTools {
         input_schema: {
           type: "object" as const,
           properties: {
+            ref: {
+              type: "string",
+              description: "Preferred Browser V2 ref from browser_snapshot",
+            },
             selector: {
               type: "string",
               description: "CSS selector for the element",
@@ -515,7 +702,134 @@ export class BrowserTools {
               description: "Optional visible in-app browser workbench session id.",
             },
           },
-          required: ["selector"],
+        },
+      },
+      {
+        name: "browser_upload_file",
+        description:
+          "Upload a workspace-readable file into a file input, preferably using a Browser V2 ref from browser_snapshot",
+        input_schema: {
+          type: "object" as const,
+          properties: {
+            file_path: { type: "string", description: "Workspace file path to upload" },
+            ref: { type: "string", description: "Preferred Browser V2 ref for an input[type=file]" },
+            selector: { type: "string", description: "CSS selector fallback for input[type=file]" },
+            session_id: {
+              type: "string",
+              description: "Optional visible in-app browser workbench session id.",
+            },
+          },
+          required: ["file_path"],
+        },
+      },
+      {
+        name: "browser_handle_dialog",
+        description: "Accept or dismiss the latest JavaScript dialog in the browser",
+        input_schema: {
+          type: "object" as const,
+          properties: {
+            accept: { type: "boolean", description: "Accept the dialog. Default: true" },
+            prompt_text: { type: "string", description: "Optional prompt text for prompt dialogs" },
+            session_id: {
+              type: "string",
+              description: "Optional visible in-app browser workbench session id.",
+            },
+          },
+        },
+      },
+      {
+        name: "browser_console",
+        description: "Return recent browser console messages with secrets redacted",
+        input_schema: {
+          type: "object" as const,
+          properties: {
+            session_id: {
+              type: "string",
+              description: "Optional visible in-app browser workbench session id.",
+            },
+          },
+        },
+      },
+      {
+        name: "browser_network",
+        description: "Return recent browser network requests/responses with secrets redacted",
+        input_schema: {
+          type: "object" as const,
+          properties: {
+            session_id: {
+              type: "string",
+              description: "Optional visible in-app browser workbench session id.",
+            },
+          },
+        },
+      },
+      {
+        name: "browser_downloads",
+        description: "Return recent downloads observed in the browser session",
+        input_schema: {
+          type: "object" as const,
+          properties: {
+            session_id: {
+              type: "string",
+              description: "Optional visible in-app browser workbench session id.",
+            },
+          },
+        },
+      },
+      {
+        name: "browser_storage",
+        description: "Return redacted local/session storage for the current page",
+        input_schema: {
+          type: "object" as const,
+          properties: {
+            session_id: {
+              type: "string",
+              description: "Optional visible in-app browser workbench session id.",
+            },
+          },
+        },
+      },
+      {
+        name: "browser_emulate",
+        description: "Set browser viewport/device emulation for responsive testing",
+        input_schema: {
+          type: "object" as const,
+          properties: {
+            width: { type: "number", description: "Viewport width" },
+            height: { type: "number", description: "Viewport height" },
+            device_scale_factor: { type: "number", description: "Device scale factor" },
+            mobile: { type: "boolean", description: "Use mobile emulation metrics" },
+            session_id: {
+              type: "string",
+              description: "Optional visible in-app browser workbench session id.",
+            },
+          },
+        },
+      },
+      {
+        name: "browser_trace_start",
+        description: "Start a lightweight browser trace for diagnostics",
+        input_schema: {
+          type: "object" as const,
+          properties: {
+            session_id: {
+              type: "string",
+              description: "Optional visible in-app browser workbench session id.",
+            },
+          },
+        },
+      },
+      {
+        name: "browser_trace_stop",
+        description: "Stop the active lightweight browser trace",
+        input_schema: {
+          type: "object" as const,
+          properties: {
+            session_id: {
+              type: "string",
+              description: "Optional visible in-app browser workbench session id.",
+            },
+          },
         },
       },
       {
@@ -661,6 +975,14 @@ export class BrowserTools {
             error: "debugger_url is required. Use http://localhost:9222 or the WebSocket URL from chrome://inspect",
           };
         }
+        if (!this.hasExplicitRealBrowserConsent(input)) {
+          return {
+            success: false,
+            error:
+              "Explicit consent is required before controlling a real signed-in browser. Retry with confirm_real_browser_control=true only after the user approves the target browser/profile/tab.",
+            consentRequired: true,
+          };
+        }
         await this.browserService.close();
         this.browserService = new BrowserService(this.workspace, {
           headless: true,
@@ -686,10 +1008,11 @@ export class BrowserTools {
 
       case "browser_navigate": {
         if (this.shouldPreferVisibleWorkbench(input)) {
+          const visibleUrl = this.ensureVisibleNavigationAllowed(input?.url);
           const visibleResult = await this.browserWorkbenchService.navigate({
             taskId: this.taskId,
             sessionId: this.getSessionId(input),
-            url: input?.url,
+            url: visibleUrl,
             waitUntil: input?.wait_until || "load",
           });
           if (visibleResult) {
@@ -705,6 +1028,14 @@ export class BrowserTools {
         }
         let result;
         try {
+          if (this.isSystemBrowserProfileRequest(input) && !this.hasExplicitRealBrowserConsent(input)) {
+            return {
+              success: false,
+              error:
+                "Explicit consent is required before reusing the system Chrome profile. Use the visible workspace Browser Workbench by default, or retry with confirm_real_browser_control=true only after the user approves real-browser profile control.",
+              consentRequired: true,
+            };
+          }
           await this.ensureBrowserConfigured({
             headless: input?.force_headless === true ? true : input?.headless,
             profile: input?.profile,
@@ -789,6 +1120,7 @@ export class BrowserTools {
             sessionId: this.getSessionId(input),
             workspacePath: this.workspace.path,
             filename,
+            fullPage: full_page === true,
           });
           if (result) {
             const fullPath = path.join(this.workspace.path, result.path);
@@ -842,6 +1174,76 @@ export class BrowserTools {
         return result;
       }
 
+      case "browser_snapshot": {
+        if (this.shouldPreferVisibleWorkbench(input) && this.hasVisibleWorkbenchSession(input)) {
+          const result = await this.browserWorkbenchService.snapshot(
+            this.taskId,
+            this.getSessionId(input),
+          );
+          if (result) {
+            this.daemon.logEvent(this.taskId, "browser_action", {
+              action: "snapshot",
+              url: result.url,
+              nodeCount: Array.isArray(result.nodes) ? result.nodes.length : undefined,
+              visible: true,
+            });
+            return result;
+          }
+        }
+        const content = await this.browserService.getContent();
+        return {
+          success: true,
+          sessionId: "headless",
+          tabId: "active",
+          url: content.url,
+          title: content.title,
+          nodes: content.links.slice(0, 60).map((link) => ({
+            role: "link",
+            name: link.text,
+            text: link.href,
+          })),
+          refSupport: false,
+          message:
+            "Headless snapshot is read-only and does not provide Browser V2 refs. Use selector-based tools or open a visible Browser Workbench session for ref actions.",
+          consoleSummary: { count: 0, recent: [] },
+          networkSummary: { count: 0, recent: [] },
+        };
+      }
+
+      case "browser_tabs": {
+        const tabs = this.browserWorkbenchService.getTabs(this.taskId, this.getSessionId(input));
+        if (tabs.length > 0) return { success: true, tabs };
+        return {
+          success: true,
+          tabs: [
+            {
+              tabId: "active",
+              title: "",
+              url: this.browserService.getUrl() || "",
+              active: true,
+              backend: "playwright-local",
+            },
+          ],
+        };
+      }
+
+      case "browser_switch_tab": {
+        const tabs = this.browserWorkbenchService.getTabs(this.taskId, this.getSessionId(input));
+        const target = tabs.find((tab: Any) => tab.tabId === input?.tab_id);
+        if (target?.active) return { success: true, tab: target };
+        return {
+          success: false,
+          error: "Only the active visible workbench tab is available in this Browser V2 build.",
+        };
+      }
+
+      case "browser_close_tab": {
+        return {
+          success: false,
+          error: "Closing the active Browser Workbench tab from tools is disabled to avoid hiding the shared user/agent surface. Use browser_close to close background browser state.",
+        };
+      }
+
       case "browser_get_content": {
         if (this.shouldPreferVisibleWorkbench(input) && this.hasVisibleWorkbenchSession(input)) {
           const result = await this.browserWorkbenchService.getContent(
@@ -866,6 +1268,30 @@ export class BrowserTools {
       }
 
       case "browser_click": {
+        if (typeof input?.ref === "string" && input.ref.trim()) {
+          if (this.shouldPreferVisibleWorkbench(input) && this.hasVisibleWorkbenchSession(input)) {
+            const result = await this.browserWorkbenchService.clickRef(
+              this.taskId,
+              input.ref.trim(),
+              this.getSessionId(input),
+            );
+            if (result) {
+              this.daemon.logEvent(this.taskId, "browser_action", {
+                action: "click_ref",
+                success: result.success,
+                visible: true,
+              });
+              return result;
+            }
+          }
+          return {
+            success: false,
+            error: "browser_click ref requires an active visible Browser V2 snapshot. Call browser_snapshot and retry, or use selector.",
+          };
+        }
+        if (typeof input?.selector !== "string" || !input.selector.trim()) {
+          return { success: false, error: "selector or ref is required" };
+        }
         if (this.shouldPreferVisibleWorkbench(input) && this.hasVisibleWorkbenchSession(input)) {
           const result = await this.browserWorkbenchService.click(
             this.taskId,
@@ -891,7 +1317,74 @@ export class BrowserTools {
         return result;
       }
 
+      case "browser_hover": {
+        if (typeof input?.ref === "string" && input.ref.trim()) {
+          if (this.shouldPreferVisibleWorkbench(input) && this.hasVisibleWorkbenchSession(input)) {
+            const result = await this.browserWorkbenchService.hoverRef(
+              this.taskId,
+              input.ref.trim(),
+              this.getSessionId(input),
+            );
+            if (result) return result;
+          }
+          return {
+            success: false,
+            error: "browser_hover ref requires an active visible Browser V2 snapshot.",
+          };
+        }
+        return {
+          success: false,
+          error: "browser_hover currently requires a Browser V2 ref from browser_snapshot.",
+        };
+      }
+
+      case "browser_drag": {
+        const fromRef = typeof input?.from_ref === "string" ? input.from_ref.trim() : "";
+        const toRef = typeof input?.to_ref === "string" ? input.to_ref.trim() : "";
+        if (!fromRef || !toRef) {
+          return { success: false, error: "from_ref and to_ref are required" };
+        }
+        if (this.shouldPreferVisibleWorkbench(input) && this.hasVisibleWorkbenchSession(input)) {
+          const result = await this.browserWorkbenchService.dragRef(
+            this.taskId,
+            fromRef,
+            toRef,
+            this.getSessionId(input),
+          );
+          if (result) return result;
+        }
+        return {
+          success: false,
+          error: "browser_drag requires an active visible Browser V2 snapshot.",
+        };
+      }
+
       case "browser_fill": {
+        if (typeof input?.ref === "string" && input.ref.trim()) {
+          if (this.shouldPreferVisibleWorkbench(input) && this.hasVisibleWorkbenchSession(input)) {
+            const result = await this.browserWorkbenchService.fillRef(
+              this.taskId,
+              input.ref.trim(),
+              String(input.value ?? ""),
+              this.getSessionId(input),
+            );
+            if (result) {
+              this.daemon.logEvent(this.taskId, "browser_action", {
+                action: "fill_ref",
+                success: result.success,
+                visible: true,
+              });
+              return result;
+            }
+          }
+          return {
+            success: false,
+            error: "browser_fill ref requires an active visible Browser V2 snapshot. Call browser_snapshot and retry, or use selector.",
+          };
+        }
+        if (typeof input?.selector !== "string" || !input.selector.trim()) {
+          return { success: false, error: "selector or ref is required" };
+        }
         if (this.shouldPreferVisibleWorkbench(input) && this.hasVisibleWorkbenchSession(input)) {
           const result = await this.browserWorkbenchService.fill(
             this.taskId,
@@ -923,6 +1416,31 @@ export class BrowserTools {
       }
 
       case "browser_type": {
+        if (typeof input?.ref === "string" && input.ref.trim()) {
+          if (this.shouldPreferVisibleWorkbench(input) && this.hasVisibleWorkbenchSession(input)) {
+            const result = await this.browserWorkbenchService.typeRef(
+              this.taskId,
+              input.ref.trim(),
+              String(input.text ?? ""),
+              this.getSessionId(input),
+            );
+            if (result) {
+              this.daemon.logEvent(this.taskId, "browser_action", {
+                action: "type_ref",
+                success: result.success,
+                visible: true,
+              });
+              return result;
+            }
+          }
+          return {
+            success: false,
+            error: "browser_type ref requires an active visible Browser V2 snapshot. Call browser_snapshot and retry, or use selector.",
+          };
+        }
+        if (typeof input?.selector !== "string" || !input.selector.trim()) {
+          return { success: false, error: "selector or ref is required" };
+        }
         if (this.shouldPreferVisibleWorkbench(input) && this.hasVisibleWorkbenchSession(input)) {
           const result = await this.browserWorkbenchService.type(
             this.taskId,
@@ -1060,6 +1578,23 @@ export class BrowserTools {
       }
 
       case "browser_get_text": {
+        if (typeof input?.ref === "string" && input.ref.trim()) {
+          if (this.shouldPreferVisibleWorkbench(input) && this.hasVisibleWorkbenchSession(input)) {
+            const result = await this.browserWorkbenchService.getTextRef(
+              this.taskId,
+              input.ref.trim(),
+              this.getSessionId(input),
+            );
+            if (result) return result;
+          }
+          return {
+            success: false,
+            error: "browser_get_text ref requires an active visible Browser V2 snapshot. Call browser_snapshot and retry, or use selector.",
+          };
+        }
+        if (typeof input?.selector !== "string" || !input.selector.trim()) {
+          return { success: false, error: "selector or ref is required" };
+        }
         if (this.shouldPreferVisibleWorkbench(input) && this.hasVisibleWorkbenchSession(input)) {
           const result = await this.browserWorkbenchService.getText(
             this.taskId,
@@ -1070,6 +1605,108 @@ export class BrowserTools {
         }
         const result = await this.browserService.getText(input.selector);
         return result;
+      }
+
+      case "browser_upload_file": {
+        const filePath = await this.resolveWorkspaceReadablePath(input?.file_path);
+        await fs.access(filePath);
+        if (this.shouldPreferVisibleWorkbench(input) && this.hasVisibleWorkbenchSession(input)) {
+          const result = await this.browserWorkbenchService.uploadFile({
+            taskId: this.taskId,
+            sessionId: this.getSessionId(input),
+            filePath,
+            ref: typeof input?.ref === "string" ? input.ref.trim() : undefined,
+            selector: typeof input?.selector === "string" ? input.selector.trim() : undefined,
+          });
+          if (result) return result;
+        }
+        return {
+          success: false,
+          error: "browser_upload_file requires an active visible Browser V2 session and a file input ref or selector.",
+        };
+      }
+
+      case "browser_handle_dialog": {
+        if (this.shouldPreferVisibleWorkbench(input) && this.hasVisibleWorkbenchSession(input)) {
+          const result = await this.browserWorkbenchService.handleDialog({
+            taskId: this.taskId,
+            sessionId: this.getSessionId(input),
+            accept: input?.accept !== false,
+            promptText: typeof input?.prompt_text === "string" ? input.prompt_text : undefined,
+          });
+          if (result) return result;
+        }
+        return {
+          success: false,
+          error: "browser_handle_dialog requires an active visible Browser V2 session.",
+        };
+      }
+
+      case "browser_console": {
+        const result = this.browserWorkbenchService.getConsole(this.taskId, this.getSessionId(input));
+        if (result) return result;
+        return { success: true, entries: [] };
+      }
+
+      case "browser_network": {
+        const result = this.browserWorkbenchService.getNetwork(this.taskId, this.getSessionId(input));
+        if (result) return result;
+        return { success: true, entries: [] };
+      }
+
+      case "browser_downloads": {
+        const result = this.browserWorkbenchService.getDownloads(this.taskId, this.getSessionId(input));
+        if (result) return result;
+        return { success: true, entries: [] };
+      }
+
+      case "browser_storage": {
+        if (this.shouldPreferVisibleWorkbench(input) && this.hasVisibleWorkbenchSession(input)) {
+          const result = await this.browserWorkbenchService.getStorage(
+            this.taskId,
+            this.getSessionId(input),
+          );
+          if (result) return result;
+        }
+        return {
+          success: false,
+          error: "browser_storage requires an active visible Browser V2 session.",
+        };
+      }
+
+      case "browser_emulate": {
+        if (this.shouldPreferVisibleWorkbench(input) && this.hasVisibleWorkbenchSession(input)) {
+          const result = await this.browserWorkbenchService.emulate({
+            taskId: this.taskId,
+            sessionId: this.getSessionId(input),
+            width: typeof input?.width === "number" ? input.width : undefined,
+            height: typeof input?.height === "number" ? input.height : undefined,
+            deviceScaleFactor:
+              typeof input?.device_scale_factor === "number" ? input.device_scale_factor : undefined,
+            mobile: input?.mobile === true,
+          });
+          if (result) return result;
+        }
+        return {
+          success: false,
+          error: "browser_emulate requires an active visible Browser V2 session.",
+        };
+      }
+
+      case "browser_trace_start": {
+        const result = await this.browserWorkbenchService.traceStart(
+          this.taskId,
+          this.getSessionId(input),
+        );
+        return result || { success: false, error: "No active visible Browser V2 session" };
+      }
+
+      case "browser_trace_stop": {
+        const result = await this.browserWorkbenchService.traceStop(
+          this.taskId,
+          this.getSessionId(input),
+        );
+        return result || { success: false, error: "No active visible Browser V2 session" };
       }
 
       case "browser_evaluate": {

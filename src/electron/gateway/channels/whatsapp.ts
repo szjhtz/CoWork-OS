@@ -55,6 +55,20 @@ import {
 const WHATSAPP_USER_JID_RE = /^(\d+)(?::\d+)?@s\.whatsapp\.net$/i;
 const WHATSAPP_LID_JID_RE = /^(\d+)@lid$/i;
 
+function maskWhatsAppIdentity(value: string | undefined): string {
+  if (!value) return "unknown";
+  const normalized = normalizeWhatsAppPhoneTarget(value);
+  const identity = normalized || value;
+  const digits = identity.replace(/\D+/g, "");
+  if (digits.length >= 4) {
+    return `${digits.slice(0, 2)}***${digits.slice(-2)}`;
+  }
+  if (identity.length <= 3) {
+    return "***";
+  }
+  return `${identity.slice(0, 2)}***${identity.slice(-2)}`;
+}
+
 function stripWhatsAppTargetPrefixes(value: string): string {
   let candidate = value.trim();
   while (true) {
@@ -404,7 +418,9 @@ export class WhatsAppAdapter implements ChannelAdapter {
       this._selfJid = this.sock?.user?.id;
       this._selfE164 = this._selfJid ? (this.jidToE164(this._selfJid) ?? undefined) : undefined;
 
-      console.log(`WhatsApp connected as ${this._selfE164 || this._selfJid}`);
+      console.log(
+        `WhatsApp connected as ${maskWhatsAppIdentity(this._selfE164 || this._selfJid)}`,
+      );
       this.setStatus("connected");
 
       // Only fully reset backoff if the previous connection was stable or this is the first connection.
@@ -1083,10 +1099,34 @@ export class WhatsAppAdapter implements ChannelAdapter {
   }
 
   /**
-   * Edit an existing message (not supported by WhatsApp Web API)
+   * Edit an existing message.
    */
-  async editMessage(_chatId: string, _messageId: string, _text: string): Promise<void> {
-    throw new Error("WhatsApp does not support message editing");
+  async editMessage(chatId: string, messageId: string, text: string): Promise<void> {
+    if (!this.sock || this._status !== "connected") {
+      throw new Error("WhatsApp is not connected");
+    }
+
+    const jid = this.toWhatsAppJid(chatId);
+    let textToSend = this.convertMarkdownToWhatsApp(text);
+    if (this.isSelfChatMode && textToSend && textToSend.trim()) {
+      const prefix = this.responsePrefix;
+      if (!textToSend.startsWith(prefix)) {
+        textToSend = `${prefix} ${textToSend}`;
+      }
+    }
+
+    await this.sendWithRetry(
+      () =>
+        this.sock!.sendMessage(jid, {
+          text: textToSend,
+          edit: {
+            remoteJid: jid,
+            fromMe: true,
+            id: messageId,
+          },
+        } as unknown as AnyMessageContent),
+      "editMessage",
+    );
   }
 
   /**

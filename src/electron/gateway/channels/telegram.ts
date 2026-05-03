@@ -47,6 +47,17 @@ import {
   Poll,
   ReplyKeyboard,
 } from "./types";
+import { listNativeRemoteCommands } from "../remote-command-registry";
+
+export function buildTelegramBotCommands(): Array<{
+  command: string;
+  description: string;
+}> {
+  return listNativeRemoteCommands().map((command) => ({
+    command: command.name,
+    description: command.description.slice(0, 256),
+  }));
+}
 
 /**
  * Exponential backoff configuration
@@ -292,39 +303,7 @@ export class TelegramAdapter implements ChannelAdapter {
   private async registerBotCommands(): Promise<void> {
     if (!this.bot) return;
 
-    await this.bot.api.setMyCommands([
-      // Core commands
-      { command: "start", description: "Start the bot and see welcome message" },
-      { command: "help", description: "Show all available commands" },
-      { command: "status", description: "Check bot connection and system status" },
-
-      // Workspace management
-      { command: "workspaces", description: "List all available workspaces" },
-      { command: "workspace", description: "Select or show current workspace" },
-      { command: "addworkspace", description: "Add a new workspace by path" },
-      { command: "removeworkspace", description: "Remove a workspace from the list" },
-
-      // Task management
-      { command: "newtask", description: "Start a fresh task/conversation" },
-      { command: "cancel", description: "Cancel the current running task" },
-      { command: "retry", description: "Retry the last failed task" },
-      { command: "history", description: "Show recent task history" },
-
-      // Model configuration
-      { command: "provider", description: "Change or show current LLM provider" },
-      { command: "providers", description: "List all available LLM providers" },
-      { command: "model", description: "Change or show current model" },
-      { command: "models", description: "List available AI models" },
-
-      // Skills management
-      { command: "skills", description: "List available skills" },
-      { command: "skill", description: "Enable or disable a skill" },
-
-      // Settings
-      { command: "settings", description: "View and modify bot settings" },
-      { command: "debug", description: "Toggle debug mode on/off" },
-      { command: "version", description: "Show bot version information" },
-    ]);
+    await this.bot.api.setMyCommands(buildTelegramBotCommands());
   }
 
   /**

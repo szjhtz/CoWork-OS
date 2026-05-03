@@ -42,9 +42,11 @@ function preparePackageJsonForElectronBuilder(args) {
   if (isMacBuild(args) && process.env.COWORK_MAC_UNSIGNED === "1") {
     pkg.build = pkg.build || {};
     pkg.build.mac = pkg.build.mac || {};
-    pkg.build.mac.identity = null;
+    pkg.build.mac.identity = "-";
     pkg.build.mac.notarize = false;
     pkg.build.mac.gatekeeperAssess = false;
+    pkg.build.mac.entitlements = "build/entitlements.mac.unsigned.plist";
+    pkg.build.mac.entitlementsInherit = "build/entitlements.mac.unsigned.plist";
     process.env.CSC_IDENTITY_AUTO_DISCOVERY = "false";
     changed = true;
   } else if (isMacBuild(args) && isFalseEnv(process.env.CSC_IDENTITY_AUTO_DISCOVERY)) {

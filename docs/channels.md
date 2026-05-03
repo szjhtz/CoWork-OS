@@ -7,34 +7,47 @@ CoWork OS supports 17 messaging channels. All channels share these common featur
 - Session management
 - Rate limiting
 - Inbound attachment persistence (files saved to `.cowork/inbox/attachments/`)
-- Chat commands: `/simplify`, `/batch`, `/llm-wiki`, `/schedule`, `/digest`, `/followups`, `/brief`
+- Shared message lifecycle for commands, active tasks, follow-ups, progress delivery, cancellations, and scheduled outputs
 - **Ambient mode**: Passively ingest all messages without responding; enable per-channel in settings
 - **Self-message capture**: Capture your own outgoing messages as context (`captureSelfMessages` on WhatsApp, iMessage, BlueBubbles)
 - **Per-channel routing policy**: Channels can restrict who can talk to the agent, which workspaces/roles they route into, how group/server traffic is filtered, and how much mid-task progress is relayed back into the channel
 
-### Common Bot Commands
+See [Gateway Message Lifecycle](gateway-message-lifecycle.md) for the shared routing, command, active-task, skill-slash, delivery, and scheduled-output behavior. For day-to-day usage examples, see [Using CoWork from WhatsApp and Other Channels](gateway-user-guide.md). For per-channel feature and best-practice guides, see [Channel User Guides](channel-user-guides.md) and the [dedicated channel guide index](channel-guides/).
+
+### Common Remote Commands
 
 These commands are available across all channels:
 
 | Command | Description |
 |---------|-------------|
+| `/help` | Show compact channel help |
+| `/commands [category]` | Show the remote command catalog |
+| `/status` | Check gateway and task status |
 | `/workspaces` | List available workspaces |
 | `/workspace <n>` | Select workspace by number |
-| `/newtask` | Start fresh conversation |
-| `/status` | Check bot status |
-| `/cancel` | Cancel running task |
+| `/newtask`, `/new` | Start the next message fresh without cancelling the old task |
+| `/new temp` | Start a scratch temporary workspace session |
+| `/cancel`, `/stop` | Cancel the running task |
+| `/pause`, `/resume` | Pause or resume the current task |
+| `/queue <message>` | Send a follow-up to the current task |
+| `/steer <guidance>` | Send high-priority guidance to the current task |
+| `/background <prompt>` | Start an unlinked background task |
 | `/pair <code>` | Pair with code |
 | `/simplify [objective]` | Run simplify workflow on current/specified task context |
 | `/batch <objective>` | Run parallel batch workflow with safety policy controls |
 | `/llm-wiki <objective>` | Build or maintain a persistent research vault in the active workspace |
+| `/<skill-slug> args` | Invoke an enabled skill by slash alias or skill slug |
 | `/schedule <prompt>` | Schedule a recurring task |
 | `/digest [lookback]` | Digest of recent chat messages |
 | `/followups [lookback]` | Extract follow-ups/commitments |
 | `/brief [today\|week]` | Generate a brief summary (DM only) |
 
+Recognized slash commands are handled by the gateway and are never forwarded as normal task text. Unknown slash commands return an explicit unknown-command reply.
+
 ### Slash-Skill Notes
 
 - `/simplify`, `/batch`, and `/llm-wiki` are bundled global skills (enabled by default), available in desktop and gateway channels.
+- Enabled skills can also be invoked from gateway channels as `/<skill-slug> args`; use `/skills` to see available skill slugs and `/skill <id>` to toggle a skill.
 - Inline chaining is supported in normal messages: `... then run /simplify`, `... then run /batch ...`, and `... then run /llm-wiki ...`.
 - WhatsApp natural phrase mapping supports all three commands, including research-vault phrasing for `llm-wiki`.
 - `/batch` external policy defaults to `confirm`; `none` blocks known external side-effect actions for the run.
@@ -47,6 +60,10 @@ See [Universal `/simplify` and `/batch`](simplify-batch.md) and [LLM Wiki](llm-w
 ## WhatsApp
 
 QR code pairing via Baileys library for Web WhatsApp connections.
+
+WhatsApp uses the shared gateway lifecycle after connection. `/new` and `/newtask` unlink the chat from the current task; `/new temp` starts a scratch temporary workspace session; `/stop` and `/cancel` cancel the active task. Temporary workspaces are hidden from `/workspaces` and from the `/new temp` acknowledgement.
+
+WhatsApp supports typing indicators and editable task-progress messages. CoWork edits the current progress message when possible and falls back to a new message if the provider rejects the edit.
 
 ### Setup
 
@@ -71,6 +88,8 @@ Designate specific groups as link-research channels. Post URLs there and the age
 ## Telegram
 
 Bot commands, streaming responses, workspace selection via grammY.
+
+Telegram uses the shared gateway lifecycle. The bot's `/` menu is populated with the core remote commands such as `/new`, `/stop`, `/commands`, `/queue`, `/steer`, `/background`, `/skills`, `/schedule`, and `/brief`.
 
 ### Setup
 
@@ -102,6 +121,8 @@ Designate specific groups as link-research channels. Post URLs there and the age
 ## Discord
 
 Slash commands, DM support, guild integration, embeds, polls, select menus, and live message/attachment API.
+
+Discord uses the shared gateway lifecycle through native slash commands and text messages delivered to the bot. `/task <prompt>` remains a native compatibility shortcut for starting a task; use `/status` for current state and `/commands` for the command catalog.
 
 ### Setup
 
@@ -146,6 +167,8 @@ See [Supervisor Mode on Discord](supervisor-mode-discord.md).
 ## Slack
 
 Socket Mode integration with channel mentions, file uploads, and optional curated progress relays.
+
+Slack uses the shared gateway lifecycle for DMs, mentions, and registered Slack slash commands. Slack only sends slash command payloads for commands registered in the Slack app, so add the core commands listed in [Using CoWork from WhatsApp and Other Channels](gateway-user-guide.md#slack-tips) when configuring the app.
 
 ### Setup
 

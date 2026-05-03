@@ -281,12 +281,11 @@ sudo systemctl enable --now cowork-os-node
 sudo journalctl -u cowork-os-node -f
 ```
 
-## Optional: Browser Automation (Playwright)
+## Optional: Browser Automation (Browser V2 Fallback)
 
-CoWork OS includes browser automation tools (Playwright). On minimal Linux VPS images (and especially slim Docker images),
-Chromium may fail to launch until OS dependencies are installed.
+CoWork OS desktop uses the visible Browser V2 Workbench by default. Headless Linux/VPS installs do not have that renderer-owned workbench, so browser tools use the Playwright-local fallback when browser automation is explicitly needed. On minimal Linux VPS images (and especially slim Docker images), Chromium may fail to launch until OS dependencies are installed.
 
-If you want browser tools on Debian/Ubuntu, you can install Playwright’s Chromium + dependencies:
+If you want fallback browser tools on Debian/Ubuntu, install Playwright’s Chromium + dependencies:
 
 ```bash
 cd /opt/cowork-os

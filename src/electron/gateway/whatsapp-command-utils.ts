@@ -178,6 +178,10 @@ export function normalizeWhatsAppNaturalCommand(text: string): string | undefine
     }
   }
 
+  if (/^(?:new temp|new temporary|new scratch|fresh temp|fresh scratch)\b/i.test(normalized)) {
+    return "/newtask temp";
+  }
+
   if (
     /^(?:start new task|start a task|begin task|open new task|let's start|let's do it|clear the slate|start over|new conversation|reset chat|fresh start|new task|fresh task|new|compact|reset)\b/i.test(
       normalized,
@@ -368,6 +372,21 @@ export function normalizeWhatsAppNaturalCommand(text: string): string | undefine
 
   if (/^(?:show queue|clear queue|empty queue|reset queue)\b/i.test(normalized)) {
     return "/queue clear";
+  }
+
+  const queuePromptMatch = normalized.match(/^(?:queue|q)\s+(.+)$/i);
+  if (queuePromptMatch) {
+    return `/queue ${queuePromptMatch[1].trim()}`;
+  }
+
+  const steerMatch = normalized.match(/^(?:steer|guide|guidance)\s+(.+)$/i);
+  if (steerMatch) {
+    return `/steer ${steerMatch[1].trim()}`;
+  }
+
+  const backgroundMatch = normalized.match(/^(?:background|bg|btw)\s+(.+)$/i);
+  if (backgroundMatch) {
+    return `/background ${backgroundMatch[1].trim()}`;
   }
 
   if (

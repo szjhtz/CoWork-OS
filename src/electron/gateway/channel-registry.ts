@@ -51,12 +51,15 @@ import { createLineAdapter } from "./channels/line";
 import { createBlueBubblesAdapter } from "./channels/bluebubbles";
 import { createEmailAdapter } from "./channels/email";
 import { createXAdapter } from "./channels/x";
+import { createLogger } from "../utils/logger";
 import {
   assertSafeLoomMailboxFolder,
   isSecureOrLocalLoomUrl,
   normalizeEmailProtocol,
 } from "../utils/loom";
 import { getUnsupportedManualEmailSetupMessage } from "../../shared/email-provider-support";
+
+const logger = createLogger("ChannelRegistry");
 
 /**
  * Channel metadata for registration
@@ -105,8 +108,10 @@ export interface ChannelCapabilities {
   video: boolean;
   location: boolean;
   editMessage: boolean;
+  supportsEditMessage?: boolean;
   deleteMessage: boolean;
   typing: boolean;
+  supportsTyping?: boolean;
   readReceipts: boolean;
   groups: boolean;
   threads: boolean;
@@ -168,6 +173,7 @@ export class ChannelRegistry extends EventEmitter {
   private constructor() {
     super();
     this.registerBuiltinChannels();
+    logger.debug(`Registered ${this.channels.size} built-in channel types`);
   }
 
   /**
@@ -204,8 +210,10 @@ export class ChannelRegistry extends EventEmitter {
           video: true,
           location: true,
           editMessage: true,
+          supportsEditMessage: true,
           deleteMessage: true,
           typing: true,
+          supportsTyping: true,
           readReceipts: false,
           groups: true,
           threads: true,
@@ -252,8 +260,10 @@ export class ChannelRegistry extends EventEmitter {
           video: false,
           location: false,
           editMessage: true,
+          supportsEditMessage: true,
           deleteMessage: true,
           typing: true,
+          supportsTyping: true,
           readReceipts: false,
           groups: true,
           threads: true,
@@ -305,8 +315,10 @@ export class ChannelRegistry extends EventEmitter {
           video: false,
           location: false,
           editMessage: true,
+          supportsEditMessage: true,
           deleteMessage: true,
           typing: true,
+          supportsTyping: false,
           readReceipts: false,
           groups: true,
           threads: true,
@@ -359,9 +371,11 @@ export class ChannelRegistry extends EventEmitter {
           voice: true,
           video: true,
           location: true,
-          editMessage: false,
+          editMessage: true,
+          supportsEditMessage: true,
           deleteMessage: true,
           typing: true,
+          supportsTyping: true,
           readReceipts: true,
           groups: true,
           threads: false,
@@ -1388,18 +1402,18 @@ export class ChannelRegistry extends EventEmitter {
 
     // Check platform compatibility
     if (metadata.platforms && !metadata.platforms.includes(process.platform)) {
-      console.log(`Channel ${metadata.type} not supported on ${process.platform}`);
+      logger.debug(`Channel ${metadata.type} not supported on ${process.platform}`);
       return;
     }
 
     // Check for duplicate
     if (this.channels.has(metadata.type)) {
-      console.warn(`Channel ${metadata.type} already registered, overwriting`);
+      logger.warn(`Channel ${metadata.type} already registered, overwriting`);
     }
 
     this.channels.set(metadata.type, entry);
     this.emit("channel:registered", { type: metadata.type, metadata });
-    console.log(`Channel registered: ${metadata.type} (${metadata.displayName})`);
+    logger.debug(`Channel registered: ${metadata.type} (${metadata.displayName})`);
   }
 
   /**

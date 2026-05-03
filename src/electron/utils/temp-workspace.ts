@@ -8,6 +8,7 @@ export interface TempWorkspacePruneOptions {
   tempWorkspaceRoot: string;
   currentWorkspaceId?: string;
   protectedWorkspaceIds?: string[];
+  dryRun?: boolean;
   nowMs?: number;
   keepRecent?: number;
   maxAgeMs?: number;
@@ -16,6 +17,22 @@ export interface TempWorkspacePruneOptions {
   activeTaskStatuses?: string[];
   idleSessionProtectMs?: number;
   minAgeForHardPruneMs?: number;
+}
+
+export interface TempWorkspacePruneResult {
+  removedDirs: number;
+  removedRows: number;
+  candidateWorkspaceIds: string[];
+  candidateDirPaths: string[];
+  checkedRows: number;
+  checkedDirs: number;
+  dryRun: boolean;
+}
+
+export interface TempWorkspaceDirectoryResult {
+  slug: string;
+  path: string;
+  workspaceId: string;
 }
 
 interface TempWorkspaceRow {
@@ -36,6 +53,7 @@ const DEFAULT_HARD_LIMIT = 200;
 const DEFAULT_TARGET_AFTER_PRUNE = 120;
 const DEFAULT_IDLE_SESSION_PROTECT_MS = 48 * 60 * 60 * 1000;
 const DEFAULT_MIN_AGE_FOR_HARD_PRUNE_MS = 24 * 60 * 60 * 1000;
+const TEMP_WORKSPACE_DIR_MODE = 0o700;
 const DEFAULT_ACTIVE_TASK_STATUSES = [
   "pending",
   "queued",
@@ -53,6 +71,129 @@ const isSafeTempSubPath = (candidatePath: string, rootPath: string): boolean => 
   if (resolvedCandidate === resolvedRoot) return false;
   return resolvedCandidate.startsWith(`${resolvedRoot}${path.sep}`);
 };
+
+const sanitizeTempPathSegment = (raw: string): string => {
+  const safe = String(raw || "")
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64);
+  return safe || "session";
+};
+
+const isPosix = (): boolean => process.platform !== "win32";
+
+const ensurePrivateDirectoryMode = (directoryPath: string): void => {
+  if (!isPosix()) return;
+  const stat = fs.statSync(directoryPath);
+  const getUid = process.getuid;
+  if (typeof getUid === "function" && stat.uid !== getUid()) {
+    throw new Error(`Temp workspace directory is owned by another user: ${directoryPath}`);
+  }
+  if ((stat.mode & 0o077) !== 0) {
+    fs.chmodSync(directoryPath, TEMP_WORKSPACE_DIR_MODE);
+  }
+};
+
+export function ensureTempWorkspaceRootSync(tempWorkspaceRoot: string): string {
+  const resolvedRoot = path.resolve(tempWorkspaceRoot);
+  fs.mkdirSync(resolvedRoot, {
+    recursive: true,
+    mode: TEMP_WORKSPACE_DIR_MODE,
+  });
+
+  const stat = fs.lstatSync(resolvedRoot);
+  if (stat.isSymbolicLink()) {
+    throw new Error(`Temp workspace root must not be a symlink: ${resolvedRoot}`);
+  }
+  if (!stat.isDirectory()) {
+    throw new Error(`Temp workspace root must be a directory: ${resolvedRoot}`);
+  }
+
+  ensurePrivateDirectoryMode(resolvedRoot);
+  return resolvedRoot;
+}
+
+const isSafeExistingTempDirectory = (candidatePath: string, rootPath: string): boolean => {
+  if (!isSafeTempSubPath(candidatePath, rootPath)) return false;
+  try {
+    const stat = fs.lstatSync(candidatePath);
+    if (stat.isSymbolicLink() || !stat.isDirectory()) return false;
+
+    const realRoot = fs.realpathSync(rootPath);
+    const realCandidate = fs.realpathSync(candidatePath);
+    if (realCandidate === realRoot) return false;
+    return realCandidate.startsWith(`${realRoot}${path.sep}`);
+  } catch {
+    return false;
+  }
+};
+
+export function ensureTempWorkspaceDirectorySync(
+  tempWorkspaceRoot: string,
+  slug: string,
+): string {
+  const resolvedRoot = ensureTempWorkspaceRootSync(tempWorkspaceRoot);
+  if (path.basename(slug) !== slug || slug.includes(path.sep)) {
+    throw new Error(`Invalid temp workspace slug: ${slug}`);
+  }
+
+  const workspacePath = path.join(resolvedRoot, slug);
+  if (!isSafeTempSubPath(workspacePath, resolvedRoot)) {
+    throw new Error(`Temp workspace path escapes root: ${workspacePath}`);
+  }
+
+  try {
+    fs.mkdirSync(workspacePath, {
+      mode: TEMP_WORKSPACE_DIR_MODE,
+    });
+  } catch (error) {
+    if ((error as { code?: string }).code !== "EEXIST") {
+      throw error;
+    }
+  }
+
+  if (!isSafeExistingTempDirectory(workspacePath, resolvedRoot)) {
+    throw new Error(`Temp workspace path is not a safe directory: ${workspacePath}`);
+  }
+  ensurePrivateDirectoryMode(workspacePath);
+  return workspacePath;
+}
+
+export function ensureTempWorkspaceDirectoryPathSync(
+  tempWorkspaceRoot: string,
+  workspacePath: string,
+): string {
+  const resolvedRoot = ensureTempWorkspaceRootSync(tempWorkspaceRoot);
+  const resolvedWorkspacePath = path.resolve(workspacePath);
+  if (
+    !isSafeTempSubPath(resolvedWorkspacePath, resolvedRoot) ||
+    path.dirname(resolvedWorkspacePath) !== resolvedRoot
+  ) {
+    throw new Error(`Temp workspace path must be a direct child of root: ${workspacePath}`);
+  }
+  return ensureTempWorkspaceDirectorySync(resolvedRoot, path.basename(resolvedWorkspacePath));
+}
+
+export function createUniqueScopedTempWorkspaceDirectorySync(
+  tempWorkspaceRoot: string,
+  scope: string,
+  keyPrefix: string = "session",
+): TempWorkspaceDirectoryResult {
+  const resolvedRoot = ensureTempWorkspaceRootSync(tempWorkspaceRoot);
+  const safeScope = sanitizeTempPathSegment(scope);
+  const safePrefix = sanitizeTempPathSegment(keyPrefix);
+  const workspacePath = fs.mkdtempSync(path.join(resolvedRoot, `${safeScope}-${safePrefix}-`));
+  if (!isSafeExistingTempDirectory(workspacePath, resolvedRoot)) {
+    throw new Error(`Temp workspace path is not a safe directory: ${workspacePath}`);
+  }
+  ensurePrivateDirectoryMode(workspacePath);
+  const slug = path.basename(workspacePath);
+  return {
+    slug,
+    path: workspacePath,
+    workspaceId: `${TEMP_WORKSPACE_ID_PREFIX}${slug}`,
+  };
+}
 
 const quoteSqlIdentifier = (identifier: string): string => `"${identifier}"`;
 
@@ -171,11 +312,11 @@ const listTempDirectories = (rootPath: string): TempDirectoryEntry[] => {
   const dirs: TempDirectoryEntry[] = [];
 
   for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
+    if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
     const fullPath = path.resolve(path.join(rootPath, entry.name));
-    if (!isSafeTempSubPath(fullPath, rootPath)) continue;
+    if (!isSafeExistingTempDirectory(fullPath, rootPath)) continue;
     try {
-      const stat = fs.statSync(fullPath);
+      const stat = fs.lstatSync(fullPath);
       dirs.push({
         path: fullPath,
         mtimeMs: Number.isFinite(stat.mtimeMs) ? stat.mtimeMs : stat.ctimeMs,
@@ -188,11 +329,9 @@ const listTempDirectories = (rootPath: string): TempDirectoryEntry[] => {
   return dirs;
 };
 
-export function pruneTempWorkspaces(options: TempWorkspacePruneOptions): {
-  removedDirs: number;
-  removedRows: number;
-} {
+export function pruneTempWorkspaces(options: TempWorkspacePruneOptions): TempWorkspacePruneResult {
   const nowMs = options.nowMs ?? Date.now();
+  const dryRun = options.dryRun === true;
   const keepRecent = Math.max(0, options.keepRecent ?? DEFAULT_KEEP_RECENT);
   const maxAgeMs = options.maxAgeMs ?? DEFAULT_MAX_AGE_MS;
   const hardLimit = Math.max(1, options.hardLimit ?? DEFAULT_HARD_LIMIT);
@@ -215,7 +354,7 @@ export function pruneTempWorkspaces(options: TempWorkspacePruneOptions): {
     Math.min(hardLimit, options.targetAfterPrune ?? DEFAULT_TARGET_AFTER_PRUNE),
   );
 
-  const resolvedRoot = path.resolve(options.tempWorkspaceRoot);
+  const resolvedRoot = ensureTempWorkspaceRootSync(options.tempWorkspaceRoot);
 
   const rows = options.db
     .prepare(`
@@ -319,6 +458,8 @@ export function pruneTempWorkspaces(options: TempWorkspacePruneOptions): {
   const rowsById = new Map(rows.map((row) => [row.id, row]));
   let removedDirs = 0;
   let removedRows = 0;
+  const candidateWorkspaceIds = new Set<string>();
+  const candidateDirPaths = new Set<string>();
 
   for (const workspaceId of toDeleteIds) {
     const row = rowsById.get(workspaceId);
@@ -328,8 +469,16 @@ export function pruneTempWorkspaces(options: TempWorkspacePruneOptions): {
       continue;
     }
 
+    candidateWorkspaceIds.add(workspaceId);
+    if (row.path && isSafeExistingTempDirectory(row.path, resolvedRoot)) {
+      candidateDirPaths.add(path.resolve(row.path));
+    }
+    if (dryRun) {
+      continue;
+    }
+
     try {
-      if (row.path && isSafeTempSubPath(row.path, resolvedRoot) && fs.existsSync(row.path)) {
+      if (row.path && isSafeExistingTempDirectory(row.path, resolvedRoot)) {
         fs.rmSync(row.path, { recursive: true, force: true });
         removedDirs += 1;
       }
@@ -346,20 +495,22 @@ export function pruneTempWorkspaces(options: TempWorkspacePruneOptions): {
     }
   }
 
-  const rowsAfterDbPrune = options.db
-    .prepare(`
+  const rowsAfterDbPrune = dryRun
+    ? rows.filter((row) => !candidateWorkspaceIds.has(row.id))
+    : (options.db
+        .prepare(`
     SELECT id, path, created_at, COALESCE(last_used_at, created_at) AS last_used_at
     FROM workspaces
     WHERE id = ? OR substr(id, 1, ?) = ?
     ORDER BY COALESCE(last_used_at, created_at) DESC
   `)
-    .all(TEMP_WORKSPACE_ID, TEMP_ID_PREFIX_LENGTH, TEMP_WORKSPACE_ID_PREFIX) as TempWorkspaceRow[];
+        .all(TEMP_WORKSPACE_ID, TEMP_ID_PREFIX_LENGTH, TEMP_WORKSPACE_ID_PREFIX) as TempWorkspaceRow[]);
 
   const protectedPaths = new Set<string>();
   const workspaceIdsByPath = new Map<string, string[]>();
   for (const row of rowsAfterDbPrune) {
     const resolvedPath = path.resolve(row.path);
-    if (!isSafeTempSubPath(resolvedPath, resolvedRoot)) continue;
+    if (!isSafeExistingTempDirectory(resolvedPath, resolvedRoot)) continue;
     protectedPaths.add(resolvedPath);
     const existing = workspaceIdsByPath.get(resolvedPath) ?? [];
     existing.push(row.id);
@@ -367,8 +518,19 @@ export function pruneTempWorkspaces(options: TempWorkspacePruneOptions): {
   }
 
   const deleteDirectoryAndStaleRows = (directoryPath: string): boolean => {
-    if (!isSafeTempSubPath(directoryPath, resolvedRoot)) return false;
-    if (!fs.existsSync(directoryPath)) return false;
+    if (!isSafeExistingTempDirectory(directoryPath, resolvedRoot)) return false;
+
+    const workspaceIds = workspaceIdsByPath.get(directoryPath) ?? [];
+    if (dryRun) {
+      candidateDirPaths.add(path.resolve(directoryPath));
+      for (const workspaceId of workspaceIds) {
+        if (hasWorkspaceReferences(options.db, workspaceId, activeTaskStatuses, sessionActiveCutoffMs)) {
+          continue;
+        }
+        candidateWorkspaceIds.add(workspaceId);
+      }
+      return true;
+    }
 
     try {
       fs.rmSync(directoryPath, { recursive: true, force: true });
@@ -377,11 +539,11 @@ export function pruneTempWorkspaces(options: TempWorkspacePruneOptions): {
       return false;
     }
 
-    const workspaceIds = workspaceIdsByPath.get(directoryPath) ?? [];
     for (const workspaceId of workspaceIds) {
       if (hasWorkspaceReferences(options.db, workspaceId, activeTaskStatuses, sessionActiveCutoffMs)) {
         continue;
       }
+      candidateWorkspaceIds.add(workspaceId);
       try {
         if (deleteWorkspaceAndRelatedData(options.db, workspaceId)) {
           removedRows += 1;
@@ -406,7 +568,9 @@ export function pruneTempWorkspaces(options: TempWorkspacePruneOptions): {
     }
   }
 
-  const directoriesAfterAgePrune = listTempDirectories(resolvedRoot);
+  const directoriesAfterAgePrune = listTempDirectories(resolvedRoot).filter(
+    (entry) => !dryRun || !candidateDirPaths.has(entry.path),
+  );
   let remainingDirCount = directoriesAfterAgePrune.length;
   if (remainingDirCount > hardLimit) {
     const candidateDirs = directoriesAfterAgePrune
@@ -422,5 +586,13 @@ export function pruneTempWorkspaces(options: TempWorkspacePruneOptions): {
     }
   }
 
-  return { removedDirs, removedRows };
+  return {
+    removedDirs,
+    removedRows,
+    candidateWorkspaceIds: Array.from(candidateWorkspaceIds),
+    candidateDirPaths: Array.from(candidateDirPaths),
+    checkedRows: rows.length,
+    checkedDirs: directories.length,
+    dryRun,
+  };
 }

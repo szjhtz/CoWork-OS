@@ -1,6 +1,10 @@
 import * as fs from "fs/promises";
 import * as path from "path";
 import { IPC_CHANNELS } from "../../shared/types";
+import {
+  BrowserSessionManager,
+  getBrowserSessionManager,
+} from "./browser-session-manager";
 
 type AnyRecord = Record<string, unknown>;
 
@@ -99,6 +103,8 @@ export class BrowserWorkbenchService {
   private sessions = new Map<string, BrowserWorkbenchSession>();
   private waiters = new Map<string, Array<(session: BrowserWorkbenchSession | null) => void>>();
 
+  constructor(private browserSessionManager: BrowserSessionManager = getBrowserSessionManager()) {}
+
   setMainWindow(window: Any | null): void {
     this.mainWindow = window;
   }
@@ -111,6 +117,7 @@ export class BrowserWorkbenchService {
     };
     const key = sessionKey(session.taskId, session.sessionId);
     this.sessions.set(key, session);
+    this.browserSessionManager.registerElectronWorkbenchSession(session);
     const waiters = this.waiters.get(key);
     if (waiters) {
       this.waiters.delete(key);
@@ -127,6 +134,7 @@ export class BrowserWorkbenchService {
       return;
     }
     this.sessions.delete(key);
+    this.browserSessionManager.unregisterSession(input);
   }
 
   updateSessionStatus(input: {
@@ -147,6 +155,7 @@ export class BrowserWorkbenchService {
       url: input.url ?? existing.url,
       title: input.title ?? existing.title,
     });
+    this.browserSessionManager.updateSession(input);
   }
 
   getSession(taskId: string, sessionId?: unknown): BrowserWorkbenchSession | null {
@@ -215,6 +224,132 @@ export class BrowserWorkbenchService {
         })),
       }))()
     `);
+  }
+
+  async snapshot(taskId: string, sessionId?: unknown): Promise<AnyRecord | null> {
+    return (await this.browserSessionManager.snapshot({ taskId, sessionId })) as AnyRecord | null;
+  }
+
+  async clickRef(taskId: string, ref: string, sessionId?: unknown): Promise<AnyRecord | null> {
+    const session = this.getSession(taskId, sessionId);
+    const result = await this.browserSessionManager.clickRef({ taskId, sessionId, ref });
+    if (session && result?.success) {
+      this.emitCursor(session, { x: 42, y: 42, kind: "click", label: "Click", pulse: true });
+    }
+    return result;
+  }
+
+  async hoverRef(taskId: string, ref: string, sessionId?: unknown): Promise<AnyRecord | null> {
+    const session = this.getSession(taskId, sessionId);
+    const result = await this.browserSessionManager.hoverRef({ taskId, sessionId, ref });
+    if (session && result?.success) {
+      this.emitCursor(session, { x: 42, y: 42, kind: "move", label: "Hover" });
+    }
+    return result;
+  }
+
+  async dragRef(
+    taskId: string,
+    fromRef: string,
+    toRef: string,
+    sessionId?: unknown,
+  ): Promise<AnyRecord | null> {
+    const session = this.getSession(taskId, sessionId);
+    const result = await this.browserSessionManager.dragRef({ taskId, sessionId, fromRef, toRef });
+    if (session && result?.success) {
+      this.emitCursor(session, { x: 42, y: 42, kind: "click", label: "Drag", pulse: true });
+    }
+    return result;
+  }
+
+  async fillRef(
+    taskId: string,
+    ref: string,
+    value: string,
+    sessionId?: unknown,
+  ): Promise<AnyRecord | null> {
+    const session = this.getSession(taskId, sessionId);
+    const result = await this.browserSessionManager.fillRef({ taskId, sessionId, ref, value });
+    if (session && result?.success) {
+      this.emitCursor(session, { x: 42, y: 42, kind: "fill", label: "Fill" });
+    }
+    return result;
+  }
+
+  async typeRef(
+    taskId: string,
+    ref: string,
+    text: string,
+    sessionId?: unknown,
+  ): Promise<AnyRecord | null> {
+    const session = this.getSession(taskId, sessionId);
+    const result = await this.browserSessionManager.typeRef({ taskId, sessionId, ref, text });
+    if (session && result?.success) {
+      this.emitCursor(session, { x: 42, y: 42, kind: "type", label: "Type" });
+    }
+    return result;
+  }
+
+  async getTextRef(taskId: string, ref: string, sessionId?: unknown): Promise<AnyRecord | null> {
+    return await this.browserSessionManager.getTextRef({ taskId, sessionId, ref });
+  }
+
+  async uploadFile(input: {
+    taskId: string;
+    sessionId?: unknown;
+    filePath: string;
+    ref?: string;
+    selector?: string;
+  }): Promise<AnyRecord | null> {
+    return await this.browserSessionManager.uploadFile(input);
+  }
+
+  async handleDialog(input: {
+    taskId: string;
+    sessionId?: unknown;
+    accept?: boolean;
+    promptText?: string;
+  }): Promise<AnyRecord | null> {
+    return await this.browserSessionManager.handleDialog(input);
+  }
+
+  getTabs(taskId: string, sessionId?: unknown): AnyRecord[] {
+    return this.browserSessionManager.getTabs(taskId, sessionId) as unknown as AnyRecord[];
+  }
+
+  getConsole(taskId: string, sessionId?: unknown): AnyRecord | null {
+    return this.browserSessionManager.getConsole(taskId, sessionId);
+  }
+
+  getNetwork(taskId: string, sessionId?: unknown): AnyRecord | null {
+    return this.browserSessionManager.getNetwork(taskId, sessionId);
+  }
+
+  getDownloads(taskId: string, sessionId?: unknown): AnyRecord | null {
+    return this.browserSessionManager.getDownloads(taskId, sessionId);
+  }
+
+  async getStorage(taskId: string, sessionId?: unknown): Promise<AnyRecord | null> {
+    return await this.browserSessionManager.getStorage(taskId, sessionId);
+  }
+
+  async emulate(input: {
+    taskId: string;
+    sessionId?: unknown;
+    width?: number;
+    height?: number;
+    deviceScaleFactor?: number;
+    mobile?: boolean;
+  }): Promise<AnyRecord | null> {
+    return await this.browserSessionManager.emulate(input);
+  }
+
+  async traceStart(taskId: string, sessionId?: unknown): Promise<AnyRecord | null> {
+    return await this.browserSessionManager.traceStart(taskId, sessionId);
+  }
+
+  async traceStop(taskId: string, sessionId?: unknown): Promise<AnyRecord | null> {
+    return await this.browserSessionManager.traceStop(taskId, sessionId);
   }
 
   async click(taskId: string, selector: string, sessionId?: unknown): Promise<AnyRecord | null> {
@@ -388,12 +523,16 @@ export class BrowserWorkbenchService {
     workspacePath: string;
     filename?: string;
     includeDataUrl?: boolean;
+    fullPage?: boolean;
   }): Promise<{ path: string; fullPath: string; width: number; height: number; dataUrl?: string } | null> {
     const contents = await this.getWebContents(this.getSession(input.taskId, input.sessionId));
     if (!contents) return null;
-    const image = await contents.capturePage();
-    const size = image.getSize();
-    const png = image.toPNG();
+    const capture = input.fullPage === true
+      ? await this.captureFullPage(contents).catch(() => null)
+      : null;
+    const image = capture ? null : await contents.capturePage();
+    const size = capture?.size || image.getSize();
+    const png = capture?.png || image.toPNG();
     const safeName =
       typeof input.filename === "string" && input.filename.trim()
         ? path.basename(input.filename.trim())
@@ -408,6 +547,28 @@ export class BrowserWorkbenchService {
       width: size.width,
       height: size.height,
       dataUrl: input.includeDataUrl ? `data:image/png;base64,${png.toString("base64")}` : undefined,
+    };
+  }
+
+  private async captureFullPage(contents: Any): Promise<{ png: Buffer; size: { width: number; height: number } }> {
+    const debug = contents.debugger;
+    if (!debug) throw new Error("Browser debugger is not available for full-page capture");
+    if (!debug.isAttached()) debug.attach("1.3");
+    await debug.sendCommand("Page.enable").catch(() => undefined);
+    const metrics = await debug.sendCommand("Page.getLayoutMetrics");
+    const contentSize = metrics?.contentSize || {};
+    const width = Math.max(1, Math.ceil(contentSize.width || 0));
+    const height = Math.max(1, Math.ceil(contentSize.height || 0));
+    const screenshot = await debug.sendCommand("Page.captureScreenshot", {
+      format: "png",
+      captureBeyondViewport: true,
+      clip: { x: 0, y: 0, width, height, scale: 1 },
+    });
+    const data = typeof screenshot?.data === "string" ? screenshot.data : "";
+    if (!data) throw new Error("Full-page screenshot returned empty data");
+    return {
+      png: Buffer.from(data, "base64"),
+      size: { width, height },
     };
   }
 

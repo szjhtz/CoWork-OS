@@ -13,7 +13,10 @@ import {
   getActiveTempWorkspaceLeases,
   touchTempWorkspaceLease,
 } from "../utils/temp-workspace-lease";
-import { pruneTempWorkspaces } from "../utils/temp-workspace";
+import {
+  ensureTempWorkspaceDirectoryPathSync,
+  pruneTempWorkspaces,
+} from "../utils/temp-workspace";
 import { HookSessionRepository } from "./HookSessionRepository";
 import { TEMP_WORKSPACE_NAME, TEMP_WORKSPACE_ROOT_DIR_NAME } from "../../shared/types";
 
@@ -186,11 +189,12 @@ export class HookAgentIngress {
   }
 
   private async createTempWorkspace(key: string): Promise<Workspace> {
-    await fs.mkdir(this.tempWorkspaceRoot, { recursive: true });
-
     const identity = createScopedTempWorkspaceIdentity(this.scope, sanitizeTempWorkspaceKey(key));
     const workspacePath = path.join(this.tempWorkspaceRoot, identity.slug);
-    await fs.mkdir(workspacePath, { recursive: true });
+    const safeWorkspacePath = ensureTempWorkspaceDirectoryPathSync(
+      this.tempWorkspaceRoot,
+      workspacePath,
+    );
 
     const now = Date.now();
     const permissions: Workspace["permissions"] = {
@@ -214,7 +218,7 @@ export class HookAgentIngress {
     `).run(
       identity.workspaceId,
       TEMP_WORKSPACE_NAME,
-      workspacePath,
+      safeWorkspacePath,
       now,
       now,
       JSON.stringify(permissions),
@@ -223,7 +227,7 @@ export class HookAgentIngress {
     const workspace = this.workspaceRepo.findById(identity.workspaceId) ?? {
       id: identity.workspaceId,
       name: TEMP_WORKSPACE_NAME,
-      path: workspacePath,
+      path: safeWorkspacePath,
       createdAt: now,
       lastUsedAt: now,
       permissions,

@@ -27,6 +27,19 @@ describe("WhatsApp natural command mapping for slash workflows", () => {
     );
   });
 
+  it("maps task-flow shortcut phrases", () => {
+    expect(normalizeWhatsAppNaturalCommand("new temp")).toBe("/newtask temp");
+    expect(normalizeWhatsAppNaturalCommand("queue check this after")).toBe(
+      "/queue check this after",
+    );
+    expect(normalizeWhatsAppNaturalCommand("steer focus on tests")).toBe(
+      "/steer focus on tests",
+    );
+    expect(normalizeWhatsAppNaturalCommand("btw summarize the logs")).toBe(
+      "/background summarize the logs",
+    );
+  });
+
   it("does not misclassify URLs", () => {
     expect(
       normalizeWhatsAppNaturalCommand("check https://example.com/batch before we decide"),

@@ -36,7 +36,7 @@ Cowork OS supports these via:
 - Message box shortcuts: one `/` picker for app commands such as `/schedule`, `/clear`, `/plan`, and `/cost`, plus skill-backed workflow aliases from plugin packs
 - Slash skill workflows: `/simplify [objective] ...` for quality passes, `/batch <objective> ...` for parallelizable migration/transform workflows, `/llm-wiki <objective> ...` for persistent research vaults, and CoWork Shortcuts aliases such as `/strategy`, `/batch-rename`, `/gmail-summary-drive`, `/multi-source-report`, and `/end-of-day-log`
 - Integrations: Notion, Gmail/Google Calendar (if configured), Apple Calendar/Reminders (macOS)
-- Web automation: visible Browser Workbench for normal-user site testing, with browser tools, screenshots, annotation, and fallback browser modes when explicitly needed
+- Web automation: visible Browser Workbench / Browser V2 for normal-user site testing, with snapshot refs, browser tools, diagnostics, screenshots, annotation, downloads/uploads, and fallback browser modes when explicitly needed
 - Company-ops primitives: venture workspace kit, digital twin operators, strategic planner, and Mission Control ops monitoring
 - Everything Workbench: task output cards, sidebar/fullscreen artifact workspaces, follow-up composer, and refresh-after-edit behavior for generated knowledge-work artifacts
 

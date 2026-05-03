@@ -76,6 +76,7 @@ export type ToolSchedulerPrepareResult =
 export interface ToolSchedulerExecuteBatchParams {
   calls: SchedulableToolCall[];
   maxParallel?: number;
+  shouldContinue?: () => boolean;
   summarizeBatch?: (
     batch: ScheduledToolBatch,
     reports: ToolScheduleCallReport[],
@@ -148,17 +149,19 @@ export class ToolScheduler {
 
       const rawOutcomes =
         batch.mode === "parallel"
-          ? await this.runParallelBatch(batch, params.maxParallel)
-          : await this.runSerialBatch(batch);
+          ? await this.runParallelBatch(batch, params.maxParallel, params.shouldContinue)
+          : await this.runSerialBatch(batch, params.shouldContinue);
 
       for (let index = 0; index < batch.calls.length; index += 1) {
         const call = batch.calls[index]!;
         const rawOutcome = rawOutcomes[index]!;
-        await call.spec.postExecutionEffect?.({
-          toolName: call.toolName,
-          input: call.input,
-          outcome: rawOutcome,
-        });
+        if (rawOutcome.metadata?.cancelled !== true) {
+          await call.spec.postExecutionEffect?.({
+            toolName: call.toolName,
+            input: call.input,
+            outcome: rawOutcome,
+          });
+        }
         const finalized = await call.finalize(rawOutcome);
         toolResultSlots.set(call.index, finalized.toolResult);
         reports.push({
@@ -266,10 +269,11 @@ export class ToolScheduler {
 
   private async runSerialBatch(
     batch: ScheduledToolBatch,
+    shouldContinue?: () => boolean,
   ): Promise<ToolScheduleRawExecutionOutcome[]> {
     const outcomes: ToolScheduleRawExecutionOutcome[] = [];
     for (const call of batch.calls) {
-      outcomes.push(await this.runCall(call));
+      outcomes.push(await this.runCall(call, shouldContinue));
     }
     return outcomes;
   }
@@ -277,6 +281,7 @@ export class ToolScheduler {
   private async runParallelBatch(
     batch: ScheduledToolBatch,
     maxParallel = batch.calls.length,
+    shouldContinue?: () => boolean,
   ): Promise<ToolScheduleRawExecutionOutcome[]> {
     const outcomes = new Array<ToolScheduleRawExecutionOutcome>(batch.calls.length);
     const concurrency = Math.min(
@@ -292,7 +297,10 @@ export class ToolScheduler {
         if (nextIndex >= batch.calls.length) {
           break;
         }
-        outcomes[nextIndex] = await this.runCall(batch.calls[nextIndex]!);
+        outcomes[nextIndex] = await this.runCall(
+          batch.calls[nextIndex]!,
+          shouldContinue,
+        );
       }
     };
 
@@ -302,7 +310,16 @@ export class ToolScheduler {
 
   private async runCall(
     call: PreparedSchedulableToolCall,
+    shouldContinue?: () => boolean,
   ): Promise<ToolScheduleRawExecutionOutcome> {
+    if (shouldContinue && !shouldContinue()) {
+      return {
+        error: new Error("Tool execution cancelled"),
+        metadata: {
+          cancelled: true,
+        },
+      };
+    }
     try {
       return await call.run();
     } catch (error) {

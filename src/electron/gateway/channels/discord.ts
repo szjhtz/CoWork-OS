@@ -49,6 +49,7 @@ import {
   SelectMenu,
   SelectMenuHandler,
 } from "./types";
+import { listNativeRemoteCommands } from "../remote-command-registry";
 
 /**
  * Embed color constants for different message types
@@ -61,6 +62,158 @@ const EMBED_COLORS = {
   warning: 0xfee75c as ColorResolvable, // Yellow
   neutral: 0x99aab5 as ColorResolvable, // Gray
 } as const;
+
+export type DiscordSlashCommandDefinition = { toJSON(): unknown };
+
+export function buildDiscordSlashCommands(): DiscordSlashCommandDefinition[] {
+  const commands = new Map<string, DiscordSlashCommandDefinition>();
+  for (const command of listNativeRemoteCommands()) {
+    const builder = new SlashCommandBuilder()
+      .setName(command.name)
+      .setDescription(command.description.slice(0, 100));
+
+    switch (command.name) {
+      case "new":
+      case "newtask":
+        builder.addStringOption((option) =>
+          option
+            .setName("mode")
+            .setDescription("Use temp for a scratch temporary session")
+            .setRequired(false)
+            .addChoices({ name: "temp", value: "temp" }),
+        );
+        break;
+      case "commands":
+        builder.addStringOption((option) =>
+          option
+            .setName("category")
+            .setDescription("Command category or page")
+            .setRequired(false),
+        );
+        break;
+      case "workspace":
+        builder.addStringOption((option) =>
+          option
+            .setName("name")
+            .setDescription("Workspace name or number")
+            .setRequired(false),
+        );
+        break;
+      case "queue":
+        builder.addStringOption((option) =>
+          option
+            .setName("message")
+            .setDescription("Follow-up message, or clear")
+            .setRequired(false),
+        );
+        break;
+      case "steer":
+        builder.addStringOption((option) =>
+          option
+            .setName("guidance")
+            .setDescription("Guidance for the active task")
+            .setRequired(true),
+        );
+        break;
+      case "background":
+        builder.addStringOption((option) =>
+          option
+            .setName("prompt")
+            .setDescription("Background task prompt")
+            .setRequired(true),
+        );
+        break;
+      case "skill":
+        builder.addStringOption((option) =>
+          option
+            .setName("id")
+            .setDescription("Skill id to toggle or inspect")
+            .setRequired(true),
+        );
+        break;
+      case "schedule":
+        builder.addStringOption((option) =>
+          option
+            .setName("prompt")
+            .setDescription("Schedule expression and task prompt")
+            .setRequired(true),
+        );
+        break;
+      case "brief":
+        builder.addStringOption((option) =>
+          option
+            .setName("query")
+            .setDescription("Brief command or scope")
+            .setRequired(false),
+        );
+        break;
+      case "agent":
+        builder.addStringOption((option) =>
+          option
+            .setName("name")
+            .setDescription("Agent name, id, or clear")
+            .setRequired(false),
+        );
+        break;
+    }
+
+    commands.set(command.name, builder);
+  }
+
+  commands.set(
+    "task",
+    new SlashCommandBuilder()
+      .setName("task")
+      .setDescription("Run a task")
+      .addStringOption((option) =>
+        option.setName("prompt").setDescription("Task description").setRequired(true),
+      ),
+  );
+  commands.set(
+    "addworkspace",
+    new SlashCommandBuilder()
+      .setName("addworkspace")
+      .setDescription("Add a new workspace by path")
+      .addStringOption((option) =>
+        option.setName("path").setDescription("Path to the workspace folder").setRequired(true),
+      ),
+  );
+  commands.set(
+    "provider",
+    new SlashCommandBuilder()
+      .setName("provider")
+      .setDescription("Change or show current LLM provider")
+      .addStringOption((option) =>
+        option
+          .setName("name")
+          .setDescription("Provider name")
+          .setRequired(false),
+      ),
+  );
+  commands.set(
+    "model",
+    new SlashCommandBuilder()
+      .setName("model")
+      .setDescription("Change or show current model")
+      .addStringOption((option) =>
+        option.setName("name").setDescription("Model name to use").setRequired(false),
+      ),
+  );
+  commands.set(
+    "pair",
+    new SlashCommandBuilder()
+      .setName("pair")
+      .setDescription("Pair with a pairing code to gain access")
+      .addStringOption((option) =>
+        option
+          .setName("code")
+          .setDescription("The pairing code from CoWork OS app")
+          .setRequired(true),
+      ),
+  );
+
+  return Array.from(commands.values());
+}
 
 export class DiscordAdapter implements ChannelAdapter {
   readonly type = "discord" as const;
@@ -280,62 +433,7 @@ export class DiscordAdapter implements ChannelAdapter {
   private async registerSlashCommands(): Promise<void> {
     if (!this.client?.user) return;
 
-    const commands = [
-      new SlashCommandBuilder().setName("start").setDescription("Start the bot and get help"),
-      new SlashCommandBuilder().setName("help").setDescription("Show available commands"),
-      new SlashCommandBuilder().setName("workspaces").setDescription("List available workspaces"),
-      new SlashCommandBuilder()
-        .setName("workspace")
-        .setDescription("Select or show current workspace")
-        .addStringOption((option) =>
-          option.setName("path").setDescription("Workspace path to select").setRequired(false),
-        ),
-      new SlashCommandBuilder()
-        .setName("addworkspace")
-        .setDescription("Add a new workspace by path")
-        .addStringOption((option) =>
-          option.setName("path").setDescription("Path to the workspace folder").setRequired(true),
-        ),
-      new SlashCommandBuilder()
-        .setName("newtask")
-        .setDescription("Start a fresh task/conversation"),
-      new SlashCommandBuilder()
-        .setName("provider")
-        .setDescription("Change or show current LLM provider")
-        .addStringOption((option) =>
-          option
-            .setName("name")
-            .setDescription("Provider name (anthropic, gemini, openrouter, bedrock, ollama)")
-            .setRequired(false),
-        ),
-      new SlashCommandBuilder().setName("providers").setDescription("List all available providers"),
-      new SlashCommandBuilder().setName("models").setDescription("List available AI models"),
-      new SlashCommandBuilder()
-        .setName("model")
-        .setDescription("Change or show current model")
-        .addStringOption((option) =>
-          option.setName("name").setDescription("Model name to use").setRequired(false),
-        ),
-      new SlashCommandBuilder().setName("status").setDescription("Check bot status"),
-      new SlashCommandBuilder().setName("cancel").setDescription("Cancel current task"),
-      new SlashCommandBuilder()
-        .setName("task")
-        .setDescription("Run a task")
-        .addStringOption((option) =>
-          option.setName("prompt").setDescription("Task description").setRequired(true),
-        ),
-      new SlashCommandBuilder()
-        .setName("pair")
-        .setDescription("Pair with a pairing code to gain access")
-        .addStringOption((option) =>
-          option
-            .setName("code")
-            .setDescription("The pairing code from CoWork OS app")
-            .setRequired(true),
-        ),
-      new SlashCommandBuilder().setName("approve").setDescription("Approve the pending action"),
-      new SlashCommandBuilder().setName("deny").setDescription("Deny the pending action"),
-    ];
+    const commands = buildDiscordSlashCommands();
 
     const rest = new REST().setToken(this.config.botToken);
 
@@ -1308,8 +1406,19 @@ export class DiscordAdapter implements ChannelAdapter {
 
     // Handle specific commands with their options
     switch (commandName) {
+      case "new":
+      case "newtask": {
+        const mode = options.getString("mode");
+        if (mode === "temp") text += " temp";
+        break;
+      }
+      case "commands": {
+        const category = options.getString("category");
+        if (category) text += ` ${category}`;
+        break;
+      }
       case "workspace": {
-        const wsPath = options.getString("path");
+        const wsPath = options.getString("name") || options.getString("path");
         if (wsPath) text += ` ${wsPath}`;
         break;
       }
@@ -1326,6 +1435,41 @@ export class DiscordAdapter implements ChannelAdapter {
       case "model": {
         const model = options.getString("name");
         if (model) text += ` ${model}`;
+        break;
+      }
+      case "queue": {
+        const queueMessage = options.getString("message");
+        if (queueMessage) text += ` ${queueMessage}`;
+        break;
+      }
+      case "steer": {
+        const guidance = options.getString("guidance");
+        if (guidance) text += ` ${guidance}`;
+        break;
+      }
+      case "background": {
+        const prompt = options.getString("prompt");
+        if (prompt) text += ` ${prompt}`;
+        break;
+      }
+      case "skill": {
+        const skillId = options.getString("id");
+        if (skillId) text += ` ${skillId}`;
+        break;
+      }
+      case "schedule": {
+        const prompt = options.getString("prompt");
+        if (prompt) text += ` ${prompt}`;
+        break;
+      }
+      case "brief": {
+        const query = options.getString("query");
+        if (query) text += ` ${query}`;
+        break;
+      }
+      case "agent": {
+        const agentName = options.getString("name");
+        if (agentName) text += ` ${agentName}`;
         break;
       }
       case "task": {

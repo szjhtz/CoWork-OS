@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { normalizeWhatsAppPhoneTarget } from "../channels/whatsapp";
+import { normalizeWhatsAppPhoneTarget, WhatsAppAdapter } from "../channels/whatsapp";
 
 // Mock electron
 vi.mock("electron", () => ({
@@ -231,6 +231,30 @@ describe("WhatsApp Adapter updateConfig", () => {
 
     it("should be true by default", () => {
       expect(adapter.shouldReconnect).toBe(true);
+    });
+  });
+});
+
+describe("WhatsAppAdapter editMessage", () => {
+  it("sends a Baileys edit payload with WhatsApp markdown and self-chat prefix", async () => {
+    const adapter = new WhatsAppAdapter({
+      authDir: "/tmp/test-cowork/wa-auth",
+      selfChatMode: true,
+      responsePrefix: "🤖",
+    } as Any);
+    const sendMessage = vi.fn().mockResolvedValue({ key: { id: "edit-1" } });
+    (adapter as Any).sock = { sendMessage };
+    (adapter as Any)._status = "connected";
+
+    await adapter.editMessage("15551234567", "msg-1", "**Done** [link](https://example.com)");
+
+    expect(sendMessage).toHaveBeenCalledWith("15551234567@s.whatsapp.net", {
+      text: "🤖 *Done* link (https://example.com)",
+      edit: {
+        remoteJid: "15551234567@s.whatsapp.net",
+        fromMe: true,
+        id: "msg-1",
+      },
     });
   });
 });

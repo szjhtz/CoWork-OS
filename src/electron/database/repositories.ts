@@ -56,6 +56,27 @@ function safeJsonParse<T>(jsonString: string, defaultValue: T, context?: string)
 }
 
 const taskRepositoryLogger = createLogger("TaskRepository");
+const SAFE_SQL_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+const quoteSqlIdentifier = (identifier: string): string => {
+  if (!SAFE_SQL_IDENTIFIER.test(identifier)) {
+    throw new Error(`Unsafe SQL identifier: ${identifier}`);
+  }
+  return `"${identifier}"`;
+};
+
+interface SqliteForeignKeyRow {
+  table?: string;
+  from?: string;
+  to?: string;
+  on_delete?: string;
+}
+
+interface SqliteTableInfoRow {
+  name?: string;
+  notnull?: number;
+  pk?: number;
+}
 
 export class WorkspaceRepository {
   constructor(private db: Database.Database) {}
@@ -831,12 +852,92 @@ export class TaskRepository {
       );
       deleteSubscriptions.run(taskId);
 
+      this.cleanupTaskForeignKeyReferences(taskId);
+
       // Finally delete the task
       const deleteTask = this.db.prepare("DELETE FROM tasks WHERE id = ?");
       deleteTask.run(taskId);
     });
 
     deleteTransaction(id);
+  }
+
+  private cleanupTaskForeignKeyReferences(taskId: string): void {
+    const tableRows = this.db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+      .all() as Array<{ name?: string }>;
+
+    for (const tableRow of tableRows) {
+      const tableName = String(tableRow.name || "");
+      if (!tableName || tableName.startsWith("sqlite_") || tableName === "tasks") {
+        continue;
+      }
+      if (!SAFE_SQL_IDENTIFIER.test(tableName)) {
+        taskRepositoryLogger.warn(
+          `Skipping task delete FK cleanup for unsafe table name: ${tableName}`,
+        );
+        continue;
+      }
+
+      const tableInfo = this.db
+        .prepare(`PRAGMA table_info(${quoteSqlIdentifier(tableName)})`)
+        .all() as SqliteTableInfoRow[];
+      const columns = new Map(
+        tableInfo
+          .map(
+            (column) =>
+              [
+                String(column.name || ""),
+                Number(column.notnull || 0) || Number(column.pk || 0),
+              ] as const,
+          )
+          .filter(([column]) => SAFE_SQL_IDENTIFIER.test(column)),
+      );
+
+      const foreignKeys = this.db
+        .prepare(`PRAGMA foreign_key_list(${quoteSqlIdentifier(tableName)})`)
+        .all() as SqliteForeignKeyRow[];
+
+      for (const foreignKey of foreignKeys) {
+        const referencedTable = String(foreignKey.table || "");
+        const referencedColumn = String(foreignKey.to || "id");
+        const columnName = String(foreignKey.from || "");
+        if (referencedTable !== "tasks" || referencedColumn !== "id") {
+          continue;
+        }
+        if (!SAFE_SQL_IDENTIFIER.test(columnName) || !columns.has(columnName)) {
+          taskRepositoryLogger.warn(
+            `Skipping task delete FK cleanup for unsafe column ${tableName}.${columnName}`,
+          );
+          continue;
+        }
+
+        const quotedTable = quoteSqlIdentifier(tableName);
+        const quotedColumn = quoteSqlIdentifier(columnName);
+        const onDelete = String(foreignKey.on_delete || "").toUpperCase();
+        const columnIsNullable = columns.get(columnName) === 0;
+
+        if (columnIsNullable && onDelete !== "CASCADE") {
+          this.db
+            .prepare(`UPDATE ${quotedTable} SET ${quotedColumn} = NULL WHERE ${quotedColumn} = ?`)
+            .run(taskId);
+        } else {
+          this.db.prepare(`DELETE FROM ${quotedTable} WHERE ${quotedColumn} = ?`).run(taskId);
+        }
+      }
+    }
+
+    const quotedTasksTable = quoteSqlIdentifier("tasks");
+    for (const columnName of ["parent_task_id", "branch_from_task_id"]) {
+      try {
+        const quotedColumn = quoteSqlIdentifier(columnName);
+        this.db
+          .prepare(`UPDATE ${quotedTasksTable} SET ${quotedColumn} = NULL WHERE ${quotedColumn} = ?`)
+          .run(taskId);
+      } catch {
+        // Older databases may not have every self-reference column.
+      }
+    }
   }
 
   private mapRowToTask(row: Any): Task {

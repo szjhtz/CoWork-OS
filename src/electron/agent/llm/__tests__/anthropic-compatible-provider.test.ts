@@ -78,6 +78,59 @@ describe("AnthropicCompatibleProvider URL resolution", () => {
     );
   });
 
+  it("sends bearer auth alongside x-api-key for compatible gateways", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(mockUnauthorizedResponse());
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new AnthropicCompatibleProvider({
+      type: "anthropic-compatible",
+      providerName: "Anthropic-Compatible",
+      apiKey: "test-key",
+      baseUrl: "https://example.com/anthropic",
+      defaultModel: "custom-model",
+    });
+
+    await provider.testConnection();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://example.com/anthropic/v1/messages",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          "x-api-key": "test-key",
+          Authorization: "Bearer test-key",
+        }),
+      }),
+    );
+  });
+
+  it("surfaces simple gateway error strings during connection tests", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 402,
+        statusText: "Payment Required",
+        json: vi.fn().mockResolvedValue({
+          error: "Insufficient balance",
+          status: 402,
+        }),
+      } as unknown as Response),
+    );
+
+    const provider = new AnthropicCompatibleProvider({
+      type: "anthropic-compatible",
+      providerName: "Anthropic-Compatible",
+      apiKey: "test-key",
+      baseUrl: "https://example.com/anthropic",
+      defaultModel: "custom-model",
+    });
+
+    await expect(provider.testConnection()).resolves.toEqual({
+      success: false,
+      error: "Insufficient balance",
+    });
+  });
+
   it("uses /v1/models when refreshing models from an unversioned Anthropic-compatible base URL", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
@@ -362,5 +415,63 @@ describe("AnthropicCompatibleProvider prompt caching", () => {
     expect(requestBodies[1].messages[0].content[0].cache_control).toEqual({ type: "ephemeral" });
     expect(requestBodies[1].messages[1].content[0].cache_control).toEqual({ type: "ephemeral" });
     expect(requestBodies[1].messages[2].content[0].cache_control).toEqual({ type: "ephemeral" });
+  });
+
+  it("does not send managed prompt-cache controls to NanoGPT", async () => {
+    let capturedBody: Any = null;
+    let capturedHeaders: HeadersInit | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        capturedBody = init?.body ? JSON.parse(String(init.body)) : null;
+        capturedHeaders = init?.headers;
+        return {
+          ok: true,
+          json: async () => ({
+            content: [{ type: "text", text: "ok" }],
+            stop_reason: "end_turn",
+            usage: { input_tokens: 10, output_tokens: 5 },
+          }),
+        } as Response;
+      }),
+    );
+
+    const provider = new AnthropicCompatibleProvider({
+      type: "anthropic-compatible",
+      providerName: "Anthropic-Compatible",
+      apiKey: "test-key",
+      baseUrl: "https://nano-gpt.com/api/v1",
+      defaultModel: "moonshotai/kimi-k2.6:thinking",
+    });
+
+    await provider.createMessage({
+      model: "moonshotai/kimi-k2.6:thinking",
+      maxTokens: 4096,
+      system: "legacy system",
+      systemBlocks: [
+        {
+          text: "Stable instructions",
+          scope: "session",
+          cacheable: true,
+          stableKey: "identity:1",
+        },
+      ],
+      promptCache: {
+        mode: "anthropic_auto",
+        ttl: "5m",
+        explicitRecentMessages: 3,
+      },
+      messages: [{ role: "user", content: "hello" }],
+    });
+
+    expect(capturedBody.cache_control).toBeUndefined();
+    expect(capturedBody.system).toEqual([{ type: "text", text: "Stable instructions" }]);
+    expect(capturedBody.messages).toEqual([{ role: "user", content: "hello" }]);
+    expect(capturedHeaders).toEqual(
+      expect.objectContaining({
+        "x-api-key": "test-key",
+        Authorization: "Bearer test-key",
+      }),
+    );
   });
 });

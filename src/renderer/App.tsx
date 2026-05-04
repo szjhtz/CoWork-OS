@@ -35,6 +35,10 @@ import {
   ComputerUseApprovalDialog,
   isComputerUseAppGrantApproval,
 } from "./components/ComputerUseApprovalDialog";
+import {
+  BrowserUseApprovalDialog,
+  isBrowserUseDomainApproval,
+} from "./components/BrowserUseApprovalDialog";
 import { GenericApprovalDialog } from "./components/GenericApprovalDialog";
 import { ApproveAllSessionWarningDialog } from "./components/ApproveAllSessionWarningDialog";
 import { QuickTaskFAB } from "./components/QuickTaskFAB";
@@ -561,6 +565,7 @@ type SelectedTaskWorkspaceViewProps = {
   ) => void;
   onDismissInputRequest: (requestId: string) => void;
   onOpenBrowserView?: (url?: string) => void;
+  onRevealRightSidebar?: () => void;
   onViewTaskOutputs: (taskId: string, primaryOutputPath?: string) => void;
   onTasksChanged: () => void | Promise<void>;
   onCancelTaskById: (taskId: string) => Promise<void>;
@@ -630,6 +635,7 @@ const SelectedTaskWorkspaceView = memo(function SelectedTaskWorkspaceView({
   onSubmitInputRequest,
   onDismissInputRequest,
   onOpenBrowserView,
+  onRevealRightSidebar,
   onViewTaskOutputs,
   onTasksChanged,
   onCancelTaskById,
@@ -706,6 +712,42 @@ const SelectedTaskWorkspaceView = memo(function SelectedTaskWorkspaceView({
       current ? { ...current, url: status.url ?? current.url } : current,
     );
   }, []);
+  const openBrowserWorkbenchSidebar = useCallback(
+    (request: { sessionId?: string; url?: string; requestId?: string }) => {
+      setSpreadsheetArtifact(null);
+      onRevealRightSidebar?.();
+      const containerWidth =
+        splitLayoutRef.current?.getBoundingClientRect().width || window.innerWidth;
+      const maxWidth = Math.max(
+        SPREADSHEET_SIDEBAR_MIN_WIDTH,
+        containerWidth - SPREADSHEET_MAIN_MIN_WIDTH,
+      );
+      const preferredBrowserWidth = Math.max(
+        SPREADSHEET_SIDEBAR_DEFAULT_WIDTH,
+        containerWidth - 460,
+      );
+      setSpreadsheetSidebarWidth(
+        Math.min(Math.max(preferredBrowserWidth, SPREADSHEET_SIDEBAR_MIN_WIDTH), maxWidth),
+      );
+      setBrowserWorkbench({
+        sessionId: request.sessionId || "default",
+        url: request.url,
+        mode: "sidebar",
+        requestId: request.requestId,
+      });
+    },
+    [onRevealRightSidebar],
+  );
+  const openWebLinkInBrowserSidebar = useCallback(
+    (url: string) => {
+      openBrowserWorkbenchSidebar({
+        sessionId: "link-preview",
+        url,
+        requestId: `link-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      });
+    },
+    [openBrowserWorkbenchSidebar],
+  );
   const sendSpreadsheetFullscreenMessage = useCallback(
     async (message: string, images?: ImageAttachment[]) => {
       const startedAt = Date.now();
@@ -724,27 +766,12 @@ const SelectedTaskWorkspaceView = memo(function SelectedTaskWorkspaceView({
   }, [selectedTaskId, workspace?.path]);
   useEffect(() => {
     if (!browserWorkbenchRequest || browserWorkbenchRequest.taskId !== selectedTaskId) return;
-    setSpreadsheetArtifact(null);
-    const containerWidth =
-      splitLayoutRef.current?.getBoundingClientRect().width || window.innerWidth;
-    const maxWidth = Math.max(
-      SPREADSHEET_SIDEBAR_MIN_WIDTH,
-      containerWidth - SPREADSHEET_MAIN_MIN_WIDTH,
-    );
-    const preferredBrowserWidth = Math.max(
-      SPREADSHEET_SIDEBAR_DEFAULT_WIDTH,
-      containerWidth - 460,
-    );
-    setSpreadsheetSidebarWidth(
-      Math.min(Math.max(preferredBrowserWidth, SPREADSHEET_SIDEBAR_MIN_WIDTH), maxWidth),
-    );
-    setBrowserWorkbench({
+    openBrowserWorkbenchSidebar({
       sessionId: browserWorkbenchRequest.sessionId || "default",
       url: browserWorkbenchRequest.url,
-      mode: "sidebar",
       requestId: browserWorkbenchRequest.requestId,
     });
-  }, [browserWorkbenchRequest, selectedTaskId]);
+  }, [browserWorkbenchRequest, openBrowserWorkbenchSidebar, selectedTaskId]);
   useEffect(() => {
     try {
       window.localStorage.setItem(
@@ -1152,6 +1179,9 @@ const SelectedTaskWorkspaceView = memo(function SelectedTaskWorkspaceView({
         onOpenDocumentArtifact={openDocumentArtifact}
         onOpenPresentationArtifact={openPresentationArtifact}
         onOpenWebArtifact={openWebArtifact}
+        onOpenWebLinkInSidebar={
+          task && workspace?.path && !remoteTaskView ? openWebLinkInBrowserSidebar : undefined
+        }
       />
       {(spreadsheetArtifact || browserWorkbench) && workspace?.path && !remoteTaskView ? (
         <>
@@ -1172,6 +1202,7 @@ const SelectedTaskWorkspaceView = memo(function SelectedTaskWorkspaceView({
           >
             {browserWorkbench && task ? (
               <BrowserWorkbenchView
+                key={browserWorkbench.requestId || browserWorkbench.sessionId}
                 taskId={task.id}
                 sessionId={browserWorkbench.sessionId}
                 initialUrl={browserWorkbench.url}
@@ -1832,6 +1863,9 @@ export function App() {
     setBrowserUrl(url || "");
     setCurrentView("browser");
   };
+  const handleRevealRightSidebar = useCallback(() => {
+    setRightSidebarCollapsed(false);
+  }, []);
 
   const handleShowOnboarding = () => {
     // Reset onboarding state to show the wizard again
@@ -4180,80 +4214,6 @@ export function App() {
               <line x1="9" y1="3" x2="9" y2="21" />
             </svg>
           </button>
-          {leftSidebarCollapsed && (
-            <>
-              <button
-                type="button"
-                className="title-bar-btn"
-                onClick={() => setCurrentView("home")}
-                title="Home"
-                aria-label="Home"
-              >
-                <svg
-                  aria-hidden="true"
-                  width="18"
-                  height="18"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="#6b7280"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  style={{ display: "block", flexShrink: 0 }}
-                >
-                  <path d="M3 11.5 12 4l9 7.5" />
-                  <path d="M5 10.5V20h14v-9.5" />
-                  <path d="M9 20v-6h6v6" />
-                </svg>
-              </button>
-              <button
-                type="button"
-                className="title-bar-btn"
-                onClick={() => setCurrentView("health")}
-                title="Health"
-                aria-label="Health"
-              >
-                <svg
-                  aria-hidden="true"
-                  width="18"
-                  height="18"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="#6b7280"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  style={{ display: "block", flexShrink: 0 }}
-                >
-                  <path d="M20 13.5c0 4.3-3.5 6.5-8 9-4.5-2.5-8-4.7-8-9A5.5 5.5 0 0 1 9.5 8c1.6 0 3 0.8 4.5 2.5C15.5 8.8 16.9 8 18.5 8A5.5 5.5 0 0 1 20 13.5Z" />
-                  <path d="M8 13h2l1.2-2.4L13 16l1.3-3H18" />
-                </svg>
-              </button>
-              <button
-                type="button"
-                className="title-bar-btn"
-                onClick={handleNewSession}
-                title="New Session"
-                aria-label="New Session"
-              >
-                <svg
-                  aria-hidden="true"
-                  width="18"
-                  height="18"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="#6b7280"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  style={{ display: "block", flexShrink: 0 }}
-                >
-                  <line x1="12" y1="5" x2="12" y2="19" />
-                  <line x1="5" y1="12" x2="19" y2="12" />
-                </svg>
-              </button>
-            </>
-          )}
         </div>
         <div className="title-bar-spacer" />
         <div className="title-bar-actions">
@@ -4704,6 +4664,7 @@ export function App() {
                 onSubmitInputRequest={handleSubmitInputRequestFromMainContent}
                 onDismissInputRequest={handleDismissInputRequestFromMainContent}
                 onOpenBrowserView={handleOpenBrowserView}
+                onRevealRightSidebar={handleRevealRightSidebar}
                 onViewTaskOutputs={handleViewTaskOutputsFromMainContent}
                 onTasksChanged={loadTasks}
                 onCancelTaskById={handleCancelTaskById}
@@ -4735,6 +4696,17 @@ export function App() {
                 void handleApprovalResponse(computerUseAppGrantApproval.id, true)
               }
               onDeny={() => void handleApprovalResponse(computerUseAppGrantApproval.id, false)}
+            />
+          ) : genericApproval && isBrowserUseDomainApproval(genericApproval) ? (
+            <BrowserUseApprovalDialog
+              approval={genericApproval}
+              onRespond={(action) =>
+                void handleApprovalResponse(
+                  genericApproval.id,
+                  action.startsWith("allow_"),
+                  action,
+                )
+              }
             />
           ) : genericApproval ? (
             <GenericApprovalDialog

@@ -11,7 +11,7 @@ import type {
   KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import type { IntegrationMentionSelection } from "../../shared/types";
-import { IntegrationMentionIcon, getIntegrationMentionIconMeta } from "./IntegrationMentionIcon";
+import { IntegrationMentionIcon, renderIntegrationMentionIconContent } from "./IntegrationMentionIcon";
 
 export type IntegrationMentionSpan = {
   spanId: string;
@@ -279,16 +279,9 @@ function renderComposerDom(root: HTMLElement, parts: RenderPart[]): void {
     chip.contentEditable = "false";
     chip.dataset.integrationMentionId = part.span.spanId;
 
-    const iconMeta = getIntegrationMentionIconMeta(
-      part.span.mention.iconKey,
-      part.span.mention.label,
-    );
     const icon = document.createElement("span");
     icon.className = "integration-mention-icon integration-mention-icon-xs";
-    icon.style.backgroundColor = iconMeta.bg;
-    icon.style.color = iconMeta.fg;
-    icon.setAttribute("aria-hidden", "true");
-    icon.textContent = iconMeta.glyph;
+    renderIntegrationMentionIconContent(icon, part.span.mention.iconKey, part.span.mention.label);
 
     const label = document.createElement("span");
     label.className = "integration-mention-chip-label";

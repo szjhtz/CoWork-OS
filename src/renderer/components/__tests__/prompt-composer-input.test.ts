@@ -34,6 +34,7 @@ describe("PromptComposerInput", () => {
     );
 
     expect(markup).toContain("integration-mention-chip");
+    expect(markup).toContain("integration-mention-icon-svg");
     expect(markup).toContain("Gmail");
     expect(markup).toContain("for triage");
   });

@@ -47,9 +47,13 @@ export function scopeToLabel(scope: PermissionRuleScope): string {
     case "tool":
       return `Tool: ${scope.toolName}`;
     case "domain":
-      return scope.toolName
-        ? `Domain: ${scope.domain} (${scope.toolName})`
-        : `Domain: ${scope.domain}`;
+      if (scope.toolName) {
+        return `Domain: ${scope.domain} (${scope.toolName})`;
+      }
+      if (scope.toolPrefix) {
+        return `Domain: ${scope.domain} (${scope.toolPrefix}*)`;
+      }
+      return `Domain: ${scope.domain}`;
     case "path":
       return scope.toolName
         ? `Path: ${scope.path} (${scope.toolName})`

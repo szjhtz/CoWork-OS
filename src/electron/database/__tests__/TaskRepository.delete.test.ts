@@ -368,6 +368,50 @@ describeWithSqlite("TaskRepository.delete", () => {
     expect(db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
   });
 
+  it("cleans legacy task foreign keys that are not hard-coded in the delete path", () => {
+    const workspace = insertWorkspace();
+    const task = taskRepo.create({
+      title: "Task with legacy references",
+      prompt: "archive me from an upgraded database",
+      status: "completed",
+      workspaceId: workspace.id,
+    });
+
+    db.exec(`
+      CREATE TABLE legacy_required_task_refs (
+        id TEXT PRIMARY KEY,
+        task_id TEXT NOT NULL REFERENCES tasks(id),
+        note TEXT NOT NULL
+      );
+
+      CREATE TABLE legacy_optional_task_refs (
+        id TEXT PRIMARY KEY,
+        source_task_id TEXT REFERENCES tasks(id),
+        note TEXT NOT NULL
+      );
+    `);
+    db.prepare("INSERT INTO legacy_required_task_refs (id, task_id, note) VALUES (?, ?, ?)").run(
+      randomUUID(),
+      task.id,
+      "delete this row",
+    );
+    const optionalRefId = randomUUID();
+    db.prepare(
+      "INSERT INTO legacy_optional_task_refs (id, source_task_id, note) VALUES (?, ?, ?)",
+    ).run(optionalRefId, task.id, "preserve this row");
+
+    taskRepo.delete(task.id);
+
+    expect(taskRepo.findById(task.id)).toBeUndefined();
+    expect(db.prepare("SELECT COUNT(1) AS count FROM legacy_required_task_refs").get()).toEqual({
+      count: 0,
+    });
+    expect(
+      db.prepare("SELECT source_task_id FROM legacy_optional_task_refs WHERE id = ?").get(optionalRefId),
+    ).toEqual({ source_task_id: null });
+    expect(db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+  });
+
   it("prunes only stale remote shadow tasks covered by the fetched window", () => {
     const workspace = insertWorkspace();
     const now = Date.now();

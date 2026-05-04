@@ -94,6 +94,7 @@ const PermissionRuleScopeSchema = z.discriminatedUnion("kind", [
     kind: z.literal("domain"),
     domain: z.string().min(1).max(200),
     toolName: z.string().min(1).max(200).optional(),
+    toolPrefix: z.string().min(1).max(200).optional(),
   }),
   z.object({
     kind: z.literal("command_prefix"),

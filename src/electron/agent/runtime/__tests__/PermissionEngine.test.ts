@@ -429,6 +429,84 @@ describe("PermissionEngine", () => {
     expect(readResult.scopePreview).toContain("docs.example.com");
   });
 
+  it("matches browser domain rules by tool prefix without granting unrelated tools", () => {
+    const rules: PermissionRule[] = [
+      {
+        source: "session",
+        effect: "allow",
+        scope: {
+          kind: "domain",
+          domain: "github.com",
+          toolPrefix: "browser_",
+        },
+      },
+    ];
+
+    for (const toolName of ["browser_navigate", "browser_click", "browser_fill"]) {
+      const result = evaluate({
+        toolName,
+        approvalType: "network_access",
+        mode: "default",
+        toolInput: { url: "https://github.com/openai/codex" },
+        rules,
+      });
+
+      expect(result.decision).toBe("allow");
+      expect(result.matchedRule?.scope).toEqual({
+        kind: "domain",
+        domain: "github.com",
+        toolPrefix: "browser_",
+      });
+    }
+
+    for (const toolName of ["web_fetch", "http_request", "open_url"]) {
+      const result = evaluate({
+        toolName,
+        approvalType: "network_access",
+        mode: "default",
+        toolInput: { url: "https://github.com/openai/codex" },
+        rules,
+      });
+
+      expect(result.matchedRule).toBeUndefined();
+    }
+  });
+
+  it("infers browser domain approvals as browser-only domain rules", () => {
+    expect(PermissionEngine.inferScope({
+      workspace,
+      toolName: "browser_navigate",
+      approvalType: "network_access",
+      mode: "default",
+      rules: [],
+      toolInput: { url: "https://github.com/openai/codex" },
+    })).toEqual({
+      kind: "domain",
+      domain: "github.com",
+      toolPrefix: "browser_",
+    });
+  });
+
+  it("keeps workspace network blocks hard for Browser Use domain access", () => {
+    const result = evaluate({
+      workspace: {
+        ...workspace,
+        permissions: {
+          ...workspace.permissions,
+          network: false,
+        },
+      },
+      toolName: "browser_navigate",
+      approvalType: "network_access",
+      mode: "default",
+      toolInput: { url: "https://github.com/openai/codex" },
+    });
+
+    expect(result.decision).toBe("deny");
+    expect(result.reason.type).toBe("workspace_capability");
+    expect(result.reason.summary).toContain("network");
+  });
+
   it("treats browser navigation as a mutating action in default mode", () => {
     const result = evaluate({
       toolName: "browser_navigate",

@@ -172,6 +172,45 @@ const GOOGLE_WORKSPACE_SPLIT_OPTIONS: IntegrationMentionOption[] = [
   },
 ];
 
+const BROWSER_USE_OPTION: IntegrationMentionOption = {
+  id: "builtin:browser-use",
+  label: "Browser",
+  source: "builtin",
+  providerKey: "browser-use",
+  iconKey: "browser",
+  description: "Open, inspect, test, and interact with web pages in the Browser Use session.",
+  aliases: [
+    "browser",
+    "browser use",
+    "web",
+    "website",
+    "site",
+    "chrome",
+    "page",
+    "qa",
+    "test",
+    "click",
+    "screenshot",
+  ],
+  tools: [
+    "browser_navigate",
+    "browser_snapshot",
+    "browser_click",
+    "browser_fill",
+    "browser_type",
+    "browser_press",
+    "browser_screenshot",
+    "browser_get_content",
+    "browser_get_text",
+    "browser_evaluate",
+    "browser_wait",
+    "browser_scroll",
+  ],
+  promptHint:
+    "Use Browser Use/browser_* tools for interactive web pages, local app testing, login flows, forms, screenshots, and visual checks. Prefer the visible browser session and inspect with browser_snapshot before acting.",
+  status: "configured",
+};
+
 const INBOX_AGENT_OPTION: IntegrationMentionOption = {
   id: "builtin:inbox-agent",
   label: "Inbox",
@@ -280,7 +319,7 @@ function optionFromBuiltin(
 }
 
 function buildBuiltinOptions(settings: BuiltinIntegrationSettings): IntegrationMentionOption[] {
-  const options: IntegrationMentionOption[] = [];
+  const options: IntegrationMentionOption[] = [BROWSER_USE_OPTION];
 
   const google = settings.googleWorkspace;
   if (google?.enabled && (hasText(google.accessToken) || hasText(google.refreshToken))) {

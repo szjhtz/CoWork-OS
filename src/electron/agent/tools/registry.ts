@@ -104,6 +104,7 @@ import { CodeExecTools } from "./code-exec-tools";
 import { DocumentParserTools } from "./document-parser-tools";
 import { isHeadlessMode } from "../../utils/runtime-mode";
 import { sanitizeStoredPreferredName } from "../../utils/preferred-name";
+import { getBrowserWorkbenchService } from "../../browser/browser-workbench-service";
 import { HooksSettingsManager } from "../../hooks/settings";
 import { InfraTools } from "../../infra/infra-tools";
 import { InfraSettingsManager } from "../../infra/infra-settings";
@@ -156,6 +157,7 @@ import {
   renderToolForContext,
   withToolPromptMetadataList,
 } from "./tool-prompting";
+import { buildBrowserUseDomainApprovalDetails } from "./browser-use-approval-context";
 
 function sanitizeFilename(raw: string, maxLen = 120): string {
   const base = path.basename(String(raw || "").trim() || "artifact");
@@ -1533,12 +1535,41 @@ export class ToolRegistry {
     };
   }
 
+  private buildBrowserUseApprovalDetails(toolName: string, input: Any) {
+    const normalizedToolName = String(toolName || "").trim().toLowerCase();
+    const toolInput = input && typeof input === "object" && !Array.isArray(input) ? input : {};
+    const sessionId =
+      typeof (toolInput as Record<string, unknown>).session_id === "string"
+        ? ((toolInput as Record<string, unknown>).session_id as string).trim()
+        : undefined;
+    const currentUrl =
+      normalizedToolName === "browser_navigate"
+        ? null
+        : getBrowserWorkbenchService().getSession(this.taskId, sessionId)?.url || null;
+    return buildBrowserUseDomainApprovalDetails({
+      toolName,
+      input,
+      currentUrl,
+    });
+  }
+
   private buildExecutionMiddlewares(): ToolExecutionMiddleware[] {
     const policyMiddleware: ToolExecutionMiddleware = async (context, next) => {
       const runtime = this.getRuntimeMetadata(context.request.name);
       const approvalType = this.getApprovalTypeForTool(context.request.name, context.request.input);
+      const browserUseApproval = this.buildBrowserUseApprovalDetails(
+        context.request.name,
+        context.request.input,
+      );
+      const effectiveApprovalType = browserUseApproval ? "network_access" : approvalType;
       const permissionEvaluation = (this.daemon as Any)?.evaluateToolPermission;
       const serverName = this.getMcpServerName(context.request.name);
+      const approvalDetails = {
+        tool: context.request.name,
+        params: context.request.input ?? null,
+        ...(serverName ? { serverName } : {}),
+        ...browserUseApproval,
+      };
       const pipeline = await evaluateToolPolicyPipeline({
         workspace: this.workspace,
         toolName: context.request.name,
@@ -1552,13 +1583,9 @@ export class ToolRegistry {
           typeof permissionEvaluation === "function"
             ? () =>
                 permissionEvaluation.call(this.daemon, this.taskId, {
-                  ...(approvalType ? { approvalType } : {}),
+                  ...(effectiveApprovalType ? { approvalType: effectiveApprovalType } : {}),
                   toolName: context.request.name,
-                  details: {
-                    tool: context.request.name,
-                    params: context.request.input ?? null,
-                    ...(serverName ? { serverName } : {}),
-                  },
+                  details: approvalDetails,
                 })
             : undefined,
       });
@@ -1590,13 +1617,13 @@ export class ToolRegistry {
         const approved = await requester.call(
           this.daemon,
           this.taskId,
-          approvalType || "external_service",
-          `Approve tool call: ${context.request.name}`,
+          effectiveApprovalType || "external_service",
+          browserUseApproval
+            ? `Allow Browser Use to access ${browserUseApproval.origin}?`
+            : `Approve tool call: ${context.request.name}`,
           {
-            tool: context.request.name,
-            params: context.request.input ?? null,
+            ...approvalDetails,
             reason: pipeline.reason || null,
-            ...(serverName ? { serverName } : {}),
           },
         );
         if (approved !== true) {

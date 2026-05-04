@@ -2,6 +2,19 @@ import { describe, expect, it } from "vitest";
 import { buildIntegrationMentionOptionsFromState } from "../integration-mention-options";
 
 describe("buildIntegrationMentionOptionsFromState", () => {
+  it("always exposes Browser Use as an @mention option", () => {
+    const options = buildIntegrationMentionOptionsFromState({});
+
+    expect(options).toEqual([
+      expect.objectContaining({
+        id: "builtin:browser-use",
+        label: "Browser",
+        iconKey: "browser",
+        tools: expect.arrayContaining(["browser_navigate", "browser_snapshot"]),
+      }),
+    ]);
+  });
+
   it("splits configured Google Workspace into Gmail, Drive, and Calendar", () => {
     const options = buildIntegrationMentionOptionsFromState({
       builtins: {
@@ -17,6 +30,7 @@ describe("buildIntegrationMentionOptionsFromState", () => {
     });
 
     expect(options.map((option) => option.label)).toEqual([
+      "Browser",
       "Gmail",
       "Google Drive",
       "Google Calendar",
@@ -61,7 +75,9 @@ describe("buildIntegrationMentionOptionsFromState", () => {
       },
     });
 
-    expect(options).toEqual([]);
+    expect(options.map((option) => option.id)).toEqual(["builtin:browser-use"]);
+    expect(options.some((option) => option.id === "builtin:notion")).toBe(false);
+    expect(options.some((option) => option.id === "builtin:dropbox")).toBe(false);
   });
 
   it("returns connected Slack gateway channels", () => {
@@ -79,8 +95,8 @@ describe("buildIntegrationMentionOptionsFromState", () => {
       ],
     });
 
-    expect(options).toHaveLength(1);
-    expect(options[0]).toMatchObject({
+    expect(options).toHaveLength(2);
+    expect(options[1]).toMatchObject({
       id: "gateway:slack:ch_1",
       label: "Slack",
       iconKey: "slack",
@@ -119,6 +135,7 @@ describe("buildIntegrationMentionOptionsFromState", () => {
     });
 
     expect(options.map((option) => option.label)).toEqual([
+      "Browser",
       "Google Drive",
       "Google Docs",
       "Google Sheets",
@@ -153,8 +170,8 @@ describe("buildIntegrationMentionOptionsFromState", () => {
       },
     });
 
-    expect(disconnected).toEqual([]);
-    expect(connected).toHaveLength(1);
-    expect(connected[0].tools).toEqual(["mcp_custom_search"]);
+    expect(disconnected.map((option) => option.id)).toEqual(["builtin:browser-use"]);
+    expect(connected).toHaveLength(2);
+    expect(connected[1].tools).toEqual(["mcp_custom_search"]);
   });
 });

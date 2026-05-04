@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback, Fragment, useDeferredValue } from "react";
-import { ChevronDown, ChevronRight, SlidersHorizontal, EyeOff, AppWindow, Bell, HardDrive, Rows3, Search, Server, Workflow, HeartPulse, Lightbulb, Inbox, Users, UsersRound, ListFilter, EllipsisVertical, Shapes } from "lucide-react";
+import { ChevronDown, ChevronRight, SlidersHorizontal, EyeOff, AppWindow, Bell, HardDrive, Rows3, Search, Server, Workflow, HeartPulse, Lightbulb, Inbox, Users, UsersRound, ListFilter, EllipsisVertical, Shapes, Plus } from "lucide-react";
 import { resolveTwinIcon } from "../utils/twin-icons";
 import { stripAllEmojis } from "../utils/emoji-replacer";
 import { Task, Workspace, UiDensity, InfraStatus, UpdateInfo } from "../../shared/types";
@@ -1715,8 +1715,8 @@ export function Sidebar({
             <span className="cli-btn-text">
               <span className="terminal-only">new_session</span>
               <span className="modern-only cli-new-task-modern-label">
-                <span className="cli-new-task-modern-plus" aria-hidden="true">
-                  +
+                <span className="sidebar-home-btn-icon sidebar-new-session-icon" aria-hidden="true">
+                  <Plus size={16} strokeWidth={2} style={{ display: "block" }} />
                 </span>
                 <span>New</span>
               </span>

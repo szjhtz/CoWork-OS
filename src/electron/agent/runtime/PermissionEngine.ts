@@ -642,6 +642,7 @@ export class PermissionEngine {
       case "domain":
         if (!facts.normalizedDomain || !scope.domain) return false;
         if (scope.toolName && scope.toolName !== facts.toolName) return false;
+        if (scope.toolPrefix && !facts.toolName.startsWith(scope.toolPrefix)) return false;
         return facts.normalizedDomain === scope.domain;
       case "path":
         if (!facts.normalizedPath || !scope.path) return false;
@@ -729,6 +730,13 @@ export class PermissionEngine {
     request: PermissionEngineRequest,
     facts = this.buildFacts(request),
   ): PermissionRuleScope {
+    if (facts.normalizedDomain && facts.toolName.startsWith("browser_")) {
+      return {
+        kind: "domain",
+        domain: facts.normalizedDomain,
+        toolPrefix: "browser_",
+      };
+    }
     if (facts.normalizedDomain && (facts.isNetworkAccess || facts.isDataExport)) {
       return {
         kind: "domain",

@@ -1175,6 +1175,7 @@ export type PermissionRuleScope =
       kind: "domain";
       domain: string;
       toolName?: string;
+      toolPrefix?: string;
     }
   | {
       kind: "path";

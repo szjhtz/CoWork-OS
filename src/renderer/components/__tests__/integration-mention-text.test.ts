@@ -27,6 +27,7 @@ describe("IntegrationMentionText", () => {
     );
 
     expect(markup).toContain("integration-mention-message-chip");
+    expect(markup).toContain("integration-mention-icon-svg");
     expect(markup).toContain("Gmail");
     expect(markup).toContain("whats the last email I got");
   });

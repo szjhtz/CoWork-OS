@@ -22,6 +22,7 @@ export function normalizePermissionScope(scope: PermissionRuleScope): Permission
         kind: "domain",
         domain: String(scope.domain || "").trim().toLowerCase(),
         ...(scope.toolName ? { toolName: String(scope.toolName || "").trim() } : {}),
+        ...(scope.toolPrefix ? { toolPrefix: String(scope.toolPrefix || "").trim() } : {}),
       };
     case "path":
       return {
@@ -51,8 +52,15 @@ export function normalizePermissionScope(scope: PermissionRuleScope): Permission
 export function permissionScopeFingerprint(scope: PermissionRuleScope): string {
   const normalized = normalizePermissionScope(scope);
   switch (normalized.kind) {
-    case "domain":
-      return `domain:${normalized.toolName || "*"}:${normalized.domain}`;
+    case "domain": {
+      const toolScope = [
+        normalized.toolName ? `tool=${normalized.toolName}` : "",
+        normalized.toolPrefix ? `prefix=${normalized.toolPrefix}` : "",
+      ]
+        .filter(Boolean)
+        .join(",");
+      return `domain:${toolScope || "*"}:${normalized.domain}`;
+    }
     case "path":
       return `path:${normalized.toolName || "*"}:${normalized.path}`;
     case "command_prefix":
@@ -73,9 +81,13 @@ export function summarizePermissionScope(scope: PermissionRuleScope): string {
   const normalized = normalizePermissionScope(scope);
   switch (normalized.kind) {
     case "domain":
-      return normalized.toolName
-        ? `${normalized.toolName} on domain ${normalized.domain}`
-        : `domain ${normalized.domain}`;
+      if (normalized.toolName) {
+        return `${normalized.toolName} on domain ${normalized.domain}`;
+      }
+      if (normalized.toolPrefix) {
+        return `${normalized.toolPrefix}* on domain ${normalized.domain}`;
+      }
+      return `domain ${normalized.domain}`;
     case "path":
       return normalized.toolName
         ? `${normalized.toolName} on path ${normalized.path}`
@@ -94,7 +106,12 @@ export function getPermissionScopeSpecificity(scope: PermissionRuleScope): numbe
   const normalized = normalizePermissionScope(scope);
   switch (normalized.kind) {
     case "domain":
-      return 4500 + normalized.domain.length + (normalized.toolName ? 1000 : 0);
+      return (
+        4500 +
+        normalized.domain.length +
+        (normalized.toolName ? 1000 : 0) +
+        (normalized.toolPrefix ? 750 : 0)
+      );
     case "path":
       return 4000 + normalized.path.length + (normalized.toolName ? 1000 : 0);
     case "command_prefix":

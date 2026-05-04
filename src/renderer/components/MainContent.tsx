@@ -2578,12 +2578,13 @@ export function cleanAssistantMessageForDisplay(message: string): string {
   );
 }
 
-const buildMarkdownComponents = (options: {
+export const buildMarkdownComponents = (options: {
   workspacePath?: string;
   onOpenViewer?: (path: string) => void;
+  onOpenWebLinkInSidebar?: (url: string) => void;
   citations?: Array<{ index: number; url: string; title: string; snippet: string; domain: string; accessedAt: number; sourceTool: string }>;
 }) => {
-  const { workspacePath, onOpenViewer, citations } = options;
+  const { workspacePath, onOpenViewer, onOpenWebLinkInSidebar, citations } = options;
 
   /** Map citation index → citation for O(1) lookup */
   const citationMap = new Map(
@@ -2655,6 +2656,10 @@ const buildMarkdownComponents = (options: {
       const handleClick = async (e: React.MouseEvent) => {
         e.preventDefault();
         e.stopPropagation();
+        if (onOpenWebLinkInSidebar) {
+          onOpenWebLinkInSidebar(href);
+          return;
+        }
         try {
           await window.electronAPI.openExternal(href);
         } catch (err) {
@@ -4791,6 +4796,7 @@ interface MainContentProps {
   onOpenDocumentArtifact?: (path: string) => void;
   onOpenPresentationArtifact?: (path: string) => void;
   onOpenWebArtifact?: (path: string) => void;
+  onOpenWebLinkInSidebar?: (url: string) => void;
   selectedModel: string;
   selectedProvider: LLMProviderType;
   selectedReasoningEffort?: LLMReasoningEffort;
@@ -7668,6 +7674,7 @@ function MainContentComponent({
   onOpenDocumentArtifact,
   onOpenPresentationArtifact,
   onOpenWebArtifact,
+  onOpenWebLinkInSidebar,
   selectedModel,
   selectedProvider,
   selectedReasoningEffort,
@@ -8345,8 +8352,13 @@ function MainContentComponent({
 
   const markdownComponents = useMemo(
     () =>
-      buildMarkdownComponents({ workspacePath: workspace?.path, onOpenViewer: setViewerFilePath, citations }),
-    [workspace?.path, setViewerFilePath, citations],
+      buildMarkdownComponents({
+        workspacePath: workspace?.path,
+        onOpenViewer: setViewerFilePath,
+        onOpenWebLinkInSidebar,
+        citations,
+      }),
+    [workspace?.path, setViewerFilePath, onOpenWebLinkInSidebar, citations],
   );
   const eventTitleMarkdownComponents = useMemo(
     () => ({
@@ -14539,7 +14551,8 @@ function areMainContentPropsEqual(prev: MainContentProps, next: MainContentProps
     prev.onOpenSpreadsheetArtifact === next.onOpenSpreadsheetArtifact &&
     prev.onOpenDocumentArtifact === next.onOpenDocumentArtifact &&
     prev.onOpenPresentationArtifact === next.onOpenPresentationArtifact &&
-    prev.onOpenWebArtifact === next.onOpenWebArtifact
+    prev.onOpenWebArtifact === next.onOpenWebArtifact &&
+    prev.onOpenWebLinkInSidebar === next.onOpenWebLinkInSidebar
   );
 }
 

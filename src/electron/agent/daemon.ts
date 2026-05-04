@@ -2809,6 +2809,9 @@ export class AgentDaemon extends EventEmitter {
       typeof details?.serverName === "string" && details.serverName.trim()
         ? details.serverName.trim()
         : null;
+    const permissionToolInput = Object.prototype.hasOwnProperty.call(details || {}, "permissionInput")
+      ? details.permissionInput
+      : details?.params ?? details;
     const mode = this.buildPermissionMode(taskId, task);
     const bundleGrantKey =
       type === "run_command" && details?.approvalMode === "single_bundle"
@@ -2818,7 +2821,7 @@ export class AgentDaemon extends EventEmitter {
       const scope = PermissionEngine.inferScope({
         workspace: workspace as Workspace,
         toolName,
-        toolInput: details?.params ?? details,
+        toolInput: permissionToolInput,
         mode,
         approvalType: type,
         command: details?.command,
@@ -2871,7 +2874,7 @@ export class AgentDaemon extends EventEmitter {
           createdAt: 0,
         } as Workspace),
       toolName,
-      toolInput: details?.params ?? details,
+      toolInput: permissionToolInput,
       mode,
       rules,
       approvalType: type,
@@ -2885,7 +2888,7 @@ export class AgentDaemon extends EventEmitter {
               PermissionEngine.inferScope({
                 workspace: workspace as Workspace,
                 toolName,
-                toolInput: details?.params ?? details,
+                toolInput: permissionToolInput,
                 mode,
                 approvalType: type,
                 command: details?.command,
@@ -2915,7 +2918,7 @@ export class AgentDaemon extends EventEmitter {
           createdAt: 0,
         } as Workspace),
       toolName,
-      toolInput: details?.params ?? details,
+      toolInput: permissionToolInput,
       mode,
       approvalType: type,
       command: details?.command,
@@ -2935,7 +2938,7 @@ export class AgentDaemon extends EventEmitter {
         const securityContext = buildPermissionSecurityContext({
           workspace,
           toolName,
-          toolInput: details?.params ?? details,
+          toolInput: permissionToolInput,
           recentSensitiveSources: runtime?.listRecentSensitiveSources?.() || [],
         });
         return securityContext ? { securityContext } : {};

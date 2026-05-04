@@ -93,6 +93,36 @@ describe("PptxPreviewService", () => {
     expect(preview.slides[1].text).toContain("First point");
   });
 
+  it("allows preview when the viewer passes a real file path for a symlinked workspace root", async () => {
+    const realWorkspace = path.join(tempRoot, "workspace-real");
+    const workspaceAlias = path.join(tempRoot, "workspace-alias");
+    await fs.mkdir(realWorkspace, { recursive: true });
+    try {
+      await fs.symlink(realWorkspace, workspaceAlias, "dir");
+    } catch {
+      return;
+    }
+    const deckPath = path.join(realWorkspace, "deck.pptx");
+    await createDeck(deckPath);
+    const realDeckPath = await fs.realpath(deckPath);
+
+    const service = new PptxPreviewService({
+      cacheRoot: path.join(tempRoot, "cache"),
+      artifactToolRunner: null,
+      commandRunner: async () => {
+        throw new Error("converter unavailable");
+      },
+    });
+
+    const preview = await service.buildPreview({
+      filePath: realDeckPath,
+      workspaceRoot: workspaceAlias,
+    });
+
+    expect(preview.slideCount).toBe(2);
+    expect(preview.renderStatus).toBe("text_only");
+  });
+
   it("renders images once and reuses the preview cache", async () => {
     const workspace = path.join(tempRoot, "workspace");
     await fs.mkdir(workspace, { recursive: true });
@@ -268,6 +298,33 @@ describe("PptxPreviewService", () => {
     await expect(
       service.buildPreview({
         filePath: deckPath,
+        workspaceRoot: workspace,
+      }),
+    ).rejects.toThrow(/outside the workspace/);
+  });
+
+  it("rejects symlinked PPTX files that resolve outside the workspace", async () => {
+    const workspace = path.join(tempRoot, "workspace");
+    const outside = path.join(tempRoot, "outside");
+    await fs.mkdir(workspace, { recursive: true });
+    await fs.mkdir(outside, { recursive: true });
+    const deckPath = path.join(outside, "deck.pptx");
+    await createDeck(deckPath);
+    const linkPath = path.join(workspace, "linked.pptx");
+    try {
+      await fs.symlink(deckPath, linkPath);
+    } catch {
+      return;
+    }
+
+    const service = new PptxPreviewService({
+      cacheRoot: path.join(tempRoot, "cache"),
+      artifactToolRunner: null,
+    });
+
+    await expect(
+      service.buildPreview({
+        filePath: linkPath,
         workspaceRoot: workspace,
       }),
     ).rejects.toThrow(/outside the workspace/);

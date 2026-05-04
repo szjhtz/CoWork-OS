@@ -104,9 +104,16 @@ export class PptxPreviewService {
     workspaceRoot?: string;
     renderMode?: PptxPreviewRenderMode;
   }): Promise<PptxPresentationPreview> {
-    const resolvedPath = path.resolve(input.filePath);
-    if (input.workspaceRoot && !isPathInside(resolvedPath, input.workspaceRoot)) {
-      throw new Error("Access denied: PPTX preview path is outside the workspace");
+    const resolvedPath = await fs.realpath(path.resolve(input.filePath));
+    if (input.workspaceRoot) {
+      const resolvedWorkspaceRoot = await fs.realpath(
+        path.resolve(input.workspaceRoot),
+      );
+      if (!isPathInside(resolvedPath, resolvedWorkspaceRoot)) {
+        throw new Error(
+          "Access denied: PPTX preview path is outside the workspace",
+        );
+      }
     }
 
     const stats = await fs.stat(resolvedPath);

@@ -1,6 +1,8 @@
-import { describe, expect, it } from "vitest";
+import type { ReactElement } from "react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   autolinkBareDomains,
+  buildMarkdownComponents,
   createQuotedAssistantMessage,
   autolinkUrlsInBrackets,
   normalizeCodeBlockTextForDisplay,
@@ -9,7 +11,48 @@ import {
   shouldCreateFreshTaskForSend,
 } from "../MainContent";
 
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+function getMarkdownLinkClickHandler(
+  onOpenWebLinkInSidebar?: (url: string) => void,
+): (event: { preventDefault: () => void; stopPropagation: () => void }) => Promise<void> {
+  const components = buildMarkdownComponents({ onOpenWebLinkInSidebar });
+  const link = components.a({
+    href: "https://example.com/product",
+    children: "Example",
+  }) as ReactElement<{
+    onClick: (event: { preventDefault: () => void; stopPropagation: () => void }) => Promise<void>;
+  }>;
+  return link.props.onClick;
+}
+
 describe("MainContent markdown normalization helpers", () => {
+  it("routes external markdown links to the sidebar browser callback when available", async () => {
+    const openExternal = vi.fn();
+    const onOpenWebLinkInSidebar = vi.fn();
+    vi.stubGlobal("window", { electronAPI: { openExternal } });
+    const clickEvent = { preventDefault: vi.fn(), stopPropagation: vi.fn() };
+
+    await getMarkdownLinkClickHandler(onOpenWebLinkInSidebar)(clickEvent);
+
+    expect(clickEvent.preventDefault).toHaveBeenCalled();
+    expect(clickEvent.stopPropagation).toHaveBeenCalled();
+    expect(onOpenWebLinkInSidebar).toHaveBeenCalledWith("https://example.com/product");
+    expect(openExternal).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the system browser when no sidebar browser callback is available", async () => {
+    const openExternal = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("window", { electronAPI: { openExternal } });
+    const clickEvent = { preventDefault: vi.fn(), stopPropagation: vi.fn() };
+
+    await getMarkdownLinkClickHandler()(clickEvent);
+
+    expect(openExternal).toHaveBeenCalledWith("https://example.com/product");
+  });
+
   it("does not rewrite non-citation sources text that only contains pipes", () => {
     const input = "Sources: see table | see appendix";
     expect(normalizeSourcesSection(input)).toBe(input);

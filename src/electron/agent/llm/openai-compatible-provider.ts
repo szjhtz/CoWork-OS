@@ -9,8 +9,11 @@ import {
   toOpenAICompatibleMessages,
   toOpenAICompatibleTools,
   fromOpenAICompatibleResponse,
+  type OpenAICompatibleToolOptions,
 } from "./openai-compatible";
 import { buildOpenAIPromptCacheFields } from "./prompt-cache";
+
+const OPENCODE_GO_KIMI_MAX_COMPLETION_TOKENS = 32_768;
 
 function joinUrl(baseUrl: string, path: string): string {
   const trimmedBase = baseUrl.replace(/\/+$/, "");
@@ -56,6 +59,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
   private apiKey: string;
   private chatCompletionsUrl: string;
   private modelsUrl: string;
+  private normalizedBaseUrl: string;
   private defaultModel: string;
   private providerName: string;
   private extraHeaders?: Record<string, string>;
@@ -63,11 +67,100 @@ export class OpenAICompatibleProvider implements LLMProvider {
   constructor(options: OpenAICompatibleProviderOptions) {
     this.type = options.type;
     this.apiKey = options.apiKey;
+    this.normalizedBaseUrl = normalizeBaseUrl(options.baseUrl);
     this.chatCompletionsUrl = resolveChatCompletionsUrl(options.baseUrl);
     this.modelsUrl = resolveModelsUrl(options.baseUrl);
     this.defaultModel = options.defaultModel;
     this.providerName = options.providerName;
     this.extraHeaders = options.extraHeaders;
+  }
+
+  private normalizeModelForEndpoint(model: string): string {
+    const trimmed = model.trim();
+    const lowerBase = this.normalizedBaseUrl.toLowerCase();
+    if (
+      lowerBase.includes("opencode.ai/zen/go/") &&
+      trimmed.startsWith("opencode-go/")
+    ) {
+      return trimmed.slice("opencode-go/".length);
+    }
+    if (
+      lowerBase.includes("opencode.ai/zen/") &&
+      trimmed.startsWith("opencode/")
+    ) {
+      return trimmed.slice("opencode/".length);
+    }
+    return trimmed;
+  }
+
+  private isKimiK2Model(model: string): boolean {
+    const normalized = model.toLowerCase().trim();
+    const bareModel = normalized.includes("/")
+      ? normalized.slice(normalized.lastIndexOf("/") + 1)
+      : normalized;
+    const withoutVariant = bareModel.includes(":")
+      ? bareModel.slice(0, bareModel.indexOf(":"))
+      : bareModel;
+    return (
+      withoutVariant === "kimi-k2.6" ||
+      withoutVariant === "kimi-k2.5" ||
+      withoutVariant === "kimi-k2" ||
+      withoutVariant === "kimi-k2-thinking" ||
+      withoutVariant.startsWith("kimi-k2.")
+    );
+  }
+
+  private isOpenCodeGoEndpoint(): boolean {
+    return this.normalizedBaseUrl.toLowerCase().includes("opencode.ai/zen/go/");
+  }
+
+  private getOutputTokenField(
+    model: string,
+  ): "max_tokens" | "max_completion_tokens" {
+    return this.isKimiK2Model(model) ? "max_completion_tokens" : "max_tokens";
+  }
+
+  private getMaxOutputTokens(model: string, requestedMaxTokens: number): number {
+    if (
+      this.isOpenCodeGoEndpoint() &&
+      this.isKimiK2Model(model) &&
+      Number.isFinite(requestedMaxTokens) &&
+      requestedMaxTokens > 0
+    ) {
+      return Math.min(
+        Math.floor(requestedMaxTokens),
+        OPENCODE_GO_KIMI_MAX_COMPLETION_TOKENS,
+      );
+    }
+
+    return requestedMaxTokens;
+  }
+
+  private getToolOptions(
+    model: string,
+  ): OpenAICompatibleToolOptions | undefined {
+    if (!this.isKimiK2Model(model)) return undefined;
+    return { functionStrict: false };
+  }
+
+  private getToolRequestExtras(
+    model: string,
+    tools?: Any[],
+  ): Record<string, Any> {
+    if (!tools?.length || !this.isKimiK2Model(model)) return {};
+
+    // Kimi K2.5/K2.6 thinking-mode tool turns require provider-specific
+    // reasoning_content replay. CoWork's provider-agnostic transcript does not
+    // retain that field, so disable thinking only for tool calls.
+    return { thinking: { type: "disabled" } };
+  }
+
+  private getErrorMessage(errorData: Any): string | undefined {
+    if (!errorData || typeof errorData !== "object") return undefined;
+    if (typeof errorData.error === "string") return errorData.error;
+    if (typeof errorData.error?.message === "string") return errorData.error.message;
+    if (typeof errorData.message === "string") return errorData.message;
+    return undefined;
   }
 
   async createMessage(request: LLMRequest): Promise<LLMResponse> {
@@ -77,10 +170,16 @@ export class OpenAICompatibleProvider implements LLMProvider {
       supportsImages,
       systemBlocks: request.systemBlocks,
     });
-    const tools = request.tools ? toOpenAICompatibleTools(request.tools) : undefined;
 
     try {
-      const model = request.model || this.defaultModel;
+      const model = this.normalizeModelForEndpoint(
+        request.model || this.defaultModel,
+      );
+      const tools = request.tools
+        ? toOpenAICompatibleTools(request.tools, this.getToolOptions(model))
+        : undefined;
+      const outputTokenField = this.getOutputTokenField(model);
+      const maxOutputTokens = this.getMaxOutputTokens(model, request.maxTokens);
       console.log(`[${this.providerName}] Calling API with model: ${model}`);
 
       const headers: Record<string, string> = {
@@ -97,25 +196,25 @@ export class OpenAICompatibleProvider implements LLMProvider {
         body: JSON.stringify({
           model,
           messages,
-          max_tokens: request.maxTokens,
+          [outputTokenField]: maxOutputTokens,
           ...(tools && tools.length > 0
             ? {
                 tools,
                 tool_choice: request.toolChoice || "auto",
               }
             : {}),
+          ...this.getToolRequestExtras(model, tools),
           ...buildOpenAIPromptCacheFields(request.promptCache),
         }),
         signal: request.signal,
       });
 
       if (!response.ok) {
-        const errorData = (await response.json().catch(() => ({}))) as {
-          error?: { message?: string };
-        };
+        const errorData = await response.json().catch(() => ({}));
+        const errorMessage = this.getErrorMessage(errorData);
         throw new Error(
           `${this.providerName} API error: ${response.status} ${response.statusText}` +
-            (errorData.error?.message ? ` - ${errorData.error.message}` : ""),
+            (errorMessage ? ` - ${errorMessage}` : ""),
         );
       }
 
@@ -137,6 +236,8 @@ export class OpenAICompatibleProvider implements LLMProvider {
 
   async testConnection(): Promise<{ success: boolean; error?: string }> {
     try {
+      const model = this.normalizeModelForEndpoint(this.defaultModel);
+      const outputTokenField = this.getOutputTokenField(model);
       const headers: Record<string, string> = {
         "Content-Type": "application/json",
         ...this.extraHeaders,
@@ -149,19 +250,19 @@ export class OpenAICompatibleProvider implements LLMProvider {
         method: "POST",
         headers,
         body: JSON.stringify({
-          model: this.defaultModel,
+          model,
           messages: [{ role: "user", content: "Hi" }],
-          max_tokens: 10,
+          [outputTokenField]: 10,
         }),
       });
 
       if (!response.ok) {
-        const errorData = (await response.json().catch(() => ({}))) as {
-          error?: { message?: string };
-        };
+        const errorData = await response.json().catch(() => ({}));
         return {
           success: false,
-          error: errorData.error?.message || `HTTP ${response.status}: ${response.statusText}`,
+          error:
+            this.getErrorMessage(errorData) ||
+            `HTTP ${response.status}: ${response.statusText}`,
         };
       }
 

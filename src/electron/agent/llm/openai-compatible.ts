@@ -238,12 +238,20 @@ export function toOpenAICompatibleMessages(
   return cleaned;
 }
 
-export function toOpenAICompatibleTools(tools: LLMTool[]): Array<{
+export interface OpenAICompatibleToolOptions {
+  functionStrict?: boolean;
+}
+
+export function toOpenAICompatibleTools(
+  tools: LLMTool[],
+  options?: OpenAICompatibleToolOptions,
+): Array<{
   type: "function";
   function: {
     name: string;
     description: string;
     parameters: Any;
+    strict?: boolean;
   };
 }> {
   return tools.map((tool) => ({
@@ -252,6 +260,9 @@ export function toOpenAICompatibleTools(tools: LLMTool[]): Array<{
       name: tool.name,
       description: tool.description,
       parameters: tool.input_schema,
+      ...(typeof options?.functionStrict === "boolean"
+        ? { strict: options.functionStrict }
+        : {}),
     },
   }));
 }

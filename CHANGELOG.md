@@ -10,7 +10,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.5.44] - 2026-05-05
 
 ### Added
+- **Release notes for 0.5.44**: see [Release Notes 0.5.44](docs/release-notes-0.5.44.md).
 - **Browser V2 documentation**: added the canonical Browser V2 architecture guide covering the visible Browser Workbench default, `BrowserSessionManager`, Electron-workbench / Playwright-local / external-CDP backends, accessibility snapshot refs, diagnostics, downloads/uploads, real-browser consent, safety invariants, and verification flow. Refreshed README, Features, Architecture, Development, Getting Started, Troubleshooting, Use Cases, Web Page Artifacts, Showcase, Status, and docs home to reflect Browser V2 as the new browser concept. See [Browser V2 Architecture](docs/browser-v2-architecture.md) and [Browser Workbench](docs/browser-workbench.md).
+- **Gateway and channel user guides**: documented remote command routing, active-task behavior, `/new` and `/new temp` sessions, `/stop` cancellation, skill slash invocation, shared channel delivery, editable WhatsApp progress, scheduled channel output delivery, per-channel feature guides, dedicated per-channel user guide pages, and end-user best practices for using CoWork from messaging channels. See [Channel User Guides](docs/channel-user-guides.md), [Dedicated Channel Guides](docs/channel-guides/), [Gateway User Guide](docs/gateway-user-guide.md), and [Gateway Message Lifecycle](docs/gateway-message-lifecycle.md).
+- **Browser Use approval and routing controls**: added tool-prefix permission scopes, browser-domain approval context, Browser Use domain approval prompts, the Browser Use composer mention option, sidebar approval wiring, markdown-link routing into the browser sidebar, and tests covering permission-rule behavior.
+- **Expanded gateway runtime**: added shared gateway types, channel delivery services, remote command normalization and registry support, WhatsApp command utilities, temporary workspace routing, voice event routing, tray channel activity, plugin/persona IPC update hooks, and daemon startup wiring for gateway services.
+- **Provider coverage**: added DeepSeek and NanoGPT as named provider options, including NanoGPT onboarding/settings support and Anthropic-compatible request handling that avoids CoWork-managed caching where the upstream provider does not support it.
+- **Persistent goal slash command**: added a slash-command path for keeping an explicit persistent goal in the active task context.
+- **Imagegen frontend web skill**: bundled and registered `imagegen-frontend-web` guidance for higher-quality frontend image direction and generated visual references.
+
+### Changed
+- **Browser Workbench experience**: refined Browser Workbench navigation, styling, sidebar approvals, mention text/icons, browser tool prompting, runtime browser tool definitions, storage-secret redaction, and tool-scheduler behavior so live browser work is more visible and controlled.
+- **Agent and gateway routing**: tightened gateway/skill command routing, parallel batch execution coverage, temporary workspace handling, ambient monitoring updates, and shared channel-message behavior across Slack, Discord, email, Telegram, WhatsApp, and the channel registry.
+- **Release packaging and smoke coverage**: refined the Electron builder runner, mac packaging environment loading, desktop artifact smoke checks, unsigned mac entitlements, release artifact-name verification, and the mac unsigned release smoke path used by CI.
+- **Documentation refresh**: updated README, docs home, feature overview, capabilities, architecture, getting started, troubleshooting, web artifact, Linux VPS, self-hosting, status, showcase, development, and message-box guidance to reflect Browser V2, channel guides, gateway behavior, and current release packaging.
+- **Branding assets**: refreshed app/logo assets and related docs for the current CoWork OS branding set.
+
+### Fixed
+- **Agents Hub active agents**: Mission Control active agents now appear in Agents Hub counts and panel state instead of being hidden from the hub summary.
+- **Task metadata persistence**: restored persisted `TaskRepository.findAll` fields for assigned agent role, board metadata, and awaiting-user-input reason codes.
+- **Provider retry handling**: overloaded provider failures are classified as transient/retryable, enabling existing fallback and retry handling instead of failing immediately.
+- **HTTP tool failure details**: `http_request` failures preserve clearer failure reason and status metadata instead of collapsing into a generic unknown-error path.
+- **OpenCode Go/Kimi compatibility**: improved OpenAI-compatible tool-call handling for Kimi/OpenCode Go style responses and tightened workspace status labels in the renderer.
+- **Anthropic-compatible custom model selection**: fixed overlapping custom-model matching so the intended Anthropic-compatible gateway model is selected.
+- **NanoGPT request reliability**: fixed NanoGPT Anthropic-compatible request handling and auth/cache behavior for routes that should bypass CoWork-managed prompt caching.
+- **Task archive cleanup**: fixed archive deletion and SQLite cleanup paths so archived tasks and dependent rows are removed without foreign-key leftovers.
+- **Workspace switching**: fixed active-chat workspace switching so task context follows the selected workspace correctly.
+- **PPTX preview path validation**: tightened workspace path validation for presentation previews.
+- **Security hardening**: hardened MCP registry package verification, command/path containment, control-plane auth, and workspace file access.
+- **Email channel timeouts**: reset IMAP timeout state after failures so one timeout does not cascade into later mailbox operations.
+- **Dev-log diagnostics**: reduced false-positive error classification in development log utilities.
 
 ## [0.5.43] - 2026-05-02
 

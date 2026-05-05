@@ -344,6 +344,71 @@ describe("LLMProviderFactory custom provider config resolution", () => {
     );
   });
 
+  it("adapts OpenCode Go Kimi tool turns to the raw chat completions API", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { content: "ok" }, finish_reason: "stop" }],
+      }),
+    } as Response);
+
+    const provider = LLMProviderFactory.createProviderFromConfig({
+      type: "opencode",
+      model: "opencode-go/kimi-k2.6",
+      providerApiKey: "opencode-go-key",
+      providerBaseUrl: "https://opencode.ai/zen/go/v1/chat/completions",
+    } as Any);
+
+    await expect(
+      provider.createMessage({
+        model: "opencode-go/kimi-k2.6",
+        system: "Use tools when useful.",
+        maxTokens: 48000,
+        messages: [
+          { role: "user", content: "Search for current design skills" },
+        ],
+        tools: [
+          {
+            name: "web_search",
+            description: "Search the web",
+            input_schema: {
+              type: "object",
+              properties: {
+                query: { type: "string" },
+              },
+              required: ["query"],
+            },
+          },
+        ],
+      }),
+    ).resolves.toMatchObject({
+      content: [{ type: "text", text: "ok" }],
+      stopReason: "end_turn",
+    });
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "https://opencode.ai/zen/go/v1/chat/completions",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          Authorization: "Bearer opencode-go-key",
+        }),
+      }),
+    );
+
+    const body = JSON.parse(
+      String(fetchSpy.mock.calls[0]?.[1]?.body || "{}"),
+    );
+    expect(body).toMatchObject({
+      model: "kimi-k2.6",
+      max_completion_tokens: 32768,
+      thinking: { type: "disabled" },
+      tool_choice: "auto",
+    });
+    expect(body.max_tokens).toBeUndefined();
+    expect(body.tools[0].function.strict).toBe(false);
+  });
+
   it("uses DeepSeek's documented OpenAI-compatible endpoint", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
       ok: true,

@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { sanitizeToolCallHistory, toOpenAICompatibleMessages } from "../openai-compatible";
+import {
+  sanitizeToolCallHistory,
+  toOpenAICompatibleMessages,
+  toOpenAICompatibleTools,
+} from "../openai-compatible";
 
 describe("toOpenAICompatibleMessages", () => {
   it("splits stable and turn-scoped system blocks into separate leading system messages", () => {
@@ -395,5 +399,28 @@ describe("toOpenAICompatibleMessages", () => {
       "Here is an image:\n[Image attached: image/png, 0.0MB - this provider does not support inline images. Switch to an image-capable model/provider and resend the image.]",
     );
     expect(result[0].content).not.toContain("image_url");
+  });
+});
+
+describe("toOpenAICompatibleTools", () => {
+  it("can mark functions non-strict for providers with strict schema defaults", () => {
+    const result = toOpenAICompatibleTools(
+      [
+        {
+          name: "web_search",
+          description: "Search the web",
+          input_schema: {
+            type: "object",
+            properties: {
+              query: { type: "string" },
+            },
+            required: ["query"],
+          },
+        },
+      ],
+      { functionStrict: false },
+    );
+
+    expect(result[0].function.strict).toBe(false);
   });
 });

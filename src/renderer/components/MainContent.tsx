@@ -319,6 +319,16 @@ function truncateSuggestionText(value: string, maxLength = WELCOME_SUGGESTION_TE
   return `${text.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
 }
 
+export function getWorkspaceStatusFolderLabel(workspace?: Workspace | null): string {
+  if (workspace?.isTemp || isTempWorkspaceId(workspace?.id)) return "Work in a folder";
+  const workspacePath = workspace?.path?.trim();
+  if (workspacePath) {
+    const folderName = workspacePath.split(/[/\\]/).filter(Boolean).pop();
+    return folderName || workspacePath;
+  }
+  return workspace?.name?.trim() || "No folder selected";
+}
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -13040,7 +13050,7 @@ function MainContentComponent({
                     <button
                       className="input-status-workspace"
                       onClick={handleWorkspaceDropdownToggle}
-                      title={workspace?.path || "Select a workspace folder"}
+                      title={getWorkspaceStatusFolderLabel(workspace)}
                     >
                       <svg
                         width="12"
@@ -13056,16 +13066,7 @@ function MainContentComponent({
                         <line x1="12" y1="17" x2="12" y2="21" />
                       </svg>
                       <span className="input-status-workspace-path">
-                        {workspace?.isTemp || isTempWorkspaceId(workspace?.id)
-                          ? "Work in a folder"
-                          : workspace?.path
-                            ? (() => {
-                                const parts = workspace.path.split(/[/\\]/).filter(Boolean);
-                                return parts.length > 2
-                                  ? `~/.../${parts.slice(-2).join("/")}`
-                                  : workspace.path;
-                              })()
-                            : "No folder selected"}
+                        {getWorkspaceStatusFolderLabel(workspace)}
                       </span>
                     </button>
                     {showWorkspaceDropdown && (
@@ -14300,7 +14301,7 @@ function MainContentComponent({
             <button
               className="input-status-workspace"
               onClick={handleWorkspaceDropdownToggle}
-              title={workspace?.path || "Select a workspace folder"}
+              title={getWorkspaceStatusFolderLabel(workspace)}
             >
               <svg
                 width="12"
@@ -14316,16 +14317,7 @@ function MainContentComponent({
                 <line x1="12" y1="17" x2="12" y2="21" />
               </svg>
               <span className="input-status-workspace-path">
-                {workspace?.isTemp || isTempWorkspaceId(workspace?.id)
-                  ? "Work in a folder"
-                  : workspace?.path
-                    ? (() => {
-                        const parts = workspace.path.split(/[/\\]/).filter(Boolean);
-                        return parts.length > 2
-                          ? `~/.../${parts.slice(-2).join("/")}`
-                          : workspace.path;
-                      })()
-                    : "No folder selected"}
+                {getWorkspaceStatusFolderLabel(workspace)}
               </span>
             </button>
             <button

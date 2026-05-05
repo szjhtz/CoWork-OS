@@ -13,6 +13,7 @@ import {
   deriveTaskHeaderPresentation,
   estimateTaskFeedRowHeight,
   extractGeneratedArtifactPathsFromText,
+  getWorkspaceStatusFolderLabel,
   getInlinePreviewKindForGeneratedFile,
   getInlinePreviewKindForTaskEvent,
   getAutoScrollTargetTop,
@@ -91,6 +92,24 @@ function makeWorkspace(overrides: Partial<Workspace> = {}): Workspace {
     ...overrides,
   };
 }
+
+describe("getWorkspaceStatusFolderLabel", () => {
+  it("shows only the final folder name for workspace paths", () => {
+    expect(
+      getWorkspaceStatusFolderLabel(
+        makeWorkspace({ path: "/Users/mesut/Downloads/app/cowork", name: "Custom name" }),
+      ),
+    ).toBe("cowork");
+    expect(getWorkspaceStatusFolderLabel(makeWorkspace({ path: "C:\\Users\\mesut\\cowork" }))).toBe(
+      "cowork",
+    );
+  });
+
+  it("keeps temp and missing workspace fallbacks", () => {
+    expect(getWorkspaceStatusFolderLabel(makeWorkspace({ isTemp: true }))).toBe("Work in a folder");
+    expect(getWorkspaceStatusFolderLabel(null)).toBe("No folder selected");
+  });
+});
 
 describe("task automation creation", () => {
   it("renders the modal with task-derived defaults", () => {

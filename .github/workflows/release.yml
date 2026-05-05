@@ -215,7 +215,14 @@ jobs:
           "
 
       - name: Package and publish Electron app
-        run: npm run package
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${RUNNER_OS}" = "macOS" ]; then
+            COWORK_MAC_UNSIGNED=1 node scripts/run_electron_builder.mjs --mac --publish never
+          else
+            npm run package
+          fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # unsigned macOS build publishing to GitHub releases
@@ -249,7 +256,14 @@ jobs:
           fi
 
       - name: Smoke desktop release artifacts
-        run: npm run package:desktop:smoke -- --expected-version=${{ steps.release_metadata.outputs.npm_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          smoke_args=(-- --expected-version=${{ steps.release_metadata.outputs.npm_version }})
+          if [ "${RUNNER_OS}" = "macOS" ]; then
+            smoke_args+=(--allow-unsigned)
+          fi
+          npm run package:desktop:smoke "${smoke_args[@]}"
 
       - name: Upload release artifacts explicitly
         shell: bash

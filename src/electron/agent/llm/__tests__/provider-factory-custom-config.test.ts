@@ -228,6 +228,7 @@ describe("LLMProviderFactory custom provider config resolution", () => {
         method: "POST",
         headers: expect.objectContaining({
           "x-api-key": "nano-key",
+          Authorization: "Bearer nano-key",
         }),
       }),
     );

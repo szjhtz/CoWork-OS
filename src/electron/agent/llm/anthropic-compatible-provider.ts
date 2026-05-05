@@ -53,6 +53,26 @@ function resolveModelsUrl(baseUrl: string): string {
   return joinUrl(trimmedBase, "/v1/models");
 }
 
+function isNanoGptBaseUrl(baseUrl: string): boolean {
+  try {
+    const hostname = new URL(baseUrl.trim()).hostname.toLowerCase();
+    return hostname === "nano-gpt.com" || hostname.endsWith(".nano-gpt.com");
+  } catch {
+    return false;
+  }
+}
+
+function extractProviderErrorMessage(errorData: Any): string {
+  const error = errorData?.error;
+  if (typeof error === "string") {
+    return error;
+  }
+  if (error && typeof error === "object") {
+    return typeof error.message === "string" ? error.message : "";
+  }
+  return typeof errorData?.message === "string" ? errorData.message : "";
+}
+
 export interface AnthropicCompatibleProviderOptions {
   type: LLMProviderType;
   providerName: string;
@@ -69,6 +89,7 @@ export class AnthropicCompatibleProvider implements LLMProvider {
   private defaultModel: string;
   private providerName: string;
   private promptCacheAutoSupported = true;
+  private managedPromptCacheSupported = true;
 
   constructor(options: AnthropicCompatibleProviderOptions) {
     this.type = options.type;
@@ -77,6 +98,7 @@ export class AnthropicCompatibleProvider implements LLMProvider {
     this.messagesUrl = resolveMessagesUrl(options.baseUrl);
     this.defaultModel = options.defaultModel;
     this.providerName = options.providerName;
+    this.managedPromptCacheSupported = !isNanoGptBaseUrl(options.baseUrl);
   }
 
   async createMessage(request: LLMRequest): Promise<LLMResponse> {
@@ -87,7 +109,9 @@ export class AnthropicCompatibleProvider implements LLMProvider {
       (message) => console.warn(`[${this.providerName}] ${message}`),
     );
     const requestedPromptCache =
-      request.promptCache?.mode === "disabled" ? undefined : request.promptCache;
+      request.promptCache?.mode === "disabled" || !this.managedPromptCacheSupported
+        ? undefined
+        : request.promptCache;
     const effectivePromptCache =
       requestedPromptCache?.mode === "anthropic_auto" && !this.promptCacheAutoSupported
         ? { ...requestedPromptCache, mode: "anthropic_explicit" as const }
@@ -122,8 +146,13 @@ export class AnthropicCompatibleProvider implements LLMProvider {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-api-key": this.apiKey,
           "anthropic-version": ANTHROPIC_VERSION,
+          ...(this.apiKey
+            ? {
+                "x-api-key": this.apiKey,
+                Authorization: `Bearer ${this.apiKey}`,
+              }
+            : {}),
         },
         body: JSON.stringify({
           model: this.defaultModel,
@@ -133,12 +162,11 @@ export class AnthropicCompatibleProvider implements LLMProvider {
       });
 
       if (!response.ok) {
-        const errorData = (await response.json().catch(() => ({}))) as {
-          error?: { message?: string };
-        };
+        const errorData = (await response.json().catch(() => ({}))) as Any;
+        const providerMessage = extractProviderErrorMessage(errorData);
         return {
           success: false,
-          error: errorData.error?.message || `HTTP ${response.status}: ${response.statusText}`,
+          error: providerMessage || `HTTP ${response.status}: ${response.statusText}`,
         };
       }
 
@@ -276,8 +304,13 @@ export class AnthropicCompatibleProvider implements LLMProvider {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-api-key": this.apiKey,
         "anthropic-version": ANTHROPIC_VERSION,
+        ...(this.apiKey
+          ? {
+              "x-api-key": this.apiKey,
+              Authorization: `Bearer ${this.apiKey}`,
+            }
+          : {}),
       },
       body: JSON.stringify({
         model: args.model,
@@ -293,10 +326,8 @@ export class AnthropicCompatibleProvider implements LLMProvider {
     });
 
     if (!response.ok) {
-      const errorData = (await response.json().catch(() => ({}))) as {
-        error?: { message?: string };
-      };
-      const providerMessage = errorData.error?.message || "";
+      const errorData = (await response.json().catch(() => ({}))) as Any;
+      const providerMessage = extractProviderErrorMessage(errorData);
       if (
         args.promptCache?.mode === "anthropic_auto" &&
         isPromptCacheAutoUnsupportedError(response.status, providerMessage)

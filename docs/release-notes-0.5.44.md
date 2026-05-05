@@ -44,6 +44,6 @@ Release `0.5.44` is a broad reliability and platform release. It expands Browser
 - **npm package smoke**: published and verified `cowork-os@0.5.44`, including registry propagation and tarball metadata.
 - **GitHub release assets**: published the macOS, Windows, Linux server, updater metadata, checksum, and blockmap assets under the `v0.5.44` GitHub release.
 
-## Known Issue
+## macOS First Launch
 
-- **macOS DMG distribution**: the `v0.5.44` macOS DMG was published as an unsigned fallback artifact, so Gatekeeper can block launch with "Apple could not verify CoWork OS is free of malware." Public macOS releases must be Developer ID signed and notarized; the release workflow has been updated after `v0.5.44` to require those credentials before publishing another macOS DMG.
+- **Unsigned DMG Gatekeeper prompt**: CoWork OS macOS DMGs are currently unsigned. After dragging the app to Applications, open it once. If macOS blocks it, go to **System Settings > Privacy & Security**, scroll to **Security**, click **Open Anyway** next to `"CoWork OS" was blocked to protect your Mac`, then click **Open Anyway** in the confirmation dialog.

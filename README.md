@@ -116,7 +116,7 @@ Download the latest release from [GitHub Releases](https://github.com/CoWork-OS/
 | **macOS** | `.dmg` | Drag CoWork OS into Applications |
 | **Windows** | `.exe` (NSIS installer) | Run the installer and follow the prompts |
 
-> **macOS first launch:** Public DMG releases must be Developer ID signed and notarized. If macOS shows "Apple could not verify CoWork OS is free of malware", the downloaded artifact is not suitable for distribution; install a newer signed release instead. Maintainers can still create local-only unsigned fallback builds with `npm run package:mac:unsigned`.
+> **macOS first launch:** CoWork OS macOS DMGs are currently unsigned. After dragging the app to Applications, open it once. If macOS blocks it, go to **System Settings > Privacy & Security**, scroll to **Security**, click **Open Anyway** next to `"CoWork OS" was blocked to protect your Mac`, then click **Open Anyway** in the confirmation dialog. Maintainers can create this unsigned DMG/ZIP with `npm run package:mac:unsigned`.
 
 > **Windows first launch:** Windows SmartScreen may show a warning for unrecognized apps. Click **More info** > **Run anyway** to proceed.
 

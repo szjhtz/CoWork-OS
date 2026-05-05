@@ -2,15 +2,24 @@
 
 ## macOS app won't launch with "Apple could not verify"
 
-Public CoWork OS DMG releases must be Developer ID signed and notarized. If macOS shows **"Apple could not verify CoWork OS is free of malware"**, the downloaded artifact was not signed/notarized for distribution. Install a newer signed release instead of bypassing Gatekeeper.
+CoWork OS macOS DMGs are currently unsigned. On first launch, macOS may show **"Apple could not verify CoWork OS is free of malware"** or **`"CoWork OS" was blocked to protect your Mac`**.
 
-Release maintainers can create local-only unsigned macOS DMG/ZIP artifacts with:
+Use the macOS Gatekeeper override:
+
+1. Drag **CoWork OS** from the DMG into **Applications**.
+2. Open **CoWork OS** once. If macOS blocks it, click **Done**.
+3. Open **System Settings > Privacy & Security**.
+4. Scroll to **Security**.
+5. Next to **`"CoWork OS" was blocked to protect your Mac`**, click **Open Anyway**.
+6. In the confirmation dialog, click **Open Anyway** again.
+
+Release maintainers can create unsigned macOS DMG/ZIP artifacts with:
 
 ```bash
 npm run package:mac:unsigned
 ```
 
-Unsigned fallback builds are for maintainer diagnostics only. If you intentionally built one locally, remove quarantine before launch:
+Terminal fallback:
 
 ```bash
 xattr -dr com.apple.quarantine "/Applications/CoWork OS.app"

@@ -205,6 +205,11 @@ export const PROVIDER_IMAGE_CAPS: Record<string, LLMProviderImageCaps> = {
     maxImageBytes: 20 * 1024 * 1024,
     supportedMimeTypes: ["image/jpeg", "image/png", "image/webp", "image/gif"],
   },
+  "nano-gpt": {
+    supportsImages: true,
+    maxImageBytes: 20 * 1024 * 1024,
+    supportedMimeTypes: ["image/jpeg", "image/png", "image/webp", "image/gif"],
+  },
   "anthropic-compatible": {
     supportsImages: true,
     maxImageBytes: 5 * 1024 * 1024,

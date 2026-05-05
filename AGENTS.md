@@ -11,6 +11,7 @@ When a user reports a failure, error, or unexpected behavior that likely involve
 5. Quote relevant error lines with timestamps when summarizing findings.
 6. If logs are missing, state that clearly and continue with other diagnostics.
 7. If the request is not failure/debug related (for example docs, refactors, or feature questions), skip log triage unless the user explicitly asks for log analysis.
+8. For Browser Use permission failures, also verify workspace permission rules: domain-scoped rules may now target a specific tool name or a tool-prefix (for example `browser_*`), and missing matches can cause repeated approval prompts or denials.
 
 ## Dev Log Availability
 

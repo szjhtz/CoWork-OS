@@ -22,7 +22,8 @@ type LLMProviderType =
   | "groq"
   | "xai"
   | "deepseek"
-  | "kimi";
+  | "kimi"
+  | "nano-gpt";
 
 interface ProviderOption {
   type: LLMProviderType;
@@ -233,6 +234,26 @@ const PROVIDER_OPTIONS: ProviderOption[] = [
     requiresApiKey: true,
     apiKeyPlaceholder: "sk-...",
     apiKeyLink: "https://platform.moonshot.ai/",
+  },
+  {
+    type: "nano-gpt",
+    name: "NanoGPT",
+    description: "OpenAI-compatible access to NanoGPT models",
+    icon: (
+      <svg
+        width="24"
+        height="24"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+      >
+        <path d="M12 2l3 7 7 3-7 3-3 7-3-7-7-3 7-3 3-7z" />
+      </svg>
+    ),
+    requiresApiKey: true,
+    apiKeyPlaceholder: "nanogpt-...",
+    apiKeyLink: "https://nano-gpt.com/api",
   },
   {
     type: "bedrock",
@@ -449,6 +470,14 @@ export function OnboardingModal({
         testConfig.deepseek = { apiKey, model: "deepseek-chat" };
       } else if (selectedProvider === "kimi") {
         testConfig.kimi = { apiKey };
+      } else if (selectedProvider === "nano-gpt") {
+        testConfig.customProviders = {
+          "nano-gpt": {
+            apiKey,
+            baseUrl: "https://nano-gpt.com/api/v1",
+            model: "minimax/minimax-m2.7",
+          },
+        };
       }
 
       const result = await window.electronAPI.testLLMProvider(testConfig);
@@ -489,6 +518,14 @@ export function OnboardingModal({
           settings.deepseek = { apiKey, model: "deepseek-chat" };
         } else if (selectedProvider === "kimi") {
           settings.kimi = { apiKey, model: "kimi-k2.5" };
+        } else if (selectedProvider === "nano-gpt") {
+          settings.customProviders = {
+            "nano-gpt": {
+              apiKey,
+              baseUrl: "https://nano-gpt.com/api/v1",
+              model: "minimax/minimax-m2.7",
+            },
+          };
         }
 
         await window.electronAPI.saveLLMSettings(settings);
@@ -541,6 +578,8 @@ export function OnboardingModal({
         return "deepseek-chat";
       case "kimi":
         return "kimi-k2.5";
+      case "nano-gpt":
+        return "minimax/minimax-m2.7";
       default:
         return "sonnet-4";
     }

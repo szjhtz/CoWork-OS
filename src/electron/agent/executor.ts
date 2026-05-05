@@ -19013,6 +19013,13 @@ You are continuing a previous conversation. The context from the previous conver
     if (code && retryableCodes.has(code)) return true;
     // 429 / rate limit are transient — retry after delay
     if (/429|rate limit|too many requests|free-models-per-min/.test(message)) return true;
+    if (
+      /service_unavailable_error|server_is_overloaded|server is overloaded|servers are currently overloaded|temporarily unavailable/.test(
+        message,
+      )
+    ) {
+      return true;
+    }
     return (
       message.includes("fetch failed") ||
       message.includes("network") ||

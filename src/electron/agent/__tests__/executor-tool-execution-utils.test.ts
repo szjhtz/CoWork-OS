@@ -150,6 +150,33 @@ describe("tool failure normalization", () => {
     expect(normalized.kind).toBe("runtime");
   });
 
+  it("uses HTTP status details when a request tool returns no explicit error", () => {
+    expect(
+      getToolFailureReason(
+        {
+          success: false,
+          status: 404,
+          statusText: "Not Found",
+          body: "missing",
+        },
+        "unknown error",
+      ),
+    ).toBe("HTTP 404 Not Found");
+  });
+
+  it("uses non-generic status text for status-zero request failures", () => {
+    expect(
+      getToolFailureReason(
+        {
+          success: false,
+          status: 0,
+          statusText: "Request timed out",
+        },
+        "unknown error",
+      ),
+    ).toBe("Request timed out");
+  });
+
   it("does not classify non-blocking vision config failures as hard failures", () => {
     expect(
       isHardToolFailure(

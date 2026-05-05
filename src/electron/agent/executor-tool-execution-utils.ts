@@ -758,6 +758,15 @@ export function normalizeToolFailureReason(result: Any, fallback: string): Norma
   if (typeof result?.terminationReason === "string" && result.terminationReason.trim()) {
     return { message: `termination: ${result.terminationReason}` };
   }
+  if (typeof result?.status === "number") {
+    const statusText = typeof result.statusText === "string" ? result.statusText.trim() : "";
+    if (result.status > 0) {
+      return { message: `HTTP ${result.status}${statusText ? ` ${statusText}` : ""}` };
+    }
+    if (statusText && statusText.toLowerCase() !== "error") {
+      return { message: statusText };
+    }
+  }
   if (typeof result?.exitCode === "number") {
     return { message: `exit code ${result.exitCode}` };
   }

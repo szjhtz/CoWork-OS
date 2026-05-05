@@ -148,6 +148,20 @@ export class OpenAIProvider implements LLMProvider {
     );
   }
 
+  private isRetryableProviderMessage(message: string, code?: string): boolean {
+    const normalized = String(message || "").toLowerCase();
+    const normalizedCode = String(code || "").toLowerCase();
+    return (
+      normalizedCode === "service_unavailable_error" ||
+      normalizedCode === "server_is_overloaded" ||
+      normalized.includes("service_unavailable_error") ||
+      normalized.includes("server_is_overloaded") ||
+      normalized.includes("server is overloaded") ||
+      normalized.includes("servers are currently overloaded") ||
+      normalized.includes("temporarily unavailable")
+    );
+  }
+
   private toStructuredProviderError(error: Any, phase: OpenAIProviderErrorPhase): Error {
     const message = String(error?.message || "OpenAI request failed");
     const wrapped = new OpenAIProviderError(message);
@@ -156,6 +170,7 @@ export class OpenAIProvider implements LLMProvider {
     wrapped.code = String(error?.code || error?.cause?.code || "").trim() || undefined;
     wrapped.retryable =
       this.isTransientInterruptionMessage(message) ||
+      this.isRetryableProviderMessage(message, wrapped.code) ||
       wrapped.code === "ECONNRESET" ||
       wrapped.code === "ETIMEDOUT" ||
       wrapped.code === "ENOTFOUND" ||

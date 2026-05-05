@@ -23,6 +23,13 @@ function isTransientProviderError(error: Any): boolean {
   if (code && retryableCodes.has(code)) return true;
   // 429 / rate limit are transient — retry after delay
   if (/429|rate limit|too many requests|free-models-per-min/.test(message)) return true;
+  if (
+    /service_unavailable_error|server_is_overloaded|server is overloaded|servers are currently overloaded|temporarily unavailable/.test(
+      message,
+    )
+  ) {
+    return true;
+  }
   return (
     message.includes("fetch failed") ||
     message.includes("network") ||
@@ -104,6 +111,19 @@ describe("isTransientProviderError", () => {
 
     it("should return true for unexpected eof", () => {
       const error = { message: "unexpected eof while reading stream" };
+      expect(isTransientProviderError(error)).toBe(true);
+    });
+
+    it("should return true for overloaded service errors", () => {
+      const error = {
+        message:
+          'Codex error: {"type":"error","error":{"type":"service_unavailable_error","code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later."}}',
+      };
+      expect(isTransientProviderError(error)).toBe(true);
+    });
+
+    it("should return true for temporarily unavailable provider errors", () => {
+      const error = { message: "The provider is temporarily unavailable" };
       expect(isTransientProviderError(error)).toBe(true);
     });
 

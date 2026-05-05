@@ -425,6 +425,34 @@ describe("OpenAIProvider structured errors", () => {
     });
   });
 
+  it("marks overloaded Codex service errors as retryable", async () => {
+    completeMock.mockRejectedValue(
+      new Error(
+        'Codex error: {"type":"error","error":{"type":"service_unavailable_error","code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later.","param":null},"sequence_number":2}',
+      ),
+    );
+
+    const provider = new OpenAIProvider(makeConfig());
+    const request = makeRequest();
+
+    await expect(provider.createMessage(request)).rejects.toMatchObject({
+      retryable: true,
+      phase: "oauth",
+    });
+  });
+
+  it("marks temporarily unavailable provider errors as retryable", async () => {
+    completeMock.mockRejectedValue(new Error("The provider is temporarily unavailable"));
+
+    const provider = new OpenAIProvider(makeConfig());
+    const request = makeRequest();
+
+    await expect(provider.createMessage(request)).rejects.toMatchObject({
+      retryable: true,
+      phase: "oauth",
+    });
+  });
+
   it("accepts OpenClaw-style openai-codex model refs for ChatGPT subscription requests", async () => {
     completeMock.mockResolvedValue({
       stopReason: "stop",

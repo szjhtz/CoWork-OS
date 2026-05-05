@@ -58,10 +58,19 @@ export function redactDevLogLine(line) {
 
 export function inferDevLogLevel(line, stream = "stdout") {
   const text = String(line).toLowerCase();
+  if (/\bfailed\s*=\s*0\b/.test(text) && !/\bfailed\s*=\s*[1-9]\d*\b/.test(text)) {
+    return "info";
+  }
+  if (/^note: /.test(text) || text.includes("code generator has deoptimised")) {
+    return "warn";
+  }
+  if (/error fetching email \d+: error: imap command timeout/.test(text)) {
+    return "warn";
+  }
   if (/\b(error|exception|failed|failure|uncaught|fatal|crash)\b/.test(text)) return "error";
   if (/\b(warn|warning|deprecated)\b/.test(text)) return "warn";
   if (/\b(debug|trace|verbose)\b/.test(text)) return "debug";
-  return stream === "stderr" ? "error" : "info";
+  return stream === "stderr" ? "warn" : "info";
 }
 
 export function parseDevLogLine(line) {

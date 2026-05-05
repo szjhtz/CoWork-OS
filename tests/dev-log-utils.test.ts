@@ -6,6 +6,7 @@ import {
   applyDevLogRetention,
   createDevLogEvent,
   formatDevLogTextLine,
+  inferDevLogLevel,
   redactDevLogLine,
   serializeDevLogEvent,
 } from "../scripts/dev-log-utils.mjs";
@@ -67,6 +68,39 @@ describe("dev-log-utils", () => {
         line: "[electron] uncaught exception while loading",
       }).level,
     ).toBe("error");
+  });
+
+  it("does not treat successful failed=0 summaries as errors", () => {
+    expect(
+      inferDevLogLevel(
+        "[electron] [Main] MCP summary: enabled=5, attempted=5, connected=5, failed=0",
+        "stderr",
+      ),
+    ).toBe("info");
+  });
+
+  it("keeps non-error stderr notes out of the error bucket", () => {
+    expect(
+      inferDevLogLevel(
+        "Note: The code generator has deoptimised the styling of src/renderer/components/MainContent.tsx as it exceeds the max of 500KB.",
+        "stderr",
+      ),
+    ).toBe("warn");
+    expect(inferDevLogLevel("    at process.processTimers (node:internal/timers:541:7)", "stderr"))
+      .toBe("warn");
+  });
+
+  it("keeps transient IMAP fetch timeouts as warnings", () => {
+    expect(
+      inferDevLogLevel("Error fetching email 67486: Error: IMAP command timeout", "stderr"),
+    ).toBe("warn");
+  });
+
+  it("still classifies real stderr failures as errors", () => {
+    expect(inferDevLogLevel("Unhandled exception: boom", "stderr")).toBe("error");
+    expect(inferDevLogLevel("Error: Unable to find an available dev server port", "stderr")).toBe(
+      "error",
+    );
   });
 
   it("redacts common secret shapes before writing files", () => {

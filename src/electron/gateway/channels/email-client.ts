@@ -621,14 +621,23 @@ export class EmailClient extends EventEmitter {
     }
   }
 
+  private resetImapConnection(): void {
+    this.currentCallback = undefined;
+    this.responseBuffer = "";
+    this.connected = false;
+    if (this.imapSocket && !this.imapSocket.destroyed) {
+      this.imapSocket.destroy();
+    }
+    this.imapSocket = undefined;
+  }
+
   /**
    * Wait for server response
    */
   private async waitForResponse(expectedType: string): Promise<string> {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
-        this.currentCallback = undefined;
-        this.responseBuffer = "";
+        this.resetImapConnection();
         reject(new Error("IMAP response timeout"));
       }, 10000);
 
@@ -673,8 +682,7 @@ export class EmailClient extends EventEmitter {
       const fullCommand = `${tag} ${command}\r\n`;
 
       const timeout = setTimeout(() => {
-        this.currentCallback = undefined;
-        this.responseBuffer = "";
+        this.resetImapConnection();
         reject(new Error("IMAP command timeout"));
       }, 30000);
 

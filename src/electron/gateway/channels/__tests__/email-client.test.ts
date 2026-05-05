@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { EmailClient, type EmailMessage } from "../email-client";
 
 const iso88599Overrides: Record<string, number> = {
@@ -30,6 +30,8 @@ function parseEmailResponse(
 }
 
 type EmailClientTestAccess = EmailClient & {
+  connected: boolean;
+  imapSocket?: { destroyed?: boolean; destroy: () => void; write: (command: string) => void };
   parseEmailResponse(response: string, uid: number): EmailMessage | null;
   connectImap(): Promise<void>;
   selectMailbox(): Promise<void>;
@@ -41,6 +43,10 @@ type EmailClientTestAccess = EmailClient & {
 function getTestAccess(client: EmailClient): EmailClientTestAccess {
   return client as unknown as EmailClientTestAccess;
 }
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe("EmailClient MIME parsing", () => {
   it("decodes multipart Outlook-style bodies without leaking MIME boundaries", () => {
@@ -322,5 +328,41 @@ describe("EmailClient MIME parsing", () => {
     expect(fetchSpy).toHaveBeenNthCalledWith(3, 12);
     expect(disconnectSpy).toHaveBeenCalled();
     expect(messages.map((message) => message.uid)).toEqual([14, 13, 12]);
+  });
+
+  it("resets the IMAP connection when a command times out", async () => {
+    vi.useFakeTimers();
+    const client = new EmailClient({
+      imapHost: "imap-mail.outlook.com",
+      imapPort: 993,
+      imapSecure: true,
+      smtpHost: "smtp-mail.outlook.com",
+      smtpPort: 587,
+      smtpSecure: false,
+      email: "user@msn.com",
+      password: "test-password",
+      mailbox: "INBOX",
+      pollInterval: 30000,
+    });
+    const clientAccess = getTestAccess(client);
+    const socket = {
+      destroyed: false,
+      destroy: vi.fn(() => {
+        socket.destroyed = true;
+      }),
+      write: vi.fn(),
+    };
+    clientAccess.imapSocket = socket;
+    clientAccess.connected = true;
+
+    const command = expect(clientAccess.imapCommand("NOOP")).rejects.toThrow(
+      "IMAP command timeout",
+    );
+    await vi.advanceTimersByTimeAsync(30000);
+
+    await command;
+    expect(socket.destroy).toHaveBeenCalled();
+    expect(clientAccess.imapSocket).toBeUndefined();
+    expect(clientAccess.connected).toBe(false);
   });
 });

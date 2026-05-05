@@ -125,6 +125,7 @@ const SCRIPT = {
       xai: "Grok. Let's put xAI to work.",
       deepseek: "DeepSeek. Practical and cost-efficient.",
       kimi: "Kimi. Solid choice.",
+      "nano-gpt": "NanoGPT. Flexible model routing.",
     };
     return responses[provider] || "Good choice.";
   },
@@ -1226,6 +1227,8 @@ export function useOnboardingFlow({ onComplete, workspaceId }: UseOnboardingOpti
         return "deepseek-chat";
       case "kimi":
         return "kimi-k2.5";
+      case "nano-gpt":
+        return "minimax/minimax-m2.7";
       default:
         return "sonnet-4";
     }
@@ -1277,6 +1280,9 @@ export function useOnboardingFlow({ onComplete, workspaceId }: UseOnboardingOpti
         case "kimi":
           currentModel = existingSettings.kimi?.model;
           break;
+        case "nano-gpt":
+          currentModel = existingSettings.customProviders?.["nano-gpt"]?.model;
+          break;
         default:
           currentModel = undefined;
           break;
@@ -1323,6 +1329,8 @@ export function useOnboardingFlow({ onComplete, workspaceId }: UseOnboardingOpti
           return !!existingSettings.deepseek?.apiKey;
         case "kimi":
           return !!existingSettings.kimi?.apiKey;
+        case "nano-gpt":
+          return !!existingSettings.customProviders?.["nano-gpt"]?.apiKey;
         default:
           return false;
       }
@@ -1355,6 +1363,14 @@ export function useOnboardingFlow({ onComplete, workspaceId }: UseOnboardingOpti
         testConfig.deepseek = { apiKey, model: "deepseek-chat" };
       } else if (provider === "kimi") {
         testConfig.kimi = { apiKey };
+      } else if (provider === "nano-gpt") {
+        testConfig.customProviders = {
+          "nano-gpt": {
+            apiKey,
+            baseUrl: "https://nano-gpt.com/api/v1",
+            model: getDefaultModel("nano-gpt"),
+          },
+        };
       }
 
       return testConfig;
@@ -1441,6 +1457,18 @@ export function useOnboardingFlow({ onComplete, workspaceId }: UseOnboardingOpti
           ...existingSettings?.kimi,
           ...(trimmedApiKey ? { apiKey: trimmedApiKey } : {}),
           model: modelKey,
+        };
+      } else if (provider === "nano-gpt") {
+        settings.customProviders = {
+          ...existingSettings?.customProviders,
+          "nano-gpt": {
+            ...existingSettings?.customProviders?.["nano-gpt"],
+            ...(trimmedApiKey ? { apiKey: trimmedApiKey } : {}),
+            baseUrl:
+              existingSettings?.customProviders?.["nano-gpt"]?.baseUrl ||
+              "https://nano-gpt.com/api/v1",
+            model: modelKey,
+          },
         };
       }
 

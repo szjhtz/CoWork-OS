@@ -7556,6 +7556,7 @@ export const CUSTOM_LLM_PROVIDER_TYPES = [
   "cerebras",
   "mistral",
   "github-copilot",
+  "nano-gpt",
   "qwen-portal",
   "minimax",
   "minimax-portal",
@@ -7602,6 +7603,7 @@ export const MULTI_LLM_PROVIDER_DISPLAY: Record<
     icon: "\u{1F517}",
     color: "#64748b",
   },
+  "nano-gpt": { name: "NanoGPT", icon: "\u{2728}", color: "#22c55e" },
 };
 
 export interface CachedModelInfo {

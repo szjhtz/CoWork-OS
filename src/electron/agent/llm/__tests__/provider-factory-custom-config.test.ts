@@ -257,6 +257,33 @@ describe("LLMProviderFactory custom provider config resolution", () => {
     );
   });
 
+  it("routes NanoGPT through its named OpenAI-compatible provider", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { content: "ok" }, finish_reason: "stop" }],
+      }),
+    } as Response);
+
+    const provider = LLMProviderFactory.createProviderFromConfig({
+      type: "nano-gpt",
+      model: "",
+      providerApiKey: " nano-key\r\n",
+    } as Any);
+
+    await expect(provider.testConnection()).resolves.toEqual({ success: true });
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "https://nano-gpt.com/api/v1/chat/completions",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          Authorization: "Bearer nano-key",
+        }),
+      }),
+    );
+  });
+
   it("uses a documented OpenCode Go chat completions endpoint without appending the path twice", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
       ok: true,

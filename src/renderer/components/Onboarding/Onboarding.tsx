@@ -68,6 +68,7 @@ const PROVIDERS: {
   { id: "xai", name: "Grok", requiresKey: true },
   { id: "deepseek", name: "DeepSeek", requiresKey: true },
   { id: "kimi", name: "Kimi", requiresKey: true },
+  { id: "nano-gpt", name: "NanoGPT", requiresKey: true },
   { id: "bedrock", name: "AWS Bedrock", requiresKey: false },
 ];
 
@@ -81,6 +82,7 @@ const PROVIDER_URLS: Record<string, string> = {
   xai: "https://console.x.ai/",
   deepseek: "https://platform.deepseek.com/api_keys",
   kimi: "https://platform.moonshot.ai/",
+  "nano-gpt": "https://nano-gpt.com/api",
 };
 
 const CAPABILITY_PILLARS = [

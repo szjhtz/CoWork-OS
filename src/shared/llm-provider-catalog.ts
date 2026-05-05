@@ -133,6 +133,23 @@ export const CUSTOM_PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     apiKeyPlaceholder: "ghp_...",
   },
   {
+    id: "nano-gpt",
+    name: "NanoGPT",
+    compatibility: "openai",
+    baseUrl: "https://nano-gpt.com/api/v1",
+    defaultModel: "minimax/minimax-m2.7",
+    knownModels: [
+      "minimax/minimax-m2.7",
+      "openai/gpt-5.2",
+      "google/gemini-3-pro-preview",
+      "anthropic/claude-sonnet-4-5",
+    ],
+    apiKeyLabel: "NanoGPT API Key",
+    apiKeyPlaceholder: "nanogpt-...",
+    apiKeyUrl: "https://nano-gpt.com/api",
+    description: "OpenAI-compatible NanoGPT endpoint with a prefilled base URL.",
+  },
+  {
     id: "qwen-portal",
     name: "Qwen",
     compatibility: "anthropic",

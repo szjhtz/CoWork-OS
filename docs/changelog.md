@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.44] - 2026-05-05
+
 ### Added
 - **Browser V2 documentation**: added the canonical Browser V2 architecture guide covering the visible Browser Workbench default, `BrowserSessionManager`, Electron-workbench / Playwright-local / external-CDP backends, accessibility snapshot refs, diagnostics, downloads/uploads, real-browser consent, safety invariants, and verification flow. Refreshed README, Features, Architecture, Development, Getting Started, Troubleshooting, Use Cases, Web Page Artifacts, Showcase, Status, and docs home to reflect Browser V2 as the new browser concept. See [Browser V2 Architecture](browser-v2-architecture.md) and [Browser Workbench](browser-workbench.md).
 - **Gateway usage docs**: documented remote command routing, active-task behavior, `/new` and `/new temp` sessions, `/stop` cancellation, skill slash invocation, shared channel delivery, editable WhatsApp progress, scheduled channel output delivery, per-channel feature guides, dedicated per-channel user guide pages, and end-user best practices for using CoWork from messaging channels. See [Channel User Guides](channel-user-guides.md), [Dedicated Channel Guides](channel-guides/), [Gateway User Guide](gateway-user-guide.md), and [Gateway Message Lifecycle](gateway-message-lifecycle.md).
@@ -1033,7 +1035,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | 0.1.0 | 2025-01-24 | First public release with core features |
 | 0.0.1 | 2025-01-20 | Initial development setup |
 
-[Unreleased]: https://github.com/CoWork-OS/CoWork-OS/compare/v0.5.43...HEAD
+[Unreleased]: https://github.com/CoWork-OS/CoWork-OS/compare/v0.5.44...HEAD
+[0.5.44]: https://github.com/CoWork-OS/CoWork-OS/compare/v0.5.43...v0.5.44
 [0.5.43]: https://github.com/CoWork-OS/CoWork-OS/compare/v0.5.42...v0.5.43
 [0.5.42]: https://github.com/CoWork-OS/CoWork-OS/compare/v0.5.41...v0.5.42
 [0.5.41]: https://github.com/CoWork-OS/CoWork-OS/compare/v0.5.40...v0.5.41

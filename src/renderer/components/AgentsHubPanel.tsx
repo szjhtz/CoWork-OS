@@ -56,11 +56,28 @@ import type {
   SecurityMode,
   Workspace,
 } from "../../shared/types";
+import { getEmojiIcon } from "../utils/emoji-icon-map";
 
 type SkillLite = {
   id: string;
   name: string;
   description?: string;
+};
+
+type AgentsHubAgentRole = {
+  id: string;
+  displayName: string;
+  description?: string;
+  icon?: string;
+  color?: string;
+  isActive: boolean;
+  soul?: string;
+  heartbeatEnabled?: boolean;
+  heartbeatPolicy?: {
+    enabled?: boolean;
+    cadenceMinutes?: number;
+  };
+  pulseEveryMinutes?: number;
 };
 
 type AgentsLibraryTab = "library" | "recent" | "shared" | "scheduled" | "templates";
@@ -246,6 +263,35 @@ function formatRelative(timestamp?: number): string {
 
 function isTerminalManagedSessionStatus(status?: ManagedSession["status"]): boolean {
   return status === "completed" || status === "failed" || status === "cancelled";
+}
+
+function parseAgentRoleSoul(soul?: string): Record<string, unknown> | null {
+  if (!soul) return null;
+  try {
+    const parsed = JSON.parse(soul) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function isManagedAgentMirrorRole(role: Pick<AgentsHubAgentRole, "soul">): boolean {
+  const metadata = parseAgentRoleSoul(role.soul);
+  return (
+    typeof metadata?.managedAgentId === "string" ||
+    metadata?.managedAgentMigrated === true
+  );
+}
+
+export function getMissionControlActiveAgentRoles<T extends AgentsHubAgentRole>(agentRoles: T[]): T[] {
+  return agentRoles.filter(
+    (role) =>
+      role.isActive &&
+      !isManagedAgentMirrorRole(role) &&
+      (role.heartbeatPolicy?.enabled === true || role.heartbeatEnabled === true),
+  );
 }
 
 function getManagedSessionEventText(event: ManagedSessionEvent): string {
@@ -698,7 +744,7 @@ export function AgentsHubPanel({
   const [workspacePermissions, setWorkspacePermissions] = useState<
     Record<string, AgentWorkspacePermissionSnapshot>
   >({});
-  const [agentRoles, setAgentRoles] = useState<Any[]>([]);
+  const [agentRoles, setAgentRoles] = useState<AgentsHubAgentRole[]>([]);
   const [automationProfiles, setAutomationProfiles] = useState<Any[]>([]);
   const [conversionPanel, setConversionPanel] = useState<ConversionPanel>(null);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
@@ -976,6 +1022,10 @@ export function AgentsHubPanel({
     const studio = getStudioConfig(agentDetails[agent.id]);
     return !!studio?.scheduleConfig?.enabled;
   });
+  const activeMissionControlAgentRoles = useMemo(
+    () => getMissionControlActiveAgentRoles(agentRoles),
+    [agentRoles],
+  );
   const sharedAgents = agents.filter((agent) => {
     const visibility = getStudioConfig(agentDetails[agent.id])?.sharing?.visibility;
     return visibility === "team" || visibility === "workspace";
@@ -1014,6 +1064,12 @@ export function AgentsHubPanel({
         return agents;
     }
   }, [agents, libraryTab, recentlyUsedAgents, scheduledAgents, sharedAgents]);
+  const visibleLibraryAgents = libraryAgents.slice(0, 6);
+  const visibleMissionControlAgentRoles =
+    libraryTab === "library"
+      ? activeMissionControlAgentRoles.slice(0, Math.max(0, 6 - visibleLibraryAgents.length))
+      : [];
+  const visibleAgentCount = agents.length + activeMissionControlAgentRoles.length;
 
   const featuredTemplates = useMemo(() => {
     const preferred = templates.filter((template) => template.featured);
@@ -2682,7 +2738,12 @@ export function AgentsHubPanel({
       <section className="agents-metrics-strip">
         <div className="agents-metric-pill">
           <span>Total agents</span>
-          <strong>{agents.length}</strong>
+          <strong>{visibleAgentCount}</strong>
+          {activeMissionControlAgentRoles.length > 0 ? (
+            <small>
+              {agents.length} managed · {activeMissionControlAgentRoles.length} Mission Control
+            </small>
+          ) : null}
         </div>
         <div className="agents-metric-pill">
           <span>Total runs</span>
@@ -2764,9 +2825,9 @@ export function AgentsHubPanel({
               );
             })}
           </div>
-        ) : libraryAgents.length > 0 ? (
+        ) : visibleLibraryAgents.length > 0 || visibleMissionControlAgentRoles.length > 0 ? (
           <div className="agents-library-grid">
-            {libraryAgents.slice(0, 6).map((agent, index) => {
+            {visibleLibraryAgents.map((agent, index) => {
               const studio = getStudioConfig(agentDetails[agent.id]);
               const analytics = getAgentAnalytics(agent, sessions, studio);
               const TemplateGlyph = studio?.templateId
@@ -2802,6 +2863,35 @@ export function AgentsHubPanel({
                   <div className="agents-library-card-meta">
                     <span>{studio?.sharing?.ownerLabel || studio?.sharing?.visibility || "team"}</span>
                     <span>{analytics.latestRunAt ? formatRelative(analytics.latestRunAt) : "No runs yet"}</span>
+                  </div>
+                </button>
+              );
+            })}
+            {visibleMissionControlAgentRoles.map((agentRole, offset) => {
+              const Icon = getEmojiIcon(agentRole.icon || "🤖");
+              const cardIndex = visibleLibraryAgents.length + offset;
+              const cadence = agentRole.heartbeatPolicy?.cadenceMinutes || agentRole.pulseEveryMinutes;
+              return (
+                <button
+                  key={`mission-control-${agentRole.id}`}
+                  className={`agents-library-card legacy ${cardIndex === 0 ? "feature" : ""}`}
+                  onClick={() => setConversionPanel("agent-role")}
+                >
+                  <div className="agents-library-card-top">
+                    <span className="agents-library-card-icon" style={{ color: agentRole.color }}>
+                      <Icon size={cardIndex === 0 ? 20 : 18} />
+                    </span>
+                    <span className="agents-library-card-status mission-control">
+                      Mission Control
+                    </span>
+                  </div>
+                  <div className="agents-library-card-copy">
+                    <strong>{agentRole.displayName}</strong>
+                    <p>{agentRole.description || "Active Agent Persona running in Mission Control."}</p>
+                  </div>
+                  <div className="agents-library-card-meta">
+                    <span>Agent Persona</span>
+                    <span>{cadence ? `${cadence}m cadence` : "heartbeat enabled"}</span>
                   </div>
                 </button>
               );
@@ -4246,6 +4336,13 @@ function renderAgentsStyles() {
         line-height: 1;
         font-weight: 500;
       }
+      .agents-metric-pill small {
+        display: block;
+        margin-top: 8px;
+        color: var(--agents-muted);
+        font-size: 0.78rem;
+        line-height: 1.35;
+      }
       .agents-governance-list {
         display: grid;
         gap: 12px;
@@ -4445,6 +4542,9 @@ function renderAgentsStyles() {
         transform: translateY(-2px);
         box-shadow: 0 28px 54px -36px rgba(15, 23, 42, 0.22);
       }
+      .agents-library-card.legacy {
+        border-style: dashed;
+      }
       .agents-library-card.feature {
         grid-row: span 2;
         min-height: 260px;
@@ -4467,6 +4567,10 @@ function renderAgentsStyles() {
         color: var(--agents-muted);
         font-size: 0.78rem;
         text-transform: capitalize;
+      }
+      .agents-library-card-status.mission-control {
+        background: rgba(21, 112, 239, 0.1);
+        color: #155eef;
       }
       .agents-library-card-copy strong {
         display: block;

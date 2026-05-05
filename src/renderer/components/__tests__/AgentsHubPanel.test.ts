@@ -6,6 +6,7 @@ import {
   buildDraftFromTemplate,
   getEffectiveApprovalPreview,
   getApprovalRuntimeMatrix,
+  getMissionControlActiveAgentRoles,
   getSlackDeploymentHealth,
   makeBlankDraft,
   normalizeSlackDeploymentHealth,
@@ -14,6 +15,49 @@ import {
 } from "../AgentsHubPanel";
 
 describe("AgentsHubPanel draft helpers", () => {
+  it("keeps active Mission Control personas visible without double-counting managed mirrors", () => {
+    const roles = [
+      {
+        id: "active-persona",
+        displayName: "Research Operator",
+        isActive: true,
+        heartbeatEnabled: true,
+        soul: undefined,
+      },
+      {
+        id: "inactive-persona",
+        displayName: "Inactive Operator",
+        isActive: false,
+        heartbeatEnabled: true,
+      },
+      {
+        id: "manual-persona",
+        displayName: "Manual Persona",
+        isActive: true,
+        heartbeatEnabled: false,
+      },
+      {
+        id: "managed-mirror",
+        displayName: "Managed Mirror",
+        isActive: true,
+        heartbeatEnabled: true,
+        soul: JSON.stringify({ managedAgentId: "managed-1" }),
+      },
+      {
+        id: "policy-enabled",
+        displayName: "Policy Enabled",
+        isActive: true,
+        heartbeatEnabled: false,
+        heartbeatPolicy: { enabled: true },
+      },
+    ] as Any;
+
+    expect(getMissionControlActiveAgentRoles(roles).map((role) => role.id)).toEqual([
+      "active-persona",
+      "policy-enabled",
+    ]);
+  });
+
   it("builds a template-backed studio draft with seeded schedule, tools, and memory", () => {
     const draft = buildDraftFromTemplate(
       {

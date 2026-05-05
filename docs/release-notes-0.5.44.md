@@ -43,3 +43,7 @@ Release `0.5.44` is a broad reliability and platform release. It expands Browser
 - **Linux server smoke**: built the Linux x64 server tarball, verified checksum metadata, and smoke-tested the server package.
 - **npm package smoke**: published and verified `cowork-os@0.5.44`, including registry propagation and tarball metadata.
 - **GitHub release assets**: published the macOS, Windows, Linux server, updater metadata, checksum, and blockmap assets under the `v0.5.44` GitHub release.
+
+## Known Issue
+
+- **macOS DMG distribution**: the `v0.5.44` macOS DMG was published as an unsigned fallback artifact, so Gatekeeper can block launch with "Apple could not verify CoWork OS is free of malware." Public macOS releases must be Developer ID signed and notarized; the release workflow has been updated after `v0.5.44` to require those credentials before publishing another macOS DMG.

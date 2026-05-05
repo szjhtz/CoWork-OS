@@ -1,16 +1,16 @@
 # Troubleshooting
 
-## macOS app won't launch (unsigned build)
+## macOS app won't launch with "Apple could not verify"
 
-CoWork OS is currently distributed as an unsigned build. On first launch, use **System Settings > Privacy & Security > Open Anyway** once.
+Public CoWork OS DMG releases must be Developer ID signed and notarized. If macOS shows **"Apple could not verify CoWork OS is free of malware"**, the downloaded artifact was not signed/notarized for distribution. Install a newer signed release instead of bypassing Gatekeeper.
 
-Release maintainers can create the unsigned macOS DMG/ZIP with:
+Release maintainers can create local-only unsigned macOS DMG/ZIP artifacts with:
 
 ```bash
 npm run package:mac:unsigned
 ```
 
-Terminal fallback:
+Unsigned fallback builds are for maintainer diagnostics only. If you intentionally built one locally, remove quarantine before launch:
 
 ```bash
 xattr -dr com.apple.quarantine "/Applications/CoWork OS.app"

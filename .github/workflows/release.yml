@@ -89,6 +89,19 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     needs: hardening-release-gate
+    env:
+      CSC_LINK: ${{ secrets.CSC_LINK }}
+      CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+      CSC_NAME: ${{ secrets.CSC_NAME }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+      APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
+      APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY_CONTENT }}
+      APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+      APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+      APPLE_KEYCHAIN_PROFILE: ${{ secrets.APPLE_KEYCHAIN_PROFILE }}
     strategy:
       fail-fast: false
       matrix:
@@ -214,18 +227,21 @@ jobs:
             fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
           "
 
+      - name: Validate macOS signing and notarization inputs
+        if: runner.os == 'macOS'
+        run: node scripts/prepare_macos_signing_ci.mjs
+
       - name: Package and publish Electron app
         shell: bash
         run: |
           set -euo pipefail
           if [ "${RUNNER_OS}" = "macOS" ]; then
-            COWORK_MAC_UNSIGNED=1 node scripts/run_electron_builder.mjs --mac --publish never
+            node scripts/run_electron_builder.mjs --mac --publish never
           else
             npm run package
           fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # unsigned macOS build publishing to GitHub releases
 
       - name: Align packaged artifact names with updater metadata
         run: node scripts/release-artifact-names.mjs
@@ -260,9 +276,6 @@ jobs:
         run: |
           set -euo pipefail
           smoke_args=(-- --expected-version=${{ steps.release_metadata.outputs.npm_version }})
-          if [ "${RUNNER_OS}" = "macOS" ]; then
-            smoke_args+=(--allow-unsigned)
-          fi
           npm run package:desktop:smoke "${smoke_args[@]}"
 
       - name: Upload release artifacts explicitly

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **macOS release signing gate**: release builds now require Developer ID signing and Apple notarization inputs before macOS artifacts can be packaged or smoke-tested. The release workflow no longer forces `COWORK_MAC_UNSIGNED=1`, and macOS smoke tests now require Gatekeeper assessment to pass instead of accepting unsigned fallback DMGs.
+
 ## [0.5.44] - 2026-05-05
 
 ### Added

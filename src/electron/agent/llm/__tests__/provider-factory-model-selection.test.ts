@@ -191,6 +191,31 @@ describe("LLMProviderFactory model status", () => {
     expect(resolved.modelKey).toBe("gpt-4o-mini");
     expect(resolved.modelId).toBe("gpt-5.5");
   });
+
+  it("runs the stored Anthropic-compatible gateway model even when another provider uses the same id", () => {
+    const settings: LLMSettings = {
+      providerType: "anthropic-compatible",
+      modelKey: "sonnet-4-6",
+      kimi: {
+        model: "moonshotai/kimi-k2.6:thinking",
+      },
+      customProviders: {
+        "anthropic-compatible": {
+          apiKey: "nano-key",
+          baseUrl: "https://nano-gpt.com/api/v1",
+          model: "moonshotai/kimi-k2.6:thinking",
+        },
+      },
+    };
+    vi.spyOn(LLMProviderFactory, "loadSettings").mockReturnValue(settings);
+
+    const resolved = LLMProviderFactory.resolveTaskModelSelection();
+
+    expect(resolved.providerType).toBe("anthropic-compatible");
+    expect(resolved.modelKey).toBe("moonshotai/kimi-k2.6:thinking");
+    expect(resolved.modelId).toBe("moonshotai/kimi-k2.6:thinking");
+    expect(resolved.modelSource).toBe("provider_default");
+  });
 });
 
 describe("LLMProviderFactory model selection persistence", () => {

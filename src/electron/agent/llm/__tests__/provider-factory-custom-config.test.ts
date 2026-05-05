@@ -150,6 +150,36 @@ describe("LLMProviderFactory custom provider config resolution", () => {
     ]);
   });
 
+  it("keeps Anthropic-compatible gateway models that overlap another provider", () => {
+    const modelStatus = LLMProviderFactory.getProviderModelStatus({
+      providerType: "anthropic-compatible",
+      modelKey: "sonnet-4-6",
+      kimi: {
+        model: "moonshotai/kimi-k2.6:thinking",
+      },
+      customProviders: {
+        "anthropic-compatible": {
+          apiKey: "nano-key",
+          baseUrl: "https://nano-gpt.com/api/v1",
+          model: "moonshotai/kimi-k2.6:thinking",
+          cachedModels: [
+            {
+              key: "moonshotai/kimi-k2.6:thinking",
+              displayName: "Kimi K2.6 Thinking",
+              description: "NanoGPT Anthropic-compatible model",
+            },
+          ],
+        },
+      },
+    } as Any);
+
+    expect(modelStatus.currentModel).toBe("moonshotai/kimi-k2.6:thinking");
+    expect(modelStatus.models[0]).toMatchObject({
+      key: "moonshotai/kimi-k2.6:thinking",
+      displayName: "Kimi K2.6 Thinking",
+    });
+  });
+
   it("returns documented MiniMax Portal models when refreshing custom-provider models", async () => {
     vi.spyOn(LLMProviderFactory, "loadSettings").mockReturnValue({
       providerType: "minimax-portal",

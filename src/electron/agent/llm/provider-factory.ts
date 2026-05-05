@@ -2619,28 +2619,8 @@ export class LLMProviderFactory {
         settings.customProviders?.[resolvedProviderType] ||
         settings.customProviders?.[settings.providerType];
 
-      // Guard against cross-provider model contamination: if the stored model for this
-      // custom provider matches a model that belongs to a different provider (e.g. an
-      // Azure deployment name stored as minimax-portal's model), ignore it and fall
-      // back to this provider's catalog default.
       const storedModel = customConfig?.model;
-      const isFromAnotherProvider =
-        storedModel != null &&
-        (settings.azure?.deployments?.includes(storedModel) ||
-          settings.azure?.deployment === storedModel ||
-          settings.openai?.model === storedModel ||
-          settings.gemini?.model === storedModel ||
-          settings.openrouter?.model === storedModel ||
-          settings.deepseek?.model === storedModel ||
-          settings.ollama?.model === storedModel ||
-          settings.groq?.model === storedModel ||
-          settings.xai?.model === storedModel ||
-          settings.kimi?.model === storedModel ||
-          settings.openaiCompatible?.model === storedModel);
-      const currentModel =
-        (!isFromAnotherProvider && storedModel) ||
-        customEntry.defaultModel ||
-        "";
+      const currentModel = storedModel || customEntry.defaultModel || "";
       const cachedModels =
         customConfig?.cachedModels && customConfig.cachedModels.length > 0
           ? customConfig.cachedModels

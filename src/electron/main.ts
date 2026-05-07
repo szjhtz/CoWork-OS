@@ -1088,6 +1088,10 @@ if (!gotTheLock) {
 
   function createWindow() {
     const isMac = process.platform === "darwin";
+    const isWsl =
+      process.platform === "linux" &&
+      (Boolean(process.env.WSL_DISTRO_NAME) ||
+        os.release().toLowerCase().includes("microsoft"));
     let useMacVibrancy = isMac && !nativeTheme.prefersReducedTransparency;
     const {
       isMaximized: shouldStartMaximized,
@@ -1120,7 +1124,8 @@ if (!gotTheLock) {
         initialWindowBounds.x === undefined ||
         initialWindowBounds.y === undefined,
       icon: getDesktopIconPath(),
-      titleBarStyle: isMac ? "hiddenInset" : "hidden",
+      ...(isWsl ? {} : { titleBarStyle: isMac ? "hiddenInset" : "hidden" }),
+      ...(isWsl ? { frame: true } : {}),
       ...(isMac ? { trafficLightPosition: { x: 18, y: 18 } } : {}),
       ...(useMacVibrancy
         ? {

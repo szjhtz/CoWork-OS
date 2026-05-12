@@ -7,6 +7,7 @@
 
 import { spawn, ChildProcess } from "child_process";
 import { EventEmitter } from "events";
+import * as path from "path";
 import {
   MCPTransport,
   MCPServerConfig,
@@ -23,6 +24,108 @@ interface PendingRequest {
 }
 const logger = createLogger("MCP StdioTransport");
 
+interface NormalizedStdioSpawnCommand {
+  command: string;
+  args: string[];
+  shell: boolean;
+}
+
+const WINDOWS_CMD_SHIM_COMMANDS = new Set(["npm", "npx", "pnpm", "yarn", "yarnpkg"]);
+
+export function splitStdioCommandLine(input: string): string[] {
+  const tokens: string[] = [];
+  let current = "";
+  let quote: '"' | "'" | null = null;
+
+  for (let index = 0; index < input.length; index++) {
+    const char = input[index];
+    const next = input[index + 1];
+
+    if (char === "\\" && (next === '"' || next === "'" || /\s/.test(next || ""))) {
+      current += next;
+      index++;
+      continue;
+    }
+
+    if ((char === '"' || char === "'") && (!quote || quote === char)) {
+      quote = quote ? null : char;
+      continue;
+    }
+
+    if (!quote && /\s/.test(char)) {
+      if (current) {
+        tokens.push(current);
+        current = "";
+      }
+      continue;
+    }
+
+    current += char;
+  }
+
+  if (current) {
+    tokens.push(current);
+  }
+
+  return tokens;
+}
+
+function shouldSplitInlineCommand(command: string, args: string[]): boolean {
+  const trimmed = command.trim();
+  if (args.length > 0 || !/\s/.test(trimmed)) {
+    return false;
+  }
+  if (trimmed.startsWith('"') || trimmed.startsWith("'")) {
+    return true;
+  }
+
+  const firstToken = trimmed.split(/\s+/, 1)[0] || "";
+  if (/^[A-Za-z]:[\\/]/.test(firstToken) || firstToken.includes("/") || firstToken.includes("\\")) {
+    return false;
+  }
+
+  return true;
+}
+
+function shouldUseWindowsShell(command: string, platform: NodeJS.Platform): boolean {
+  if (platform !== "win32") {
+    return false;
+  }
+
+  const baseName = path.win32.basename(command).toLowerCase();
+  if (baseName.endsWith(".cmd") || baseName.endsWith(".bat")) {
+    return true;
+  }
+
+  const extension = path.win32.extname(baseName);
+  const commandName = extension ? baseName.slice(0, -extension.length) : baseName;
+  return WINDOWS_CMD_SHIM_COMMANDS.has(commandName);
+}
+
+export function normalizeStdioSpawnCommand(
+  command: string,
+  args: string[] = [],
+  platform: NodeJS.Platform = process.platform,
+): NormalizedStdioSpawnCommand {
+  const trimmedCommand = command.trim();
+  let resolvedCommand = trimmedCommand;
+  let resolvedArgs = [...args];
+
+  if (shouldSplitInlineCommand(trimmedCommand, resolvedArgs)) {
+    const parts = splitStdioCommandLine(trimmedCommand);
+    if (parts.length > 1) {
+      resolvedCommand = parts[0];
+      resolvedArgs = [...parts.slice(1), ...resolvedArgs];
+    }
+  }
+
+  return {
+    command: resolvedCommand,
+    args: resolvedArgs,
+    shell: shouldUseWindowsShell(resolvedCommand, platform),
+  };
+}
+
 export class StdioTransport extends EventEmitter implements MCPTransport {
   private process: ChildProcess | null = null;
   private config: MCPServerConfig;
@@ -34,6 +137,7 @@ export class StdioTransport extends EventEmitter implements MCPTransport {
   private stderrBuffer = ""; // Capture stderr for better error messages
   private connected = false;
   private requestId = 0;
+  private lastCloseError: Error | null = null;
 
   constructor(config: MCPServerConfig) {
     super();
@@ -79,20 +183,26 @@ export class StdioTransport extends EventEmitter implements MCPTransport {
           }
           return arg;
         });
+        const spawnCommand = normalizeStdioSpawnCommand(command, resolvedArgs);
 
         // When launching via Electron's executable with --runAsNode, force pure
         // Node mode so macOS doesn't treat child connector processes as GUI apps.
-        if (command === process.execPath && resolvedArgs.includes("--runAsNode")) {
+        if (spawnCommand.command === process.execPath && spawnCommand.args.includes("--runAsNode")) {
           processEnv.ELECTRON_RUN_AS_NODE = "1";
         }
 
-        logger.debug(`Spawning: ${command} ${resolvedArgs.join(" ")}`);
+        this.lastCloseError = null;
+        logger.debug(
+          `Spawning: ${spawnCommand.command} ${spawnCommand.args.join(" ")}${
+            spawnCommand.shell ? " (shell)" : ""
+          }`,
+        );
 
-        this.process = spawn(command, resolvedArgs, {
+        this.process = spawn(spawnCommand.command, spawnCommand.args, {
           cwd: cwd || process.cwd(),
           env: processEnv,
           stdio: ["pipe", "pipe", "pipe"],
-          shell: false,
+          shell: spawnCommand.shell,
         });
 
         // Handle stdout (JSON-RPC messages from server)
@@ -114,6 +224,7 @@ export class StdioTransport extends EventEmitter implements MCPTransport {
         // Handle process errors
         this.process.on("error", (error) => {
           clearTimeout(timeout);
+          this.lastCloseError = error;
           logger.error("Process error:", error);
           this.errorHandler?.(error);
           if (!this.connected) {
@@ -135,6 +246,8 @@ export class StdioTransport extends EventEmitter implements MCPTransport {
             const stderrSnippet = this.stderrBuffer.trim().slice(-500); // Last 500 chars
             message += `: ${stderrSnippet}`;
           }
+          const exitError = new Error(message);
+          this.lastCloseError = exitError;
           if (code === 0) {
             logger.debug(message);
           } else {
@@ -142,9 +255,9 @@ export class StdioTransport extends EventEmitter implements MCPTransport {
           }
 
           if (!this.connected) {
-            reject(new Error(message));
+            reject(exitError);
           } else {
-            this.closeHandler?.(code !== 0 ? new Error(message) : undefined);
+            this.closeHandler?.(code !== 0 ? exitError : undefined);
           }
           this.cleanup();
         });
@@ -157,7 +270,9 @@ export class StdioTransport extends EventEmitter implements MCPTransport {
               const stderrSnippet = this.stderrBuffer.trim().slice(-500);
               message += `: ${stderrSnippet}`;
             }
-            this.closeHandler?.(code !== 0 ? new Error(message) : undefined);
+            const closeError = code !== 0 ? new Error(message) : undefined;
+            this.lastCloseError = closeError || null;
+            this.closeHandler?.(closeError);
           }
           this.cleanup();
         });
@@ -234,7 +349,9 @@ export class StdioTransport extends EventEmitter implements MCPTransport {
    */
   async sendRequest(method: string, params?: Record<string, Any>): Promise<Any> {
     if (!this.connected || !this.process?.stdin?.writable) {
-      throw new Error("Not connected");
+      throw new Error(
+        this.lastCloseError ? `Not connected: ${this.lastCloseError.message}` : "Not connected",
+      );
     }
 
     const id = ++this.requestId;
@@ -269,7 +386,9 @@ export class StdioTransport extends EventEmitter implements MCPTransport {
    */
   async send(message: JSONRPCRequest | JSONRPCNotification): Promise<void> {
     if (!this.connected || !this.process?.stdin?.writable) {
-      throw new Error("Not connected");
+      throw new Error(
+        this.lastCloseError ? `Not connected: ${this.lastCloseError.message}` : "Not connected",
+      );
     }
 
     try {
@@ -366,7 +485,7 @@ export class StdioTransport extends EventEmitter implements MCPTransport {
     // Reject all pending requests so callers don't hang forever
     for (const [, pending] of this.pendingRequests) {
       clearTimeout(pending.timeout);
-      pending.reject(new Error("Transport closed"));
+      pending.reject(this.lastCloseError || new Error("Transport closed"));
     }
     this.pendingRequests.clear();
 

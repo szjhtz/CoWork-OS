@@ -117,24 +117,40 @@ Provider-native search is additive. If Gmail or Outlook/Microsoft Graph search f
 
 See [Ask Inbox Architecture](ask-inbox-architecture.md).
 
-### `@Gmail` or `@Inbox` says Google Workspace authorization failed
+### `@Gmail`, `@Google Tasks`, `@Google Slides`, or `@Inbox` says Google Workspace authorization failed
 
-The composer `@` menu uses local configured state, so a stale Google token can still appear until the next provider call proves it is invalid. If a Gmail or Inbox request reports a Google Workspace token refresh bad request, CoWork clears the stale access/refresh tokens and requires a reconnect.
+The composer `@` menu uses local configured state, so a stale Google token can still appear until the next provider call proves it is invalid. If a Google Workspace request reports a token refresh bad request, CoWork clears the stale access/refresh tokens and requires a reconnect. If the token is valid but was granted before newer services existed, CoWork reports missing scopes and also requires reconnect.
 
 Fix:
 
 1. Open **Settings > Integrations > Google Workspace**.
-2. Confirm the client id, client secret, and scopes match the OAuth client you want to use.
-3. Click **Connect** again and finish the Google OAuth flow.
-4. Retry the `@Gmail` or `@inbox` prompt.
+2. Confirm the client id and client secret match the OAuth client you want to use.
+3. Leave the default Google Workspace scopes enabled, or make sure any custom scope list includes Drive, Gmail read/send/modify, Calendar, Spreadsheets, Documents, Tasks, Presentations, Chat messages, and Chat spaces readonly.
+4. Click **Connect** again and finish the Google OAuth flow.
+5. Retry the `@Gmail`, `@Google Tasks`, `@Google Slides`, or `@inbox` prompt.
 
 If you recently changed the Google OAuth client id, client secret, or scopes, reconnect even if the integration previously worked. Changed OAuth configuration invalidates the old token set.
+
+### Integration reconnect notifications
+
+When a background integration request fails because authorization is stale, revoked, missing scopes, or blocked by a sign-in challenge, CoWork now creates a warning notification instead of silently retrying forever. The notification points you back to Settings so you can reconnect or update the provider credentials.
+
+This applies to the shared Google Workspace path used by Gmail, Calendar, and Drive; X (Twitter) login/challenge failures; and MCP connector tool calls or connection status errors that look like auth failures. To avoid notification spam, repeated auth failures for the same integration are de-duped for a short window.
+
+Fix:
+
+1. Open the settings path named in the notification, usually **Settings > Integrations** or the provider-specific settings page.
+2. Reconnect the provider or update the missing API key/OAuth credentials.
+3. If the provider asks for new scopes, approve the updated scope set.
+4. Retry the task or automation after the integration shows connected.
+
+For maintainers, auth-like MCP disconnects are left in an error state instead of entering the normal reconnect loop. This keeps token expiration and sign-in challenges visible to the user rather than hiding them behind repeated background retries.
 
 ### The `@` menu does not show an integration
 
 The composer only shows configured integrations that are locally usable. It does not run live health checks while typing.
 
-Check that the integration is enabled and has local credentials. For Google Workspace, the menu should show Gmail, Google Drive, and Google Calendar instead of a single Google Workspace item. For gateway channels such as Slack, the channel must be connected and enabled. For MCP connectors, the connector must be connected/configured.
+Check that the integration is enabled and has local credentials. For Google Workspace, the menu should show service-specific entries instead of a single Google Workspace item: Gmail, Google Drive, and Google Calendar for built-in tools, plus Google Docs, Google Sheets, Google Slides, Google Tasks, and Google Chat when the Google Workspace MCP connector exposes those tools. For gateway channels such as Slack, the channel must be connected and enabled. For MCP connectors, the connector must be connected/configured.
 
 See [Composer Mentions](composer-mentions.md).
 
@@ -251,7 +267,7 @@ See [Web Page Artifacts](web-page-artifacts.md) for the expected sidebar/fullscr
 
 ## Browser workbench does not open for website testing
 
-Interactive browser-use prompts should open a visible browser workbench in the right sidebar. This is different from web page artifacts: generated `.html` files use the artifact iframe viewer, while live URLs use the Browser V2 workbench. See [Browser Workbench](browser-workbench.md) for the expected controls, cursor overlay, screenshots, diagnostics, snapshot refs, and annotation behavior.
+Interactive browser-use prompts should open a visible browser workbench in the right sidebar. This is different from web page artifacts: generated `.html` files use the artifact iframe viewer, while live URLs use the Browser V2 workbench. See [Browser Workbench](browser-workbench.md) for the expected controls, cursor overlay, responsive viewport controls, screenshots, diagnostics, snapshot refs, and annotation behavior.
 
 If a task like "go to example.com and test the application as a normal user" does not open the sidebar browser:
 
@@ -268,6 +284,7 @@ If the sidebar opens but browser actions are hard to follow:
 3. If snapshot refs fail as stale or unknown, call `browser_snapshot` again and retry with the new ref. Refs are valid only for the latest snapshot after page updates and navigation.
 4. If diagnostics look empty, confirm the task is using the visible Browser V2 workbench rather than forced Playwright or external CDP. Console/network/download/storage buffers are session-scoped.
 5. If screenshots or annotation fail, check that the task has an active workspace folder; captures are saved into the workspace before they can be attached back to the agent.
+6. If responsive screenshots do not match the expected breakpoint, confirm the task called `browser_emulate` against the visible workbench and that the toolbar shows the active viewport size before `browser_screenshot` runs.
 
 For a fresh repro log:
 

@@ -33,10 +33,10 @@ Cowork OS supports these via:
 - Channels: Slack, iMessage, WhatsApp, Telegram, Email, etc.
 - Scheduling: `/schedule ...`, `schedule_task`, and task view `... > Add automation...`
 - Inbox + briefing commands: `/inbox`, `/brief [morning|today|tomorrow|week]`
-- Message box shortcuts: one `/` picker for app commands such as `/schedule`, `/clear`, `/plan`, and `/cost`, plus skill-backed workflow aliases from plugin packs
+- Message box shortcuts: one `/` picker for app commands such as `/schedule`, `/clear`, `/plan`, `/cost`, and `/multitask`, plus skill-backed workflow aliases from plugin packs
 - Slash skill workflows: `/simplify [objective] ...` for quality passes, `/batch <objective> ...` for parallelizable migration/transform workflows, `/llm-wiki <objective> ...` for persistent research vaults, and CoWork Shortcuts aliases such as `/strategy`, `/batch-rename`, `/gmail-summary-drive`, `/multi-source-report`, and `/end-of-day-log`
 - Integrations: Notion, Gmail/Google Calendar (if configured), Apple Calendar/Reminders (macOS)
-- Web automation: visible Browser Workbench / Browser V2 for normal-user site testing, with snapshot refs, browser tools, diagnostics, screenshots, annotation, downloads/uploads, and fallback browser modes when explicitly needed
+- Web automation: visible Browser Workbench / Browser V2 for normal-user site testing, with desktop/tablet/mobile viewport checks, snapshot refs, browser tools, diagnostics, screenshots, annotation, downloads/uploads, and fallback browser modes when explicitly needed
 - Company-ops primitives: venture workspace kit, digital twin operators, strategic planner, and Mission Control ops monitoring
 - Everything Workbench: task output cards, sidebar/fullscreen artifact workspaces, follow-up composer, and refresh-after-edit behavior for generated knowledge-work artifacts
 
@@ -327,6 +327,12 @@ Build a dev task queue for repo owner/repo from open high-priority issues.
 For each item include acceptance criteria, dependencies, risk, and suggested owner (agent or human).
 Run up to 8 tasks in parallel and provide progress checkpoints.
 For any code changes, summarize diffs and STOP before merge/deploy unless I approve.
+```
+
+Shortcut form for one-shot lane fan-out:
+
+```text
+/multitask 6 Build a dev task queue for repo owner/repo from open high-priority issues. Include acceptance criteria, dependencies, risk, suggested owner, and verification notes.
 ```
 
 ### 11) "Figure It Out" Agent (Fallback Orchestration)

@@ -9,6 +9,7 @@ import {
 import { PairingCodeDisplay } from "./PairingCodeDisplay";
 import { ContextPolicySettings } from "./ContextPolicySettings";
 import { ResearchChannelsSettings } from "./ResearchChannelsSettings";
+import { ChannelSpecializationSettings } from "./ChannelSpecializationSettings";
 
 interface TelegramSettingsProps {
   onStatusChange?: (connected: boolean) => void;
@@ -524,6 +525,8 @@ export function TelegramSettings({ onStatusChange }: TelegramSettingsProps) {
         }}
         channelType="telegram"
       />
+
+      <ChannelSpecializationSettings channelId={channel.id} />
 
       {/* Per-Context Security Policies (DM vs Group) */}
       <div className="settings-section">

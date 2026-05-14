@@ -182,11 +182,11 @@ That means:
 
 Slash behavior is special only in how the skill is selected, not in how the task is redefined.
 
-The main message box now has one `/` picker for both deterministic app commands and skill-backed workflow shortcuts. App commands such as `/schedule`, `/clear`, `/plan`, `/cost`, `/compact`, `/doctor`, and `/undo` are not skills. Plugin-pack `slashCommands` and enabled task skills are skills, so they use this additive skill model.
+The main message box now has one `/` picker for both deterministic app commands and skill-backed workflow shortcuts. App commands such as `/schedule`, `/clear`, `/plan`, `/cost`, `/multitask`, `/compact`, `/doctor`, and `/undo` are not skills. Plugin-pack `slashCommands` and enabled task skills are skills, so they use this additive skill model. Selecting a skill-backed workflow from the picker inserts an editable `/<command> ` token into the composer so the user can add context before sending.
 
 Plugin aliases are resolved before direct skill IDs when an enabled alias and a direct skill share the same visible token. This keeps backend execution aligned with the picker display. If an alias target is missing or disabled, the resolver can fall back to an enabled direct skill ID.
 
-See [Message Box Shortcuts](message-box-shortcuts.md) for picker ordering, app command behavior, plugin alias resolution, and the bundled CoWork Shortcuts pack.
+See [Message Box Shortcuts](message-box-shortcuts.md) for picker ordering, app command behavior, plugin alias resolution, and the bundled CoWork Shortcuts pack. See [Claude-for-Legal Workflows](claude-for-legal.md) for the legal pack extension that can show main-view matter intake cards after a legal slash workflow starts.
 
 Gateway channels use the same additive skill execution model when a user sends `/<skill-slug> args`. The remote command registry handles command ownership first, `/skill <id>` remains the toggle command, and enabled skill slugs are forwarded as deterministic skill invocations rather than ordinary chat text. See [Gateway Message Lifecycle](gateway-message-lifecycle.md).
 

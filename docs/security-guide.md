@@ -230,6 +230,12 @@ Remote ACP delegation is constrained more tightly than ordinary outbound automat
 - private and link-local IP targets are rejected by the remote invoker validation layer
 - remote requests use bounded timeouts so bad endpoints cannot hang the main process indefinitely
 
+### Control Plane Exposure
+
+The Control Plane binds to loopback by default. Headless/managed deployments fail closed on `0.0.0.0`/`::` binds unless Tailscale exposure is enabled, the process is running in a privately published container with `COWORK_CONTROL_PLANE_BIND_CONTEXT=container`, or `COWORK_CONTROL_PLANE_ALLOW_INSECURE_PUBLIC_BIND=1` is set as a break-glass override.
+
+Reverse-proxied dashboards should set `COWORK_CONTROL_PLANE_ALLOWED_ORIGINS` to the public HTTPS origin. Only enable `COWORK_CONTROL_PLANE_TRUST_PROXY=1` behind a proxy that controls forwarded headers.
+
 ### No Telemetry
 
 CoWork OS does **not**:
@@ -287,7 +293,7 @@ All these are stored encrypted in the database:
 | `hooks` | Automation hooks configuration |
 | `mcp` | MCP server configurations |
 | `acp` | ACP-related persisted settings and lifecycle metadata |
-| `controlplane` | Control plane settings |
+| `controlplane` | Control plane settings, tokens, allowed browser origins, and proxy trust settings |
 | `channels` | Channel/gateway configurations |
 | `builtintools` | Built-in tool settings |
 | `tailscale` | Tailscale integration settings |

@@ -20,6 +20,8 @@ The most important rule is simple: ordinary text during a running task is treate
 
 If you want a new task, send `/new`. If you want to stop the current task, send `/stop`.
 
+Admins can also specialize a channel, group/chat, or topic/thread in channel settings. When a specialization exists, new tasks from that scope automatically use its workspace, agent role, prompt guidance, tool restrictions, and shared-memory policy. Running tasks keep their existing workspace and role until they finish or you start fresh.
+
 ## Starting a Task
 
 Send the task directly:
@@ -37,6 +39,8 @@ Draft a customer reply based on the last email thread.
 ```
 
 CoWork will route the message into the selected workspace for that chat. If no workspace is selected, it may ask you to choose one or use the channel's default behavior.
+
+If the chat has an admin-configured specialization, that specialization becomes the default for new tasks from that chat. Workspace router rules can still override it for a specific message when the workspace policy says so.
 
 Best practices:
 

@@ -12,6 +12,8 @@ The foundation is still the hybrid memory system, but the runtime now makes it e
 
 An optional external provider lane can also sit beside that local stack. Today that provider is Supermemory, and it is additive rather than authoritative.
 
+Dreaming sits above these lanes as a memory-curation process. It reviews recent transcript evidence, structured observations, and curated hot memory, then writes reviewable `dreaming_candidates` instead of directly changing memory.
+
 Those lanes map into runtime layers as:
 
 - **L0 Identity**: curated user/workspace memory + `USER.md` essentials
@@ -44,6 +46,10 @@ User messages / task events / accepted distill candidates
         │
         ├─→ TranscriptStore
         │     └─→ .cowork/memory/transcripts/*
+        │
+        ├─→ DreamingService
+        │     ├─→ dreaming_runs
+        │     └─→ dreaming_candidates (reviewable memory maintenance proposals)
         │
         └─→ DailyLogService / DailyLogSummarizer
               └─→ .cowork/memory/daily + summaries
@@ -112,6 +118,10 @@ This lane is for the small set of durable facts that should stay front-and-cente
 
 Curated hot memory is injected by default through `<cowork_hot_memory>`.
 
+### Dreaming interaction
+
+Dreaming can propose curated-memory additions, replacements, or archives when recent evidence shows a correction, contradiction, duplicate entry, open loop, recurring cadence, or durable constraint. Those proposals remain `dreaming_candidates` until accepted and applied through `CuratedMemoryService`; Dreaming is not allowed to bypass the curated-memory write path.
+
 ---
 
 ## Lane 2 — Recall Archive
@@ -158,6 +168,12 @@ Destructive inspector actions are workspace-scoped. Delete is implemented as con
 - `<private>...</private>` redacts that segment from captured memory and marks affected derived entries private when needed
 - private, redacted, and suppressed observations are excluded from Supermemory mirroring
 - redacted and suppressed observations are excluded from both search-based prompt recall and recent-memory prompt recall
+
+### Dreaming interaction
+
+Dreaming uses structured observations as compact evidence for memory maintenance. It can detect likely stale archive facts, contradictions, and repeated patterns, but it records proposals in `dreaming_candidates` rather than editing `memories` or `memory_observation_metadata` directly.
+
+Dreaming candidates keep evidence refs so future Memory Hub review can show why a proposal exists before any archive, replacement, or topic-pack update is applied.
 
 ## Screen Context Evidence — Chronicle Promotions
 
@@ -257,6 +273,8 @@ Each checkpoint can now carry two complementary artifacts:
 
 - `structuredSummary`: compact durable synthesis used by existing memory/prompt flows
 - `evidencePacket`: exact transcript/message spans with provenance and a dedupe hash
+
+Dreaming reads session recall as one of its main evidence sources after task completion. This gives memory curation access to what actually happened in the run without injecting full transcript history into future prompts by default.
 
 ### Checkpoint capture triggers
 

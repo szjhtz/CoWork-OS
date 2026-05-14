@@ -642,6 +642,26 @@ export class AgentTeamOrchestrator {
     itemDescription?: string,
     collaborativeMode?: boolean,
   ): string {
+    if (collaborativeMode && rootTask.agentConfig?.multitaskMode) {
+      const parts: string[] = [];
+      parts.push(`You are part of the multitask team "${teamName}".`);
+      parts.push("");
+      parts.push("ROOT TASK CONTEXT:");
+      parts.push(`Title: ${rootTask.title}`);
+      parts.push(rootTask.prompt);
+      parts.push("");
+      parts.push("YOUR MULTITASK LANE:");
+      parts.push(`Title: ${itemTitle}`);
+      if (itemDescription && itemDescription.trim().length > 0) {
+        parts.push(itemDescription.trim());
+      }
+      parts.push("");
+      parts.push("Work only on this lane. Do not duplicate other lanes unless required for context.");
+      parts.push("Report what you did or found, list changed files if any, and call out risks or blockers.");
+      parts.push("Your result will be synthesized with the other multitask lanes.");
+      return parts.join("\n");
+    }
+
     if (collaborativeMode) {
       const parts: string[] = [];
       parts.push(`You are part of the team "${teamName}".`);

@@ -1,6 +1,6 @@
 # Operator Runtime Visibility
 
-Operator Runtime Visibility is the productized surface for the learning-loop, recall, shell, and router work that now ships in CoWork OS. The goal is not to add a second learning system. It is to make the existing memory, playbook, skill-promotion, and routing subsystems visible after every task, while keeping CoWork OS centered on its core surfaces: desktop control plane, channels, inbox, devices, and governed automation.
+Operator Runtime Visibility is the productized surface for the learning-loop, recall, shell, and router work that now ships in CoWork OS. The goal is not to add a second learning system. It is to make the existing memory, Dreaming, playbook, skill-promotion, and routing subsystems visible after every task, while keeping CoWork OS centered on its core surfaces: desktop control plane, channels, inbox, devices, and governed automation.
 
 ## What users see
 
@@ -9,6 +9,7 @@ Operator Runtime Visibility is the productized surface for the learning-loop, re
 Every task completion now emits a standardized learning event that can show:
 
 - memory captured or skipped
+- Dreaming candidates proposed from recent memory/session evidence
 - playbook reinforcement or no-op
 - skill proposal created, approved, rejected, or pending review
 - evidence links behind each step
@@ -88,6 +89,7 @@ The new surfaces make the runtime easier to trust and understand without changin
 Chronicle is part of this visibility story:
 
 - it does **not** create a second memory subsystem
+- Dreaming candidates stay in the same memory-review model instead of becoming a separate memory subsystem
 - it makes recent-screen evidence inspectable when it influenced a task
 - it keeps passive raw frames local and ephemeral, while promoted task-used observations appear as normal runtime evidence and recall
 - when background Chronicle memory generation is enabled, the resulting `screen_context` memories stay visible through the same memory and recall surfaces instead of a Chronicle-only UI
@@ -96,6 +98,7 @@ Chronicle is part of this visibility story:
 
 - [Computer use](computer-use.md)
 - [Chronicle](chronicle.md)
+- [Dreaming](dreaming.md)
 - [Features](features.md)
 - [Skills Runtime Model](skills-runtime-model.md)
 - [Mission Control](mission-control.md)

@@ -1279,6 +1279,28 @@ export function InboxAgentPanel(props: InboxAgentPanelProps = {}) {
     };
   }, [mailboxClientState]);
 
+  const selectedThreadCapabilities = useMemo(
+    () => new Set<string>(selectedThreadAccount?.capabilities || []),
+    [selectedThreadAccount],
+  );
+
+  const selectedThreadCapabilityReason = useMemo(() => {
+    if (!selectedThread || !selectedThreadAccount) return "Connect or sync this mailbox account first.";
+    if (selectedThread.provider === "gmail" && gmailCleanupDisabledReason) return gmailCleanupDisabledReason;
+    if (selectedThread.provider === "outlook_graph") return "Reconnect the Outlook email channel if Microsoft Graph reports a Mail.ReadWrite permission error.";
+    if (selectedThread.provider === "agentmail") return "AgentMail supports reply-all, labels, read-state, archive, and trash where the AgentMail API exposes them; new-message forwarding is disabled.";
+    return "This provider does not expose that mailbox action.";
+  }, [gmailCleanupDisabledReason, selectedThread, selectedThreadAccount]);
+
+  const canSelectedThread = useCallback(
+    (capability: string) => {
+      if (!selectedThread) return false;
+      if (selectedThread.provider === "gmail" && gmailCleanupDisabledReason) return false;
+      return selectedThreadCapabilities.has(capability);
+    },
+    [gmailCleanupDisabledReason, selectedThread, selectedThreadCapabilities],
+  );
+
   const runAction = async (work: () => Promise<void>) => {
     setBusy(true);
     setError(null);
@@ -1550,6 +1572,14 @@ export function InboxAgentPanel(props: InboxAgentPanelProps = {}) {
 
   const openManualCompose = (mode: ManualComposeMode) => {
     if (!selectedThread) return;
+    if (mode === "forward" && !canSelectedThread("forward")) {
+      setError(selectedThreadCapabilityReason);
+      return;
+    }
+    if ((mode === "reply" || mode === "reply_all") && !canSelectedThread("send")) {
+      setError(selectedThreadCapabilityReason);
+      return;
+    }
     const latestIncoming = [...selectedThread.messages]
       .reverse()
       .find((message) => message.direction === "incoming") || selectedThread.messages[selectedThread.messages.length - 1];
@@ -3178,6 +3208,44 @@ export function InboxAgentPanel(props: InboxAgentPanelProps = {}) {
                       {replacementReadiness.providerBackends.join(" + ")}
                     </div>
                   )}
+                  {mailboxClientState.queuedActions.filter((action) => action.status === "failed").slice(0, 3).map((action) => (
+                    <div
+                      key={action.id}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "6px",
+                        marginTop: "6px",
+                        fontSize: "0.68rem",
+                        color: "var(--color-text-muted)",
+                      }}
+                    >
+                      <span style={{ minWidth: 0, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {action.type} failed{action.latestError ? `: ${action.latestError}` : ""}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void runAction(async () => {
+                            await window.electronAPI.retryMailboxAction(action.id);
+                            await reloadAll(selectedThread?.id);
+                          })
+                        }
+                        style={{
+                          border: "1px solid var(--color-border-subtle)",
+                          background: "var(--color-bg-secondary)",
+                          borderRadius: "999px",
+                          color: "var(--color-text-muted)",
+                          fontSize: "0.68rem",
+                          padding: "2px 8px",
+                          cursor: "pointer",
+                          flexShrink: 0,
+                        }}
+                      >
+                        Retry
+                      </button>
+                    </div>
+                  ))}
                 </>
               )}
             </div>
@@ -4863,13 +4931,15 @@ export function InboxAgentPanel(props: InboxAgentPanelProps = {}) {
               onClick={() => openManualCompose("reply")}
               icon={<Reply size={13} />}
               label="Reply"
-              disabled={busy || !selectedThread}
+              disabled={busy || !selectedThread || !canSelectedThread("send")}
+              title={selectedThread && !canSelectedThread("send") ? selectedThreadCapabilityReason : undefined}
             />
             <ActionBtn
               onClick={() => openManualCompose("forward")}
               icon={<Forward size={13} />}
               label="Forward"
-              disabled={busy || !selectedThread}
+              disabled={busy || !selectedThread || !canSelectedThread("forward")}
+              title={selectedThread && !canSelectedThread("forward") ? selectedThreadCapabilityReason : undefined}
             />
             <ActionBtn
               onClick={() => void handleThreadAction("mark_done")}
@@ -5796,46 +5866,23 @@ export function InboxAgentPanel(props: InboxAgentPanelProps = {}) {
                   onClick={() => void handleThreadAction(selectedThread.unreadCount > 0 ? "mark_read" : "mark_unread")}
                   icon={<MailOpen size={13} />}
                   label={selectedThread.unreadCount > 0 ? "Mark read" : "Mark unread"}
-                  disabled={
-                    busy ||
-                    (selectedThread.provider === "gmail" && !gmailCleanupActionsEnabled)
-                  }
-                  title={
-                    selectedThread.provider === "gmail" && gmailCleanupDisabledReason
-                      ? gmailCleanupDisabledReason
-                      : undefined
-                  }
+                  disabled={busy || !canSelectedThread(selectedThread.unreadCount > 0 ? "mark_read" : "mark_unread")}
+                  title={!canSelectedThread(selectedThread.unreadCount > 0 ? "mark_read" : "mark_unread") ? selectedThreadCapabilityReason : undefined}
                 />
                 <ActionBtn
                   onClick={() => void handleThreadAction("archive")}
                   icon={<Archive size={13} />}
                   label="Archive"
-                  disabled={
-                    busy ||
-                    selectedThread.provider !== "gmail" ||
-                    !gmailCleanupActionsEnabled
-                  }
-                  title={
-                    selectedThread.provider === "gmail" && gmailCleanupDisabledReason
-                      ? gmailCleanupDisabledReason
-                      : undefined
-                  }
+                  disabled={busy || !canSelectedThread("archive")}
+                  title={!canSelectedThread("archive") ? selectedThreadCapabilityReason : undefined}
                 />
                 <ActionBtn
                   onClick={() => void handleThreadAction("trash")}
                   icon={<Trash2 size={13} />}
                   label="Trash"
                   variant="danger"
-                  disabled={
-                    busy ||
-                    selectedThread.provider !== "gmail" ||
-                    !gmailCleanupActionsEnabled
-                  }
-                  title={
-                    selectedThread.provider === "gmail" && gmailCleanupDisabledReason
-                      ? gmailCleanupDisabledReason
-                      : undefined
-                  }
+                  disabled={busy || !canSelectedThread("trash")}
+                  title={!canSelectedThread("trash") ? selectedThreadCapabilityReason : undefined}
                 />
               </div>
               {selectedThreadNeedsGmailCleanupAttention && (

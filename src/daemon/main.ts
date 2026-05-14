@@ -16,16 +16,22 @@ import {
 } from "../electron/utils/env-migration";
 import {
   getArgValue,
+  getControlPlaneAllowedOriginsFromEnv,
+  getControlPlaneBindContextFromEnv,
   getEnvSettingsImportModeFromArgsOrEnv,
   isHeadlessMode,
+  shouldAllowInsecureControlPlanePublicBindFromEnv,
   shouldEnableControlPlaneFromArgsOrEnv,
   shouldImportEnvSettingsFromArgsOrEnv,
   shouldPrintControlPlaneTokenFromArgsOrEnv,
+  shouldTrustControlPlaneProxyFromEnv,
+  shouldUseManagedDeploymentModeFromEnv,
 } from "../electron/utils/runtime-mode";
 import { getUserDataDir } from "../electron/utils/user-data-dir";
 import { ChannelGateway } from "../electron/gateway";
 import { ControlPlaneServer } from "../electron/control-plane/server";
 import { ControlPlaneSettingsManager } from "../electron/control-plane/settings";
+import { evaluateControlPlaneDeploymentPosture } from "../electron/control-plane/deployment-posture";
 import { TailscaleSettingsManager } from "../electron/tailscale/settings";
 import {
   initRemoteGatewayClient,
@@ -176,14 +182,33 @@ async function startControlPlane(options: {
       return { ok: false, error: "No authentication token configured" };
     }
 
+    const posture = evaluateControlPlaneDeploymentPosture({
+      settings,
+      headless: isHeadlessMode(),
+      managedDeployment: shouldUseManagedDeploymentModeFromEnv(),
+      bindContext: getControlPlaneBindContextFromEnv(),
+      allowInsecurePublicBind: shouldAllowInsecureControlPlanePublicBindFromEnv(),
+    });
+    if (posture.status === "blocked") {
+      return {
+        ok: false,
+        error: `Control Plane deployment posture blocked startup: ${posture.reasons.join(" ")}`,
+      };
+    }
+    if (posture.status === "degraded") {
+      console.warn(`[Daemon] Control Plane deployment posture degraded: ${posture.reasons.join(" ")}`);
+    }
+
     const server = new ControlPlaneServer({
       port: settings.port,
       host: settings.host,
+      trustProxy: settings.trustProxy,
       token: settings.token,
       nodeToken: settings.nodeToken,
       handshakeTimeoutMs: settings.handshakeTimeoutMs,
       heartbeatIntervalMs: settings.heartbeatIntervalMs,
       maxPayloadBytes: settings.maxPayloadBytes,
+      allowedOrigins: settings.allowedOrigins,
       onEvent: (evt) => options.onEvent?.(evt),
     });
 
@@ -594,9 +619,12 @@ async function main(): Promise<void> {
     process.env.COWORK_CONTROL_PLANE_PORT ||
     getArgValue("--control-plane-port");
   const cpPort = cpPortRaw ? Number.parseInt(cpPortRaw, 10) : undefined;
+  const cpAllowedOrigins = getControlPlaneAllowedOriginsFromEnv();
   if (
     (typeof cpHost === "string" && cpHost.trim()) ||
-    (typeof cpPort === "number" && Number.isFinite(cpPort))
+    (typeof cpPort === "number" && Number.isFinite(cpPort)) ||
+    typeof cpAllowedOrigins !== "undefined" ||
+    process.env.COWORK_CONTROL_PLANE_TRUST_PROXY !== undefined
   ) {
     try {
       ControlPlaneSettingsManager.updateSettings({
@@ -605,6 +633,12 @@ async function main(): Promise<void> {
           : {}),
         ...(typeof cpPort === "number" && Number.isFinite(cpPort)
           ? { port: cpPort }
+          : {}),
+        ...(typeof cpAllowedOrigins !== "undefined"
+          ? { allowedOrigins: cpAllowedOrigins }
+          : {}),
+        ...(process.env.COWORK_CONTROL_PLANE_TRUST_PROXY !== undefined
+          ? { trustProxy: shouldTrustControlPlaneProxyFromEnv() }
           : {}),
       });
     } catch (error) {

@@ -97,6 +97,7 @@ import { createTimelineEmitter } from "./timeline-emitter";
 import { TaskExecutor } from "./executor";
 import { TaskQueueManager } from "./queue-manager";
 import { BuiltinToolsSettingsManager } from "./tools/builtin-settings";
+import { loadPolicies } from "../admin/policies";
 import { ComputerUseSessionManager } from "../computer-use/session-manager";
 import { decideTaskOutcome, getTaskBestKnownOutcome, hasSubstantiveOutcomeEvidence } from "./outcome-policy";
 import { approvalIdempotency, taskIdempotency as _taskIdempotency, IdempotencyManager } from "../security/concurrency";
@@ -112,11 +113,14 @@ import {
   summarizePermissionScope,
 } from "../security/permission-utils";
 import { buildPermissionSecurityContext } from "./security/export-permission-context";
+import { evaluateNetworkPolicy } from "../security/network-policy";
 import { PlaybookService } from "../memory/PlaybookService";
 import { UserProfileService } from "../memory/UserProfileService";
 import { RelationshipMemoryService } from "../memory/RelationshipMemoryService";
 import { AdaptiveStyleEngine } from "../memory/AdaptiveStyleEngine";
 import { MemoryConsolidator } from "../memory/MemoryConsolidator";
+import { DreamingRepository } from "../memory/DreamingRepository";
+import { DreamingService } from "../memory/DreamingService";
 import { TranscriptStore } from "../memory/TranscriptStore";
 import { getAwarenessService } from "../awareness/AwarenessService";
 import { PersonalityManager } from "../settings/personality-manager";
@@ -2487,6 +2491,11 @@ export class AgentDaemon extends EventEmitter {
     }
     this.pendingContinuationTaskIds.delete(taskId);
 
+    if (existing.status === "paused" || existing.terminalStatus === "needs_user_action") {
+      await this.acceptTaskCurrentProgress(taskId, "Task stopped by user; current progress accepted.");
+      return;
+    }
+
     const cached = this.activeTasks.get(taskId);
     if (cached) {
       await cached.executor.wrapUp();
@@ -2495,6 +2504,71 @@ export class AgentDaemon extends EventEmitter {
       this.cancelTaskRecord(taskId, "Task removed from queue during wrap-up request");
       this.finishQueueSlot(taskId);
     }
+  }
+
+  private async acceptTaskCurrentProgress(taskId: string, message: string): Promise<void> {
+    const existing = this.taskRepo.findById(taskId);
+    const currentStatus = existing ? deriveCanonicalTaskStatus(existing) : undefined;
+    if (!existing || isTerminalTaskStatus(currentStatus)) {
+      return;
+    }
+
+    const pendingRequests = this.inputRequestRepo.findPendingByTaskId(taskId);
+    for (const request of pendingRequests) {
+      this.inputRequestRepo.resolve(request.id, "dismissed");
+      const pending = this.pendingInputRequests.get(request.id);
+      if (pending && !pending.resolved) {
+        pending.resolved = true;
+        this.pendingInputRequests.delete(request.id);
+        pending.reject(new Error("Task stopped by user; current progress accepted."));
+      }
+      this.logEvent(taskId, "input_request_dismissed", {
+        requestId: request.id,
+        status: "dismissed",
+        terminalTask: true,
+        reason: "user_accepted_current_progress",
+      });
+    }
+
+    this.cleanupPendingApprovalsForTask(taskId, "Task ended because the user accepted the current progress.");
+
+    const cached = this.activeTasks.get(taskId);
+    if (cached) {
+      await cached.executor.cancel("user");
+      cached.status = "completed";
+      cached.lastAccessed = Date.now();
+    }
+
+    const bestKnownOutcome = getTaskBestKnownOutcome(existing);
+    const resultSummary =
+      bestKnownOutcome?.resultSummary ||
+      existing.resultSummary ||
+      "Stopped by user with current progress accepted.";
+
+    this.taskRepo.update(taskId, {
+      status: "completed",
+      completedAt: Date.now(),
+      error: null,
+      terminalStatus: "ok",
+      failureClass: undefined,
+      resultSummary,
+      ...(bestKnownOutcome ? { bestKnownOutcome } : {}),
+    });
+    this.clearRetryState(taskId);
+    this.clearTimelineTaskState(taskId);
+
+    this.logEvent(taskId, "task_completed", {
+      message,
+      resultSummary,
+      terminalStatus: "ok",
+      ...(bestKnownOutcome ? { bestKnownOutcome } : {}),
+      terminalStatusReason: "user_accepted_current_progress",
+    });
+
+    if (this.teamOrchestrator && existing.status !== "completed") {
+      void this.teamOrchestrator.onTaskTerminal(taskId).catch(() => {});
+    }
+    this.finishQueueSlot(taskId);
   }
 
   /**
@@ -2675,6 +2749,66 @@ export class AgentDaemon extends EventEmitter {
     return type === "run_command" || type === "network_access";
   }
 
+  private isAutoReviewSafeCommand(command: string): boolean {
+    const normalized = String(command || "").trim();
+    if (!normalized) return false;
+    if (/&&|\|\||[;|`]|>>?|<<?|\$\(|\bsudo\b|\bchmod\b|\bchown\b|\brm\b|\bmv\b|\bcp\b/i.test(normalized)) {
+      return false;
+    }
+    const lowered = normalized.toLowerCase();
+    return [
+      "pwd",
+      "ls",
+      "tree",
+      "head ",
+      "tail ",
+      "sed -n",
+      "grep ",
+      "rg ",
+      "git status",
+      "git diff",
+      "git log",
+      "git show",
+      "git branch",
+      "git rev-parse",
+      "git ls-files",
+    ].some((prefix) => lowered === prefix.trim() || lowered.startsWith(prefix));
+  }
+
+  private canAutoReviewApprove(
+    taskId: string,
+    type: ApprovalType | undefined,
+    details: Record<string, unknown>,
+  ): { approved: boolean; reason?: string } {
+    const policies = loadPolicies();
+    if (policies.runtime.autoReview.enabled !== true) {
+      return { approved: false };
+    }
+    if (type === "run_command") {
+      const command = typeof details.command === "string" ? details.command : "";
+      return this.isAutoReviewSafeCommand(command)
+        ? { approved: true, reason: "safe_read_shell_command" }
+        : { approved: false };
+    }
+    if (type === "network_access") {
+      const permissionInput =
+        details.permissionInput && typeof details.permissionInput === "object"
+          ? (details.permissionInput as Record<string, unknown>)
+          : details.params && typeof details.params === "object"
+            ? (details.params as Record<string, unknown>)
+            : details;
+      const url = typeof permissionInput.url === "string" ? permissionInput.url : "";
+      if (!url) return { approved: false };
+      const toolName = typeof details.tool === "string" ? details.tool : "network_access";
+      const decision = evaluateNetworkPolicy({ url, toolName });
+      this.logEvent(taskId, "network_policy_decision", decision);
+      return decision.action === "allow"
+        ? { approved: true, reason: "allowed_network_read" }
+        : { approved: false };
+    }
+    return { approved: false };
+  }
+
   private getExecutorForTask(taskId: string): TaskExecutor | null {
     const cached = this.activeTasks.get(taskId);
     return cached?.executor || null;
@@ -2682,16 +2816,33 @@ export class AgentDaemon extends EventEmitter {
 
   private buildPermissionMode(taskId: string, task?: Task): PermissionMode {
     const runtime = this.getExecutorForTask(taskId)?.runtime;
+    const enforceAllowedMode = (mode: PermissionMode): PermissionMode => {
+      const allowedModes = loadPolicies().runtime.allowedPermissionModes;
+      if (allowedModes.length === 0 || allowedModes.includes(mode)) {
+        return mode;
+      }
+      const fallback =
+        allowedModes.find((candidate) => candidate === "default") ||
+        allowedModes.find((candidate) => candidate === "dangerous_only") ||
+        allowedModes[0] ||
+        "default";
+      this.logEvent(taskId, "permission_mode_overridden", {
+        requestedMode: mode,
+        effectiveMode: fallback,
+        reason: "admin_policy",
+      });
+      return fallback;
+    };
     if (runtime?.getPermissionState().mode) {
-      return runtime.getPermissionState().mode;
+      return enforceAllowedMode(runtime.getPermissionState().mode);
     }
     if (task?.agentConfig?.executionMode === "plan" || task?.agentConfig?.executionMode === "analyze") {
-      return "plan";
+      return enforceAllowedMode("plan");
     }
     if (task?.agentConfig?.permissionMode) {
-      return task.agentConfig.permissionMode;
+      return enforceAllowedMode(task.agentConfig.permissionMode);
     }
-    return PermissionSettingsManager.loadSettings().defaultMode || "default";
+    return enforceAllowedMode(PermissionSettingsManager.loadSettings().defaultMode || "default");
   }
 
   private buildPermissionRules(
@@ -3129,11 +3280,6 @@ export class AgentDaemon extends EventEmitter {
       ...enrichedDetails,
       permissionPrompt: permission.promptDetails,
     };
-    const safeSessionAutoApprove =
-      allowAutoApprove &&
-      this.sessionAutoApproveAll &&
-      this.canSessionAutoApproveType(type as ApprovalType | undefined);
-
     if (permission.evaluation.decision === "allow") {
       permission.runtime?.recordPermissionSuccess(permission.trackingKey);
       if (type === "run_command" && enrichedDetails.approvalMode === "single_bundle") {
@@ -3181,6 +3327,19 @@ export class AgentDaemon extends EventEmitter {
       return false;
     }
 
+    const autoReview = allowAutoApprove
+      ? this.canAutoReviewApprove(
+          taskId,
+          type as ApprovalType | undefined,
+          permissionDetails,
+        )
+      : { approved: false };
+    const safeSessionAutoApprove =
+      allowAutoApprove &&
+      this.sessionAutoApproveAll &&
+      this.canSessionAutoApproveType(type as ApprovalType | undefined) &&
+      autoReview.approved;
+
     if (safeSessionAutoApprove) {
       permission.runtime?.recordPermissionSuccess(permission.trackingKey);
       const approval = this.approvalRepo.create({
@@ -3200,6 +3359,32 @@ export class AgentDaemon extends EventEmitter {
         approvalId: approval.id,
         autoApproved: true,
         reason: "session_auto_approve",
+        autoReviewReason: autoReview.reason,
+        permissionReason: permission.evaluation.reason,
+      });
+      return true;
+    }
+
+    if (autoReview.approved) {
+      permission.runtime?.recordPermissionSuccess(permission.trackingKey);
+      const approval = this.approvalRepo.create({
+        taskId,
+        type: type as Any,
+        description,
+        details: permissionDetails,
+        status: "approved",
+        requestedAt: Date.now(),
+      });
+      this.approvalRepo.update(approval.id, "approved");
+      this.logEvent(taskId, "approval_requested", {
+        approval,
+        autoApproved: true,
+      });
+      this.logEvent(taskId, "approval_granted", {
+        approvalId: approval.id,
+        autoApproved: true,
+        reason: "auto_review",
+        autoReviewReason: autoReview.reason,
         permissionReason: permission.evaluation.reason,
       });
       return true;
@@ -4201,24 +4386,42 @@ export class AgentDaemon extends EventEmitter {
     }
     this.pendingMemoryConsolidations.add(task.workspaceId);
     setTimeout(() => {
-      void MemoryConsolidator.run({
-        workspaceId: task.workspaceId,
-        workspacePath: workspace.path,
-        taskId: task.id,
-        taskPrompt: task.prompt,
-      })
+      void (async () => {
+        const consolidation = await MemoryConsolidator.run({
+          workspaceId: task.workspaceId,
+          workspacePath: workspace.path,
+          taskId: task.id,
+          taskPrompt: task.prompt,
+        });
+        const dreaming = await new DreamingService(
+          new DreamingRepository(this.dbManager.getDatabase()),
+        ).run({
+          workspaceId: task.workspaceId,
+          workspacePath: workspace.path,
+          triggerSource: "task_completion",
+          sourceTaskId: task.id,
+          taskPrompt: task.prompt,
+          instructions: "Review recent task completion evidence for memory drift, corrections, stale context, and open loops.",
+        });
+        return { consolidation, dreaming };
+      })()
         .then((result) => {
           this.logEvent(task.id, "log", {
-            message: result.skipped
-              ? "Memory consolidation skipped"
-              : "Memory consolidation completed",
-            consolidation: result,
+            message: result.consolidation.skipped
+              ? "Memory consolidation skipped; Dreaming reviewed memory evidence"
+              : "Memory consolidation and Dreaming completed",
+            consolidation: result.consolidation,
+            dreaming: {
+              runId: result.dreaming.run.id,
+              status: result.dreaming.run.status,
+              candidateCount: result.dreaming.candidates.length,
+            },
           });
         })
         .catch((error) => {
           this.logEvent(task.id, "error", {
             error: error instanceof Error ? error.message : String(error),
-            source: "memory_consolidation",
+            source: "memory_dreaming",
           });
         })
         .finally(() => {

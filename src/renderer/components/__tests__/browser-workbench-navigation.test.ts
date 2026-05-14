@@ -27,4 +27,13 @@ describe("Browser workbench navigation controls", () => {
     expect(source).not.toContain('"workspace"');
     expect(source).not.toContain("Workspace browser");
   });
+
+  it("listens for agent-driven viewport changes and exposes viewport presets", () => {
+    const source = readFileSync(componentPath, "utf8");
+
+    expect(source).toContain("onBrowserWorkbenchViewport");
+    expect(source).toContain("VIEWPORT_PRESETS");
+    expect(source).toContain("browser-workbench-device-toolbar");
+    expect(source).toContain("has-controlled-viewport");
+  });
 });

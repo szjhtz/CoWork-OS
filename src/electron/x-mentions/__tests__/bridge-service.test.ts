@@ -96,6 +96,28 @@ describe("XMentionBridgeService", () => {
     service.stop();
   });
 
+  it("suppresses repeated bridge timeout failure logs while keeping backoff polling", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    runBirdCommandMock.mockRejectedValue(
+      new Error("Command failed: bird --timeout 20000 mentions: timed out"),
+    );
+
+    const service = new XMentionBridgeService({} as Any, {
+      isNativeXChannelEnabled: () => false,
+    });
+
+    service.start();
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(120_000);
+    await vi.advanceTimersByTimeAsync(120_000);
+
+    expect(runBirdCommandMock).toHaveBeenCalledTimes(6);
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy.mock.calls[0]?.[0]).toContain("Bridge poll failed (timeout)");
+
+    service.stop();
+  });
+
   it("backs off aggressively after unsupported JSON failures", async () => {
     runBirdCommandMock.mockResolvedValueOnce({
       stdout: "@agent do: run task",

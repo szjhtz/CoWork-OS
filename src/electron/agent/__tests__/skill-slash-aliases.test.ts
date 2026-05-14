@@ -53,6 +53,29 @@ describe("resolveSkillSlashAlias", () => {
     expect(resolveSkillSlashAlias("/review")).toBe("strategy");
   });
 
+  it("resolves flat Claude for Legal pack aliases", () => {
+    mocks.getSkill.mockImplementation((id: string) =>
+      id === "commercial-legal-review" ? { id, enabled: true } : undefined,
+    );
+    mocks.getPluginsByType.mockReturnValue([
+      {
+        state: "registered",
+        manifest: {
+          name: "commercial-legal-pack",
+          slashCommands: [
+            {
+              name: "commercial-legal-review",
+              skillId: "commercial-legal-review",
+            },
+          ],
+          skills: [{ id: "commercial-legal-review", enabled: true }],
+        },
+      },
+    ]);
+
+    expect(resolveSkillSlashAlias("/commercial-legal-review")).toBe("commercial-legal-review");
+  });
+
   it("falls back to a direct skill when a colliding alias target is unavailable", () => {
     mocks.getSkill.mockImplementation((id: string) =>
       id === "review" ? { id, enabled: true } : undefined,

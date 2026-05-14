@@ -10,12 +10,28 @@ Every inbound message follows the same high-level path:
 
 1. The channel adapter receives the provider event and normalizes it into a gateway message.
 2. Gateway security checks apply pairing, allowlists, group routing, self-chat mode, and ambient-mode policy.
-3. The router resolves the chat session, selected workspace, preferred role, and any current task association.
+3. The router resolves the chat session, channel specialization, selected workspace, preferred role, and any current task association.
 4. Slash commands and WhatsApp natural shortcuts are routed through the remote command registry.
 5. Non-command text is handled by the task session controller as a new task or a follow-up to the active task.
 6. Replies, progress, approvals, cancellations, and scheduled-task outputs are delivered through one shared delivery service.
 
 Recognized commands are never forwarded to the agent as ordinary task text. Unknown slash commands return an explicit unknown-command response so accidental `/something` messages do not start unintended work.
+
+## Channel Specialization
+
+Before creating a new task, the router checks whether the channel, chat/group, or topic/thread has an enabled specialization. A specialization can provide a workspace, agent role, prompt guidance, tool restrictions, gateway context, and shared-memory opt-in.
+
+Specialization lookup uses the most specific matching record:
+
+1. `channelId + chatId + threadId`
+2. `channelId + chatId`
+3. channel-level default
+
+If no specialization matches, the gateway falls back to the existing channel config, chat session preference, and normal workspace selection behavior.
+
+Workspace-local router rules still run for each message. Their explicit role or workspace choice takes precedence over specialization for that message. Otherwise the role order is router rule, specialization, session preference, then channel default. Tool restrictions are merged with context-policy restrictions using deny-first behavior.
+
+Active follow-ups do not reassign the task's workspace or role. When a chat already has a running task, ordinary text is delivered to that task under the existing task configuration. Once the active task is completed, failed, cancelled, or unlinked with `/new`, the next normal message resolves specialization again before starting a fresh task.
 
 ## Active Task Policy
 

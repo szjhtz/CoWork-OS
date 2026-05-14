@@ -425,6 +425,23 @@ describe("OpenAIProvider structured errors", () => {
     });
   });
 
+  it("marks OAuth fetch transport failures as retryable", async () => {
+    completeMock.mockResolvedValue({
+      stopReason: "error",
+      errorMessage: "fetch failed",
+      content: [],
+    });
+
+    const provider = new OpenAIProvider(makeConfig());
+    const request = makeRequest();
+
+    await expect(provider.createMessage(request)).rejects.toMatchObject({
+      retryable: true,
+      phase: "oauth",
+      code: "PI_AI_ERROR",
+    });
+  });
+
   it("marks overloaded Codex service errors as retryable", async () => {
     completeMock.mockRejectedValue(
       new Error(

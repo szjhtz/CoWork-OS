@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  applyBuilderSelectionRequirement,
   buildDraftFromAgent,
+  buildDraftFromBuilderPlan,
   buildDraftFromWorkflowBrief,
   buildDraftFromTemplate,
   getEffectiveApprovalPreview,
+  getManagedSessionEventText,
+  getUnresolvedBuilderSelectionRequirements,
   getApprovalRuntimeMatrix,
   getMissionControlActiveAgentRoles,
   getSlackDeploymentHealth,
@@ -13,8 +17,27 @@ import {
   sortRuntimeToolCatalogEntries,
   suggestTemplateFromWorkflowBrief,
 } from "../AgentsHubPanel";
+import { BUILTIN_AGENT_TEMPLATES } from "../../../electron/managed/agent-templates";
 
 describe("AgentsHubPanel draft helpers", () => {
+  it("renders managed-session content arrays as chat text", () => {
+    expect(
+      getManagedSessionEventText({
+        id: "event-1",
+        sessionId: "session-1",
+        seq: 1,
+        timestamp: 123,
+        type: "user.message",
+        payload: {
+          content: [
+            { type: "text", text: "Summarize the latest inbox" },
+            { type: "file", artifactId: "artifact-1" },
+          ],
+        },
+      }),
+    ).toBe("Summarize the latest inbox\nAttached file artifact-1");
+  });
+
   it("keeps active Mission Control personas visible without double-counting managed mirrors", () => {
     const roles = [
       {
@@ -112,6 +135,36 @@ describe("AgentsHubPanel draft helpers", () => {
     expect(draft.workflowBrief).toBe("Answer questions from team chat.");
     expect(draft.sharing.visibility).toBe("team");
     expect(draft.deployment.surfaces).toEqual(["chatgpt"]);
+  });
+
+  it("lists all finance templates and carries template metadata into drafts", () => {
+    const financeTemplates = BUILTIN_AGENT_TEMPLATES.filter(
+      (template) => template.category === "finance",
+    );
+    expect(financeTemplates.map((template) => template.name)).toEqual([
+      "Pitch Agent",
+      "Meeting Prep Agent",
+      "Market Researcher",
+      "Earnings Reviewer",
+      "Model Builder",
+      "Valuation Reviewer",
+      "GL Reconciler",
+      "Month-End Closer",
+      "Statement Auditor",
+      "KYC Screener",
+    ]);
+
+    const pitchDraft = buildDraftFromTemplate(financeTemplates[0], [
+      { id: "ws-1", name: "Workspace", path: "/workspace" },
+    ] as Any);
+
+    expect(pitchDraft.templateRequiredPackIds).toContain("finance-core-pack");
+    expect(pitchDraft.templateRequiredConnectorIds).toContain("factset");
+    expect(pitchDraft.expectedArtifacts).toEqual(["pptx", "xlsx", "json"]);
+    expect(pitchDraft.executionMode).toBe("team");
+    expect(pitchDraft.selectedSkills).toContain("finance-source-ledger");
+    expect(pitchDraft.selectedMcpServers).toContain("pitchbook");
+    expect(pitchDraft.teamRoleNames).toContain("finance-lead");
   });
 
   it("rehydrates an existing managed agent draft from studio metadata and environment settings", () => {
@@ -216,6 +269,161 @@ describe("AgentsHubPanel draft helpers", () => {
     expect(draft.enableComputerUse).toBe(true);
     expect(draft.routines).toHaveLength(1);
     expect(draft.routines[0]?.trigger.type).toBe("schedule");
+  });
+
+  it("turns a generated builder plan into an editable private studio draft", () => {
+    const draft = buildDraftFromBuilderPlan(
+      {
+        id: "plan-1",
+        sourcePrompt: "Summarize Slack and draft follow-ups",
+        name: "Follow Up Agent",
+        subtitle: "Private in CoWork OS",
+        description: "Summarize Slack and draft follow-ups.",
+        icon: "Bot",
+        color: "#1570ef",
+        workflowBrief: "Summarize Slack and draft follow-ups.",
+        capabilities: ["Summarize context"],
+        selectedToolFamilies: ["communication", "search"],
+        selectedMcpServers: ["slack"],
+        connectedMcpServers: ["slack"],
+        recommendedMissingIntegrations: [
+          {
+            id: "slack-channel",
+            kind: "channel",
+            label: "Slack channel",
+            status: "missing",
+            reason: "Choose a channel.",
+          },
+        ],
+        missingConnections: [
+          {
+            id: "slack-channel",
+            kind: "channel",
+            label: "Slack channel",
+            status: "missing",
+            reason: "Choose a channel.",
+          },
+        ],
+        selectedSkills: ["briefing"],
+        selectionRequirements: [],
+        instructions: "You are a private agent.",
+        operatingNotes: "Ask before posting.",
+        starterPrompts: [
+          {
+            id: "run-now",
+            title: "Run this now",
+            prompt: "Run the brief.",
+          },
+        ],
+        scheduleConfig: { enabled: false, mode: "manual" },
+        routines: [
+          {
+            name: "Manual run",
+            enabled: true,
+            trigger: { type: "manual", enabled: true },
+          },
+          {
+            name: "Unsafe schedule",
+            enabled: true,
+            trigger: { type: "schedule", enabled: true, cadenceMinutes: 1440 },
+          },
+        ],
+        memoryConfig: { mode: "default", sources: ["workspace"] },
+        approvalPolicy: { autoApproveReadOnly: true, requireApprovalFor: ["post message"] },
+        sharing: { visibility: "private", ownerLabel: "You" },
+        deployment: { surfaces: ["chatgpt"] },
+        enableShell: false,
+        enableBrowser: true,
+        enableComputerUse: false,
+        rationale: ["Matched Slack workflow."],
+        checklist: ["Connect Slack channel"],
+        generatedAt: 123,
+      },
+      [{ id: "ws-1", name: "Workspace", path: "/workspace" }] as Any,
+    );
+
+    expect(draft.name).toBe("Follow Up Agent");
+    expect(draft.sharing).toEqual({ visibility: "private", ownerLabel: "You" });
+    expect(draft.selectedMcpServers).toEqual(["slack"]);
+    expect(draft.starterPrompts[0]?.title).toBe("Run this now");
+    expect(draft.missingConnections[0]?.label).toBe("Slack channel");
+    expect(draft.routines.map((routine) => routine.trigger.type)).toEqual(["manual"]);
+  });
+
+  it("applies required builder choices before create is available", () => {
+    const plan = {
+      id: "plan-choice",
+      sourcePrompt: "Summarize my emails",
+      name: "Email Agent",
+      subtitle: "Private in CoWork OS",
+      description: "Summarize email.",
+      icon: "Bot",
+      color: "#1570ef",
+      workflowBrief: "Summarize email.",
+      capabilities: ["Summarize context"],
+      selectedToolFamilies: ["search"],
+      selectedMcpServers: [],
+      connectedMcpServers: [],
+      recommendedMissingIntegrations: [],
+      missingConnections: [
+        {
+          id: "email",
+          kind: "connector",
+          label: "Email integration",
+          status: "needs_auth",
+          reason: "Email needs to be connected.",
+        },
+      ],
+      selectedSkills: [],
+      selectionRequirements: [
+        {
+          id: "email-choice",
+          kind: "integration",
+          title: "Choose email source",
+          reason: "More than one email source is available.",
+          required: true,
+          options: [
+            {
+              id: "gmail",
+              label: "Gmail",
+              status: "available",
+              selectedMcpServers: ["gmail"],
+              selectedToolFamilies: ["communication", "search"],
+            },
+            {
+              id: "email-summary",
+              label: "Email Summary",
+              status: "available",
+              selectedSkills: ["email-summary"],
+            },
+          ],
+        },
+      ],
+      instructions: "Summarize email.",
+      operatingNotes: "Ask before sending.",
+      starterPrompts: [],
+      scheduleConfig: { enabled: false, mode: "manual" },
+      routines: [],
+      memoryConfig: { mode: "default", sources: ["workspace"] },
+      approvalPolicy: { autoApproveReadOnly: true, requireApprovalFor: ["send email"] },
+      sharing: { visibility: "private", ownerLabel: "You" },
+      deployment: { surfaces: ["chatgpt"] },
+      enableShell: false,
+      enableBrowser: true,
+      enableComputerUse: false,
+      rationale: [],
+      checklist: [],
+      generatedAt: 123,
+    } as Any;
+
+    expect(getUnresolvedBuilderSelectionRequirements(plan)).toHaveLength(1);
+
+    const selected = applyBuilderSelectionRequirement(plan, "email-choice", "gmail");
+
+    expect(getUnresolvedBuilderSelectionRequirements(selected)).toHaveLength(0);
+    expect(selected.selectedMcpServers).toEqual(["gmail"]);
+    expect(selected.selectedToolFamilies).toEqual(["communication", "search"]);
+    expect(selected.missingConnections).toEqual(plan.missingConnections);
   });
 
   it("creates a sane blank draft baseline", () => {

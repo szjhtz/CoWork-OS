@@ -261,9 +261,32 @@ Models: `gemini-2.0-flash` (default), `gemini-2.5-pro` (most capable), `gemini-2
 Access multiple AI providers through one API.
 
 1. Get API key from [OpenRouter](https://openrouter.ai/keys)
-2. Configure in **Settings** > **OpenRouter**
+2. Configure in **Settings** > **LLM** > **OpenRouter**
 
 Available: Claude, GPT-4, Gemini, Llama, Mistral, and more — see [openrouter.ai/models](https://openrouter.ai/models)
+
+### Pareto Code Router
+
+OpenRouter's Pareto Code Router is available as a normal OpenRouter model selection, not as a separate provider:
+
+| Model ID | Display name | Use when |
+|----------|--------------|----------|
+| `openrouter/pareto-code` | Pareto Code Router | You want OpenRouter to choose a strong coding model from its coding frontier |
+| `openrouter/pareto-code:nitro` | Pareto Code Router (Nitro) | You want the same coding-score routing, but prefer the fastest measured model in the selected tier |
+
+When one of those models is selected, **Settings > LLM > OpenRouter** shows a **Pareto Router** field for the optional minimum coding score.
+
+- `min_coding_score` is a decimal number from `0` to `1`; do not enter percentages such as `80`.
+- Leave the field blank to let OpenRouter use its default strongest/high coding tier.
+- Current OpenRouter tiers are `>= 0.66` for high, `0.33` to `< 0.66` for medium, and `< 0.33` for lower-cost low-tier routing.
+- The score is sent through OpenRouter's `pareto-router` plugin only for `openrouter/pareto-code` and `openrouter/pareto-code:nitro`.
+- In headless or VPS installs, pass the same value through Control Plane as `settings.paretoMinCodingScore`, for example `{"providerType":"openrouter","model":"openrouter/pareto-code","settings":{"paretoMinCodingScore":0.8}}`.
+- The response `model` field can report the concrete underlying model that handled the request, so usage and cost records may show a Claude, GPT, Gemini, DeepSeek, or other routed model rather than the router id.
+- The fallback local catalog lists both Pareto models with OpenRouter's documented `200,000` token context. When the live OpenRouter model catalog returns metadata, CoWork keeps the live catalog value instead of overriding it.
+
+The Pareto Router itself adds no extra fee. Billing follows whichever underlying OpenRouter model handles the request, so cost can vary by tier and availability.
+
+Reference: [OpenRouter Pareto Router docs](https://openrouter.ai/docs/guides/routing/routers/pareto-router) and [Pareto Code Router model page](https://openrouter.ai/openrouter/pareto-code).
 
 CoWork OS also sends OpenRouter app attribution headers by default so usage is associated with the app in OpenRouter analytics and rankings. The current defaults are:
 

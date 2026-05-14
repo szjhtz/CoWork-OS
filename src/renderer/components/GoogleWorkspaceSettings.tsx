@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { GoogleWorkspaceSettingsData } from "../../shared/types";
-import { GOOGLE_WORKSPACE_DEFAULT_SCOPES } from "../../shared/google-workspace";
+import { mergeGoogleWorkspaceScopes } from "../../shared/google-workspace";
 
 const DEFAULT_TIMEOUT_MS = 20000;
 
 const scopesToText = (scopes?: string[]) =>
-  scopes && scopes.length > 0 ? scopes.join(" ") : GOOGLE_WORKSPACE_DEFAULT_SCOPES.join(" ");
+  mergeGoogleWorkspaceScopes(scopes).join(" ");
 
 const textToScopes = (value: string) =>
   value
@@ -29,6 +29,7 @@ export function GoogleWorkspaceSettings() {
     connected: boolean;
     name?: string;
     error?: string;
+    missingScopes?: string[];
   } | null>(null);
   const [statusLoading, setStatusLoading] = useState(false);
   const [oauthBusy, setOauthBusy] = useState(false);
@@ -66,7 +67,10 @@ export function GoogleWorkspaceSettings() {
     setSaving(true);
     setTestResult(null);
     try {
-      const payload: GoogleWorkspaceSettingsData = { ...settings };
+      const payload: GoogleWorkspaceSettingsData = {
+        ...settings,
+        scopes: mergeGoogleWorkspaceScopes(settings.scopes),
+      };
       await window.electronAPI.saveGoogleWorkspaceSettings(payload);
       setSettings(payload);
       await refreshStatus();
@@ -113,10 +117,7 @@ export function GoogleWorkspaceSettings() {
     setOauthError(null);
 
     try {
-      const scopes =
-        settings.scopes && settings.scopes.length > 0
-          ? settings.scopes
-          : GOOGLE_WORKSPACE_DEFAULT_SCOPES;
+      const scopes = mergeGoogleWorkspaceScopes(settings.scopes);
       const result = await window.electronAPI.startGoogleWorkspaceOAuth({
         clientId: settings.clientId,
         clientSecret: settings.clientSecret || undefined,
@@ -158,10 +159,7 @@ export function GoogleWorkspaceSettings() {
     setOauthError(null);
 
     try {
-      const scopes =
-        settings.scopes && settings.scopes.length > 0
-          ? settings.scopes
-          : GOOGLE_WORKSPACE_DEFAULT_SCOPES;
+      const scopes = mergeGoogleWorkspaceScopes(settings.scopes);
       const { url } = await window.electronAPI.getGoogleWorkspaceOAuthLink({
         clientId: settings.clientId,
         clientSecret: settings.clientSecret || undefined,
@@ -244,7 +242,7 @@ export function GoogleWorkspaceSettings() {
           </button>
         </div>
         <p className="settings-description">
-          Connect Gmail, Calendar, and Drive with a single Google Workspace OAuth flow. After
+          Connect Gmail, Calendar, Drive, Docs, Sheets, Slides, Tasks, and Chat with a single Google Workspace OAuth flow. After
           connecting, use `google_drive_action`, `gmail_action`, and `calendar_action` tools in
           tasks.
         </p>

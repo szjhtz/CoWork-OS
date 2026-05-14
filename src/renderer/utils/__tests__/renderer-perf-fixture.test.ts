@@ -6,6 +6,10 @@ import {
   taskSurfacePerfFixtureEvents,
   taskSurfacePerfFixtureTask,
 } from "../../perf-fixtures/task-surface-mixed-session.fixture";
+import {
+  taskSurfaceFailureStormEvents,
+  taskSurfaceFailureStormTask,
+} from "../../perf-fixtures/task-surface-failure-storm.fixture";
 import { deriveSharedTaskEventUiState } from "../task-event-derived";
 import {
   markTaskEventRenderable,
@@ -111,6 +115,57 @@ describe("renderer perf replay fixture", () => {
 
     console.info(
       `[renderer-perf-fixture] append_p95=${percentile(appendSamples, 0.95).toFixed(1)}ms visible=${visibleSamples.length} visible_recorded=${visibleRecordedCount}/${visibleSignalCount}`,
+    );
+  });
+
+  it("projects a failure storm into a bounded live transcript within budget", () => {
+    const startedAt = performance.now();
+    const shared = deriveSharedTaskEventUiState({
+      rawEvents: taskSurfaceFailureStormEvents,
+      task: taskSurfaceFailureStormTask,
+      workspace: null,
+      verboseSteps: false,
+      projectionMode: "live",
+      liveWindowSize: 160,
+    });
+    const projectionMs = performance.now() - startedAt;
+
+    const feedRows = shared.baseTimelineItems.map((item, index) => ({
+      kind: "timeline" as const,
+      key:
+        item.kind === "event"
+          ? `event:${item.event.id}`
+          : `action-block:${item.blockId}`,
+      estimatedHeight: 120,
+      timelineIndex: index,
+      item,
+      revision:
+        item.kind === "event"
+          ? `${item.event.id}:${item.event.type}`
+          : `${item.blockId}:${item.events[item.events.length - 1]?.id ?? "none"}`,
+      visiblePerfEventId:
+        item.kind === "event"
+          ? item.event.id
+          : item.events[item.events.length - 1]?.id ?? null,
+    }));
+    const visible = selectVisibleTaskFeedRows(feedRows as Any, "live");
+
+    expect(shared.rawEventCount).toBeGreaterThanOrEqual(600);
+    expect(shared.normalizedEvents.length).toBeLessThanOrEqual(167);
+    expect(projectionMs).toBeLessThanOrEqual(12);
+    expect(visible.visibleFeedRows.length).toBeLessThanOrEqual(12);
+    expect(
+      shared.filteredEvents.filter((event) => {
+        const payload = event.payload as Record<string, unknown> | undefined;
+        return (
+          event.type === "error" &&
+          payload?.message === "fetch failed: network timeout while querying provider"
+        );
+      }).length,
+    ).toBeLessThanOrEqual(2);
+
+    console.info(
+      `[renderer-perf-fixture] failure_storm_projection=${projectionMs.toFixed(1)}ms raw=${shared.rawEventCount} projected=${shared.normalizedEvents.length} visible=${visible.visibleFeedRows.length}`,
     );
   });
 });

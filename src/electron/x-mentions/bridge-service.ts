@@ -21,6 +21,8 @@ export class XMentionBridgeService {
   private pollInFlight = false;
   private pausedForAuth = false;
   private consecutiveFailures = 0;
+  private lastLoggedFailureKey: string | null = null;
+  private suppressedFailureLogCount = 0;
   private readonly ingress: HookAgentIngress;
   private readonly statusStore = getXMentionTriggerStatusStore();
   private readonly isNativeXChannelEnabled: () => boolean;
@@ -28,6 +30,7 @@ export class XMentionBridgeService {
   private readonly FAILURE_BACKOFF_MAX_MS = 30 * 60 * 1000;
   private readonly CLI_FAILURE_BACKOFF_MS = 10 * 60 * 1000;
   private readonly CONFIG_FAILURE_BACKOFF_MS = 30 * 60 * 1000;
+  private readonly FAILURE_LOG_REPEAT_EVERY = 5;
 
   constructor(
     agentDaemon: AgentDaemon,
@@ -63,6 +66,7 @@ export class XMentionBridgeService {
   triggerNow(): void {
     if (!this.running) return;
     this.pausedForAuth = false;
+    this.resetFailureLogSuppression();
     this.schedulePoll(0);
   }
 
@@ -162,6 +166,7 @@ export class XMentionBridgeService {
 
       this.statusStore.markSuccess();
       this.consecutiveFailures = 0;
+      this.resetFailureLogSuppression();
     } catch (error) {
       const failure = classifyXMentionFailure(error);
       this.consecutiveFailures += 1;
@@ -171,11 +176,7 @@ export class XMentionBridgeService {
         nextDelayMs = this.getFailureBackoffMs(failure.code, nextDelayMs);
       }
       this.statusStore.setMode("bridge", false);
-      console.warn(
-        failure.code === "auth"
-          ? `[X Mentions] Bridge poll failed (${failure.code}). Polling paused until settings are refreshed: ${failure.message}`
-          : `[X Mentions] Bridge poll failed (${failure.code}). Next poll in ${Math.round(nextDelayMs / 1000)}s: ${failure.message}`,
-      );
+      this.logPollFailure(failure, nextDelayMs);
       this.statusStore.markError(failure.message);
     } finally {
       this.pollInFlight = false;
@@ -183,6 +184,42 @@ export class XMentionBridgeService {
         this.schedulePoll(nextDelayMs);
       }
     }
+  }
+
+  private resetFailureLogSuppression(): void {
+    this.lastLoggedFailureKey = null;
+    this.suppressedFailureLogCount = 0;
+  }
+
+  private logPollFailure(failure: ReturnType<typeof classifyXMentionFailure>, nextDelayMs: number): void {
+    const key = `${failure.code}:${failure.message}`;
+    const repeated = key === this.lastLoggedFailureKey;
+    if (repeated) {
+      this.suppressedFailureLogCount += 1;
+      if (this.suppressedFailureLogCount % this.FAILURE_LOG_REPEAT_EVERY !== 0) {
+        return;
+      }
+      console.warn(
+        `[X Mentions] Bridge poll still failing (${failure.code}); suppressed ${this.suppressedFailureLogCount} repeated failure logs. ` +
+          (failure.code === "auth"
+            ? `Polling paused until settings are refreshed: ${failure.message}`
+            : `Next poll in ${Math.round(nextDelayMs / 1000)}s: ${failure.message}`),
+      );
+      return;
+    }
+
+    if (this.suppressedFailureLogCount > 0) {
+      console.warn(
+        `[X Mentions] Suppressed ${this.suppressedFailureLogCount} repeated bridge poll failure logs before failure changed.`,
+      );
+    }
+    this.lastLoggedFailureKey = key;
+    this.suppressedFailureLogCount = 0;
+    console.warn(
+      failure.code === "auth"
+        ? `[X Mentions] Bridge poll failed (${failure.code}). Polling paused until settings are refreshed: ${failure.message}`
+        : `[X Mentions] Bridge poll failed (${failure.code}). Next poll in ${Math.round(nextDelayMs / 1000)}s: ${failure.message}`,
+    );
   }
 }
 

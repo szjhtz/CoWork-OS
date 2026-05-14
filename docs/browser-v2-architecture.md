@@ -12,7 +12,7 @@ Default behavior:
 - **Workspace browser profile is the default profile**. Cookies and storage persist per workspace and are isolated from system Chrome.
 - **Real Chrome/Edge profile control is opt-in only**. The agent must receive explicit consent before attaching to or launching against a signed-in system browser profile.
 - **Refs from accessibility snapshots are preferred**. CSS selectors still work for legacy prompts, but Browser V2 tools prefer snapshot refs because they are grounded in the rendered page.
-- **Diagnostics are first-class browser context**. Console, network, downloads, storage, trace state, screenshots, and visible cursor events are part of the browser session rather than one-off debug artifacts.
+- **Diagnostics and viewport state are first-class browser context**. Console, network, downloads, storage, trace state, screenshots, emulated viewport size, and visible cursor events are part of the browser session rather than one-off debug artifacts.
 
 ## Runtime Layers
 
@@ -20,7 +20,7 @@ Browser V2 has four cooperating layers:
 
 1. **Renderer-owned workbench**
 
-   `BrowserWorkbenchView` owns the visible Electron `webview`, tab strip, address bar, toolbar, diagnostics drawer, screenshot annotation flow, snapshot overlay, and cursor overlay. The renderer stays responsible for the user-visible browser surface and keeps webview hardening local to the UI.
+   `BrowserWorkbenchView` owns the visible Electron `webview`, tab strip, address bar, toolbar, viewport preset controls, diagnostics drawer, screenshot annotation flow, snapshot overlay, and cursor overlay. The renderer stays responsible for the user-visible browser surface and keeps webview hardening local to the UI.
 
 2. **Main-process session manager**
 
@@ -95,7 +95,7 @@ Diagnostics and environment:
 - `browser_network`
 - `browser_downloads`
 - `browser_storage`
-- `browser_emulate`
+- `browser_emulate` for responsive QA and device metrics; in the visible workbench it also resizes the shared webview so screenshots match the tested viewport
 - `browser_trace_start`
 - `browser_trace_stop`
 
@@ -154,6 +154,7 @@ Required visible controls:
 - popup/new-window promotion into workbench tabs where possible
 - address bar with current URL, navigation status, reload/stop, back, and forward
 - security/profile indicator showing workspace browser context
+- desktop/tablet/mobile viewport preset controls plus visible active-size state when `browser_emulate` controls the page
 - screenshot and annotation controls
 - snapshot overlay control showing what the agent can target
 - diagnostics drawer for Console, Network, Downloads, Storage, and Trace
@@ -188,6 +189,7 @@ Each session keeps bounded, redacted diagnostics:
 - download events
 - storage snapshots for current origin
 - current emulation state
+- current visible viewport state for responsive QA
 - lightweight trace start/stop markers
 
 Diagnostics support two audiences:
@@ -202,16 +204,16 @@ Secrets are redacted before diagnostics enter model-visible output. Diagnostics 
 Core Browser V2 files:
 
 - `src/electron/browser/browser-session-manager.ts`: session registry, backend kind, CDP commands, snapshots, refs, actions, diagnostics, storage, upload, dialog, emulation, tracing, redaction, cleanup
-- `src/electron/browser/browser-workbench-service.ts`: visible workbench registration, webContents lookup, session-manager bridge, screenshot capture, cursor/status events
+- `src/electron/browser/browser-workbench-service.ts`: visible workbench registration, webContents lookup, session-manager bridge, screenshot capture, cursor/status/viewport events
 - `src/electron/agent/tools/browser-tools.ts`: tool definitions, visible default routing, ref-aware actions, fallback selection, real-browser consent gates
 - `src/electron/agent/tools/builtin-settings.ts`: built-in browser tool metadata
 - `src/electron/agent/tools/runtime-tool-definition.ts`: runtime tool visibility and grouping
 - `src/electron/agent/tools/tool-prompting.ts`: prompt guidance for snapshot-first browser use
 - `src/shared/types.ts`: browser tool names and Browser Workbench IPC/shared contracts
-- `src/electron/preload.ts`: browser workbench IPC bridge for registration, open requests, screenshots, status, diagnostics, and cursor events
+- `src/electron/preload.ts`: browser workbench IPC bridge for registration, open requests, screenshots, status, diagnostics, cursor events, and viewport events
 - `src/electron/main.ts`: Browser Workbench IPC handlers, webview attachment hardening, and workbench service wiring
-- `src/renderer/components/BrowserWorkbenchView.tsx`: visible browser UI, tabs, address bar, diagnostics drawer, snapshot overlay, screenshot annotation, cursor overlay
-- `src/renderer/styles/index.css`: Browser Workbench layout, toolbar, diagnostics, snapshot overlay, cursor, dark/light theme styling
+- `src/renderer/components/BrowserWorkbenchView.tsx`: visible browser UI, tabs, address bar, viewport controls, diagnostics drawer, snapshot overlay, screenshot annotation, cursor overlay
+- `src/renderer/styles/index.css`: Browser Workbench layout, toolbar, viewport controls, diagnostics, snapshot overlay, cursor, dark/light theme styling
 
 Tests:
 
@@ -250,7 +252,8 @@ Manual smoke:
 2. Navigate a local Vite app or public test site in the Browser Workbench.
 3. Capture `browser_snapshot`.
 4. Click, fill, type, hover, drag, upload, download, and screenshot through Browser V2 tools.
-5. Inspect console, network, downloads, storage, and trace tools.
-6. Switch between sidebar and fullscreen and confirm the same session remains active.
-7. Verify real-browser attach fails without consent and succeeds only after explicit approval.
-8. Inspect logs and tool outputs for unredacted obvious secrets.
+5. Run `browser_emulate` at desktop, tablet, and mobile sizes, then capture screenshots and confirm the visible workbench and saved images reflect those dimensions.
+6. Inspect console, network, downloads, storage, and trace tools.
+7. Switch between sidebar and fullscreen and confirm the same session remains active.
+8. Verify real-browser attach fails without consent and succeeds only after explicit approval.
+9. Inspect logs and tool outputs for unredacted obvious secrets.

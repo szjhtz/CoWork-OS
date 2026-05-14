@@ -3,7 +3,9 @@ import { randomBytes, createHash } from "crypto";
 import { URL } from "url";
 import {
   GMAIL_DEFAULT_SCOPES,
+  getMissingGoogleWorkspaceScopes,
   GOOGLE_WORKSPACE_DEFAULT_SCOPES,
+  mergeGoogleWorkspaceScopes,
 } from "../../../shared/google-workspace";
 import { startMicrosoftEmailOAuth } from "../../utils/microsoft-email-oauth";
 
@@ -538,13 +540,8 @@ const GOOGLE_SCOPES_MAP: Record<string, string> = {
   "google-drive":
     "https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file",
   gmail: GMAIL_DEFAULT_SCOPES.join(" "),
-  // Full Google Workspace: covers Sheets, Docs, Chat, Drive, Gmail, Calendar in one OAuth consent
-  "google-workspace":
-    GOOGLE_WORKSPACE_DEFAULT_SCOPES.join(" ") +
-    " https://www.googleapis.com/auth/spreadsheets" +
-    " https://www.googleapis.com/auth/documents" +
-    " https://www.googleapis.com/auth/chat.messages" +
-    " https://www.googleapis.com/auth/chat.spaces.readonly",
+  // Full Google Workspace: covers Sheets, Docs, Slides, Tasks, Chat, Drive, Gmail, Calendar in one OAuth consent
+  "google-workspace": GOOGLE_WORKSPACE_DEFAULT_SCOPES.join(" "),
 };
 
 async function startGoogleOAuth(request: ConnectorOAuthRequest): Promise<ConnectorOAuthResult> {
@@ -556,8 +553,12 @@ async function startGoogleOAuth(request: ConnectorOAuthRequest): Promise<Connect
   }
 
   const defaultScope = GOOGLE_SCOPES_MAP[request.provider] || GOOGLE_SCOPES_MAP["gmail"];
+  const requestedScopes =
+    request.provider === "google-workspace"
+      ? mergeGoogleWorkspaceScopes(request.scopes)
+      : request.scopes;
   const scope =
-    request.scopes && request.scopes.length > 0 ? request.scopes.join(" ") : defaultScope;
+    requestedScopes && requestedScopes.length > 0 ? requestedScopes.join(" ") : defaultScope;
 
   const { redirectUri, waitForCode, state } = await startOAuthCallbackServer();
 
@@ -602,9 +603,20 @@ async function startGoogleOAuth(request: ConnectorOAuthRequest): Promise<Connect
     refresh_token?: string;
     expires_in?: number;
     token_type?: string;
+    scope?: string;
   };
   if (!tokenData.access_token) {
     throw new Error("Google OAuth did not return an access_token");
+  }
+  const grantedScopes =
+    typeof tokenData.scope === "string"
+      ? tokenData.scope.split(/\s+/).map((s) => s.trim()).filter(Boolean)
+      : scope.split(/\s+/).map((s) => s.trim()).filter(Boolean);
+  if (request.provider === "google-workspace") {
+    const missingScopes = getMissingGoogleWorkspaceScopes(grantedScopes);
+    if (missingScopes.length > 0) {
+      throw new Error(`Google OAuth did not grant required scopes: ${missingScopes.join(", ")}`);
+    }
   }
 
   return {
@@ -613,6 +625,7 @@ async function startGoogleOAuth(request: ConnectorOAuthRequest): Promise<Connect
     refreshToken: tokenData.refresh_token,
     expiresIn: tokenData.expires_in,
     tokenType: tokenData.token_type,
+    scopes: grantedScopes,
   };
 }
 

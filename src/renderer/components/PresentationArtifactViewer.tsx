@@ -26,6 +26,7 @@ import { ModelDropdown } from "./MainContent";
 import type { SpreadsheetTurnContext } from "./SpreadsheetArtifactViewer";
 import { PresentationArtifactCard } from "./PresentationArtifactCard";
 import { PresentationViewer, type PresentationPreview } from "./PresentationViewer";
+import "./artifact-viewers.css";
 
 type PresentationArtifactViewerMode = "sidebar" | "fullscreen";
 type PresentationSettingsTab = Any;

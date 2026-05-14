@@ -1,7 +1,12 @@
 services:
   cowork-os:
     build: .
+    init: true
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     environment:
       # Persist database/settings.
       - COWORK_USER_DATA_DIR=/data
@@ -24,6 +29,7 @@ services:
       # Bind inside the container on all interfaces, but only publish on host loopback below.
       - COWORK_CONTROL_PLANE_HOST=0.0.0.0
       - COWORK_CONTROL_PLANE_PORT=18789
+      - COWORK_CONTROL_PLANE_BIND_CONTEXT=container
     volumes:
       - cowork_data:/data
       # Default workspace volume (recommended to avoid host permission issues).
@@ -41,7 +47,12 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.node
+    init: true
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     environment:
       - COWORK_USER_DATA_DIR=/data
       # Optional: COWORK_TZ=America/New_York  # IANA timezone
@@ -50,6 +61,7 @@ services:
       - COWORK_IMPORT_ENV_SETTINGS=1
       - COWORK_CONTROL_PLANE_HOST=0.0.0.0
       - COWORK_CONTROL_PLANE_PORT=18789
+      - COWORK_CONTROL_PLANE_BIND_CONTEXT=container
     volumes:
       - cowork_data:/data
       - cowork_workspace:/workspace

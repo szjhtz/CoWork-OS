@@ -1,7 +1,7 @@
 import { Workspace } from "../../../shared/types";
 import { AgentDaemon } from "../daemon";
 import { VoiceSettingsManager } from "../../voice/voice-settings-manager";
-import { GuardrailManager } from "../../guardrails/guardrail-manager";
+import { evaluateNetworkPolicy } from "../../security/network-policy";
 
 const ELEVENLABS_API_BASE = "https://api.elevenlabs.io/v1";
 const E164_REGEX = /^\+[1-9]\d{1,14}$/;
@@ -97,15 +97,13 @@ export class VoiceCallTools {
   }
 
   private ensureDomainAllowed(url: string): void {
-    if (GuardrailManager.isDomainAllowed(url)) return;
-    const settings = GuardrailManager.loadSettings();
-    const allowedDomainsStr =
-      settings.allowedDomains.length > 0 ? settings.allowedDomains.join(", ") : "(none configured)";
-    throw new Error(
-      `Domain not allowed: "${url}"\n` +
-        `Allowed domains: ${allowedDomainsStr}\n` +
-        `You can modify allowed domains in Settings > Guardrails.`,
-    );
+    const decision = evaluateNetworkPolicy({ url, toolName: "voice_call" });
+    this.daemon.logEvent(this.taskId, "network_policy_decision", decision);
+    if (decision.action === "allow") return;
+    if (decision.reason === "legacy_guardrail_domain_denied") {
+      throw new Error(`Domain not allowed: "${url}"`);
+    }
+    throw new Error(`Network access denied for "${url}": ${decision.reason}`);
   }
 
   private async requestApproval(summary: string, details: Record<string, unknown>): Promise<void> {

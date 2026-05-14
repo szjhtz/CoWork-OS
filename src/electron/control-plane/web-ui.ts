@@ -997,6 +997,10 @@ export function getControlPlaneWebUIHtml(): string {
           llmSettingsJson.placeholder = '{"provider":"anthropic"}';
           return;
         }
+        if (provider === 'openrouter') {
+          llmSettingsJson.placeholder = '{"baseUrl":"https://openrouter.ai/api/v1","paretoMinCodingScore":0.8}';
+          return;
+        }
         llmSettingsJson.placeholder = '{"baseUrl":"https://..."}';
       }
 

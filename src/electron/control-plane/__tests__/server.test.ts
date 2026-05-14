@@ -201,6 +201,43 @@ describe("ControlPlaneServer security boundaries", () => {
     return { client, socket, sent };
   };
 
+  it("allows same-origin browser WebSocket connections", async () => {
+    const { ControlPlaneServer } = await import("../server");
+    const server = new ControlPlaneServer({ token: "operator-token" });
+
+    expect((server as Any).isOriginAllowed("http://127.0.0.1:18789", "127.0.0.1:18789")).toBe(
+      true,
+    );
+  });
+
+  it("allows explicitly configured browser origins", async () => {
+    const { ControlPlaneServer } = await import("../server");
+    const server = new ControlPlaneServer({
+      token: "operator-token",
+      allowedOrigins: ["https://cowork.example.com"],
+    });
+
+    expect((server as Any).isOriginAllowed("https://cowork.example.com", "127.0.0.1:18789")).toBe(
+      true,
+    );
+  });
+
+  it("rejects unexpected browser origins", async () => {
+    const { ControlPlaneServer } = await import("../server");
+    const server = new ControlPlaneServer({ token: "operator-token" });
+
+    expect((server as Any).isOriginAllowed("https://evil.example.com", "127.0.0.1:18789")).toBe(
+      false,
+    );
+  });
+
+  it("allows non-browser clients without an Origin header", async () => {
+    const { ControlPlaneServer } = await import("../server");
+    const server = new ControlPlaneServer({ token: "operator-token" });
+
+    expect((server as Any).isOriginAllowed(undefined, "127.0.0.1:18789")).toBe(true);
+  });
+
   it("does not allow the node token to self-select operator privileges", async () => {
     const { ControlPlaneServer } = await import("../server");
     const server = new ControlPlaneServer({

@@ -4,10 +4,10 @@ Digital Twin Personas are role presets for CoWork agents. A twin gives you a str
 
 This guide covers what twins are for, how they relate to the new core automation model, the built-in persona families, and how to design custom templates that stay aligned with the hard split between:
 
-- core runtime: `Workflow Intelligence` (`Memory + Heartbeat + Reflection + Suggestions`)
+- core runtime: `Workflow Intelligence` (`Memory + Heartbeat + Reflection + Dreaming + Suggestions`)
 - product surfaces: Mission Control, Triggers, Devices, and Digital Twins
 
-Use [Workflow Intelligence](workflow-intelligence.md), [Core Automation](core-automation.md), and [Heartbeat v3](heartbeat-v3.md) as the runtime source of truth.
+Use [Workflow Intelligence](workflow-intelligence.md), [Dreaming](dreaming.md), [Core Automation](core-automation.md), and [Heartbeat v3](heartbeat-v3.md) as the runtime source of truth.
 
 ---
 

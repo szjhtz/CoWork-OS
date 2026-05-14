@@ -12,13 +12,14 @@ In other words:
 
 we did not build a vague "self-improving AI" story.
 
-We gave CoWork OS Workflow Intelligence: a governed loop that turns memory, heartbeat signals, reflection, and user-reviewed suggestions into durable learning.
+We gave CoWork OS Workflow Intelligence: a governed loop that turns memory, heartbeat signals, reflection, Dreaming, and user-reviewed suggestions into durable learning.
 
 That loop now runs through the always-on core:
 
 - `Memory` as the source of truth
 - `Heartbeat` as the scheduler
 - internal `Reflection` as the evaluator
+- `Dreaming` as background memory curation
 - reviewable `Suggestions` as the user-facing output
 
 And that is what lets CoWork OS improve without turning the whole product into an opaque autopilot.
@@ -116,6 +117,7 @@ In CoWork OS, context learning includes:
 
 - memory candidates extracted from traces
 - hot-path memory capture
+- Dreaming candidates proposed from recent sessions, structured observations, corrections, and memory drift
 - offline memory distillation
 - scoped memory by workspace/profile/target
 - workflow-intelligence journals and reflection artifacts
@@ -138,6 +140,7 @@ A trace is not just a final answer. It is the execution path:
 - what signals arrived
 - what Heartbeat noticed
 - what Reflection evaluated
+- what Dreaming proposed for memory curation
 - what was dispatched
 - what suggestion the user acted on, edited, snoozed, dismissed, or ignored
 - what succeeded or failed
@@ -281,7 +284,7 @@ if everything owns learning, nothing stays legible.
 
 That is why CoWork OS made the hard cut:
 
-- `Workflow Intelligence` is the core runtime: Memory, Heartbeat, internal Reflection, and reviewable Suggestions
+- `Workflow Intelligence` is the core runtime: Memory, Heartbeat, internal Reflection, Dreaming, and reviewable Suggestions
 - Mission Control observes and configures that runtime
 - Triggers only normalize ingress
 - Devices only route execution
@@ -334,6 +337,7 @@ That is the real learning loop in CoWork OS.
 ## Related Docs
 
 - [Core Automation](core-automation.md)
+- [Dreaming](dreaming.md)
 - [Heartbeat v3](heartbeat-v3.md)
 - [Workflow Intelligence](workflow-intelligence.md)
 - [Mission Control](mission-control.md)

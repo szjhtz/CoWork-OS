@@ -20,3 +20,9 @@ export {
 } from "./store";
 export { NotificationOverlayManager } from "./NotificationOverlayWindow";
 export { NativeNotificationCenter } from "./NativeNotificationCenter";
+export {
+  isLikelyIntegrationAuthError,
+  notifyIntegrationAuthIssue,
+  resetIntegrationAuthNotificationDedupe,
+  setIntegrationAuthNotificationServiceProvider,
+} from "./integration-auth";

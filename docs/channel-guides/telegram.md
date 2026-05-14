@@ -16,6 +16,7 @@ Telegram is a strong power-user channel for CoWork. It offers native bot command
 - Direct messages, groups, and topic/thread context where Telegram provides it.
 - Group routing modes: all, mentions only, mentions or commands, commands only.
 - Allowed group chat IDs.
+- Per-group and per-topic specialization for workspace, agent role, guidance, and tool policy.
 - Reactions and responsive draft-style assistant updates.
 - Attachment and voice handling where supported.
 
@@ -38,6 +39,7 @@ In groups, mention the bot or use commands depending on the routing mode. In DMs
 - Use `/new` before switching topics.
 - Use `/new temp` for one-off experiments.
 - Use command-only routing in busy groups.
+- Use topic specialization when one Telegram forum group hosts several distinct workflows.
 - Use dedicated groups for research-link collection.
 - Use `/task` or `/status` to understand what CoWork thinks is active before steering it.
 - Keep approvals in DMs unless the group is trusted.
@@ -51,5 +53,6 @@ In groups, mention the bot or use commands depending on the routing mode. In DMs
 ## Related Docs
 
 - [Channel Integrations](../channels.md#telegram)
+- [Channel Specialization](../channels.md#channel-specialization)
 - [Gateway User Guide](../gateway-user-guide.md)
 - [Research Channels](../research-channels.md)

@@ -23,6 +23,9 @@ import {
   CuratedMemoryEntry,
   CuratedMemoryKind,
   CuratedMemoryTarget,
+  ChannelSpecialization,
+  CreateChannelSpecializationRequest,
+  UpdateChannelSpecializationRequest,
 } from "../../shared/types";
 import { isActiveTaskStatus, normalizeTaskLifecycleState } from "../../shared/task-status";
 import { isTimelineEventType, normalizeTaskEventToTimelineV2 } from "../../shared/timeline-v2";
@@ -34,6 +37,7 @@ import {
   getTaskTraceSessionId,
 } from "./task-trace-projection";
 import { UsageInsightsProjector } from "../reports/UsageInsightsProjector";
+import { enqueueTaskEventTelemetry } from "../telemetry/task-event-exporter";
 import { getSafeStorage } from "../utils/safe-storage";
 import { createLogger } from "../utils/logger";
 
@@ -567,7 +571,14 @@ export class TaskRepository {
     return row ? this.mapRowToTask(row) : undefined;
   }
 
-  findAll(limit = 100, offset = 0, options?: { prioritizeSidebar?: boolean }): Task[] {
+  findAll(
+    limit = 100,
+    offset = 0,
+    options?: {
+      prioritizeSidebar?: boolean;
+      excludeSources?: Array<NonNullable<Task["source"]>>;
+    },
+  ): Task[] {
     const orderBy = options?.prioritizeSidebar
       ? `
       ORDER BY
@@ -577,12 +588,20 @@ export class TaskRepository {
         created_at DESC
       `
       : "ORDER BY COALESCE(updated_at, created_at) DESC, created_at DESC";
+    const excludedSources = Array.isArray(options?.excludeSources)
+      ? options.excludeSources.filter((source): source is NonNullable<Task["source"]> => Boolean(source))
+      : [];
+    const where =
+      excludedSources.length > 0
+        ? `WHERE COALESCE(source, 'manual') NOT IN (${excludedSources.map(() => "?").join(", ")})`
+        : "";
     const stmt = this.db.prepare(`
       SELECT * FROM tasks
+      ${where}
       ${orderBy}
       LIMIT ? OFFSET ?
     `);
-    const rows = stmt.all(limit, offset) as Any[];
+    const rows = stmt.all(...excludedSources, limit, offset) as Any[];
     return rows.map((row) => this.mapRowToTask(row));
   }
 
@@ -1351,6 +1370,12 @@ export class TaskEventRepository {
       } catch {
         // Best-effort cache invalidation only.
       }
+    }
+
+    try {
+      enqueueTaskEventTelemetry(newEvent);
+    } catch {
+      // Best-effort telemetry only.
     }
 
     return newEvent;
@@ -2867,6 +2892,241 @@ export class ChannelSessionRepository {
       debugMode,
       createdAt: row.created_at as number,
       lastActivityAt: row.last_activity_at as number,
+    };
+  }
+}
+
+export class ChannelSpecializationRepository {
+  constructor(private db: Database.Database) {}
+
+  upsert(request: CreateChannelSpecializationRequest): ChannelSpecialization {
+    const existing = this.findByScope({
+      channelId: request.channelId,
+      chatId: request.chatId,
+      threadId: request.threadId,
+    });
+    if (!existing) return this.create(request);
+    const update: UpdateChannelSpecializationRequest = {
+      id: existing.id,
+      chatId: request.chatId ?? null,
+      threadId: request.threadId ?? null,
+      name: request.name ?? null,
+      workspaceId: request.workspaceId ?? null,
+      agentRoleId: request.agentRoleId ?? null,
+      systemGuidance: request.systemGuidance ?? null,
+      toolRestrictions: request.toolRestrictions,
+    };
+    if (request.allowSharedContextMemory !== undefined) {
+      update.allowSharedContextMemory = request.allowSharedContextMemory;
+    }
+    if (request.enabled !== undefined) {
+      update.enabled = request.enabled;
+    }
+    return this.update(update) || existing;
+  }
+
+  create(request: CreateChannelSpecializationRequest): ChannelSpecialization {
+    const now = Date.now();
+    const specialization: ChannelSpecialization = {
+      id: uuidv4(),
+      channelId: request.channelId,
+      chatId: this.cleanOptionalString(request.chatId),
+      threadId: this.cleanOptionalString(request.threadId),
+      name: this.cleanOptionalString(request.name),
+      workspaceId: this.cleanOptionalString(request.workspaceId),
+      agentRoleId: this.cleanOptionalString(request.agentRoleId),
+      systemGuidance: this.cleanOptionalString(request.systemGuidance),
+      toolRestrictions: this.cleanToolRestrictions(request.toolRestrictions),
+      allowSharedContextMemory: request.allowSharedContextMemory === true,
+      enabled: request.enabled !== false,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    this.db
+      .prepare(
+        `INSERT INTO channel_specializations (
+          id, channel_id, chat_id, thread_id, name, workspace_id, agent_role_id,
+          system_guidance, tool_restrictions, allow_shared_context_memory,
+          enabled, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        specialization.id,
+        specialization.channelId,
+        specialization.chatId ?? null,
+        specialization.threadId ?? null,
+        specialization.name ?? null,
+        specialization.workspaceId ?? null,
+        specialization.agentRoleId ?? null,
+        specialization.systemGuidance ?? null,
+        JSON.stringify(specialization.toolRestrictions || []),
+        specialization.allowSharedContextMemory ? 1 : 0,
+        specialization.enabled ? 1 : 0,
+        specialization.createdAt,
+        specialization.updatedAt,
+      );
+
+    return specialization;
+  }
+
+  update(request: UpdateChannelSpecializationRequest): ChannelSpecialization | undefined {
+    const existing = this.findById(request.id);
+    if (!existing) return undefined;
+
+    const fields: string[] = [];
+    const values: unknown[] = [];
+    const push = (column: string, value: unknown) => {
+      fields.push(`${column} = ?`);
+      values.push(value);
+    };
+
+    if ("chatId" in request) push("chat_id", this.cleanOptionalString(request.chatId) ?? null);
+    if ("threadId" in request) push("thread_id", this.cleanOptionalString(request.threadId) ?? null);
+    if ("name" in request) push("name", this.cleanOptionalString(request.name) ?? null);
+    if ("workspaceId" in request)
+      push("workspace_id", this.cleanOptionalString(request.workspaceId) ?? null);
+    if ("agentRoleId" in request)
+      push("agent_role_id", this.cleanOptionalString(request.agentRoleId) ?? null);
+    if ("systemGuidance" in request)
+      push("system_guidance", this.cleanOptionalString(request.systemGuidance) ?? null);
+    if ("toolRestrictions" in request)
+      push("tool_restrictions", JSON.stringify(this.cleanToolRestrictions(request.toolRestrictions)));
+    if ("allowSharedContextMemory" in request)
+      push("allow_shared_context_memory", request.allowSharedContextMemory ? 1 : 0);
+    if ("enabled" in request) push("enabled", request.enabled ? 1 : 0);
+
+    if (fields.length === 0) return existing;
+
+    push("updated_at", Date.now());
+    values.push(request.id);
+    this.db
+      .prepare(`UPDATE channel_specializations SET ${fields.join(", ")} WHERE id = ?`)
+      .run(...values);
+    return this.findById(request.id);
+  }
+
+  delete(id: string): boolean {
+    const result = this.db.prepare("DELETE FROM channel_specializations WHERE id = ?").run(id);
+    return Number(result.changes || 0) > 0;
+  }
+
+  findById(id: string): ChannelSpecialization | undefined {
+    const row = this.db
+      .prepare("SELECT * FROM channel_specializations WHERE id = ?")
+      .get(id) as Record<string, unknown> | undefined;
+    return row ? this.mapRow(row) : undefined;
+  }
+
+  findByScope(input: {
+    channelId: string;
+    chatId?: string | null;
+    threadId?: string | null;
+  }): ChannelSpecialization | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM channel_specializations
+         WHERE channel_id = ?
+           AND COALESCE(chat_id, '') = ?
+           AND COALESCE(thread_id, '') = ?
+         LIMIT 1`,
+      )
+      .get(
+        input.channelId,
+        this.cleanOptionalString(input.chatId) ?? "",
+        this.cleanOptionalString(input.threadId) ?? "",
+      ) as Record<string, unknown> | undefined;
+    return row ? this.mapRow(row) : undefined;
+  }
+
+  listByChannel(channelId: string): ChannelSpecialization[] {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM channel_specializations
+         WHERE channel_id = ?
+         ORDER BY COALESCE(chat_id, '') ASC, COALESCE(thread_id, '') ASC, updated_at DESC`,
+      )
+      .all(channelId) as Record<string, unknown>[];
+    return rows.map((row) => this.mapRow(row));
+  }
+
+  resolve(input: {
+    channelId: string;
+    chatId?: string | null;
+    threadId?: string | null;
+  }): ChannelSpecialization | undefined {
+    const chatId = this.cleanOptionalString(input.chatId);
+    const threadId = this.cleanOptionalString(input.threadId);
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM channel_specializations
+         WHERE channel_id = ?
+           AND enabled = 1
+           AND (
+             (chat_id IS NULL AND thread_id IS NULL)
+             OR (? IS NOT NULL AND chat_id = ? AND thread_id IS NULL)
+             OR (? IS NOT NULL AND ? IS NOT NULL AND chat_id = ? AND thread_id = ?)
+           )
+         ORDER BY
+           CASE
+             WHEN chat_id = ? AND thread_id = ? THEN 3
+             WHEN chat_id = ? AND thread_id IS NULL THEN 2
+             WHEN chat_id IS NULL AND thread_id IS NULL THEN 1
+             ELSE 0
+           END DESC,
+           updated_at DESC
+         LIMIT 1`,
+      )
+      .all(
+        input.channelId,
+        chatId ?? null,
+        chatId ?? null,
+        chatId ?? null,
+        threadId ?? null,
+        chatId ?? null,
+        threadId ?? null,
+        chatId ?? null,
+        threadId ?? null,
+        chatId ?? null,
+      ) as Record<string, unknown>[];
+    return rows[0] ? this.mapRow(rows[0]) : undefined;
+  }
+
+  private cleanOptionalString(value: unknown): string | undefined {
+    return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+  }
+
+  private cleanToolRestrictions(value: unknown): string[] {
+    if (!Array.isArray(value)) return [];
+    return Array.from(
+      new Set(
+        value
+          .filter((item): item is string => typeof item === "string")
+          .map((item) => item.trim())
+          .filter(Boolean),
+      ),
+    );
+  }
+
+  private mapRow(row: Record<string, unknown>): ChannelSpecialization {
+    return {
+      id: row.id as string,
+      channelId: row.channel_id as string,
+      chatId: (row.chat_id as string) || undefined,
+      threadId: (row.thread_id as string) || undefined,
+      name: (row.name as string) || undefined,
+      workspaceId: (row.workspace_id as string) || undefined,
+      agentRoleId: (row.agent_role_id as string) || undefined,
+      systemGuidance: (row.system_guidance as string) || undefined,
+      toolRestrictions: safeJsonParse(
+        (row.tool_restrictions as string) || "[]",
+        [] as string[],
+        "channelSpecialization.toolRestrictions",
+      ).filter((item): item is string => typeof item === "string"),
+      allowSharedContextMemory: row.allow_shared_context_memory === 1,
+      enabled: row.enabled === 1,
+      createdAt: row.created_at as number,
+      updatedAt: row.updated_at as number,
     };
   }
 }

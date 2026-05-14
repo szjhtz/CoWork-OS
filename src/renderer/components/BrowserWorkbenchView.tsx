@@ -12,13 +12,16 @@ import {
   Maximize2,
   Mic,
   Minimize2,
+  Monitor,
   MousePointerClick,
   PencilLine,
   Plus,
   Repeat,
   ScanLine,
   Search,
+  Smartphone,
   Square,
+  Tablet,
   X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -32,6 +35,7 @@ import type {
 import { useVoiceInput } from "../hooks/useVoiceInput";
 import { ModelDropdown } from "./MainContent";
 import type { SpreadsheetTurnContext } from "./SpreadsheetArtifactViewer";
+import "./artifact-viewers.css";
 
 type BrowserWorkbenchMode = "sidebar" | "fullscreen";
 type BrowserSettingsTab = Any;
@@ -54,6 +58,12 @@ type BrowserWorkbenchTab = {
   id: string;
   url: string;
   title: string;
+};
+type BrowserViewportOverride = {
+  width: number;
+  height: number;
+  mobile: boolean;
+  label: string;
 };
 
 type BrowserWorkbenchViewProps = {
@@ -165,6 +175,14 @@ const BROWSER_CAPABILITIES: BrowserCapability[] = [
     accent: "#7c3aed",
   },
   {
+    label: "Test responsive layouts",
+    hint: "Check desktop, tablet, and mobile breakpoints",
+    prompt:
+      "Use the in-app browser to test my app at desktop, tablet, and mobile viewport sizes. Click through the main flow at each breakpoint, capture screenshots of any layout issues, and summarize what changed.",
+    icon: Monitor,
+    accent: "#2563eb",
+  },
+  {
     label: "Watch a page for changes",
     hint: "Re-check on a schedule",
     prompt:
@@ -181,6 +199,12 @@ const BROWSER_CAPABILITIES: BrowserCapability[] = [
     accent: "#ea580c",
   },
 ];
+
+const VIEWPORT_PRESETS = [
+  { label: "Desktop", width: 1440, height: 900, mobile: false, icon: Monitor },
+  { label: "Tablet", width: 768, height: 1024, mobile: true, icon: Tablet },
+  { label: "Mobile", width: 390, height: 844, mobile: true, icon: Smartphone },
+] satisfies Array<BrowserViewportOverride & { icon: LucideIcon }>;
 
 const webviewPopupProps = { allowpopups: "true" } as Any;
 
@@ -229,6 +253,7 @@ export function BrowserWorkbenchView({
   const [activeTabId, setActiveTabId] = useState("active");
   const [isLoading, setIsLoading] = useState(false);
   const [webviewSize, setWebviewSize] = useState<{ width: number; height: number } | null>(null);
+  const [controlledViewport, setControlledViewport] = useState<BrowserViewportOverride | null>(null);
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
   const [toolbarNotice, setToolbarNotice] = useState("");
@@ -246,15 +271,20 @@ export function BrowserWorkbenchView({
     () => tabs.find((tab) => tab.id === activeTabId) || tabs[0],
     [activeTabId, tabs],
   );
+  const viewportSize = useMemo(
+    () =>
+      controlledViewport
+        ? { width: controlledViewport.width, height: controlledViewport.height }
+        : webviewSize,
+    [controlledViewport, webviewSize],
+  );
   const displayTitle = title || getDomain(activeUrl) || "Browser";
   const tabLabel = title || getDomain(activeUrl) || "about:blank";
   const fullscreenLabel = mode === "fullscreen" ? "Exit full screen" : "Open browser workbench in full screen";
-  const webviewKey = webviewSize
-    ? `${partition}:${webviewSize.width}x${webviewSize.height}`
-    : `${partition}:empty`;
+  const webviewKey = `${partition}:${activeTabId}`;
   const visibleWebviewSize =
-    activeUrl && webviewSize && webviewSize.width > 0 && webviewSize.height > 0
-      ? webviewSize
+    activeUrl && viewportSize && viewportSize.width > 0 && viewportSize.height > 0
+      ? viewportSize
       : null;
   const hasVisibleWebview = Boolean(visibleWebviewSize);
   const voiceInput = useVoiceInput({
@@ -420,7 +450,7 @@ export function BrowserWorkbenchView({
     });
   }, [activeTabId]);
 
-  const applyWebviewBounds = useCallback((size = webviewSize) => {
+  const applyWebviewBounds = useCallback((size = visibleWebviewSize) => {
     const webview = webviewRef.current;
     if (!webview || !size || size.width <= 0 || size.height <= 0) return;
     const width = String(size.width);
@@ -434,7 +464,7 @@ export function BrowserWorkbenchView({
     webview.setAttribute("maxwidth", width);
     webview.setAttribute("minheight", height);
     webview.setAttribute("maxheight", height);
-  }, [webviewSize]);
+  }, [visibleWebviewSize]);
 
   useEffect(() => {
     applyWebviewBounds();
@@ -542,6 +572,11 @@ export function BrowserWorkbenchView({
     } catch {
       // The Electron webview throws if commands run during attach/navigation teardown.
     }
+  }, []);
+
+  const applyViewportPreset = useCallback((preset: BrowserViewportOverride) => {
+    setControlledViewport(preset);
+    setToolbarNotice(preset.label);
   }, []);
 
   const resizeAnnotationCanvas = useCallback(() => {
@@ -751,6 +786,25 @@ export function BrowserWorkbenchView({
   }, [sessionId, taskId]);
 
   useEffect(() => {
+    const unsubscribe = window.electronAPI.onBrowserWorkbenchViewport?.((event) => {
+      if (event.taskId !== taskId || event.sessionId !== sessionId) return;
+      const width = Math.max(320, Math.round(event.width || 0));
+      const height = Math.max(320, Math.round(event.height || 0));
+      const label = event.label || `${event.mobile ? "Mobile" : "Desktop"} ${width}x${height}`;
+      setControlledViewport({
+        width,
+        height,
+        mobile: event.mobile === true,
+        label,
+      });
+      setToolbarNotice(label);
+    });
+    return () => {
+      unsubscribe?.();
+    };
+  }, [sessionId, taskId]);
+
+  useEffect(() => {
     if (!browserCursor) return;
     const cursorAt = browserCursor.at;
     const timer = window.setTimeout(() => {
@@ -871,6 +925,45 @@ export function BrowserWorkbenchView({
             aria-label="Browser URL"
           />
         </form>
+        <div className="browser-workbench-device-toolbar" aria-label="Viewport presets">
+          {VIEWPORT_PRESETS.map((preset) => {
+            const Icon = preset.icon;
+            const active =
+              controlledViewport?.width === preset.width &&
+              controlledViewport.height === preset.height;
+            return (
+              <button
+                key={preset.label}
+                type="button"
+                className={`browser-workbench-device-btn ${active ? "is-active" : ""}`}
+                onClick={() => applyViewportPreset(preset)}
+                title={`${preset.label} ${preset.width} x ${preset.height}`}
+                aria-label={`${preset.label} viewport`}
+              >
+                <Icon size={14} strokeWidth={2.2} aria-hidden="true" />
+              </button>
+            );
+          })}
+          {controlledViewport && (
+            <>
+              <span className="browser-workbench-device-size" title={controlledViewport.label}>
+                {controlledViewport.width}x{controlledViewport.height}
+              </span>
+              <button
+                type="button"
+                className="browser-workbench-device-btn"
+                onClick={() => {
+                  setControlledViewport(null);
+                  setToolbarNotice("Auto viewport");
+                }}
+                title="Return to automatic viewport"
+                aria-label="Return to automatic viewport"
+              >
+                <X size={13} strokeWidth={2.2} aria-hidden="true" />
+              </button>
+            </>
+          )}
+        </div>
         <div className="browser-workbench-right-actions">
           {activeUrl && (
             <span className="browser-workbench-profile" title={activeTab?.url || activeUrl}>
@@ -916,7 +1009,10 @@ export function BrowserWorkbenchView({
           </button>
         </div>
       </div>
-      <div className="browser-workbench-surface" ref={surfaceRef}>
+      <div
+        className={`browser-workbench-surface ${controlledViewport ? "has-controlled-viewport" : ""}`}
+        ref={surfaceRef}
+      >
         {visibleWebviewSize ? (
           <webview
             key={webviewKey}
@@ -995,6 +1091,11 @@ export function BrowserWorkbenchView({
                 "open this URL and click the third row" both work.
               </p>
             </div>
+          </div>
+        )}
+        {controlledViewport && activeUrl && (
+          <div className="browser-workbench-viewport-badge" aria-hidden="true">
+            {controlledViewport.label}
           </div>
         )}
         {browserCursor && (

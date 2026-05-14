@@ -235,6 +235,59 @@ describe("WhatsApp Adapter updateConfig", () => {
   });
 });
 
+describe("WhatsAppAdapter certificate handling", () => {
+  it("stops auto-reconnect when WhatsApp TLS certificate trust fails", () => {
+    const adapter = new WhatsAppAdapter({
+      authDir: "/tmp/test-cowork/wa-auth-cert",
+    } as Any);
+    const statusHandler = vi.fn();
+    const errorHandler = vi.fn();
+    adapter.onStatusChange(statusHandler);
+    adapter.onError(errorHandler);
+    const reconnectSpy = vi.spyOn(adapter as Any, "attemptReconnection");
+    const certError = new Error("unable to get local issuer certificate") as Error & {
+      code: string;
+    };
+    certError.code = "UNABLE_TO_GET_ISSUER_CERT_LOCALLY";
+
+    (adapter as Any).handleConnectionUpdate({
+      connection: "close",
+      lastDisconnect: { error: certError },
+    });
+
+    expect(reconnectSpy).not.toHaveBeenCalled();
+    expect((adapter as Any).shouldReconnect).toBe(false);
+    expect(adapter.status).toBe("error");
+    expect(statusHandler).toHaveBeenCalledWith(
+      "error",
+      expect.objectContaining({
+        message: expect.stringContaining("WhatsApp TLS certificate verification failed"),
+      }),
+    );
+    expect(errorHandler).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.stringContaining("Original error: unable to get local issuer certificate"),
+      }),
+      "connectionClose",
+    );
+  });
+
+  it("continues the normal reconnect path for retryable WhatsApp disconnects", () => {
+    const adapter = new WhatsAppAdapter({
+      authDir: "/tmp/test-cowork/wa-auth-retry",
+    } as Any);
+    const reconnectSpy = vi.spyOn(adapter as Any, "attemptReconnection").mockResolvedValue(undefined);
+
+    (adapter as Any).handleConnectionUpdate({
+      connection: "close",
+      lastDisconnect: { error: { output: { statusCode: 500 } } },
+    });
+
+    expect((adapter as Any).shouldReconnect).toBe(true);
+    expect(reconnectSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("WhatsAppAdapter editMessage", () => {
   it("sends a Baileys edit payload with WhatsApp markdown and self-chat prefix", async () => {
     const adapter = new WhatsAppAdapter({

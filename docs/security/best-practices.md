@@ -32,6 +32,13 @@ Start with minimal permissions:
 - Add permissions as required
 - Review periodically
 
+### 5. Keep Group Memory Explicit
+
+For shared chats and public channels:
+- Leave shared context memory disabled unless the group is trusted
+- Use channel specialization tool restrictions for shared groups that need narrower access
+- Prefer deny-first restrictions for memory, system, network, or destructive tool groups when a channel has broad membership
+
 ## Ongoing Operations
 
 ### 1. Review Approval Requests
@@ -177,7 +184,15 @@ Install updates promptly:
 
 - Use context policies to restrict groups
 - Block memory tools in shared contexts
+- Review channel specializations for each shared group or channel
+- Enable shared context memory only for trusted specialized groups
 - Consider Docker sandboxing
+
+## FAQ
+
+### Can different groups route to different workspaces or agents?
+
+Yes. Use channel specialization in channel settings to bind a channel, chat/group, or topic/thread to a workspace, agent role, prompt guidance, tool restrictions, and optional shared-memory policy. Keep group memory disabled unless the participants and use case are trusted.
 
 ## Incident Response
 

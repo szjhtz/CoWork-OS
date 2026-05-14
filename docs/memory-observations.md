@@ -19,6 +19,10 @@ CoWork memory now has three complementary shapes:
 Structured observations are not a replacement for archive memory. They are an index and control
 plane over it.
 
+Dreaming uses that index as evidence for memory curation. It can propose stale-memory archives,
+corrections, open loops, recurring tasks, constraints, ignored-noise patterns, or curated-memory
+updates, but those proposals are stored separately as reviewable Dreaming candidates.
+
 ## Data Model
 
 Structured metadata is stored in `memory_observation_metadata`, keyed by `memory_id`.
@@ -34,6 +38,13 @@ The sidecar includes:
 Full-text search indexes observation text, facts, concepts, file paths, and tool names through the
 observation FTS table. The original `memories` row remains the source for full content and existing
 archive recall behavior.
+
+Dreaming state is stored outside the observation sidecar:
+
+- `dreaming_runs` records each background curation pass.
+- `dreaming_candidates` records each proposed memory maintenance action.
+
+This separation keeps observation metadata descriptive and keeps memory curation reviewable.
 
 ## Capture Rules
 
@@ -53,6 +64,10 @@ The runtime is intentionally selective. It should capture high-signal observatio
 - explicit `memory_save` calls
 
 It should not capture every tool call or every transient model thought.
+
+Dreaming does not change capture rules. It reviews already-captured observations and transcript
+evidence after the fact, then proposes maintenance when evidence suggests that memory is missing,
+duplicated, stale, contradicted, or too noisy.
 
 ## Privacy Controls
 
@@ -131,6 +146,10 @@ Delete from the inspector is a soft-delete operation. It marks the observation `
 minimal local metadata record, marks the underlying memory private, and excludes it from default
 search and prompt recall. It does not directly delete another workspace's memory row.
 
+Dreaming candidates should eventually appear beside these inspector workflows rather than bypassing
+them. Accepting a Dreaming candidate should call the same owning memory service that a manual
+inspector action would use.
+
 ## IPC And Security Boundary
 
 Mutation IPC calls must include `workspaceId` and `memoryId`.
@@ -164,6 +183,7 @@ Structured observation changes should include tests for:
 - prompt recall exclusion for redacted and suppressed observations
 - progressive recall tool behavior
 - Memory Hub Inspector loading, editing, redaction, promotion, suppression, and rebuild flows
+- Dreaming evidence use, candidate review state, and accepted-candidate application through owning memory services
 
 The native SQLite suite may be skipped on machines where `better-sqlite3` cannot load. Keep mock-level
 tests for service behavior that must remain covered without native SQLite, especially startup

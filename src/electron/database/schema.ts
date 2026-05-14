@@ -472,6 +472,7 @@ export class DatabaseManager {
         environment_id TEXT NOT NULL,
         title TEXT NOT NULL,
         status TEXT NOT NULL,
+        surface TEXT DEFAULT 'runtime',
         workspace_id TEXT NOT NULL,
         backing_task_id TEXT,
         backing_team_run_id TEXT,
@@ -1116,6 +1117,46 @@ export class DatabaseManager {
         FOREIGN KEY (task_id) REFERENCES tasks(id)
       );
 
+      CREATE TABLE IF NOT EXISTS dreaming_runs (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        scope_kind TEXT NOT NULL,
+        scope_ref TEXT NOT NULL,
+        status TEXT NOT NULL,
+        trigger_source TEXT NOT NULL,
+        trigger_heartbeat_run_id TEXT,
+        source_task_id TEXT,
+        instructions TEXT,
+        summary TEXT,
+        evidence_count INTEGER NOT NULL DEFAULT 0,
+        candidate_count INTEGER NOT NULL DEFAULT 0,
+        error TEXT,
+        started_at INTEGER NOT NULL,
+        completed_at INTEGER,
+        created_at INTEGER NOT NULL,
+        FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
+        FOREIGN KEY (source_task_id) REFERENCES tasks(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS dreaming_candidates (
+        id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        action TEXT NOT NULL,
+        target TEXT NOT NULL,
+        current_value TEXT,
+        proposed_value TEXT NOT NULL,
+        rationale TEXT NOT NULL,
+        confidence REAL NOT NULL,
+        evidence_refs TEXT NOT NULL DEFAULT '[]',
+        status TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        reviewed_at INTEGER,
+        resolution TEXT,
+        FOREIGN KEY (run_id) REFERENCES dreaming_runs(id) ON DELETE CASCADE,
+        FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+      );
+
       -- Per-workspace memory settings
       CREATE TABLE IF NOT EXISTS memory_settings (
         workspace_id TEXT PRIMARY KEY,
@@ -1152,6 +1193,14 @@ export class DatabaseManager {
         ON memory_observation_metadata(workspace_id, content_hash, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_memory_observation_privacy
         ON memory_observation_metadata(workspace_id, privacy_state, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_dreaming_runs_workspace
+        ON dreaming_runs(workspace_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_dreaming_runs_scope
+        ON dreaming_runs(scope_kind, scope_ref, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_dreaming_candidates_run
+        ON dreaming_candidates(run_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_dreaming_candidates_workspace_status
+        ON dreaming_candidates(workspace_id, status, created_at DESC);
 
       -- Workspace Markdown Memory Index (for kit notes, docs, and other durable markdown context)
       CREATE TABLE IF NOT EXISTS memory_markdown_files (
@@ -2117,6 +2166,7 @@ export class DatabaseManager {
           environment_id TEXT NOT NULL,
           title TEXT NOT NULL,
           status TEXT NOT NULL,
+          surface TEXT DEFAULT 'runtime',
           workspace_id TEXT NOT NULL,
           backing_task_id TEXT,
           backing_team_run_id TEXT,
@@ -2167,6 +2217,15 @@ export class DatabaseManager {
         CREATE UNIQUE INDEX IF NOT EXISTS idx_managed_session_events_source_task_event
           ON managed_session_events(session_id, source_task_event_id)
           WHERE source_task_event_id IS NOT NULL;
+      `);
+      try {
+        this.db.exec("ALTER TABLE managed_sessions ADD COLUMN surface TEXT DEFAULT 'runtime'");
+      } catch {
+        // Column already exists.
+      }
+      this.db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_managed_sessions_agent_surface
+          ON managed_sessions(agent_id, surface, created_at DESC);
       `);
     } catch (error) {
       schemaLogger.error("[DatabaseManager] Failed managed agents migration:", error);
@@ -2635,6 +2694,43 @@ export class DatabaseManager {
         );
 
         CREATE INDEX IF NOT EXISTS idx_context_policies_channel ON context_policies(channel_id);
+      `);
+    } catch {
+      // Table already exists, ignore
+    }
+
+    // Migration: Create per-channel/chat/thread specialization table.
+    try {
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS channel_specializations (
+          id TEXT PRIMARY KEY,
+          channel_id TEXT NOT NULL,
+          chat_id TEXT,
+          thread_id TEXT,
+          name TEXT,
+          workspace_id TEXT,
+          agent_role_id TEXT,
+          system_guidance TEXT,
+          tool_restrictions TEXT,
+          allow_shared_context_memory INTEGER NOT NULL DEFAULT 0,
+          enabled INTEGER NOT NULL DEFAULT 1,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE,
+          FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE SET NULL,
+          FOREIGN KEY (agent_role_id) REFERENCES agent_roles(id) ON DELETE SET NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_channel_specializations_channel
+          ON channel_specializations(channel_id);
+        CREATE INDEX IF NOT EXISTS idx_channel_specializations_lookup
+          ON channel_specializations(channel_id, chat_id, thread_id, enabled);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_channel_specializations_unique_scope
+          ON channel_specializations(
+            channel_id,
+            COALESCE(chat_id, ''),
+            COALESCE(thread_id, '')
+          );
       `);
     } catch {
       // Table already exists, ignore

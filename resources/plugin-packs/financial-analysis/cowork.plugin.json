@@ -8,7 +8,7 @@
   "keywords": ["finance", "dcf", "valuation", "financial-analysis", "ratios", "modeling"],
   "icon": "📊",
   "category": "Finance",
-  "recommendedConnectors": ["factset-mcp", "spglobal-mcp", "lseg-mcp"],
+  "recommendedConnectors": ["factset", "spglobal", "lseg", "daloopa"],
   "tryAsking": [
     "Build a DCF model for Apple with a 10-year projection and sensitivity analysis",
     "Analyze the liquidity and profitability ratios for Tesla's latest financials",
@@ -86,7 +86,41 @@
         { "name": "assumptions", "type": "string", "description": "Key assumptions, constraints, or specific data points", "required": false }
       ],
       "enabled": true
+    },
+    {
+      "id": "fa-lbo-modeling",
+      "name": "LBO Modeling",
+      "description": "Draft leveraged buyout model structure with sources, assumptions, return cases, and checks.",
+      "icon": "🏗️",
+      "category": "Finance",
+      "prompt": "Build a draft LBO model plan or workbook artifact. Include Sources & Uses, transaction assumptions, operating projections, debt schedule, cash sweep, exit assumptions, IRR/MOIC sensitivities, Checks, and Source Ledger. Stage all outputs for human review and do not present investment advice as final.",
+      "enabled": true
+    },
+    {
+      "id": "fa-three-statement-model",
+      "name": "Three-Statement Model",
+      "description": "Draft a three-statement model with linked income statement, balance sheet, cash flow, and checks.",
+      "icon": "📚",
+      "category": "Finance",
+      "prompt": "Build a draft three-statement model plan or workbook artifact. Include Inputs, Income Statement, Balance Sheet, Cash Flow, Debt/Working Capital schedules, Checks, and Source Ledger. Highlight assumptions, missing data, and failed checks.",
+      "enabled": true
+    },
+    {
+      "id": "fa-model-audit",
+      "name": "Debug Model",
+      "description": "Find model errors, hardcodes, broken checks, and unsupported assumptions.",
+      "icon": "🔍",
+      "category": "Finance",
+      "prompt": "Debug the provided finance model. Identify formula errors, broken links, circularity, hardcoded values, failed checks, inconsistent units, stale sources, and unsupported assumptions. Return prioritized findings with exact references when available.",
+      "enabled": true
     }
+  ],
+  "slashCommands": [
+    { "name": "dcf", "description": "Build a DCF model", "skillId": "fa-dcf-modeling" },
+    { "name": "comps", "description": "Run comparable company analysis", "skillId": "fa-peer-benchmarking" },
+    { "name": "lbo", "description": "Build an LBO model", "skillId": "fa-lbo-modeling" },
+    { "name": "3-statement-model", "description": "Build a linked three-statement model", "skillId": "fa-three-statement-model" },
+    { "name": "debug-model", "description": "Audit and debug a finance model", "skillId": "fa-model-audit" }
   ],
   "agentRoles": [
     {

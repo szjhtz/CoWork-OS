@@ -17,6 +17,7 @@ CoWork OS is designed with security in mind. By default:
 - **Sandboxing** isolates command execution using macOS sandbox-exec or Docker
 - **Tool restrictions** prevent sensitive operations in shared contexts (group chats)
 - **Approval gates** require user confirmation for destructive operations
+- **Control Plane exposure** is loopback-first; headless/managed deployments block raw public binds unless Tailscale, private container context, or an explicit break-glass override is configured
 
 ## Security Principles
 

@@ -22,6 +22,7 @@ The Browser Workbench supports:
 - fullscreen mode with the same follow-up composer and latest-turn/working context frame as artifact workbenches
 - a persistent per-workspace browser profile that keeps cookies and local storage separate from system Chrome
 - tab strip, URL bar, profile/security indicator, back, forward, reload, fullscreen, close, screenshot, annotation, diagnostics, and snapshot overlay controls
+- desktop/tablet/mobile viewport presets for responsive testing, plus agent-driven viewport resizing through `browser_emulate`
 - visible cursor movement during agent actions such as click, fill, type, select, wait, read, scroll, and navigation
 - screenshots saved to the workspace
 - screenshot annotation in-app, with the annotated image attachable back to the task
@@ -84,6 +85,18 @@ During visible automation, CoWork renders a cursor overlay on top of the webview
 
 This cursor is a Browser Workbench overlay. It appears for actions routed through the visible in-app browser, not for external Chrome windows or fully headless/background browser runs.
 
+## Responsive Viewport Testing
+
+`browser_emulate` controls the visible Browser Workbench viewport for responsive QA. A task can test common breakpoints such as:
+
+- desktop: `1440x900`
+- tablet: `768x1024`
+- mobile: `390x844`
+
+When the tool runs against the visible workbench, CoWork applies Chrome DevTools device metrics to the page and emits a workbench viewport event. The renderer then resizes the shared webview to that controlled size, shows the active size in the toolbar, and keeps screenshots aligned with the tested breakpoint. This makes long browser QA runs reviewable: the user can see the page at each breakpoint, and `browser_screenshot` captures the same controlled viewport.
+
+The workbench toolbar also has manual desktop/tablet/mobile preset buttons. These are user controls for the same visual surface; agent-driven testing should still use `browser_emulate` so the task timeline and tool output record the tested dimensions.
+
 ## Browser V2 Snapshots
 
 `browser_snapshot` returns a compact accessibility snapshot:
@@ -110,6 +123,7 @@ The Browser Workbench header and toolbar are functional, not cosmetic:
 
 - **Back / Forward / Reload** control the embedded webview history and page reload.
 - **URL bar** navigates the current workbench session.
+- **Viewport presets** resize the visible webview to desktop, tablet, or mobile breakpoints for responsive checks.
 - **Screenshot** captures the current visible browser page into the workspace.
 - **Diagnostics** opens a compact browser panel for console, network, downloads, storage, and trace context.
 - **Snapshot overlay** shows the class of element regions the agent can target from Browser V2 snapshots.
@@ -184,9 +198,9 @@ Key files:
 
 - `src/renderer/components/BrowserWorkbenchView.tsx`: renderer-owned webview, tab strip, toolbar, diagnostics drawer, snapshot overlay, fullscreen mode, screenshot annotation, follow-up composer, and visible cursor overlay
 - `src/electron/browser/browser-session-manager.ts`: Browser V2 session registry, backend kind, CDP actions, accessibility snapshots, ref staleness, diagnostics, uploads, downloads, storage, emulation, and trace state
-- `src/electron/browser/browser-workbench-service.ts`: main-process bridge that maps `{ taskId, sessionId }` to the renderer webview `webContentsId`, routes Browser V2 actions, captures screenshots, and emits cursor events
+- `src/electron/browser/browser-workbench-service.ts`: main-process bridge that maps `{ taskId, sessionId }` to the renderer webview `webContentsId`, routes Browser V2 actions, captures screenshots, and emits cursor and viewport events
 - `src/electron/agent/tools/browser-tools.ts`: browser tool routing, visible-workbench preference, ref-aware actions, real-browser consent gates, and Playwright fallback behavior
-- `src/electron/preload.ts`: Browser Workbench registration, status, screenshot, open-request, and cursor IPC bridge
+- `src/electron/preload.ts`: Browser Workbench registration, status, screenshot, open-request, cursor, and viewport IPC bridge
 - `src/shared/types.ts`: Browser Workbench IPC channel names
 - `src/renderer/App.tsx`: sidebar/fullscreen workbench state and task integration
 
@@ -205,8 +219,10 @@ Manual smoke checks:
 7. Use refs for click/fill/type/get-text actions, then confirm stale refs require a fresh snapshot after navigation or layout changes.
 8. Toggle the snapshot overlay and diagnostics drawer.
 9. Capture console, network, downloads, storage, and trace diagnostics.
-10. Toggle fullscreen and confirm the same session is preserved.
-11. Send a follow-up from fullscreen and confirm the prompt clears, the context frame switches to working, and the browser remains visible.
+10. Call `browser_emulate` for desktop, tablet, and mobile dimensions and confirm the visible workbench resizes with a size badge.
+11. Capture screenshots at each breakpoint and confirm the saved image dimensions match the controlled viewport.
+12. Toggle fullscreen and confirm the same session is preserved.
+13. Send a follow-up from fullscreen and confirm the prompt clears, the context frame switches to working, and the browser remains visible.
 
 Build checks:
 

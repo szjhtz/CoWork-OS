@@ -1,6 +1,6 @@
 const TRUTHY = new Set(["1", "true", "yes", "on"]);
 
-function getEnvFlag(name: string): boolean {
+export function getEnvFlag(name: string): boolean {
   const raw = process.env[name];
   if (!raw) return false;
   return TRUTHY.has(String(raw).trim().toLowerCase());
@@ -42,6 +42,35 @@ export function shouldPrintControlPlaneTokenFromArgsOrEnv(): boolean {
 
 export function shouldImportEnvSettingsFromArgsOrEnv(): boolean {
   return hasArgFlag("--import-env-settings") || getEnvFlag("COWORK_IMPORT_ENV_SETTINGS");
+}
+
+export function shouldUseManagedDeploymentModeFromEnv(): boolean {
+  return getEnvFlag("COWORK_MANAGED_DEPLOYMENT");
+}
+
+export type ControlPlaneBindContext = "host" | "container";
+
+export function getControlPlaneBindContextFromEnv(): ControlPlaneBindContext {
+  const raw = String(process.env.COWORK_CONTROL_PLANE_BIND_CONTEXT || "").trim().toLowerCase();
+  return raw === "container" ? "container" : "host";
+}
+
+export function shouldAllowInsecureControlPlanePublicBindFromEnv(): boolean {
+  return getEnvFlag("COWORK_CONTROL_PLANE_ALLOW_INSECURE_PUBLIC_BIND");
+}
+
+export function shouldTrustControlPlaneProxyFromEnv(): boolean {
+  return getEnvFlag("COWORK_CONTROL_PLANE_TRUST_PROXY");
+}
+
+export function getControlPlaneAllowedOriginsFromEnv(): string[] | undefined {
+  const raw = process.env.COWORK_CONTROL_PLANE_ALLOWED_ORIGINS;
+  if (typeof raw !== "string") return undefined;
+  const origins = raw
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  return origins.length > 0 ? origins : [];
 }
 
 export type EnvSettingsImportMode = "merge" | "overwrite";

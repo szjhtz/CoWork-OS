@@ -25,6 +25,10 @@ import {
   isConnectorConfiguredByCapability,
 } from "../connectors/capabilities";
 import type { MCPConnectorEvent } from "./MCPServerConnection";
+import {
+  isLikelyIntegrationAuthError,
+  notifyIntegrationAuthIssue,
+} from "../../notifications/integration-auth";
 
 const KNOWN_CONNECTORS = new Set(getKnownConnectorIds());
 const logger = createLogger("MCPClientManager");
@@ -327,7 +331,13 @@ export class MCPClientManager extends EventEmitter {
       throw new Error(`Server ${serverId} not connected`);
     }
 
-    return connection.callTool(toolName, args);
+    try {
+      return await connection.callTool(toolName, args);
+    } catch (error) {
+      const config = MCPSettingsManager.getServer(serverId);
+      await this.notifyConnectorAuthIssue(serverId, config, error);
+      throw error;
+    }
   }
 
   getToolCatalogVersion(): number {
@@ -418,6 +428,8 @@ export class MCPClientManager extends EventEmitter {
       // Update settings with last error
       if (error) {
         MCPSettingsManager.updateServerError(serverId, error);
+        const config = MCPSettingsManager.getServer(serverId);
+        void this.notifyConnectorAuthIssue(serverId, config, new Error(error));
       } else if (status === "connected") {
         MCPSettingsManager.updateServerError(serverId, undefined);
       }
@@ -478,6 +490,24 @@ export class MCPClientManager extends EventEmitter {
 
     connection.on("error", (error) => {
       logger.error(`Server ${serverId} error:`, error);
+      const config = MCPSettingsManager.getServer(serverId);
+      void this.notifyConnectorAuthIssue(serverId, config, error);
+    });
+  }
+
+  private async notifyConnectorAuthIssue(
+    serverId: string,
+    config: MCPServerConfig | undefined,
+    error: unknown,
+  ): Promise<void> {
+    if (!isLikelyIntegrationAuthError(error)) return;
+    const connectorId = config ? this.detectConnectorId(config) : undefined;
+    await notifyIntegrationAuthIssue({
+      integrationId: connectorId || serverId,
+      integrationName: config?.name || connectorId || serverId,
+      settingsPath: "Settings > Integrations",
+      reason: error instanceof Error ? error.message : String(error),
+      dedupeKey: `mcp-${serverId}-auth`,
     });
   }
 

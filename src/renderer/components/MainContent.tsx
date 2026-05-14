@@ -8,26 +8,11 @@ import {
   useMemo,
   Fragment,
   Children,
+  lazy,
+  Suspense,
   startTransition,
 } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import remarkBreaks from "remark-breaks";
-import hljs from "highlight.js/lib/core";
-import bash from "highlight.js/lib/languages/bash";
-import css from "highlight.js/lib/languages/css";
-import diff from "highlight.js/lib/languages/diff";
-import javascript from "highlight.js/lib/languages/javascript";
-import json from "highlight.js/lib/languages/json";
-import markdown from "highlight.js/lib/languages/markdown";
-import plaintext from "highlight.js/lib/languages/plaintext";
-import python from "highlight.js/lib/languages/python";
-import shell from "highlight.js/lib/languages/shell";
-import sql from "highlight.js/lib/languages/sql";
-import typescript from "highlight.js/lib/languages/typescript";
-import xml from "highlight.js/lib/languages/xml";
-import yaml from "highlight.js/lib/languages/yaml";
 import {
   Task,
   TaskEvent,
@@ -37,7 +22,6 @@ import {
   LLMProviderType,
   LLMReasoningEffort,
   CustomSkill,
-  EventType,
   DEFAULT_QUIRKS,
   CanvasSession,
   isTempWorkspaceId,
@@ -73,11 +57,22 @@ import {
 } from "../../shared/goal-slash-command";
 import {
   MESSAGE_SHORTCUTS_UPDATED_EVENT,
+  applySlashCommandSelection,
   buildMessageSlashOptions,
   resolveSlashSelectedIndex,
   type PluginSlashCommandAlias,
   type SlashCommandOption,
 } from "../utils/message-slash-options";
+import {
+  buildGenericLegalWorkflowFollowUp,
+  buildGenericLegalWorkflowInitialValues,
+  buildLegalDemandIntakeFollowUp,
+  buildLegalDemandIntakeInitialValues,
+  parseLegalWorkflowSlashPrompt,
+  type GenericLegalWorkflowFormValues,
+  type LegalDemandIntakeFormValues,
+  type LegalWorkflowInvocation,
+} from "../utils/legal-demand-intake";
 import {
   LLM_WIKI_AUDIT_GUI_PROMPT,
   LLM_WIKI_BRIEF_GUI_PROMPT,
@@ -108,7 +103,11 @@ import { DispatchedAgentsPanel } from "./DispatchedAgentsPanel";
 import { CliAgentFrame } from "./CliAgentFrame";
 import { isCliAgentChildTask, resolveCliAgentType } from "../../shared/cli-agent-detection";
 import { MultiLlmSelectionPanel } from "./MultiLlmSelectionPanel";
-import { AssistantMessageContent } from "./AssistantMessageContent";
+import {
+  AssistantMessageContent,
+  OsascriptCommandExcerpt,
+  isLongOsascriptCommandText,
+} from "./AssistantMessageContent";
 import { isVerificationStepDescription } from "../../shared/plan-utils";
 import { hasAssistantMediaDirective } from "../utils/assistant-media-directives";
 import type { AgentRoleData, LlmWikiVaultEntry, LlmWikiVaultSummary } from "../../electron/preload";
@@ -121,6 +120,7 @@ import {
   resolveTaskOutputSummaryFromCompletionEvent,
   resolveTaskOutputSummaryFromTask,
 } from "../utils/task-outputs";
+import { isTaskActivelyWorking } from "../utils/task-working-state";
 import { shouldShowPersistentNeedsUserActionBanner } from "../utils/task-completion-ux";
 import {
   filterVerboseTimelineNoise,
@@ -132,11 +132,13 @@ import { normalizeEventsForTimelineUi } from "../utils/timeline-projection";
 import { getEffectiveTaskEventType, getTimelineErrorText } from "../utils/task-event-compat";
 import {
   incrementRendererPerfCounter,
+  markRendererStartup,
   markTaskEventRenderable,
   markTaskEventVisible,
   measureRendererPerf,
   recordRendererRender,
 } from "../utils/renderer-perf";
+import { autolinkBareDomains } from "../utils/markdown-autolink";
 import {
   ATTACHMENT_CONTENT_END_MARKER,
   ATTACHMENT_CONTENT_START_MARKER,
@@ -206,12 +208,21 @@ import { ReplayControlsBar } from "./ReplayControls";
 import { DebugSessionPanel } from "./DebugSessionPanel";
 import { TaskPauseBanner } from "./TaskPauseBanner";
 import {
+  TASK_AUTOMATION_TEMPLATES,
+  buildTaskAutomationCronJobCreate,
+  buildTaskAutomationSchedule,
+  type TaskAutomationRunMode,
+  type TaskAutomationSchedulePreset,
+  type TaskAutomationTemplate,
+} from "./task-automation-utils";
+import {
   IntegrationMentionText,
   hasRenderableIntegrationMentions,
 } from "./IntegrationMentionText";
 import type { ReplayControls } from "../hooks/useReplayMode";
 import { useVirtualList } from "../hooks/useVirtualList";
 import { useTaskDuration } from "../hooks/useTaskDuration";
+import "./main-content.css";
 
 const CODE_PREVIEWS_EXPANDED_KEY = "cowork:codePreviewsExpanded";
 const TASK_TITLE_MAX_LENGTH = 50;
@@ -219,7 +230,6 @@ const TITLE_ELLIPSIS_REGEX = /(\.\.\.|\u2026)$/u;
 const MAX_ATTACHMENTS = 10;
 const MAX_QUOTED_ASSISTANT_MESSAGE_CHARS = 4000;
 const MAX_QUOTED_ASSISTANT_PREVIEW_CHARS = 280;
-const ACTIVE_WORK_SIGNAL_WINDOW_MS = 30_000;
 const IMAGE_FILE_EXT_RE = /\.(png|jpe?g|gif|webp|svg|bmp|ico)$/i;
 const VIDEO_FILE_EXT_RE = /\.(mp4|webm)$/i;
 type PermissionAccessMode = "default" | "full";
@@ -227,53 +237,39 @@ const HTML_FILE_EXT_RE = /\.html?$/i;
 const SPREADSHEET_FILE_EXT_RE = /\.(xlsx?|xlsm|xlsb|csv|tsv|ods|numbers|gsheet)$/i;
 const PRESENTATION_FILE_EXT_RE = /\.(pptx|ppt|pptm|potx|potm|ppsx|ppsm)$/i;
 const DOCUMENT_PREVIEW_EXT_RE = /\.(pdf|docx|docm|dotx|dotm|doc|rtf|odt|ott|pages|md|markdown|tex|txt)$/i;
-const ACTIVE_WORK_EVENT_TYPES: EventType[] = [
-  "executing",
-  "step_started",
-  "step_completed",
-  "progress_update",
-  "tool_call",
-  "tool_result",
-  "verification_started",
-  "retry_started",
-  "llm_streaming",
-];
-const TERMINAL_WORK_EVENT_TYPES = new Set<EventType | "task_paused" | "task_cancelled">([
-  "task_paused",
-  "approval_requested",
-  "task_completed",
-  "task_cancelled",
-  "follow_up_completed",
-]);
 const WELCOME_TASK_SUGGESTION_LIMIT = 5;
 const WELCOME_SUGGESTION_TEXT_MAX = 96;
 const TASK_FEED_MEASUREMENT_LAYOUT_VERSION = "diff-spacing-v2";
 const COLLAPSED_USER_BUBBLE_MAX_HEIGHT = 220;
 const COLLAPSED_USER_BUBBLE_MIN_HEIGHT = 96;
 
-hljs.registerLanguage("bash", bash);
-hljs.registerLanguage("css", css);
-hljs.registerLanguage("diff", diff);
-hljs.registerLanguage("javascript", javascript);
-hljs.registerLanguage("js", javascript);
-hljs.registerLanguage("json", json);
-hljs.registerLanguage("markdown", markdown);
-hljs.registerLanguage("md", markdown);
-hljs.registerLanguage("plaintext", plaintext);
-hljs.registerLanguage("text", plaintext);
-hljs.registerLanguage("python", python);
-hljs.registerLanguage("py", python);
-hljs.registerLanguage("shell", shell);
-hljs.registerLanguage("sh", shell);
-hljs.registerLanguage("sql", sql);
-hljs.registerLanguage("typescript", typescript);
-hljs.registerLanguage("ts", typescript);
-hljs.registerLanguage("tsx", typescript);
-hljs.registerLanguage("jsx", javascript);
-hljs.registerLanguage("html", xml);
-hljs.registerLanguage("xml", xml);
-hljs.registerLanguage("yaml", yaml);
-hljs.registerLanguage("yml", yaml);
+const LazyMarkdownRenderer = lazy(() =>
+  import("./MarkdownRenderer").then((module) => ({ default: module.MarkdownRenderer })),
+);
+const LazyHighlightedCodeBlock = lazy(() =>
+  import("./HighlightedCode").then((module) => ({ default: module.HighlightedCodeBlock })),
+);
+const LazyHighlightedCodePreview = lazy(() =>
+  import("./HighlightedCode").then((module) => ({ default: module.HighlightedCodePreview })),
+);
+
+function DeferredMarkdown({
+  children,
+  components,
+  withBreaks = false,
+}: {
+  children: string;
+  components?: unknown;
+  withBreaks?: boolean;
+}) {
+  return (
+    <Suspense fallback={<span className="markdown-deferred-text">{children}</span>}>
+      <LazyMarkdownRenderer components={components} withBreaks={withBreaks}>
+        {children}
+      </LazyMarkdownRenderer>
+    </Suspense>
+  );
+}
 
 type WelcomeTaskSuggestionSource = "heartbeat" | "memory" | "insight";
 type WelcomeTaskSuggestionModule =
@@ -869,76 +865,6 @@ export function collectLatestEndOfTaskArtifactCards(
     return a.lastReferenceTimestamp - b.lastReferenceTimestamp;
   });
   return cards.slice(Math.max(0, cards.length - limit));
-}
-
-function isActiveWorkSignal(event: TaskEvent, effectiveType: string): boolean {
-  const isActiveProgressSignal =
-    effectiveType === "progress_update" &&
-    (event.payload?.phase === "tool_execution" ||
-      event.payload?.state === "active" ||
-      event.payload?.heartbeat === true);
-  const isTimelineActiveLifecycle =
-    event.type === "timeline_group_started" ||
-    event.type === "timeline_step_started" ||
-    event.type === "timeline_step_updated";
-  return (
-    isTimelineActiveLifecycle ||
-    ACTIVE_WORK_EVENT_TYPES.includes(effectiveType as EventType) ||
-    isActiveProgressSignal
-  );
-}
-
-export function isTaskActivelyWorking(
-  task: Task | null | undefined,
-  events: TaskEvent[],
-  hasActiveChildren: boolean,
-  now = Date.now(),
-): boolean {
-  if (!task) return false;
-
-  if (task.status === "executing" || task.status === "planning") {
-    for (let i = events.length - 1; i >= 0; i--) {
-      const event = events[i];
-      if (event.taskId !== task.id) continue;
-      const effectiveType = getEffectiveTaskEventType(event);
-      if (TERMINAL_WORK_EVENT_TYPES.has(effectiveType as EventType | "task_paused" | "task_cancelled")) {
-        return false;
-      }
-      if (isActiveWorkSignal(event, effectiveType)) {
-        return true;
-      }
-    }
-    return true;
-  }
-
-  if (task.status === "completed" && hasActiveChildren) {
-    return true;
-  }
-  if (task.status === "interrupted") return true;
-  if (
-    task.status === "completed" ||
-    task.status === "paused" ||
-    task.status === "blocked" ||
-    task.status === "failed" ||
-    task.status === "cancelled"
-  ) {
-    return false;
-  }
-
-  for (let i = events.length - 1; i >= 0; i--) {
-    const event = events[i];
-    if (event.taskId !== task.id) continue;
-    const effectiveType = getEffectiveTaskEventType(event);
-
-    if (TERMINAL_WORK_EVENT_TYPES.has(effectiveType as EventType | "task_paused" | "task_cancelled")) {
-      return false;
-    }
-    if (isActiveWorkSignal(event, effectiveType)) {
-      return now - event.timestamp <= ACTIVE_WORK_SIGNAL_WINDOW_MS;
-    }
-  }
-
-  return false;
 }
 
 // In non-verbose mode, hide verification noise (verification steps are still executed by the agent).
@@ -1682,12 +1608,6 @@ function CodeBlock({ children, className, ...props }: CodeBlockProps) {
     return <MermaidDiagram chart={rawCodeText} />;
   }
 
-  // Compute highlighted HTML
-  const highlightedHtml = useMemo(
-    () => highlightCode(displayCodeText, language),
-    [displayCodeText, language],
-  );
-
   // For code blocks, wrap with copy button
   return (
     <div className="code-block-wrapper">
@@ -1725,104 +1645,36 @@ function CodeBlock({ children, className, ...props }: CodeBlockProps) {
           <span>{copied ? "Copied!" : "Copy"}</span>
         </button>
       </div>
-      {highlightedHtml ? (
-        <code
-          className={`hljs ${className || ""}`}
-          {...props}
-          dangerouslySetInnerHTML={{ __html: highlightedHtml }}
+      <Suspense
+        fallback={
+          <code className={className} {...props}>
+            {displayCodeText}
+          </code>
+        }
+      >
+        <LazyHighlightedCodeBlock
+          code={displayCodeText}
+          language={language}
+          className={className}
+          codeProps={props}
         />
-      ) : (
-        <code className={className} {...props}>
-          {displayCodeText}
-        </code>
-      )}
+      </Suspense>
     </div>
   );
 }
 
-// Utility: highlight a code string with hljs (pure function, no hooks)
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-function sanitizeHighlightedHtml(html: string): string {
-  if (!html) return "";
-  if (typeof DOMParser === "undefined") {
-    return escapeHtml(html);
-  }
-
-  const parser = new DOMParser();
-  const parsed = parser.parseFromString(`<div>${html}</div>`, "text/html");
-  const sourceRoot = parsed.body.firstElementChild;
-  if (!sourceRoot) {
-    return "";
-  }
-
-  const outputDoc = parser.parseFromString("<div></div>", "text/html");
-  const outputRoot = outputDoc.body.firstElementChild as HTMLElement;
-
-  const appendSanitized = (node: ChildNode, parent: HTMLElement): void => {
-    if (node.nodeType === 3) {
-      parent.appendChild(outputDoc.createTextNode(node.textContent || ""));
-      return;
-    }
-    if (node.nodeType !== 1) return;
-
-    const element = node as HTMLElement;
-    const tag = element.tagName.toLowerCase();
-
-    if (tag === "span") {
-      const span = outputDoc.createElement("span");
-      const classes = (element.getAttribute("class") || "")
-        .split(/\s+/)
-        .map((name) => name.trim())
-        .filter((name) => /^hljs(?:-[a-z0-9_-]+)?$/i.test(name));
-      if (classes.length > 0) {
-        span.setAttribute("class", classes.join(" "));
+function HighlightedCodePreview({ code, language }: { code: string; language?: string }) {
+  return (
+    <Suspense
+      fallback={
+        <pre className="code-preview-content">
+          <code>{code}</code>
+        </pre>
       }
-      for (const child of Array.from(element.childNodes)) {
-        appendSanitized(child, span);
-      }
-      parent.appendChild(span);
-      return;
-    }
-
-    if (tag === "br") {
-      parent.appendChild(outputDoc.createElement("br"));
-      return;
-    }
-
-    for (const child of Array.from(element.childNodes)) {
-      appendSanitized(child, parent);
-    }
-  };
-
-  for (const child of Array.from(sourceRoot.childNodes)) {
-    appendSanitized(child, outputRoot);
-  }
-
-  return outputRoot.innerHTML;
-}
-
-function highlightCode(code: string, language?: string): string | null {
-  if (!code) return null;
-  if (language && hljs.getLanguage(language)) {
-    try {
-      return sanitizeHighlightedHtml(hljs.highlight(code, { language }).value);
-    } catch {
-      // fall through
-    }
-  }
-  try {
-    return sanitizeHighlightedHtml(hljs.highlightAuto(code).value);
-  } catch {
-    return null;
-  }
+    >
+      <LazyHighlightedCodePreview code={code} language={language} />
+    </Suspense>
+  );
 }
 
 function summarizeQuotedAssistantMessage(message: string, maxChars = MAX_QUOTED_ASSISTANT_PREVIEW_CHARS): string {
@@ -1847,23 +1699,6 @@ export function createQuotedAssistantMessage(
       : cleaned,
     ...(truncated ? { truncated: true } : {}),
   };
-}
-
-// Highlighted code preview for file creation/modification events
-function HighlightedCodePreview({ code, language }: { code: string; language?: string }) {
-  const html = useMemo(() => highlightCode(code, language), [code, language]);
-  if (html) {
-    return (
-      <pre className="code-preview-content">
-        <code className="hljs" dangerouslySetInnerHTML={{ __html: html }} />
-      </pre>
-    );
-  }
-  return (
-    <pre className="code-preview-content">
-      <code>{code}</code>
-    </pre>
-  );
 }
 
 // Copy button for user messages
@@ -2295,6 +2130,7 @@ const getTextContent = (node: React.ReactNode): string => {
 const stripHttpScheme = (value: string): string => value.replace(/^https?:\/\//, "");
 const HTML_TAG_REGEX = /<[^>]*>/g;
 const URLISH_TEXT_REGEX = /^(?:https?:\/\/|www\.|(?:[a-z0-9-]+\.)+[a-z]{2,}\/)/i;
+const X_LINK_HOSTS = new Set(["x.com", "twitter.com"]);
 
 const stripHtmlTags = (value: string): string =>
   String(value || "")
@@ -2313,6 +2149,23 @@ const extractDomainFromUrl = (raw: string): string => {
     return stripHttpScheme(trimmed).split("/")[0].replace(/^www\./i, "");
   }
 };
+
+export function isXComLink(raw: string): boolean {
+  const trimmed = String(raw || "").trim();
+  if (!trimmed) return false;
+
+  try {
+    const parsed = new URL(
+      trimmed.startsWith("http://") || trimmed.startsWith("https://")
+        ? trimmed
+        : `https://${trimmed}`,
+    );
+    const hostname = parsed.hostname.replace(/^(?:www\.|mobile\.)/i, "").toLowerCase();
+    return X_LINK_HOSTS.has(hostname);
+  } catch {
+    return false;
+  }
+}
 
 const isUrlLikeLabel = (value: string): boolean => URLISH_TEXT_REGEX.test(String(value || "").trim());
 
@@ -2410,38 +2263,6 @@ const SOURCE_INLINE_BEFORE_NUMBER_REGEX = /\s+(?=\[\d+\])/g;
 export function autolinkBareUrls(text: string): string {
   return text.replace(BARE_URL_REGEX, (_match, url) => {
     return `[${url}](https://${url})`;
-  });
-}
-
-/**
- * Convert bare domains (domain.tld without path) into markdown links.
- * e.g. "learn.microsoft.com" → "[learn.microsoft.com](https://learn.microsoft.com)"
- * Only matches when not already inside a link or brackets.
- */
-const BARE_DOMAIN_REGEX =
-  /(?<!\(|\[|\/)(?:^|(?<=\s))((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,})(?=[\s\])|,;:]|$)/gi;
-const COMMON_BARE_DOMAIN_EXCLUSIONS = new Set(["e.g", "i.e"]);
-
-function shouldAutolinkBareDomain(domain: string): boolean {
-  const normalized = domain.toLowerCase();
-  if (COMMON_BARE_DOMAIN_EXCLUSIONS.has(normalized)) return false;
-
-  const labels = normalized.split(".").filter(Boolean);
-  if (labels.length < 2) return false;
-
-  const firstLabel = labels[0] || "";
-  const tld = labels[labels.length - 1] || "";
-
-  if (/^v?\d+$/.test(firstLabel)) return false;
-  if (labels.length === 2 && firstLabel.length < 3 && tld.length < 3) return false;
-
-  return true;
-}
-
-export function autolinkBareDomains(text: string): string {
-  return text.replace(BARE_DOMAIN_REGEX, (_match, domain) => {
-    if (!shouldAutolinkBareDomain(domain)) return _match;
-    return `[${domain}](https://${domain})`;
   });
 }
 
@@ -2612,9 +2433,15 @@ export const buildMarkdownComponents = (options: {
     }
 
     const linkText = getTextContent(children);
-    const fileTarget = resolveFileLinkTarget(href, linkText);
+    const xComLink = isXComLink(href);
+    const externalHref = isExternalHttpLink(href)
+      ? href
+      : xComLink
+        ? `https://${href.replace(/^\/+/, "")}`
+        : null;
+    const fileTarget = externalHref ? null : resolveFileLinkTarget(href, linkText);
 
-    if (fileTarget || isFileLink(href)) {
+    if (!externalHref && (fileTarget || isFileLink(href))) {
       const filePath = fileTarget ?? normalizeFileHref(href);
       const handleClick = async (e: React.MouseEvent) => {
         e.preventDefault();
@@ -2662,26 +2489,43 @@ export const buildMarkdownComponents = (options: {
       );
     }
 
-    if (isExternalHttpLink(href)) {
+    if (externalHref) {
       const handleClick = async (e: React.MouseEvent) => {
         e.preventDefault();
         e.stopPropagation();
         if (onOpenWebLinkInSidebar) {
-          onOpenWebLinkInSidebar(href);
+          onOpenWebLinkInSidebar(externalHref);
           return;
         }
         try {
-          await window.electronAPI.openExternal(href);
+          await window.electronAPI.openExternal(externalHref);
         } catch (err) {
           console.error("Error opening link:", err);
         }
       };
 
+      if (xComLink) {
+        return (
+          <a
+            {...props}
+            href={externalHref}
+            onClick={handleClick}
+            className={`x-social-link ${props.className || ""}`.trim()}
+            title={externalHref}
+          >
+            <span className="x-social-link-icon" aria-hidden="true">
+              X
+            </span>
+            <span className="x-social-link-label">{children}</span>
+          </a>
+        );
+      }
+
       // Check if this link matches a citation — render an enriched card
-      const normHref = href.replace(/\/+$/, "").toLowerCase();
+      const normHref = externalHref.replace(/\/+$/, "").toLowerCase();
       const matchedCitation = citationUrlMap.get(normHref);
       const matchedCitationUrl =
-        matchedCitation && typeof matchedCitation.url === "string" ? matchedCitation.url : href;
+        matchedCitation && typeof matchedCitation.url === "string" ? matchedCitation.url : externalHref;
       const matchedCitationTitle =
         matchedCitation && typeof matchedCitation.title === "string"
           ? stripHtmlTags(matchedCitation.title)
@@ -2701,7 +2545,7 @@ export const buildMarkdownComponents = (options: {
         return (
           <a
             {...props}
-            href={href}
+            href={externalHref}
             onClick={handleClick}
             className="citation-source-link"
             title={matchedCitationUrl}
@@ -2773,7 +2617,7 @@ export const buildMarkdownComponents = (options: {
       }
 
       return (
-        <a {...props} href={href} onClick={handleClick}>
+        <a {...props} href={externalHref} onClick={handleClick}>
           {children}
         </a>
       );
@@ -2850,8 +2694,6 @@ export const buildMarkdownComponents = (options: {
   };
 };
 
-const userMarkdownPlugins = [remarkGfm, remarkBreaks];
-
 function UserMessageText({
   text,
   integrationMentions,
@@ -2866,9 +2708,9 @@ function UserMessageText({
   }
 
   return (
-    <ReactMarkdown remarkPlugins={userMarkdownPlugins} components={markdownComponents}>
+    <DeferredMarkdown withBreaks components={markdownComponents}>
       {text}
-    </ReactMarkdown>
+    </DeferredMarkdown>
   );
 }
 
@@ -3635,11 +3477,373 @@ function StructuredInputPromptCard({ request, onSubmit, onDismiss }: StructuredI
   );
 }
 
+const LEGAL_DEMAND_TYPE_OPTIONS = [
+  { value: "payment", title: "Payment demand", description: "Overdue invoice / liquidated debt" },
+  { value: "breach-cure", title: "Breach / notice to cure", description: "Contract default with cure window" },
+  { value: "cease-desist", title: "Cease and desist", description: "Stop infringing or tortious activity" },
+  { value: "employment-separation", title: "Employment / separation", description: "Restrictive covenant, severance" },
+  { value: "preservation", title: "Preservation", description: "Hold-evidence notice" },
+  { value: "other", title: "Other", description: "Tell me more in the facts" },
+];
+
+const LEGAL_DEMAND_TONE_OPTIONS = ["measured", "assertive", "aggressive"];
+const LEGAL_DEMAND_RESPONSE_WINDOWS = ["7 days", "14 days", "21 days", "30 days", "Per contract / other"];
+const LEGAL_DEMAND_MARKINGS = [
+  "None",
+  "Without prejudice",
+  "Without prejudice save as to costs",
+  "Not sure - flag for review",
+];
+
+function LegalDemandIntakePromptCard({
+  prompt,
+  onSubmit,
+  onDismiss,
+}: {
+  prompt: string;
+  onSubmit: (message: string) => void;
+  onDismiss: () => void;
+}) {
+  const [values, setValues] = useState<LegalDemandIntakeFormValues>(() =>
+    buildLegalDemandIntakeInitialValues(prompt),
+  );
+
+  useEffect(() => {
+    setValues(buildLegalDemandIntakeInitialValues(prompt));
+  }, [prompt]);
+
+  const updateValue = useCallback(
+    (field: keyof LegalDemandIntakeFormValues, value: string) => {
+      setValues((prev) => ({ ...prev, [field]: value }));
+    },
+    [],
+  );
+
+  const renderChip = (
+    field: keyof LegalDemandIntakeFormValues,
+    value: string,
+    label = value,
+  ) => (
+    <button
+      key={`${field}-${value}`}
+      type="button"
+      className={`legal-intake-chip ${values[field] === value ? "selected" : ""}`}
+      onClick={() => updateValue(field, value)}
+    >
+      {label}
+    </button>
+  );
+
+  const renderTextarea = (
+    field: keyof LegalDemandIntakeFormValues,
+    placeholder: string,
+    rows = 3,
+  ) => (
+    <textarea
+      className="legal-intake-textarea"
+      rows={rows}
+      value={String(values[field] || "")}
+      placeholder={placeholder}
+      onChange={(event) => updateValue(field, event.target.value)}
+    />
+  );
+
+  const canSubmit = values.title.trim().length > 0;
+
+  return (
+    <section className="legal-intake-card" aria-label="Demand letter details">
+      <header className="legal-intake-card-header">
+        <div className="legal-intake-card-title">
+          <FileText size={18} aria-hidden="true" />
+          <span>Demand letter details</span>
+        </div>
+        <button type="button" className="legal-intake-dismiss" onClick={onDismiss} aria-label="Dismiss demand intake form">
+          <X size={16} aria-hidden="true" />
+        </button>
+      </header>
+
+      <div className="legal-intake-card-body">
+        <label className="legal-intake-field legal-intake-field-full">
+          <span>Short title for this matter</span>
+          {renderTextarea("title", "e.g. Unpaid invoices - Acme Logistics", 2)}
+        </label>
+
+        <div className="legal-intake-field legal-intake-field-full">
+          <span>What kind of demand is this?</span>
+          <div className="legal-intake-type-grid">
+            {LEGAL_DEMAND_TYPE_OPTIONS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                className={`legal-intake-type-option ${values.demandType === option.value ? "selected" : ""}`}
+                onClick={() => updateValue("demandType", option.value)}
+              >
+                <span className="legal-intake-type-title">{option.title}</span>
+                <span className="legal-intake-type-description">{option.description}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <label className="legal-intake-field">
+          <span>Sender</span>
+          <input
+            className="legal-intake-input"
+            value={values.sender}
+            placeholder="Our company / client"
+            onChange={(event) => updateValue("sender", event.target.value)}
+          />
+        </label>
+
+        <label className="legal-intake-field">
+          <span>Recipient</span>
+          <input
+            className="legal-intake-input"
+            value={values.recipient}
+            placeholder="Counterparty, entity, address"
+            onChange={(event) => updateValue("recipient", event.target.value)}
+          />
+        </label>
+
+        <label className="legal-intake-field legal-intake-field-full">
+          <span>Relationship / audience</span>
+          <input
+            className="legal-intake-input"
+            value={values.relationship}
+            placeholder="Customer, vendor, ex-employee, competitor; GC, CEO, counsel, individual"
+            onChange={(event) => updateValue("relationship", event.target.value)}
+          />
+        </label>
+
+        <div className="legal-intake-field legal-intake-field-full">
+          <span>What tone should the letter strike?</span>
+          <div className="legal-intake-chip-row">
+            {LEGAL_DEMAND_TONE_OPTIONS.map((tone) => renderChip("tone", tone, tone[0].toUpperCase() + tone.slice(1)))}
+          </div>
+          {renderTextarea("toneRationale", "One-line rationale - relationship, amount, litigation likelihood", 2)}
+        </div>
+
+        <div className="legal-intake-field legal-intake-field-full">
+          <span>How long do they get to respond or comply?</span>
+          <div className="legal-intake-chip-row">
+            {LEGAL_DEMAND_RESPONSE_WINDOWS.map((window) => renderChip("responseWindow", window))}
+          </div>
+        </div>
+
+        <div className="legal-intake-field legal-intake-field-full">
+          <span>Settlement-communication marking</span>
+          <div className="legal-intake-chip-row">
+            {LEGAL_DEMAND_MARKINGS.map((marking) => renderChip("settlementMarking", marking))}
+          </div>
+        </div>
+
+        <label className="legal-intake-field legal-intake-field-full">
+          <span>Triggering event and evidence</span>
+          {renderTextarea("triggeringEvent", "What happened, when, and what evidence exists?", 4)}
+        </label>
+
+        <label className="legal-intake-field legal-intake-field-full">
+          <span>Legal / contractual basis</span>
+          {renderTextarea("legalBasis", "Contract sections, governing law, statutes, rules, placeholders to verify", 3)}
+        </label>
+
+        <label className="legal-intake-field legal-intake-field-full">
+          <span>Desired outcome</span>
+          {renderTextarea("desiredOutcome", "Payment of $X by date Y; cure within N days; stop activity Z", 3)}
+        </label>
+
+        <label className="legal-intake-field legal-intake-field-full">
+          <span>Prior outreach</span>
+          {renderTextarea("priorOutreach", "Informal asks, responses so far, why demand-letter escalation now", 3)}
+        </label>
+
+        <label className="legal-intake-field">
+          <span>Delivery method</span>
+          <input
+            className="legal-intake-input"
+            value={values.delivery}
+            placeholder="Email, courier, certified mail, counsel"
+            onChange={(event) => updateValue("delivery", event.target.value)}
+          />
+        </label>
+
+        <label className="legal-intake-field">
+          <span>Signer</span>
+          <input
+            className="legal-intake-input"
+            value={values.signer}
+            placeholder="You, client, GC, instructed counsel"
+            onChange={(event) => updateValue("signer", event.target.value)}
+          />
+        </label>
+
+        <label className="legal-intake-field legal-intake-field-full">
+          <span>Copies / seed documents / strategic notes</span>
+          {renderTextarea("copies", "Internal stakeholders, insurance carrier, counsel", 2)}
+          {renderTextarea("seedDocs", "Paths or notes for contracts, correspondence, invoices, evidence", 2)}
+          {renderTextarea("strategicNotes", "Leverage, BATNA, downside tolerance, privilege filters, admissions risk", 3)}
+        </label>
+      </div>
+
+      <footer className="legal-intake-card-footer">
+        <span className="legal-intake-footer-note">Blank fields will be flagged in the intake.</span>
+        <button
+          type="button"
+          className="legal-intake-submit"
+          disabled={!canSubmit}
+          onClick={() => onSubmit(buildLegalDemandIntakeFollowUp(values))}
+        >
+          Continue task
+        </button>
+      </footer>
+    </section>
+  );
+}
+
+function GenericLegalWorkflowPromptCard({
+  invocation,
+  onSubmit,
+  onDismiss,
+}: {
+  invocation: LegalWorkflowInvocation;
+  onSubmit: (message: string) => void;
+  onDismiss: () => void;
+}) {
+  const [values, setValues] = useState<GenericLegalWorkflowFormValues>(() =>
+    buildGenericLegalWorkflowInitialValues(invocation),
+  );
+
+  useEffect(() => {
+    setValues(buildGenericLegalWorkflowInitialValues(invocation));
+  }, [invocation]);
+
+  const updateValue = useCallback(
+    (field: keyof GenericLegalWorkflowFormValues, value: string) => {
+      setValues((prev) => ({ ...prev, [field]: value }));
+    },
+    [],
+  );
+
+  const renderTextarea = (
+    field: keyof GenericLegalWorkflowFormValues,
+    placeholder: string,
+    rows = 3,
+  ) => (
+    <textarea
+      className="legal-intake-textarea"
+      rows={rows}
+      value={String(values[field] || "")}
+      placeholder={placeholder}
+      onChange={(event) => updateValue(field, event.target.value)}
+    />
+  );
+
+  const hasAnyContext = Object.values(values).some((value) => value.trim().length > 0);
+  const commandLabel = invocation.commandName ? `/${invocation.commandName}` : "Legal workflow";
+
+  return (
+    <section className="legal-intake-card" aria-label="Legal workflow details">
+      <header className="legal-intake-card-header">
+        <div className="legal-intake-card-title">
+          <FileText size={18} aria-hidden="true" />
+          <span>Legal workflow details</span>
+          <span className="legal-intake-command-pill">{commandLabel}</span>
+        </div>
+        <button type="button" className="legal-intake-dismiss" onClick={onDismiss} aria-label="Dismiss legal workflow form">
+          <X size={16} aria-hidden="true" />
+        </button>
+      </header>
+
+      <div className="legal-intake-card-body">
+        <label className="legal-intake-field legal-intake-field-full">
+          <span>Matter or project title</span>
+          <input
+            className="legal-intake-input"
+            value={values.matterTitle}
+            placeholder="e.g. Vendor AI review - Acme Logistics"
+            onChange={(event) => updateValue("matterTitle", event.target.value)}
+          />
+        </label>
+
+        <label className="legal-intake-field">
+          <span>Jurisdiction / governing law</span>
+          <input
+            className="legal-intake-input"
+            value={values.jurisdiction}
+            placeholder="State, country, regulator, contract law"
+            onChange={(event) => updateValue("jurisdiction", event.target.value)}
+          />
+        </label>
+
+        <label className="legal-intake-field">
+          <span>Role / side / perspective</span>
+          <input
+            className="legal-intake-input"
+            value={values.roleOrSide}
+            placeholder="Buyer, vendor, employer, plaintiff, professor, in-house"
+            onChange={(event) => updateValue("roleOrSide", event.target.value)}
+          />
+        </label>
+
+        <label className="legal-intake-field legal-intake-field-full">
+          <span>Objective</span>
+          {renderTextarea("objective", "What should this workflow accomplish?", 3)}
+        </label>
+
+        <label className="legal-intake-field legal-intake-field-full">
+          <span>Key facts / timeline</span>
+          {renderTextarea("keyFacts", "Events, dates, business context, disputed points, known unknowns", 4)}
+        </label>
+
+        <label className="legal-intake-field legal-intake-field-full">
+          <span>Documents / sources</span>
+          {renderTextarea("documents", "File paths, uploads, contract names, policies, correspondence, data sources", 3)}
+        </label>
+
+        <label className="legal-intake-field">
+          <span>Deadlines / risk triggers</span>
+          {renderTextarea("deadlines", "Notice periods, filing dates, launch dates, board dates, regulator windows", 3)}
+        </label>
+
+        <label className="legal-intake-field">
+          <span>Stakeholders / audience</span>
+          {renderTextarea("stakeholders", "Decision-maker, reviewer, business owner, client, outside counsel", 3)}
+        </label>
+
+        <label className="legal-intake-field legal-intake-field-full">
+          <span>Constraints / assumptions</span>
+          {renderTextarea("constraints", "Privilege filters, risk tolerance, deal posture, citation requirements, scope limits", 3)}
+        </label>
+
+        <label className="legal-intake-field legal-intake-field-full">
+          <span>Output preferences / review notes</span>
+          {renderTextarea("outputPreferences", "Table, memo, checklist, email draft, redlines, escalation flags, questions to ask", 3)}
+        </label>
+      </div>
+
+      <footer className="legal-intake-card-footer">
+        <span className="legal-intake-footer-note">Blank fields will be flagged before the workflow relies on them.</span>
+        <button
+          type="button"
+          className="legal-intake-submit"
+          disabled={!hasAnyContext}
+          onClick={() => onSubmit(buildGenericLegalWorkflowFollowUp(invocation, values))}
+        >
+          Continue task
+        </button>
+      </footer>
+    </section>
+  );
+}
+
 interface CreateTaskOptions {
   autonomousMode?: boolean;
   permissionMode?: PermissionMode;
   shellAccess?: boolean;
   collaborativeMode?: boolean;
+  multitaskMode?: boolean;
+  multitaskLaneCount?: number;
+  multitaskAssignmentMode?: "auto_split";
   multiLlmMode?: boolean;
   multiLlmConfig?: import("../../shared/types").MultiLlmConfig;
   verificationAgent?: boolean;
@@ -4016,7 +4220,7 @@ const FOCUSED_CARD_POOL: FocusedCard[] = [
     emoji: "📎",
     iconName: "folder",
     title: "Connect Google Workspace",
-    desc: "Use Gmail, Calendar, Drive, and Docs",
+    desc: "Use Gmail, Calendar, Drive, Docs, Sheets, Slides, and Tasks",
     action: { type: "settings", tab: "integrations" },
     category: "setup",
   },
@@ -4286,74 +4490,6 @@ function pickFocusedCards(pool: FocusedCard[], count: number): FocusedCard[] {
   return shuffleArray(picked);
 }
 
-export type TaskAutomationRunMode = "chat" | "local" | "worktree";
-export type TaskAutomationSchedulePreset =
-  | "every30m"
-  | "hourly"
-  | "daily"
-  | "weekdays"
-  | "weekly"
-  | "custom";
-
-export type TaskAutomationSchedule =
-  | { kind: "at"; atMs: number }
-  | { kind: "every"; everyMs: number; anchorMs?: number }
-  | { kind: "cron"; expr: string; tz?: string };
-
-export interface TaskAutomationTemplate {
-  id: string;
-  name: string;
-  prompt: string;
-  schedulePreset: Exclude<TaskAutomationSchedulePreset, "custom">;
-  icon: LucideIcon;
-}
-
-export const TASK_AUTOMATION_TEMPLATES: TaskAutomationTemplate[] = [
-  {
-    id: "daily-summary",
-    name: "Daily summary",
-    prompt: "Summarize yesterday's workspace activity and list the follow-up actions that need attention.",
-    schedulePreset: "daily",
-    icon: ListTodo,
-  },
-  {
-    id: "recent-changes",
-    name: "Scan recent changes",
-    prompt:
-      "Scan recent commits since the last run, or the last 24 hours, for likely bugs and propose minimal fixes.",
-    schedulePreset: "daily",
-    icon: Bug,
-  },
-  {
-    id: "ci-failures",
-    name: "CI failure summary",
-    prompt: "Summarize CI failures and flaky tests from the last CI window; suggest the highest-impact fixes.",
-    schedulePreset: "hourly",
-    icon: ShieldAlert,
-  },
-  {
-    id: "weekly-update",
-    name: "Weekly update",
-    prompt: "Synthesize this week's PRs, rollouts, incidents, and reviews into a concise weekly update.",
-    schedulePreset: "weekly",
-    icon: BookOpen,
-  },
-  {
-    id: "inbox-checkin",
-    name: "Inbox check-in",
-    prompt: "Check for urgent inbox or integration updates and summarize anything that needs my attention.",
-    schedulePreset: "every30m",
-    icon: MessageCircle,
-  },
-  {
-    id: "regression-watch",
-    name: "Regression watch",
-    prompt: "Compare recent changes to available benchmarks, traces, or logs and flag regressions early.",
-    schedulePreset: "daily",
-    icon: Sparkles,
-  },
-];
-
 const TASK_AUTOMATION_SCHEDULE_LABEL: Record<TaskAutomationSchedulePreset, string> = {
   every30m: "Every 30m",
   hourly: "Hourly",
@@ -4362,74 +4498,6 @@ const TASK_AUTOMATION_SCHEDULE_LABEL: Record<TaskAutomationSchedulePreset, strin
   weekly: "Weekly",
   custom: "Custom",
 };
-
-export function buildTaskAutomationSchedule(
-  preset: TaskAutomationSchedulePreset,
-  customCron: string,
-): TaskAutomationSchedule | null {
-  const anchorMs = Date.now();
-  switch (preset) {
-    case "every30m":
-      return { kind: "every", everyMs: 30 * 60 * 1000, anchorMs };
-    case "hourly":
-      return { kind: "every", everyMs: 60 * 60 * 1000, anchorMs };
-    case "daily":
-      return { kind: "cron", expr: "0 9 * * *" };
-    case "weekdays":
-      return { kind: "cron", expr: "0 9 * * 1-5" };
-    case "weekly":
-      return { kind: "cron", expr: "0 9 * * 1" };
-    case "custom": {
-      const expr = customCron.trim();
-      return expr ? { kind: "cron", expr } : null;
-    }
-  }
-}
-
-export function buildTaskAutomationPrompt(prompt: string, task: Task, deeplink: string): string {
-  const sourceLines = [
-    "",
-    "---",
-    `Source task: ${task.title}`,
-    `Source task ID: ${task.id}`,
-    deeplink ? `Source link: ${deeplink}` : null,
-  ].filter((line): line is string => line !== null);
-  return `${prompt.trim()}${sourceLines.join("\n")}`;
-}
-
-export interface BuildTaskAutomationCronJobCreateParams {
-  task: Task;
-  workspace: Workspace | null;
-  name: string;
-  prompt: string;
-  runMode: TaskAutomationRunMode;
-  schedule: TaskAutomationSchedule;
-  deeplink: string;
-}
-
-export function buildTaskAutomationCronJobCreate({
-  task,
-  workspace,
-  name,
-  prompt,
-  runMode,
-  schedule,
-  deeplink,
-}: BuildTaskAutomationCronJobCreateParams) {
-  const workspaceId = task.workspaceId || workspace?.id || "";
-  return {
-    name: name.trim(),
-    description: `Created from task ${task.id}${deeplink ? ` (${deeplink})` : ""}`,
-    enabled: true,
-    shellAccess: runMode === "local",
-    allowUserInput: false,
-    deleteAfterRun: false,
-    schedule,
-    workspaceId,
-    taskTitle: task.title,
-    taskPrompt: buildTaskAutomationPrompt(prompt, task, deeplink),
-  };
-}
 
 interface TaskAutomationModalProps {
   task: Task;
@@ -4766,6 +4834,7 @@ interface MainContentProps {
   childTasks?: Task[];
   childEvents?: TaskEvent[];
   onSelectChildTask?: (taskId: string) => void;
+  onOpenChildAgentSidebar?: (taskId: string) => void;
   onSelectTask?: (taskId: string | null) => void;
   onSendMessage: (
     message: string,
@@ -4896,6 +4965,7 @@ const LIVE_TRANSCRIPT_URGENT_EFFECTIVE_EVENT_TYPES = new Set([
   "verification_failed",
   "verification_pending_user_action",
 ]);
+const LIVE_TRANSCRIPT_MAX_VISIBLE_ROWS = 12;
 
 export function getDefaultTranscriptMode(args: {
   isTaskWorking: boolean;
@@ -5309,7 +5379,13 @@ export function selectVisibleTaskFeedRows(
   keepLastMatch((row) => isUserFacingLiveStatusRow(row));
   keepLastMatch((row) => isUrgentLiveTranscriptRow(row));
 
-  const visibleFeedRows = feedRows.filter((_, index) => keepIndexes.has(index));
+  const visibleIndexes = [...keepIndexes].sort((a, b) => a - b);
+  const cappedIndexes =
+    visibleIndexes.length > LIVE_TRANSCRIPT_MAX_VISIBLE_ROWS
+      ? visibleIndexes.slice(-LIVE_TRANSCRIPT_MAX_VISIBLE_ROWS)
+      : visibleIndexes;
+  const cappedKeepIndexes = new Set(cappedIndexes);
+  const visibleFeedRows = feedRows.filter((_, index) => cappedKeepIndexes.has(index));
   return {
     visibleFeedRows,
     hiddenLiveFeedRowCount: Math.max(0, feedRows.length - visibleFeedRows.length),
@@ -5646,6 +5722,15 @@ const TaskConversationRenderedRows = memo(function TaskConversationRenderedRows(
     () => new Map(renderedFeedEntries.map((entry) => [entry.row.key, entry.node])),
     [renderedFeedEntries],
   );
+  const startupRowsMarkedRef = useRef(false);
+  useEffect(() => {
+    if (startupRowsMarkedRef.current || visibleFeedRows.length === 0) return;
+    startupRowsMarkedRef.current = true;
+    markRendererStartup("first_task_rows_ready", rendererPerfLoggingEnabled, {
+      rows: visibleFeedRows.length,
+      taskId: taskId ?? "none",
+    });
+  }, [rendererPerfLoggingEnabled, taskId, visibleFeedRows.length]);
   const useVirtualizedFeed =
     transcriptMode === "live" &&
     renderableFeedRows.length >= VIRTUALIZED_FEED_ROW_THRESHOLD &&
@@ -5948,6 +6033,9 @@ const TaskConversationFlow = memo(function TaskConversationFlow(props: any) {
     | ((quote: QuotedAssistantMessage) => void)
     | undefined;
   const onSelectChildTask = props.onSelectChildTask as ((taskId: string) => void) | undefined;
+  const onOpenChildAgentSidebar = props.onOpenChildAgentSidebar as
+    | ((taskId: string) => void)
+    | undefined;
   const onViewTaskOutputs = props.onViewTaskOutputs as
     | ((taskId: string, primaryOutputPath?: string) => void)
     | undefined;
@@ -6438,6 +6526,7 @@ const TaskConversationFlow = memo(function TaskConversationFlow(props: any) {
                       events={item.childTaskEvents}
                       agentType={agentType}
                       defaultExpanded={item.childTask.status === "executing"}
+                      onOpenAgent={onOpenChildAgentSidebar ?? onSelectChildTask}
                     />
                   );
                 }
@@ -6458,6 +6547,7 @@ const TaskConversationFlow = memo(function TaskConversationFlow(props: any) {
                           childEvents={panelEvents}
                           userPrompt={task?.rawPrompt || task?.userPrompt || task?.prompt}
                           onSelectChildTask={onSelectChildTask}
+                          onOpenChildAgentSidebar={onOpenChildAgentSidebar}
                           mainTaskCompleted={
                             !!task &&
                             ["completed", "failed", "cancelled"].includes(task.status)
@@ -6470,6 +6560,7 @@ const TaskConversationFlow = memo(function TaskConversationFlow(props: any) {
                           childTasks={panelTasks}
                           childEvents={panelEvents}
                           onSelectChildTask={onSelectChildTask}
+                          onOpenChildAgentSidebar={onOpenChildAgentSidebar}
                         />
                       )}
                     </div>
@@ -6802,12 +6893,9 @@ const TaskConversationFlow = memo(function TaskConversationFlow(props: any) {
                                 <StepFeed
                                   title={
                                     typeof eventTitle === "string" ? (
-                                      <ReactMarkdown
-                                        remarkPlugins={[remarkGfm]}
-                                        components={eventTitleMarkdownComponents}
-                                      >
+                                      <DeferredMarkdown components={eventTitleMarkdownComponents}>
                                         {normalizeTimelineTitleMarkdownForDisplay(eventTitle)}
-                                      </ReactMarkdown>
+                                      </DeferredMarkdown>
                                     ) : (
                                       eventTitle
                                     )
@@ -7296,12 +7384,9 @@ const TaskConversationFlow = memo(function TaskConversationFlow(props: any) {
                     <StepFeed
                       title={
                         typeof eventTitle === "string" ? (
-                          <ReactMarkdown
-                            remarkPlugins={[remarkGfm]}
-                            components={eventTitleMarkdownComponents}
-                          >
+                          <DeferredMarkdown components={eventTitleMarkdownComponents}>
                             {normalizeTimelineTitleMarkdownForDisplay(eventTitle)}
-                          </ReactMarkdown>
+                          </DeferredMarkdown>
                         ) : (
                           eventTitle
                         )
@@ -7427,6 +7512,7 @@ const TaskConversationFlow = memo(function TaskConversationFlow(props: any) {
       onOpenWebArtifact,
       onQuoteAssistantMessage,
       onSelectChildTask,
+      onOpenChildAgentSidebar,
       onViewTaskOutputs,
       parallelGroupsByAnchorEventId,
       rejectMenuOpenFor,
@@ -7531,6 +7617,7 @@ function areTaskConversationFlowPropsEqual(prev: any, next: any): boolean {
     prev.onOpenWebArtifact === next.onOpenWebArtifact &&
     prev.onQuoteAssistantMessage === next.onQuoteAssistantMessage &&
     prev.onSelectChildTask === next.onSelectChildTask &&
+    prev.onOpenChildAgentSidebar === next.onOpenChildAgentSidebar &&
     prev.onViewTaskOutputs === next.onViewTaskOutputs
   );
 }
@@ -7661,6 +7748,7 @@ function MainContentComponent({
   childTasks = [],
   childEvents: rawChildEvents = [],
   onSelectChildTask,
+  onOpenChildAgentSidebar,
   onSelectTask,
   onSendMessage,
   onStartOnboarding,
@@ -7701,16 +7789,47 @@ function MainContentComponent({
     task?.id ? `task:${task.id}` : selectedTaskId ?? "task:none",
     rendererPerfLoggingEnabled,
   );
+  const startupMarksRef = useRef<Set<string>>(new Set());
+  const markStartupOnce = useCallback(
+    (name: string, details?: Record<string, unknown>) => {
+      if (startupMarksRef.current.has(name)) return;
+      startupMarksRef.current.add(name);
+      markRendererStartup(name, rendererPerfLoggingEnabled, details);
+    },
+    [rendererPerfLoggingEnabled],
+  );
+
+  useEffect(() => {
+    markStartupOnce("main_view_ready", {
+      taskId: task?.id ?? selectedTaskId ?? "none",
+      hasTask: Boolean(task),
+    });
+  }, [markStartupOnce, selectedTaskId, task]);
+
+  useEffect(() => {
+    markStartupOnce("composer_ready", {
+      taskId: task?.id ?? selectedTaskId ?? "none",
+    });
+  }, [markStartupOnce, selectedTaskId, task?.id]);
+
+  const [transcriptModeOverride, setTranscriptModeOverride] = useState<TranscriptMode | null>(null);
+  useEffect(() => {
+    setTranscriptModeOverride(null);
+  }, [task?.id]);
+  const effectiveSharedTaskEventUi =
+    sharedTaskEventUi?.projectionMode === "live" && transcriptModeOverride === "inspect"
+      ? null
+      : sharedTaskEventUi;
   const events = useMemo(
     () => {
-      if (sharedTaskEventUi) {
-        return sharedTaskEventUi.normalizedEvents;
+      if (effectiveSharedTaskEventUi) {
+        return effectiveSharedTaskEventUi.normalizedEvents;
       }
       return measureRendererPerf("MainContent.normalizeEvents", rendererPerfLoggingEnabled, () =>
         normalizeEventsForTimelineUi(rawEvents),
       );
     },
-    [rawEvents, rendererPerfLoggingEnabled, sharedTaskEventUi],
+    [rawEvents, rendererPerfLoggingEnabled, effectiveSharedTaskEventUi],
   );
   const childEvents = useMemo(
     () =>
@@ -8411,8 +8530,8 @@ function MainContentComponent({
     useState<number | null>(null);
   // Filter events based on verbose mode
   const filteredEvents = useMemo(() => {
-    if (!verboseSteps && sharedTaskEventUi) {
-      return sharedTaskEventUi.filteredEvents;
+    if (!verboseSteps && effectiveSharedTaskEventUi) {
+      return effectiveSharedTaskEventUi.filteredEvents;
     }
     return measureRendererPerf("MainContent.filteredEvents", rendererPerfLoggingEnabled, () => {
       const baseEvents = verboseSteps
@@ -8482,21 +8601,21 @@ function MainContentComponent({
         return !isVerificationNoiseEvent(event);
       });
     });
-  }, [events, sharedTaskEventUi, verboseSteps, task?.status, rendererPerfLoggingEnabled]);
+  }, [events, effectiveSharedTaskEventUi, verboseSteps, task?.status, rendererPerfLoggingEnabled]);
 
   // Build projection from raw events so tool_call/tool_result data embedded
   // in timeline_step_updated (which is filtered for display) still populates
   // lane titles with URLs/results.
   const parallelGroupProjection = useMemo(
     () => {
-      if (sharedTaskEventUi) return sharedTaskEventUi.parallelGroupProjection;
+      if (effectiveSharedTaskEventUi) return effectiveSharedTaskEventUi.parallelGroupProjection;
       return measureRendererPerf(
         "MainContent.parallelGroupProjection",
         rendererPerfLoggingEnabled,
         () => buildParallelGroupProjection(events),
       );
     },
-    [events, sharedTaskEventUi, rendererPerfLoggingEnabled],
+    [events, effectiveSharedTaskEventUi, rendererPerfLoggingEnabled],
   );
   const parallelGroupsByAnchorEventId = parallelGroupProjection.groupsByAnchorEventId;
   const suppressedParallelEventIds = parallelGroupProjection.suppressedEventIds;
@@ -8504,8 +8623,8 @@ function MainContentComponent({
   // Pair individual tool_call / tool_result events (outside parallel groups) so that
   // the tool_result row is suppressed and the tool_call row reflects the completed state.
   const toolCallPairing = useMemo(() => {
-    if (!verboseSteps && sharedTaskEventUi) {
-      return sharedTaskEventUi.toolCallPairing;
+    if (!verboseSteps && effectiveSharedTaskEventUi) {
+      return effectiveSharedTaskEventUi.toolCallPairing;
     }
     // callId → tool_call event
     const callIdToEvent = new Map<string, TaskEvent>();
@@ -8548,7 +8667,7 @@ function MainContentComponent({
       }
     }
     return { completions, claimedResultIds };
-  }, [filteredEvents, sharedTaskEventUi, suppressedParallelEventIds, verboseSteps]);
+  }, [filteredEvents, effectiveSharedTaskEventUi, suppressedParallelEventIds, verboseSteps]);
 
   const latestUserMessageTimestamp = useMemo(() => {
     for (let i = events.length - 1; i >= 0; i--) {
@@ -8697,11 +8816,7 @@ function MainContentComponent({
     isChatTask,
     taskStatus: task?.status,
   });
-  const [transcriptModeOverride, setTranscriptModeOverride] = useState<TranscriptMode | null>(null);
   const transcriptMode = transcriptModeOverride ?? defaultTranscriptMode;
-  useEffect(() => {
-    setTranscriptModeOverride(null);
-  }, [task?.id]);
   useEffect(() => {
     if (defaultTranscriptMode === "inspect" && transcriptModeOverride !== null) {
       setTranscriptModeOverride(null);
@@ -8809,8 +8924,8 @@ function MainContentComponent({
   }, [canvasSessions, latestUserMessageTimestamp]);
 
   const baseTimelineItems = useMemo<BaseTimelineItem[]>(() => {
-    if (!verboseSteps && sharedTaskEventUi) {
-      return sharedTaskEventUi.baseTimelineItems;
+    if (!verboseSteps && effectiveSharedTaskEventUi) {
+      return effectiveSharedTaskEventUi.baseTimelineItems;
     }
     return measureRendererPerf("MainContent.baseTimelineItems", rendererPerfLoggingEnabled, () =>
       deriveSharedTaskEventUiState({
@@ -8823,7 +8938,7 @@ function MainContentComponent({
   }, [
     rawEvents,
     rendererPerfLoggingEnabled,
-    sharedTaskEventUi,
+    effectiveSharedTaskEventUi,
     task,
     verboseSteps,
     workspace,
@@ -8942,8 +9057,8 @@ function MainContentComponent({
   ]);
 
   const latestVisibleTaskEvent = useMemo<TaskEvent | null>(() => {
-    if (!verboseSteps && sharedTaskEventUi) {
-      return sharedTaskEventUi.latestVisibleTaskEvent;
+    if (!verboseSteps && effectiveSharedTaskEventUi) {
+      return effectiveSharedTaskEventUi.latestVisibleTaskEvent;
     }
     for (let i = timelineItems.length - 1; i >= 0; i -= 1) {
       const item = timelineItems[i];
@@ -8953,12 +9068,12 @@ function MainContentComponent({
       }
     }
     return filteredEvents[filteredEvents.length - 1] ?? null;
-  }, [filteredEvents, sharedTaskEventUi, timelineItems, verboseSteps]);
+  }, [filteredEvents, effectiveSharedTaskEventUi, timelineItems, verboseSteps]);
 
   // Build all command output sessions so previous command windows remain visible.
   const commandOutputSessions = useMemo<CommandOutputSession[]>(() => {
-    if (sharedTaskEventUi) {
-      return sharedTaskEventUi.commandOutputSessions;
+    if (effectiveSharedTaskEventUi) {
+      return effectiveSharedTaskEventUi.commandOutputSessions;
     }
     return measureRendererPerf("MainContent.commandOutputSessions", rendererPerfLoggingEnabled, () => {
       const commandOutputEvents = events.filter(
@@ -9045,7 +9160,7 @@ function MainContentComponent({
         };
       });
     });
-  }, [events, sharedTaskEventUi, rendererPerfLoggingEnabled]);
+  }, [events, effectiveSharedTaskEventUi, rendererPerfLoggingEnabled]);
 
   const visibleCommandOutputSessions = useMemo(
     () =>
@@ -11115,6 +11230,24 @@ function MainContentComponent({
     setSlashQuery("");
     setSlashTarget(null);
 
+    const insertSlashCommand = (commandName: string) => {
+      pendingProgrammaticResizeRef.current = true;
+      setModeSuggestions([]);
+      const { nextValue, cursorPosition } = applySlashCommandSelection({
+        value: inputValue,
+        target: slashTarget,
+        commandName,
+      });
+      setInputValue(nextValue);
+      requestAnimationFrame(() => {
+        const input = promptInputRef.current;
+        if (input) {
+          input.focus();
+          input.setSelectionRange(cursorPosition, cursorPosition);
+        }
+      });
+    };
+
     if (option.kind === "app") {
       pendingProgrammaticResizeRef.current = true;
       setModeSuggestions([]);
@@ -11132,19 +11265,7 @@ function MainContentComponent({
         return;
       }
 
-      const before = inputValue.slice(0, slashTarget.start);
-      const after = inputValue.slice(slashTarget.end);
-      const insertText = `/${option.commandName} `;
-      const nextValue = `${before}${insertText}${after}`;
-      setInputValue(nextValue);
-      requestAnimationFrame(() => {
-        const input = promptInputRef.current;
-        if (input) {
-          const cursorPosition = before.length + insertText.length;
-          input.focus();
-          input.setSelectionRange(cursorPosition, cursorPosition);
-        }
-      });
+      insertSlashCommand(option.commandName);
       return;
     }
 
@@ -11159,41 +11280,7 @@ function MainContentComponent({
       return;
     }
 
-    if (option.hasRequiredParams) {
-      // Show parameter modal
-      pendingProgrammaticResizeRef.current = true;
-      setInputValue("");
-      setSelectedSkillForParams({
-        skill: option.skill,
-        launchMode: "slash",
-        commandName: option.commandName,
-      });
-    } else if (option.hasOptionalParams) {
-      pendingProgrammaticResizeRef.current = true;
-      setModeSuggestions([]);
-      const before = inputValue.slice(0, slashTarget.start);
-      const after = inputValue.slice(slashTarget.end);
-      const insertText = `/${option.commandName} `;
-      const nextValue = `${before}${insertText}${after}`;
-      setInputValue(nextValue);
-      requestAnimationFrame(() => {
-        const input = promptInputRef.current;
-        if (input) {
-          const cursorPosition = before.length + insertText.length;
-          input.focus();
-          input.setSelectionRange(cursorPosition, cursorPosition);
-        }
-      });
-    } else {
-      // No parameters — create task directly from slash invocation
-      pendingProgrammaticResizeRef.current = true;
-      setInputValue("");
-      if (onCreateTask) {
-        const slashPrompt = buildSlashSkillPrompt(option.commandName);
-        const title = buildTaskTitle(`Run /${option.commandName}`);
-        onCreateTask(title, slashPrompt);
-      }
-    }
+    insertSlashCommand(option.commandName);
   };
 
   const handleInputChange = (
@@ -12075,6 +12162,30 @@ function MainContentComponent({
       inputRequest.taskId === task.id &&
       onSubmitInputRequest &&
       onDismissInputRequest,
+  );
+  const [dismissedLegalWorkflowTaskId, setDismissedLegalWorkflowTaskId] =
+    useState<string | null>(null);
+  const legalWorkflowInvocation = useMemo(
+    () => parseLegalWorkflowSlashPrompt(trimmedPrompt),
+    [trimmedPrompt],
+  );
+  const hasUserFollowUpAfterInitialPrompt = useMemo(
+    () =>
+      events.some((event) => {
+        if (getEffectiveTaskEventType(event) !== "user_message") return false;
+        if (initialPromptEventId && event.id === initialPromptEventId) return false;
+        const message = typeof event.payload?.message === "string" ? event.payload.message.trim() : "";
+        return message.length > 0;
+      }),
+    [events, initialPromptEventId],
+  );
+  const showLegalWorkflowCard = Boolean(
+    task &&
+      legalWorkflowInvocation.matched &&
+      !hasActiveStructuredInputRequest &&
+      !hasUserFollowUpAfterInitialPrompt &&
+      dismissedLegalWorkflowTaskId !== task.id &&
+      !["failed", "cancelled"].includes(task.status),
   );
 
   // Welcome/Empty state
@@ -13415,6 +13526,7 @@ function MainContentComponent({
       onOpenWebArtifact={openWebArtifact}
       onQuoteAssistantMessage={handleQuoteAssistantMessage}
       onSelectChildTask={onSelectChildTask}
+      onOpenChildAgentSidebar={onOpenChildAgentSidebar}
       onViewTaskOutputs={onViewTaskOutputs}
       parallelGroupsByAnchorEventId={parallelGroupsByAnchorEventId}
       rejectMenuOpenFor={rejectMenuOpenFor}
@@ -13639,6 +13751,27 @@ function MainContentComponent({
         <div className="task-content">
           {/* Always anchor the initial user prompt above the timeline. */}
           {initialPromptBubble}
+          {showLegalWorkflowCard && (
+            legalWorkflowInvocation.kind === "demand-intake" ? (
+              <LegalDemandIntakePromptCard
+                prompt={trimmedPrompt}
+                onSubmit={(message) => {
+                  onSendMessage(message);
+                  setDismissedLegalWorkflowTaskId(task.id);
+                }}
+                onDismiss={() => setDismissedLegalWorkflowTaskId(task.id)}
+              />
+            ) : (
+              <GenericLegalWorkflowPromptCard
+                invocation={legalWorkflowInvocation}
+                onSubmit={(message) => {
+                  onSendMessage(message);
+                  setDismissedLegalWorkflowTaskId(task.id);
+                }}
+                onDismiss={() => setDismissedLegalWorkflowTaskId(task.id)}
+              />
+            )
+          )}
 
           {task?.agentConfig?.executionMode === "debug" && (
             <DebugSessionPanel events={events} />
@@ -13805,19 +13938,21 @@ function MainContentComponent({
         )}
         {renderAttachmentPanel()}
         <div
-          className={`input-container ${isDraggingFiles ? "drag-over" : ""} ${collaborativeRun && onSelectChildTask ? "input-container-with-agents" : ""}`}
+          className={`input-container ${isDraggingFiles ? "drag-over" : ""} ${collaborativeRun && (onOpenChildAgentSidebar || onSelectChildTask) ? "input-container-with-agents" : ""}`}
           onDragOver={handleDragOver}
           onDragEnter={handleDragOver}
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
         >
           {/* Collaborative agent lines — extension of input box, inside same container */}
-          {collaborativeRun && onSelectChildTask && (
+          {collaborativeRun && (onOpenChildAgentSidebar || onSelectChildTask) && (
             <CollaborativeAgentLines
               collaborativeRun={collaborativeRun}
               childTasks={childTasks}
               childEvents={childEvents}
-              onOpenAgent={(taskId) => onSelectChildTask(taskId)}
+              onOpenAgent={(taskId) =>
+                (onOpenChildAgentSidebar ?? onSelectChildTask)?.(taskId)
+              }
               mainTaskCompleted={
                 !!task &&
                 ["completed", "failed", "cancelled"].includes(task.status)
@@ -13900,7 +14035,7 @@ function MainContentComponent({
               message={effectivePauseMessage}
               reasonCode={effectivePauseReasonCode}
               markdownComponents={markdownComponents}
-              onStopTask={onStopTask}
+              onStopTask={onWrapUpTask ?? onStopTask}
               onEnableShell={remoteSession ? undefined : onEnableShellForPausedTask}
               onContinueWithoutShell={remoteSession ? undefined : onContinueWithoutShellForPausedTask}
             />
@@ -14544,7 +14679,8 @@ function areMainContentPropsEqual(prev: MainContentProps, next: MainContentProps
     prev.onOpenDocumentArtifact === next.onOpenDocumentArtifact &&
     prev.onOpenPresentationArtifact === next.onOpenPresentationArtifact &&
     prev.onOpenWebArtifact === next.onOpenWebArtifact &&
-    prev.onOpenWebLinkInSidebar === next.onOpenWebLinkInSidebar
+    prev.onOpenWebLinkInSidebar === next.onOpenWebLinkInSidebar &&
+    prev.onOpenChildAgentSidebar === next.onOpenChildAgentSidebar
   );
 }
 
@@ -14940,6 +15076,7 @@ function renderEventTitle(
 
   if (event.type === "timeline_error") {
     const message = getTimelineErrorText(event);
+    if (isLongOsascriptCommandText(message)) return "Command failed: osascript";
     return message || getMessage("error", msgCtx);
   }
 
@@ -14992,6 +15129,13 @@ function renderEventTitle(
         sanitizeToolCallTextFromAssistant(event.payload.step?.description || event.payload.message || "").text,
       );
     case "step_failed":
+      if (
+        isLongOsascriptCommandText(
+          event.payload.step?.description || event.payload.reason || event.payload.error || "",
+        )
+      ) {
+        return "Command failed: osascript";
+      }
       return `Step failed: ${condenseStepText(event.payload.step?.description || "Unknown step")}`;
     case "continuation_decision":
       return "Deciding next steps";
@@ -15393,6 +15537,13 @@ function renderEventDetails(
 
   if (event.type === "timeline_error") {
     const message = getTimelineErrorText(event);
+    if (isLongOsascriptCommandText(message)) {
+      return (
+        <div className="event-details event-details-command-error">
+          <OsascriptCommandExcerpt text={message} />
+        </div>
+      );
+    }
     return (
       <div
         className="event-details"
@@ -15596,9 +15747,9 @@ function renderEventDetails(
           <div className="follow-up-completed-title">Follow-up received</div>
           {followUpMessage && (
             <div className="markdown-content">
-              <ReactMarkdown remarkPlugins={userMarkdownPlugins} components={markdownComponents}>
+              <DeferredMarkdown withBreaks components={markdownComponents}>
                 {normalizeMarkdownForDisplay(followUpMessage)}
-              </ReactMarkdown>
+              </DeferredMarkdown>
             </div>
           )}
           {renderLinkedArtifactCards(followUpMessage)}
@@ -15618,9 +15769,9 @@ function renderEventDetails(
       return (
         <div className="event-details markdown-content">
           <div style={{ marginBottom: 8, fontWeight: 500 }}>
-            <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+            <DeferredMarkdown components={markdownComponents}>
               {normalizeMarkdownForDisplay(String(event.payload.plan?.description || ""))}
-            </ReactMarkdown>
+            </DeferredMarkdown>
           </div>
           {visiblePlanSteps.length > 0 && (
             <div className="plan-checklist">
@@ -15628,12 +15779,9 @@ function renderEventDetails(
                 <div key={i} className="plan-checklist-item">
                   <span className="plan-checklist-circle" />
                   <span className="plan-checklist-text">
-                    <ReactMarkdown
-                      remarkPlugins={[remarkGfm]}
-                      components={inlinePlanMarkdownComponents}
-                    >
+                    <DeferredMarkdown components={inlinePlanMarkdownComponents}>
                       {normalizeMarkdownForDisplay(String(step?.description || ""))}
-                    </ReactMarkdown>
+                    </DeferredMarkdown>
                   </span>
                 </div>
               ))}
@@ -15776,12 +15924,20 @@ function renderEventDetails(
     case "step_failed": {
       const rawReason =
         event.payload?.reason || event.payload?.step?.error || event.payload?.error || "Step failed.";
+      const displayReason = formatProviderErrorForDisplay(String(rawReason), { task: taskForEvent });
+      if (isLongOsascriptCommandText(displayReason)) {
+        return (
+          <div className="event-details event-details-command-error">
+            <OsascriptCommandExcerpt text={displayReason} />
+          </div>
+        );
+      }
       return (
         <div
           className="event-details"
           style={{ background: "rgba(239, 68, 68, 0.1)", borderColor: "rgba(239, 68, 68, 0.2)" }}
         >
-          {formatProviderErrorForDisplay(String(rawReason), { task: taskForEvent })}
+          {displayReason}
         </div>
       );
     }

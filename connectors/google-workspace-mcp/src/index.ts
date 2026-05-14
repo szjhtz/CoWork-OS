@@ -267,9 +267,43 @@ const GOOGLE_ACCESS_TOKEN = process.env.GOOGLE_ACCESS_TOKEN || '';
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
 const GOOGLE_REFRESH_TOKEN = process.env.GOOGLE_REFRESH_TOKEN || '';
+const GOOGLE_SCOPES = process.env.GOOGLE_SCOPES || process.env.GOOGLE_WORKSPACE_SCOPES || '';
+
+const REQUIRED_GOOGLE_WORKSPACE_SCOPES = [
+  'https://www.googleapis.com/auth/drive',
+  'https://www.googleapis.com/auth/gmail.readonly',
+  'https://www.googleapis.com/auth/gmail.send',
+  'https://www.googleapis.com/auth/gmail.modify',
+  'https://www.googleapis.com/auth/calendar',
+  'https://www.googleapis.com/auth/spreadsheets',
+  'https://www.googleapis.com/auth/documents',
+  'https://www.googleapis.com/auth/tasks',
+  'https://www.googleapis.com/auth/presentations',
+  'https://www.googleapis.com/auth/chat.messages',
+  'https://www.googleapis.com/auth/chat.spaces.readonly',
+];
 
 let cachedAccessToken = GOOGLE_ACCESS_TOKEN;
 let tokenExpiry = 0;
+
+function normalizeScopeList(scopeText: string): string[] {
+  const scopes: string[] = [];
+  const seen = new Set<string>();
+  for (const rawScope of scopeText.split(/\s+/)) {
+    const scope = rawScope.trim();
+    if (!scope || seen.has(scope)) continue;
+    seen.add(scope);
+    scopes.push(scope);
+  }
+  return scopes;
+}
+
+function getMissingRequiredScopes(scopeText: string): string[] {
+  const configuredScopes = normalizeScopeList(scopeText);
+  if (configuredScopes.length === 0) return [];
+  const configured = new Set(configuredScopes);
+  return REQUIRED_GOOGLE_WORKSPACE_SCOPES.filter((scope) => !configured.has(scope));
+}
 
 async function refreshAccessToken(): Promise<string> {
   if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET || !GOOGLE_REFRESH_TOKEN) {
@@ -339,6 +373,51 @@ async function googleRequest(
   }
 
   return response.json();
+}
+
+function hasOwn(args: Record<string, any>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(args, key);
+}
+
+function pickPresentFields(args: Record<string, any>, fields: string[]): Record<string, any> {
+  const body: Record<string, any> = {};
+  for (const field of fields) {
+    if (hasOwn(args, field) && args[field] !== undefined) {
+      body[field] = args[field];
+    }
+  }
+  return body;
+}
+
+function pickQueryParams(args: Record<string, any>, fields: string[]): Record<string, string> {
+  const params: Record<string, string> = {};
+  for (const field of fields) {
+    if (hasOwn(args, field) && args[field] !== undefined && args[field] !== null) {
+      params[field] = String(args[field]);
+    }
+  }
+  return params;
+}
+
+function requireNonEmptyString(value: unknown, label: string): string {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error(`Missing ${label}`);
+  }
+  return value;
+}
+
+function requireConfirmation(args: Record<string, any>, action: string): void {
+  if (args.confirm !== true) {
+    throw new Error(`Confirmation required before ${action}. Set confirm to true only after the user explicitly confirms.`);
+  }
+}
+
+function randomObjectId(prefix: string): string {
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function numberOrDefault(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
 // ==================== Tool Definitions ====================
@@ -604,6 +683,336 @@ const tools: MCPTool[] = [
       additionalProperties: false,
     },
   },
+
+  // ── Tasks ────────────────────────────────────────────────
+  {
+    name: 'google-workspace.tasks_lists_list',
+    description: 'List Google Tasks task lists',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        maxResults: { type: 'number', description: 'Maximum task lists to return (default: 20, max: 100)', default: 20 },
+        pageToken: { type: 'string', description: 'Page token from a previous response' },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'google-workspace.tasks_lists_create',
+    description: 'Create a Google Tasks task list',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'Task list title' },
+      },
+      required: ['title'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'google-workspace.tasks_lists_update',
+    description: 'Update a Google Tasks task list title',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tasklistId: { type: 'string', description: 'Task list ID' },
+        title: { type: 'string', description: 'New task list title' },
+      },
+      required: ['tasklistId', 'title'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'google-workspace.tasks_lists_delete',
+    description: 'Delete a Google Tasks task list. Confirm with the user before calling.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tasklistId: { type: 'string', description: 'Task list ID' },
+        confirm: {
+          type: 'boolean',
+          description: 'Must be true after the user explicitly confirms deleting this task list',
+        },
+      },
+      required: ['tasklistId', 'confirm'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'google-workspace.tasks_list',
+    description: 'List tasks in a Google Tasks task list',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tasklistId: { type: 'string', description: 'Task list ID' },
+        maxResults: { type: 'number', description: 'Maximum tasks to return (default: 20, max: 100)', default: 20 },
+        pageToken: { type: 'string', description: 'Page token from a previous response' },
+        showCompleted: { type: 'boolean', description: 'Include completed tasks' },
+        showDeleted: { type: 'boolean', description: 'Include deleted tasks' },
+        showHidden: { type: 'boolean', description: 'Include hidden tasks' },
+        showAssigned: { type: 'boolean', description: 'Include assigned tasks from Docs or Chat Spaces' },
+        dueMin: { type: 'string', description: 'Lower due-date bound, RFC3339' },
+        dueMax: { type: 'string', description: 'Upper due-date bound, RFC3339' },
+        completedMin: { type: 'string', description: 'Lower completion-date bound, RFC3339' },
+        completedMax: { type: 'string', description: 'Upper completion-date bound, RFC3339' },
+        updatedMin: { type: 'string', description: 'Lower updated-time bound, RFC3339' },
+      },
+      required: ['tasklistId'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'google-workspace.tasks_get',
+    description: 'Get one Google Tasks task',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tasklistId: { type: 'string', description: 'Task list ID' },
+        taskId: { type: 'string', description: 'Task ID' },
+      },
+      required: ['tasklistId', 'taskId'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'google-workspace.tasks_create',
+    description: 'Create a task in a Google Tasks task list',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tasklistId: { type: 'string', description: 'Task list ID' },
+        title: { type: 'string', description: 'Task title' },
+        notes: { type: 'string', description: 'Task notes or description' },
+        due: { type: 'string', description: 'Due date/time, RFC3339 or Google-compatible date string' },
+        status: { type: 'string', enum: ['needsAction', 'completed'], description: 'Initial task status' },
+        parent: { type: 'string', description: 'Optional parent task ID for subtasks' },
+        previous: { type: 'string', description: 'Optional previous sibling task ID for ordering' },
+      },
+      required: ['tasklistId', 'title'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'google-workspace.tasks_update',
+    description: 'Update a Google Tasks task with provided fields',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tasklistId: { type: 'string', description: 'Task list ID' },
+        taskId: { type: 'string', description: 'Task ID' },
+        title: { type: 'string', description: 'New task title; pass an empty string to clear when Google allows it' },
+        notes: { type: 'string', description: 'New task notes; pass an empty string to clear' },
+        due: { type: 'string', description: 'New due date/time' },
+        clearDue: { type: 'boolean', description: 'Set true to clear the due date' },
+        status: { type: 'string', enum: ['needsAction', 'completed'], description: 'New task status' },
+      },
+      required: ['tasklistId', 'taskId'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'google-workspace.tasks_complete',
+    description: 'Mark a Google Tasks task completed',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tasklistId: { type: 'string', description: 'Task list ID' },
+        taskId: { type: 'string', description: 'Task ID' },
+      },
+      required: ['tasklistId', 'taskId'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'google-workspace.tasks_uncomplete',
+    description: 'Mark a Google Tasks task as needsAction',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tasklistId: { type: 'string', description: 'Task list ID' },
+        taskId: { type: 'string', description: 'Task ID' },
+      },
+      required: ['tasklistId', 'taskId'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'google-workspace.tasks_move',
+    description: 'Move a Google Tasks task within its list',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tasklistId: { type: 'string', description: 'Task list ID' },
+        taskId: { type: 'string', description: 'Task ID' },
+        parent: { type: 'string', description: 'New parent task ID' },
+        previous: { type: 'string', description: 'New previous sibling task ID' },
+      },
+      required: ['tasklistId', 'taskId'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'google-workspace.tasks_delete',
+    description: 'Delete a Google Tasks task. Confirm with the user before calling.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tasklistId: { type: 'string', description: 'Task list ID' },
+        taskId: { type: 'string', description: 'Task ID' },
+        confirm: {
+          type: 'boolean',
+          description: 'Must be true after the user explicitly confirms deleting this task',
+        },
+        deleteAssignedTaskEverywhere: {
+          type: 'boolean',
+          description:
+            'Required for assigned tasks. Confirms the user understands deleting can remove the original task from Docs or Chat Spaces.',
+        },
+      },
+      required: ['tasklistId', 'taskId', 'confirm'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'google-workspace.tasks_clear_completed',
+    description: 'Clear completed tasks from a Google Tasks task list. Confirm with the user before calling.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tasklistId: { type: 'string', description: 'Task list ID' },
+        confirm: {
+          type: 'boolean',
+          description: 'Must be true after the user explicitly confirms clearing completed tasks',
+        },
+      },
+      required: ['tasklistId', 'confirm'],
+      additionalProperties: false,
+    },
+  },
+
+  // ── Slides ───────────────────────────────────────────────
+  {
+    name: 'google-workspace.slides_create',
+    description: 'Create a new Google Slides presentation',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'Presentation title' },
+      },
+      required: ['title'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'google-workspace.slides_get',
+    description: 'Get a Google Slides presentation including page structure',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        presentationId: { type: 'string', description: 'Presentation ID from its URL' },
+        fields: { type: 'string', description: 'Optional partial response field mask' },
+      },
+      required: ['presentationId'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'google-workspace.slides_create_slide',
+    description: 'Create a slide in a Google Slides presentation',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        presentationId: { type: 'string', description: 'Presentation ID' },
+        objectId: { type: 'string', description: 'Optional object ID for the new slide' },
+        insertionIndex: { type: 'number', description: 'Optional zero-based insertion index' },
+        predefinedLayout: {
+          type: 'string',
+          description: 'Predefined layout name (default: BLANK)',
+          default: 'BLANK',
+        },
+      },
+      required: ['presentationId'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'google-workspace.slides_delete_slide',
+    description: 'Delete a slide from a Google Slides presentation. Confirm with the user before calling.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        presentationId: { type: 'string', description: 'Presentation ID' },
+        pageObjectId: { type: 'string', description: 'Slide page object ID to delete' },
+        confirm: {
+          type: 'boolean',
+          description: 'Must be true after the user explicitly confirms deleting this slide',
+        },
+      },
+      required: ['presentationId', 'pageObjectId', 'confirm'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'google-workspace.slides_add_text_box',
+    description: 'Add a text box to a Google Slides slide',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        presentationId: { type: 'string', description: 'Presentation ID' },
+        pageObjectId: { type: 'string', description: 'Slide page object ID' },
+        text: { type: 'string', description: 'Text to insert into the text box' },
+        objectId: { type: 'string', description: 'Optional object ID for the text box' },
+        x: { type: 'number', description: 'X offset in unit coordinates (default: 72)', default: 72 },
+        y: { type: 'number', description: 'Y offset in unit coordinates (default: 72)', default: 72 },
+        width: { type: 'number', description: 'Text box width (default: 576)', default: 576 },
+        height: { type: 'number', description: 'Text box height (default: 120)', default: 120 },
+        unit: { type: 'string', enum: ['PT', 'EMU'], description: 'Dimension unit (default: PT)', default: 'PT' },
+      },
+      required: ['presentationId', 'pageObjectId', 'text'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'google-workspace.slides_replace_all_text',
+    description: 'Replace matching text throughout a Google Slides presentation',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        presentationId: { type: 'string', description: 'Presentation ID' },
+        text: { type: 'string', description: 'Text to find' },
+        replaceText: { type: 'string', description: 'Replacement text' },
+        matchCase: { type: 'boolean', description: 'Whether matching is case-sensitive', default: false },
+        confirm: {
+          type: 'boolean',
+          description: 'Must be true after the user explicitly confirms replacing text throughout the presentation',
+        },
+      },
+      required: ['presentationId', 'text', 'replaceText', 'confirm'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'google-workspace.slides_batch_update',
+    description: 'Run raw Google Slides presentations.batchUpdate requests for advanced edits',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        presentationId: { type: 'string', description: 'Presentation ID' },
+        requests: {
+          type: 'array',
+          description: 'Raw Google Slides API Request objects',
+          items: { type: 'object', description: 'Google Slides API Request object' },
+        },
+        writeControl: { type: 'object', description: 'Optional Google Slides writeControl object' },
+        confirm: {
+          type: 'boolean',
+          description: 'Must be true after the user explicitly confirms running raw batchUpdate requests',
+        },
+      },
+      required: ['presentationId', 'requests', 'confirm'],
+      additionalProperties: false,
+    },
+  },
 ];
 
 // ==================== Tool Handlers ====================
@@ -611,6 +1020,20 @@ const tools: MCPTool[] = [
 const handlers: Record<string, (args: Record<string, any>) => Promise<any>> = {
 
   'google-workspace.health': async () => {
+    const missingScopes = getMissingRequiredScopes(GOOGLE_SCOPES);
+    if (missingScopes.length > 0) {
+      return {
+        ok: true,
+        data: {
+          status: 'missing_scopes',
+          connector: 'google-workspace',
+          tokenPresent: Boolean(cachedAccessToken || GOOGLE_REFRESH_TOKEN),
+          missingScopes,
+          error: `Reconnect Google Workspace with the required scopes: ${missingScopes.join(', ')}`,
+        },
+      };
+    }
+
     const token = await getAccessToken();
     // Verify the token works by checking the Drive API
     const result = (await googleRequest('GET', 'https://www.googleapis.com/drive/v3/about', undefined, {
@@ -624,6 +1047,9 @@ const handlers: Record<string, (args: Record<string, any>) => Promise<any>> = {
         connector: 'google-workspace',
         user: result?.user?.emailAddress || 'unknown',
         tokenPresent: Boolean(token),
+        scopeWarning: GOOGLE_SCOPES
+          ? undefined
+          : 'GOOGLE_SCOPES is not configured, so health cannot verify every Workspace API scope.',
       },
     };
   },
@@ -840,6 +1266,341 @@ const handlers: Record<string, (args: Record<string, any>) => Promise<any>> = {
     );
     return { ok: true, data: result };
   },
+
+  // ── Tasks ────────────────────────────────────────────────
+
+  'google-workspace.tasks_lists_list': async (args) => {
+    const params: Record<string, string> = {
+      maxResults: String(Math.min(numberOrDefault(args.maxResults, 20), 100)),
+    };
+    if (args.pageToken) params.pageToken = String(args.pageToken);
+
+    const result = await googleRequest(
+      'GET',
+      'https://tasks.googleapis.com/tasks/v1/users/@me/lists',
+      undefined,
+      params,
+    );
+    return { ok: true, data: result };
+  },
+
+  'google-workspace.tasks_lists_create': async (args) => {
+    const title = requireNonEmptyString(args.title, 'title');
+    const result = await googleRequest(
+      'POST',
+      'https://tasks.googleapis.com/tasks/v1/users/@me/lists',
+      { title },
+    );
+    return { ok: true, data: result };
+  },
+
+  'google-workspace.tasks_lists_update': async (args) => {
+    const tasklistId = requireNonEmptyString(args.tasklistId, 'tasklistId');
+    const title = requireNonEmptyString(args.title, 'title');
+    const result = await googleRequest(
+      'PATCH',
+      `https://tasks.googleapis.com/tasks/v1/users/@me/lists/${encodeURIComponent(tasklistId)}`,
+      { title },
+    );
+    return { ok: true, data: result };
+  },
+
+  'google-workspace.tasks_lists_delete': async (args) => {
+    requireConfirmation(args, 'deleting a Google Tasks task list');
+    const tasklistId = requireNonEmptyString(args.tasklistId, 'tasklistId');
+    const result = await googleRequest(
+      'DELETE',
+      `https://tasks.googleapis.com/tasks/v1/users/@me/lists/${encodeURIComponent(tasklistId)}`,
+    );
+    return { ok: true, data: result };
+  },
+
+  'google-workspace.tasks_list': async (args) => {
+    const tasklistId = requireNonEmptyString(args.tasklistId, 'tasklistId');
+    const params = pickQueryParams(args, [
+      'pageToken',
+      'showCompleted',
+      'showDeleted',
+      'showHidden',
+      'showAssigned',
+      'dueMin',
+      'dueMax',
+      'completedMin',
+      'completedMax',
+      'updatedMin',
+    ]);
+    params.maxResults = String(Math.min(numberOrDefault(args.maxResults, 20), 100));
+
+    const result = await googleRequest(
+      'GET',
+      `https://tasks.googleapis.com/tasks/v1/lists/${encodeURIComponent(tasklistId)}/tasks`,
+      undefined,
+      params,
+    );
+    return { ok: true, data: result };
+  },
+
+  'google-workspace.tasks_get': async (args) => {
+    const tasklistId = requireNonEmptyString(args.tasklistId, 'tasklistId');
+    const taskId = requireNonEmptyString(args.taskId, 'taskId');
+    const result = await googleRequest(
+      'GET',
+      `https://tasks.googleapis.com/tasks/v1/lists/${encodeURIComponent(tasklistId)}/tasks/${encodeURIComponent(taskId)}`,
+    );
+    return { ok: true, data: result };
+  },
+
+  'google-workspace.tasks_create': async (args) => {
+    const tasklistId = requireNonEmptyString(args.tasklistId, 'tasklistId');
+    const title = requireNonEmptyString(args.title, 'title');
+    const params = pickQueryParams(args, ['parent', 'previous']);
+    const body = {
+      ...pickPresentFields(args, ['notes', 'due', 'status']),
+      title,
+    };
+
+    const result = await googleRequest(
+      'POST',
+      `https://tasks.googleapis.com/tasks/v1/lists/${encodeURIComponent(tasklistId)}/tasks`,
+      body,
+      Object.keys(params).length ? params : undefined,
+    );
+    return { ok: true, data: result };
+  },
+
+  'google-workspace.tasks_update': async (args) => {
+    const tasklistId = requireNonEmptyString(args.tasklistId, 'tasklistId');
+    const taskId = requireNonEmptyString(args.taskId, 'taskId');
+    const body = pickPresentFields(args, ['title', 'notes', 'due', 'status']);
+    if (args.clearDue === true) {
+      if (hasOwn(args, 'due') && args.due !== undefined && args.due !== null && String(args.due).trim()) {
+        throw new Error('Use either due or clearDue, not both');
+      }
+      body.due = null;
+    }
+    if (Object.keys(body).length === 0) {
+      throw new Error('At least one task field must be provided for update');
+    }
+
+    const result = await googleRequest(
+      'PATCH',
+      `https://tasks.googleapis.com/tasks/v1/lists/${encodeURIComponent(tasklistId)}/tasks/${encodeURIComponent(taskId)}`,
+      body,
+    );
+    return { ok: true, data: result };
+  },
+
+  'google-workspace.tasks_complete': async (args) => {
+    const tasklistId = requireNonEmptyString(args.tasklistId, 'tasklistId');
+    const taskId = requireNonEmptyString(args.taskId, 'taskId');
+    const result = await googleRequest(
+      'PATCH',
+      `https://tasks.googleapis.com/tasks/v1/lists/${encodeURIComponent(tasklistId)}/tasks/${encodeURIComponent(taskId)}`,
+      { status: 'completed' },
+    );
+    return { ok: true, data: result };
+  },
+
+  'google-workspace.tasks_uncomplete': async (args) => {
+    const tasklistId = requireNonEmptyString(args.tasklistId, 'tasklistId');
+    const taskId = requireNonEmptyString(args.taskId, 'taskId');
+    const result = await googleRequest(
+      'PATCH',
+      `https://tasks.googleapis.com/tasks/v1/lists/${encodeURIComponent(tasklistId)}/tasks/${encodeURIComponent(taskId)}`,
+      { status: 'needsAction' },
+    );
+    return { ok: true, data: result };
+  },
+
+  'google-workspace.tasks_move': async (args) => {
+    const tasklistId = requireNonEmptyString(args.tasklistId, 'tasklistId');
+    const taskId = requireNonEmptyString(args.taskId, 'taskId');
+    const params = pickQueryParams(args, ['parent', 'previous']);
+    const result = await googleRequest(
+      'POST',
+      `https://tasks.googleapis.com/tasks/v1/lists/${encodeURIComponent(tasklistId)}/tasks/${encodeURIComponent(taskId)}/move`,
+      undefined,
+      Object.keys(params).length ? params : undefined,
+    );
+    return { ok: true, data: result };
+  },
+
+  'google-workspace.tasks_delete': async (args) => {
+    requireConfirmation(args, 'deleting a Google Tasks task');
+    const tasklistId = requireNonEmptyString(args.tasklistId, 'tasklistId');
+    const taskId = requireNonEmptyString(args.taskId, 'taskId');
+    const task = (await googleRequest(
+      'GET',
+      `https://tasks.googleapis.com/tasks/v1/lists/${encodeURIComponent(tasklistId)}/tasks/${encodeURIComponent(taskId)}`,
+    )) as any;
+    if (task?.assignmentInfo && args.deleteAssignedTaskEverywhere !== true) {
+      throw new Error(
+        'This is an assigned task from Google Docs or Chat Spaces. Deleting it may remove the original assigned task. Set deleteAssignedTaskEverywhere to true only after the user explicitly confirms that cross-surface deletion.',
+      );
+    }
+    const result = await googleRequest(
+      'DELETE',
+      `https://tasks.googleapis.com/tasks/v1/lists/${encodeURIComponent(tasklistId)}/tasks/${encodeURIComponent(taskId)}`,
+    );
+    return { ok: true, data: result };
+  },
+
+  'google-workspace.tasks_clear_completed': async (args) => {
+    requireConfirmation(args, 'clearing completed Google Tasks tasks');
+    const tasklistId = requireNonEmptyString(args.tasklistId, 'tasklistId');
+    const result = await googleRequest(
+      'POST',
+      `https://tasks.googleapis.com/tasks/v1/lists/${encodeURIComponent(tasklistId)}/clear`,
+    );
+    return { ok: true, data: result };
+  },
+
+  // ── Slides ───────────────────────────────────────────────
+
+  'google-workspace.slides_create': async (args) => {
+    const title = requireNonEmptyString(args.title, 'title');
+    const result = await googleRequest(
+      'POST',
+      'https://slides.googleapis.com/v1/presentations',
+      { title },
+    );
+    return { ok: true, data: result };
+  },
+
+  'google-workspace.slides_get': async (args) => {
+    const presentationId = requireNonEmptyString(args.presentationId, 'presentationId');
+    const params = args.fields ? { fields: String(args.fields) } : undefined;
+    const result = await googleRequest(
+      'GET',
+      `https://slides.googleapis.com/v1/presentations/${encodeURIComponent(presentationId)}`,
+      undefined,
+      params,
+    );
+    return { ok: true, data: result };
+  },
+
+  'google-workspace.slides_create_slide': async (args) => {
+    const presentationId = requireNonEmptyString(args.presentationId, 'presentationId');
+    const createSlide: Record<string, any> = {
+      slideLayoutReference: {
+        predefinedLayout: args.predefinedLayout || 'BLANK',
+      },
+    };
+    if (args.objectId) createSlide.objectId = String(args.objectId);
+    if (hasOwn(args, 'insertionIndex') && args.insertionIndex !== undefined) {
+      createSlide.insertionIndex = args.insertionIndex;
+    }
+
+    const result = await googleRequest(
+      'POST',
+      `https://slides.googleapis.com/v1/presentations/${encodeURIComponent(presentationId)}:batchUpdate`,
+      { requests: [{ createSlide }] },
+    );
+    return { ok: true, data: result };
+  },
+
+  'google-workspace.slides_delete_slide': async (args) => {
+    requireConfirmation(args, 'deleting a Google Slides slide');
+    const presentationId = requireNonEmptyString(args.presentationId, 'presentationId');
+    const pageObjectId = requireNonEmptyString(args.pageObjectId, 'pageObjectId');
+    const result = await googleRequest(
+      'POST',
+      `https://slides.googleapis.com/v1/presentations/${encodeURIComponent(presentationId)}:batchUpdate`,
+      { requests: [{ deleteObject: { objectId: pageObjectId } }] },
+    );
+    return { ok: true, data: result };
+  },
+
+  'google-workspace.slides_add_text_box': async (args) => {
+    const presentationId = requireNonEmptyString(args.presentationId, 'presentationId');
+    const pageObjectId = requireNonEmptyString(args.pageObjectId, 'pageObjectId');
+    const text = requireNonEmptyString(args.text, 'text');
+    const objectId = args.objectId ? String(args.objectId) : randomObjectId('cowork_textbox');
+    const unit = args.unit || 'PT';
+    const x = numberOrDefault(args.x, 72);
+    const y = numberOrDefault(args.y, 72);
+    const width = numberOrDefault(args.width, 576);
+    const height = numberOrDefault(args.height, 120);
+
+    const result = await googleRequest(
+      'POST',
+      `https://slides.googleapis.com/v1/presentations/${encodeURIComponent(presentationId)}:batchUpdate`,
+      {
+        requests: [
+          {
+            createShape: {
+              objectId,
+              shapeType: 'TEXT_BOX',
+              elementProperties: {
+                pageObjectId,
+                size: {
+                  width: { magnitude: width, unit },
+                  height: { magnitude: height, unit },
+                },
+                transform: {
+                  scaleX: 1,
+                  scaleY: 1,
+                  translateX: x,
+                  translateY: y,
+                  unit,
+                },
+              },
+            },
+          },
+          {
+            insertText: {
+              objectId,
+              insertionIndex: 0,
+              text,
+            },
+          },
+        ],
+      },
+    );
+    return { ok: true, data: { objectId, result } };
+  },
+
+  'google-workspace.slides_replace_all_text': async (args) => {
+    requireConfirmation(args, 'replacing text throughout a Google Slides presentation');
+    const presentationId = requireNonEmptyString(args.presentationId, 'presentationId');
+    const text = requireNonEmptyString(args.text, 'text');
+    const replaceText = hasOwn(args, 'replaceText') ? String(args.replaceText) : '';
+    const result = await googleRequest(
+      'POST',
+      `https://slides.googleapis.com/v1/presentations/${encodeURIComponent(presentationId)}:batchUpdate`,
+      {
+        requests: [
+          {
+            replaceAllText: {
+              containsText: {
+                text,
+                matchCase: Boolean(args.matchCase),
+              },
+              replaceText,
+            },
+          },
+        ],
+      },
+    );
+    return { ok: true, data: result };
+  },
+
+  'google-workspace.slides_batch_update': async (args) => {
+    requireConfirmation(args, 'running raw Google Slides batchUpdate requests');
+    const presentationId = requireNonEmptyString(args.presentationId, 'presentationId');
+    if (!Array.isArray(args.requests)) {
+      throw new Error('requests must be an array');
+    }
+    const body: Record<string, any> = { requests: args.requests };
+    if (args.writeControl) body.writeControl = args.writeControl;
+
+    const result = await googleRequest(
+      'POST',
+      `https://slides.googleapis.com/v1/presentations/${encodeURIComponent(presentationId)}:batchUpdate`,
+      body,
+    );
+    return { ok: true, data: result };
+  },
 };
 
 // ==================== Server Bootstrap ====================
@@ -855,6 +1616,14 @@ const toolProvider: ToolProvider = {
   },
 };
 
+export function listGoogleWorkspaceToolsForTest(): MCPTool[] {
+  return tools;
+}
+
+export async function executeGoogleWorkspaceToolForTest(name: string, args: Record<string, any>): Promise<any> {
+  return toolProvider.executeTool(name, args);
+}
+
 const serverInfo: MCPServerInfo = {
   name: 'Google Workspace',
   version: '0.1.0',
@@ -864,5 +1633,11 @@ const serverInfo: MCPServerInfo = {
   },
 };
 
-const server = new StdioMCPServer(toolProvider, serverInfo);
-server.start();
+export function startGoogleWorkspaceMcpServer(): void {
+  const server = new StdioMCPServer(toolProvider, serverInfo);
+  server.start();
+}
+
+if (typeof require !== 'undefined' && typeof module !== 'undefined' && require.main === module) {
+  startGoogleWorkspaceMcpServer();
+}

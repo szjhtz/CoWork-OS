@@ -19,6 +19,10 @@ import type {
   AgentTeamMember,
   AgentTeamRun,
   AgentThought,
+  AgentBuilderCreateRequest,
+  AgentBuilderCreateResult,
+  AgentBuilderPlan,
+  AgentBuilderPlanRequest,
   AgentWorkspaceMembership,
   AgentWorkspacePermissionSnapshot,
   AgentPerformanceReview,
@@ -79,6 +83,7 @@ import type {
   ManagedSession,
   ManagedSessionCreateInput,
   ManagedSessionEvent,
+  ManagedSessionUserMessageRequest,
   ManagedSessionWorkpaper,
   UpdateManagedAgentRoutineRequest,
   ConvertAgentRoleToManagedAgentRequest,
@@ -173,9 +178,11 @@ import type {
   MailboxAutomationRecord,
   MailboxAutomationStatus,
   MailboxClientState,
+  MailboxClientSettingsPatch,
   MailboxComposeDraft,
   MailboxComposeDraftInput,
   MailboxComposeDraftPatch,
+  MailboxDraftAttachmentInput,
   MailboxForwardRecipe,
   MailboxRuleRecipe,
   MailboxScheduleRecipe,
@@ -1864,6 +1871,48 @@ interface UpdateContextPolicyOptions {
   toolRestrictions?: string[];
 }
 
+interface ChannelSpecializationData {
+  id: string;
+  channelId: string;
+  chatId?: string;
+  threadId?: string;
+  name?: string;
+  workspaceId?: string;
+  agentRoleId?: string;
+  systemGuidance?: string;
+  toolRestrictions?: string[];
+  allowSharedContextMemory: boolean;
+  enabled: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+interface CreateChannelSpecializationData {
+  channelId: string;
+  chatId?: string;
+  threadId?: string;
+  name?: string;
+  workspaceId?: string;
+  agentRoleId?: string;
+  systemGuidance?: string;
+  toolRestrictions?: string[];
+  allowSharedContextMemory?: boolean;
+  enabled?: boolean;
+}
+
+interface UpdateChannelSpecializationData {
+  id: string;
+  chatId?: string | null;
+  threadId?: string | null;
+  name?: string | null;
+  workspaceId?: string | null;
+  agentRoleId?: string | null;
+  systemGuidance?: string | null;
+  toolRestrictions?: string[];
+  allowSharedContextMemory?: boolean;
+  enabled?: boolean;
+}
+
 interface ReadFileForViewerOptions {
   enableImageOcr?: boolean;
   imageOcrMaxChars?: number;
@@ -1967,6 +2016,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.on(IPC_CHANNELS.BROWSER_WORKBENCH_CURSOR, handler);
     return () => ipcRenderer.removeListener(IPC_CHANNELS.BROWSER_WORKBENCH_CURSOR, handler);
   },
+  onBrowserWorkbenchViewport: (callback: (event: BrowserWorkbenchViewportEvent) => void) => {
+    const handler = (_: Any, event: BrowserWorkbenchViewportEvent) => callback(event);
+    ipcRenderer.on(IPC_CHANNELS.BROWSER_WORKBENCH_VIEWPORT, handler);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.BROWSER_WORKBENCH_VIEWPORT, handler);
+  },
   getLlmWikiVaultSummary: (data: { workspacePath: string; vaultPath?: string }) =>
     ipcRenderer.invoke(IPC_CHANNELS.LLM_WIKI_GET_VAULT_SUMMARY, data) as Promise<LlmWikiVaultSummary>,
   importFilesToWorkspace: (data: { workspaceId: string; files: string[] }) =>
@@ -2045,10 +2099,18 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.invoke(IPC_CHANNELS.MAILBOX_CREATE_DRAFT, input) as Promise<MailboxComposeDraft>,
   updateMailboxDraft: (draftId: string, patch: MailboxComposeDraftPatch) =>
     ipcRenderer.invoke(IPC_CHANNELS.MAILBOX_UPDATE_DRAFT, { draftId, patch }) as Promise<MailboxComposeDraft>,
+  addMailboxDraftAttachment: (draftId: string, input: MailboxDraftAttachmentInput) =>
+    ipcRenderer.invoke(IPC_CHANNELS.MAILBOX_ADD_DRAFT_ATTACHMENT, { draftId, input }) as Promise<MailboxComposeDraft>,
+  removeMailboxDraftAttachment: (draftId: string, attachmentId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.MAILBOX_REMOVE_DRAFT_ATTACHMENT, { draftId, attachmentId }) as Promise<MailboxComposeDraft>,
   sendMailboxDraft: (draftId: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.MAILBOX_SEND_DRAFT, { draftId }) as Promise<MailboxOutgoingMessage>,
   scheduleMailboxSend: (draftId: string, scheduledAt: number) =>
     ipcRenderer.invoke(IPC_CHANNELS.MAILBOX_SCHEDULE_SEND, { draftId, scheduledAt }) as Promise<MailboxComposeDraft>,
+  updateMailboxClientSettings: (patch: MailboxClientSettingsPatch) =>
+    ipcRenderer.invoke(IPC_CHANNELS.MAILBOX_UPDATE_CLIENT_SETTINGS, patch) as Promise<MailboxClientState["settings"]>,
+  retryMailboxAction: (actionId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.MAILBOX_RETRY_ACTION, { actionId }) as Promise<MailboxQueuedAction>,
   discardMailboxDraft: (draftId: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.MAILBOX_DISCARD_COMPOSE_DRAFT, { draftId }) as Promise<boolean>,
   undoMailboxAction: (actionId: string) =>
@@ -2173,7 +2235,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // Task APIs
   createTask: (data: Any) => ipcRenderer.invoke(IPC_CHANNELS.TASK_CREATE, data),
   getTask: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.TASK_GET, id),
-  listTasks: (opts?: { limit?: number; offset?: number; prioritizeSidebar?: boolean }) =>
+  listTasks: (opts?: {
+    limit?: number;
+    offset?: number;
+    prioritizeSidebar?: boolean;
+    excludeSources?: string[];
+  }) =>
     ipcRenderer.invoke(IPC_CHANNELS.TASK_LIST, opts),
   exportTasksJson: (query?: Any) => ipcRenderer.invoke(IPC_CHANNELS.TASK_EXPORT_JSON, query),
   toggleTaskPin: (taskId: string) => ipcRenderer.invoke(IPC_CHANNELS.TASK_PIN, taskId),
@@ -2308,6 +2375,14 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.invoke(IPC_CHANNELS.MANAGED_AGENT_RUNTIME_TOOL_CATALOG_IPC, agentId) as Promise<
       ManagedAgentRuntimeToolCatalog
     >,
+  generateManagedAgentPlan: (request: AgentBuilderPlanRequest) =>
+    ipcRenderer.invoke(IPC_CHANNELS.MANAGED_AGENT_GENERATE_PLAN_IPC, request) as Promise<
+      AgentBuilderPlan
+    >,
+  createManagedAgentFromPlan: (request: AgentBuilderCreateRequest) =>
+    ipcRenderer.invoke(IPC_CHANNELS.MANAGED_AGENT_CREATE_FROM_PLAN_IPC, request) as Promise<
+      AgentBuilderCreateResult
+    >,
   createManagedAgent: (request: {
     name: string;
     description?: string;
@@ -2428,8 +2503,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
   listManagedSessions: (params?: {
     limit?: number;
     offset?: number;
+    agentId?: string;
     workspaceId?: string;
     status?: ManagedSession["status"];
+    surface?: ManagedSession["surface"];
   }) =>
     ipcRenderer.invoke(IPC_CHANNELS.MANAGED_SESSION_LIST_IPC, params) as Promise<ManagedSession[]>,
   getManagedSession: (sessionId: string) =>
@@ -2438,6 +2515,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
     >,
   createManagedSession: (request: ManagedSessionCreateInput) =>
     ipcRenderer.invoke(IPC_CHANNELS.MANAGED_SESSION_CREATE_IPC, request) as Promise<ManagedSession>,
+  sendManagedSessionUserMessage: (request: ManagedSessionUserMessageRequest) =>
+    ipcRenderer.invoke(IPC_CHANNELS.MANAGED_SESSION_SEND_USER_MESSAGE_IPC, request) as Promise<
+      ManagedSession | undefined
+    >,
   resumeManagedSession: (sessionId: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.MANAGED_SESSION_RESUME_IPC, sessionId) as Promise<{
       resumed: boolean;
@@ -2868,6 +2949,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   saveAppearanceSettings: (settings: Any) =>
     ipcRenderer.invoke(IPC_CHANNELS.APPEARANCE_SAVE_SETTINGS, settings),
   getAppearanceRuntimeInfo: () => ipcRenderer.invoke(IPC_CHANNELS.APPEARANCE_GET_RUNTIME_INFO),
+  logRendererPerf: (payload: unknown) =>
+    ipcRenderer.invoke(IPC_CHANNELS.RENDERER_PERF_LOG, payload),
 
   // Personality Settings APIs
   getPersonalitySettings: () => ipcRenderer.invoke(IPC_CHANNELS.PERSONALITY_GET_SETTINGS),
@@ -4188,6 +4271,30 @@ contextBridge.exposeInMainWorld("electronAPI", {
       toolName,
       toolGroups,
     ),
+  listChannelSpecializations: (channelId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.CHANNEL_SPECIALIZATION_LIST, channelId) as Promise<
+      ChannelSpecializationData[]
+    >,
+  createChannelSpecialization: (data: CreateChannelSpecializationData) =>
+    ipcRenderer.invoke(IPC_CHANNELS.CHANNEL_SPECIALIZATION_CREATE, data) as Promise<
+      ChannelSpecializationData
+    >,
+  updateChannelSpecialization: (data: UpdateChannelSpecializationData) =>
+    ipcRenderer.invoke(IPC_CHANNELS.CHANNEL_SPECIALIZATION_UPDATE, data) as Promise<
+      ChannelSpecializationData
+    >,
+  deleteChannelSpecialization: (id: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.CHANNEL_SPECIALIZATION_DELETE, id) as Promise<{
+      success: boolean;
+    }>,
+  resolveChannelSpecialization: (data: {
+    channelId: string;
+    chatId?: string;
+    threadId?: string;
+  }) =>
+    ipcRenderer.invoke(IPC_CHANNELS.CHANNEL_SPECIALIZATION_RESOLVE, data) as Promise<
+      ChannelSpecializationData | null
+    >,
 
   // Voice Mode
   getVoiceSettings: () => ipcRenderer.invoke(IPC_CHANNELS.VOICE_GET_SETTINGS),
@@ -4446,7 +4553,15 @@ export type {
 };
 
 // Export Context Policy types
-export type { SecurityModeType, ContextTypeValue, ContextPolicyData, UpdateContextPolicyOptions };
+export type {
+  SecurityModeType,
+  ContextTypeValue,
+  ContextPolicyData,
+  UpdateContextPolicyOptions,
+  ChannelSpecializationData,
+  CreateChannelSpecializationData,
+  UpdateChannelSpecializationData,
+};
 
 export interface BrowserWorkbenchOpenRequest {
   requestId: string;
@@ -4481,6 +4596,17 @@ export interface BrowserWorkbenchCursorEvent {
     | "navigate";
   label?: string;
   pulse?: boolean;
+  at: number;
+}
+
+export interface BrowserWorkbenchViewportEvent {
+  taskId: string;
+  sessionId: string;
+  width: number;
+  height: number;
+  deviceScaleFactor: number;
+  mobile: boolean;
+  label: string;
   at: number;
 }
 
@@ -4560,6 +4686,9 @@ export interface ElectronAPI {
   onBrowserWorkbenchCursor: (
     callback: (event: BrowserWorkbenchCursorEvent) => void,
   ) => () => void;
+  onBrowserWorkbenchViewport: (
+    callback: (event: BrowserWorkbenchViewportEvent) => void,
+  ) => () => void;
   getLlmWikiVaultSummary: (data: {
     workspacePath: string;
     vaultPath?: string;
@@ -4619,8 +4748,12 @@ export interface ElectronAPI {
   extractMailboxAttachmentText: (attachmentId: string) => Promise<MailboxAttachmentRecord>;
   createMailboxDraft: (input: MailboxComposeDraftInput) => Promise<MailboxComposeDraft>;
   updateMailboxDraft: (draftId: string, patch: MailboxComposeDraftPatch) => Promise<MailboxComposeDraft>;
+  addMailboxDraftAttachment: (draftId: string, input: MailboxDraftAttachmentInput) => Promise<MailboxComposeDraft>;
+  removeMailboxDraftAttachment: (draftId: string, attachmentId: string) => Promise<MailboxComposeDraft>;
   sendMailboxDraft: (draftId: string) => Promise<MailboxOutgoingMessage>;
   scheduleMailboxSend: (draftId: string, scheduledAt: number) => Promise<MailboxComposeDraft>;
+  updateMailboxClientSettings: (patch: MailboxClientSettingsPatch) => Promise<MailboxClientState["settings"]>;
+  retryMailboxAction: (actionId: string) => Promise<MailboxQueuedAction>;
   discardMailboxDraft: (draftId: string) => Promise<boolean>;
   undoMailboxAction: (actionId: string) => Promise<MailboxQueuedAction>;
   summarizeMailboxThread: (threadId: string) => Promise<MailboxSummaryCard | null>;
@@ -4731,7 +4864,12 @@ export interface ElectronAPI {
   ) => Promise<{ success: boolean; error?: string }>;
   createTask: (data: Any) => Promise<Any>;
   getTask: (id: string) => Promise<Any>;
-  listTasks: (opts?: { limit?: number; offset?: number; prioritizeSidebar?: boolean }) => Promise<Any[]>;
+  listTasks: (opts?: {
+    limit?: number;
+    offset?: number;
+    prioritizeSidebar?: boolean;
+    excludeSources?: string[];
+  }) => Promise<Any[]>;
   exportTasksJson: (query?: Any) => Promise<Any>;
   toggleTaskPin: (taskId: string) => Promise<Any>;
   cancelTask: (id: string) => Promise<void>;
@@ -4841,6 +4979,10 @@ export interface ElectronAPI {
     agentId: string,
   ) => Promise<{ agent: ManagedAgent; currentVersion?: ManagedAgentVersion } | null>;
   getManagedAgentRuntimeToolCatalog: (agentId: string) => Promise<ManagedAgentRuntimeToolCatalog>;
+  generateManagedAgentPlan: (request: AgentBuilderPlanRequest) => Promise<AgentBuilderPlan>;
+  createManagedAgentFromPlan: (
+    request: AgentBuilderCreateRequest,
+  ) => Promise<AgentBuilderCreateResult>;
   createManagedAgent: (request: {
     name: string;
     description?: string;
@@ -4906,11 +5048,16 @@ export interface ElectronAPI {
   listManagedSessions: (params?: {
     limit?: number;
     offset?: number;
+    agentId?: string;
     workspaceId?: string;
     status?: ManagedSession["status"];
+    surface?: ManagedSession["surface"];
   }) => Promise<ManagedSession[]>;
   getManagedSession: (sessionId: string) => Promise<ManagedSession | null>;
   createManagedSession: (request: ManagedSessionCreateInput) => Promise<ManagedSession>;
+  sendManagedSessionUserMessage: (
+    request: ManagedSessionUserMessageRequest,
+  ) => Promise<ManagedSession | undefined>;
   resumeManagedSession: (sessionId: string) => Promise<{ resumed: boolean; session?: ManagedSession }>;
   cancelManagedSession: (sessionId: string) => Promise<ManagedSession | undefined>;
   listManagedSessionEvents: (sessionId: string, limit?: number) => Promise<ManagedSessionEvent[]>;
@@ -5521,6 +5668,7 @@ export interface ElectronAPI {
     prefersReducedTransparency: boolean;
     devLogCaptureEnabled: boolean;
   }>;
+  logRendererPerf: (payload: unknown) => Promise<{ success: boolean }>;
   saveAppearanceSettings: (settings: {
     themeMode?: "light" | "dark" | "system";
     visualTheme?: "terminal" | "warm" | "oblivion";
@@ -7007,6 +7155,19 @@ export interface ElectronAPI {
     toolName: string,
     toolGroups: string[],
   ) => Promise<{ allowed: boolean }>;
+  listChannelSpecializations: (channelId: string) => Promise<ChannelSpecializationData[]>;
+  createChannelSpecialization: (
+    data: CreateChannelSpecializationData,
+  ) => Promise<ChannelSpecializationData>;
+  updateChannelSpecialization: (
+    data: UpdateChannelSpecializationData,
+  ) => Promise<ChannelSpecializationData>;
+  deleteChannelSpecialization: (id: string) => Promise<{ success: boolean }>;
+  resolveChannelSpecialization: (data: {
+    channelId: string;
+    chatId?: string;
+    threadId?: string;
+  }) => Promise<ChannelSpecializationData | null>;
   // Voice Mode APIs
   getVoiceSettings: () => Promise<VoiceSettingsData>;
   saveVoiceSettings: (settings: Partial<VoiceSettingsData>) => Promise<VoiceSettingsData>;

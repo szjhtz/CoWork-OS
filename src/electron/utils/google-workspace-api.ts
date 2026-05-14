@@ -11,6 +11,11 @@ import {
   refreshGoogleWorkspaceAccessToken,
 } from "./google-workspace-auth";
 import { gmailRequest } from "./gmail-api";
+import { getMissingGoogleWorkspaceScopes } from "../../shared/google-workspace";
+import {
+  isLikelyIntegrationAuthError,
+  notifyIntegrationAuthIssue,
+} from "../notifications/integration-auth";
 
 export const GOOGLE_DRIVE_API_BASE = "https://www.googleapis.com/drive/v3";
 export const GOOGLE_DRIVE_UPLOAD_BASE = "https://www.googleapis.com/upload/drive/v3";
@@ -43,6 +48,17 @@ export interface GoogleDriveRequestResult {
   status: number;
   data?: Any;
   raw?: string;
+}
+
+async function notifyGoogleWorkspaceAuthIssue(error: unknown): Promise<void> {
+  if (!isLikelyIntegrationAuthError(error)) return;
+  await notifyIntegrationAuthIssue({
+    integrationId: "google-workspace",
+    integrationName: "Google Workspace",
+    settingsPath: "Settings > Integrations > Google Workspace",
+    reason: error instanceof Error ? error.message : String(error),
+    dedupeKey: "google-workspace-auth",
+  });
 }
 
 export async function googleDriveRequest(
@@ -114,9 +130,15 @@ export async function googleDriveRequest(
     return await requestOnce(accessToken);
   } catch (error: Any) {
     if (error?.status === 401 && settings.refreshToken) {
-      const refreshedToken = await refreshGoogleWorkspaceAccessToken(settings);
-      return await requestOnce(refreshedToken);
+      try {
+        const refreshedToken = await refreshGoogleWorkspaceAccessToken(settings);
+        return await requestOnce(refreshedToken);
+      } catch (refreshError) {
+        await notifyGoogleWorkspaceAuthIssue(refreshError);
+        throw refreshError;
+      }
     }
+    await notifyGoogleWorkspaceAuthIssue(error);
     throw error;
   }
 }
@@ -181,9 +203,15 @@ export async function googleDriveUpload(
     return await requestOnce(accessToken);
   } catch (error: Any) {
     if (error?.status === 401 && settings.refreshToken) {
-      const refreshedToken = await refreshGoogleWorkspaceAccessToken(settings);
-      return await requestOnce(refreshedToken);
+      try {
+        const refreshedToken = await refreshGoogleWorkspaceAccessToken(settings);
+        return await requestOnce(refreshedToken);
+      } catch (refreshError) {
+        await notifyGoogleWorkspaceAuthIssue(refreshError);
+        throw refreshError;
+      }
     }
+    await notifyGoogleWorkspaceAuthIssue(error);
     throw error;
   }
 }
@@ -200,6 +228,15 @@ function extractUserInfo(data: Any): { name?: string; userId?: string; email?: s
 export async function testGoogleWorkspaceConnection(
   settings: GoogleWorkspaceSettingsData,
 ): Promise<GoogleWorkspaceConnectionTestResult> {
+  const missingScopes = getMissingGoogleWorkspaceScopes(settings.scopes);
+  if (missingScopes.length > 0) {
+    return {
+      success: false,
+      error: `Google Workspace is missing required scopes for the current connector surface: ${missingScopes.join(", ")}. Reconnect Google Workspace in Settings > Integrations > Google Workspace.`,
+      missingScopes,
+    };
+  }
+
   try {
     const profile = await gmailRequest(settings, {
       method: "GET",

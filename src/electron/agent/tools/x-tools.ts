@@ -6,6 +6,7 @@ import { XSettingsManager } from "../../settings/x-manager";
 import { runBirdCommand } from "../../utils/x-cli";
 import { BrowserTools } from "./browser-tools";
 import { buildXComposeScript, buildXToggleFollowScript } from "./x-browser-scripts";
+import { notifyIntegrationAuthIssue } from "../../notifications/integration-auth";
 
 type XAction =
   | "whoami"
@@ -254,6 +255,17 @@ export class XTools {
       return false;
     }
     return hasBlockingSignal;
+  }
+
+  private isLikelyAuthBlockingError(message: string): boolean {
+    if (!message) return false;
+    return (
+      /\b(?:401|403)\b/.test(message) ||
+      /unauthori[sz]ed|forbidden|authentication required|authentication failed/i.test(message) ||
+      /not authenticated|login required|sign in to continue/i.test(message) ||
+      /captcha|challenge|verify your|please verify your account/i.test(message) ||
+      /account is locked|account suspension/i.test(message)
+    );
   }
 
   private trimTextForPrompt(value?: string): string | undefined {
@@ -1420,6 +1432,17 @@ export class XTools {
         });
 
         if (this.isLikelyBlockingError(errorMessage)) {
+          if (this.isLikelyAuthBlockingError(errorMessage)) {
+            await notifyIntegrationAuthIssue({
+              integrationId: "x-twitter",
+              integrationName: "X (Twitter)",
+              settingsPath: "Settings > X (Twitter)",
+              reason: errorMessage,
+              taskId: this.taskId,
+              workspaceId: this.workspace.id,
+              dedupeKey: "x-auth",
+            });
+          }
           return await this.runBrowserFallback(action, input, errorMessage);
         }
 

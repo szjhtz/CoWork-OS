@@ -7,6 +7,10 @@ import {
   getGoogleWorkspaceAccessToken,
   refreshGoogleWorkspaceAccessToken,
 } from "./google-workspace-auth";
+import {
+  isLikelyIntegrationAuthError,
+  notifyIntegrationAuthIssue,
+} from "../notifications/integration-auth";
 
 export const GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1";
 const DEFAULT_TIMEOUT_MS = 20000;
@@ -41,6 +45,17 @@ export interface GmailRequestResult {
   status: number;
   data?: Any;
   raw?: string;
+}
+
+async function notifyGoogleWorkspaceAuthIssue(error: unknown): Promise<void> {
+  if (!isLikelyIntegrationAuthError(error)) return;
+  await notifyIntegrationAuthIssue({
+    integrationId: "google-workspace",
+    integrationName: "Google Workspace",
+    settingsPath: "Settings > Integrations > Google Workspace",
+    reason: error instanceof Error ? error.message : String(error),
+    dedupeKey: "google-workspace-auth",
+  });
 }
 
 export async function gmailRequest(
@@ -118,9 +133,15 @@ export async function gmailRequest(
     return await requestOnce(accessToken);
   } catch (error: Any) {
     if (error?.status === 401 && settings.refreshToken) {
-      const refreshedToken = await refreshGoogleWorkspaceAccessToken(settings);
-      return await requestOnce(refreshedToken);
+      try {
+        const refreshedToken = await refreshGoogleWorkspaceAccessToken(settings);
+        return await requestOnce(refreshedToken);
+      } catch (refreshError) {
+        await notifyGoogleWorkspaceAuthIssue(refreshError);
+        throw refreshError;
+      }
     }
+    await notifyGoogleWorkspaceAuthIssue(error);
     throw error;
   }
 }

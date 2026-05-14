@@ -20,7 +20,12 @@ RestartSec=5
 # Run as an unprivileged user (recommended).
 User=cowork
 Group=cowork
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+CapabilityBoundingSet=
+ReadWritePaths=/var/lib/cowork-os /srv/cowork/workspace
 
 [Install]
 WantedBy=multi-user.target
-

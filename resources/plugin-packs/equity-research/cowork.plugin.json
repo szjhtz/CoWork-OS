@@ -8,7 +8,7 @@
   "keywords": ["equity-research", "earnings", "sector-analysis", "coverage", "price-target"],
   "icon": "📈",
   "category": "Finance",
-  "recommendedConnectors": ["factset-mcp", "lseg-mcp", "msci-mcp"],
+  "recommendedConnectors": ["factset", "lseg", "spglobal", "morningstar", "mtnewswires", "aiera"],
   "tryAsking": [
     "Analyze Tesla's latest earnings — did they beat or miss and what's the forward guidance?",
     "Write a sector deep dive on the semiconductor industry focusing on AI chip demand",
@@ -84,7 +84,63 @@
         { "name": "timeHorizon", "type": "select", "description": "Time horizon for catalyst identification", "required": true, "options": ["Near-term (0-3 months)", "Medium-term (3-12 months)", "Long-term (12+ months)"] }
       ],
       "enabled": true
+    },
+    {
+      "id": "er-earnings-preview",
+      "name": "Earnings Preview",
+      "description": "Prepare a pre-earnings setup with expectations, key debates, and source-backed watch items.",
+      "icon": "🔮",
+      "category": "Finance",
+      "prompt": "Prepare an earnings preview. Include consensus expectations, key debates, KPIs to watch, likely guidance focus, sector read-throughs, and a source ledger. Stage conclusions for analyst review.",
+      "enabled": true
+    },
+    {
+      "id": "er-model-update",
+      "name": "Model Update",
+      "description": "Update model assumptions after company results, guidance, or new disclosures.",
+      "icon": "🧮",
+      "category": "Finance",
+      "prompt": "Draft an equity model update. Identify changed inputs, source support, estimate impacts, checks, and unresolved questions. Keep output as draft work product and preserve the source ledger.",
+      "enabled": true
+    },
+    {
+      "id": "er-morning-note",
+      "name": "Morning Note",
+      "description": "Draft a concise market or coverage morning note with sourced claims.",
+      "icon": "🌅",
+      "category": "Finance",
+      "prompt": "Draft a concise morning note. Cover market moves, company-specific news, sector read-throughs, upcoming catalysts, source links, and analyst-review caveats. Do not provide final investment advice.",
+      "enabled": true
+    },
+    {
+      "id": "er-thesis",
+      "name": "Investment Thesis",
+      "description": "Draft and pressure-test a source-backed equity thesis.",
+      "icon": "🧭",
+      "category": "Finance",
+      "prompt": "Draft an equity thesis with bull/base/bear cases, evidence, valuation linkage, catalysts, risks, and disconfirming evidence. Keep the conclusion review-ready, not final advice.",
+      "enabled": true
+    },
+    {
+      "id": "er-screen",
+      "name": "Equity Screen",
+      "description": "Build a screened list of companies with criteria, ranking, and caveats.",
+      "icon": "🔎",
+      "category": "Finance",
+      "prompt": "Run an equity screen from the provided criteria and available data. Return criteria, candidate table, source support, caveats, and next diligence questions. Do not invent unavailable metrics.",
+      "enabled": true
     }
+  ],
+  "slashCommands": [
+    { "name": "earnings", "description": "Analyze an earnings release or call", "skillId": "er-earnings-analysis" },
+    { "name": "earnings-preview", "description": "Prepare an earnings preview", "skillId": "er-earnings-preview" },
+    { "name": "initiate", "description": "Draft initiation of coverage", "skillId": "er-coverage-initiation" },
+    { "name": "model-update", "description": "Draft an equity model update", "skillId": "er-model-update" },
+    { "name": "morning-note", "description": "Draft a morning note", "skillId": "er-morning-note" },
+    { "name": "sector", "description": "Run sector analysis", "skillId": "er-sector-analysis" },
+    { "name": "thesis", "description": "Draft and pressure-test an equity thesis", "skillId": "er-thesis" },
+    { "name": "catalysts", "description": "Track company catalysts", "skillId": "er-catalyst-tracking" },
+    { "name": "screen", "description": "Run an equity screen", "skillId": "er-screen" }
   ],
   "agentRoles": [
     {

@@ -27,6 +27,7 @@ export interface MicrosoftEmailRefreshRequest {
   clientSecret?: string;
   refreshToken: string;
   tenant?: string;
+  scopes?: string[];
 }
 
 const DEFAULT_TIMEOUT_MS = 2 * 60 * 1000;
@@ -314,6 +315,9 @@ export async function refreshMicrosoftEmailAccessToken(
     grant_type: "refresh_token",
     refresh_token: request.refreshToken,
   });
+  if (request.scopes && request.scopes.length > 0) {
+    params.set("scope", request.scopes.join(" "));
+  }
 
   if (request.clientSecret) {
     params.set("client_secret", request.clientSecret);

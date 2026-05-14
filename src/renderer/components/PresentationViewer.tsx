@@ -8,6 +8,7 @@ import {
   ZoomIn,
 } from "lucide-react";
 import type { FileViewerResult } from "../../electron/preload";
+import "./artifact-viewers.css";
 
 export type PresentationPreview = NonNullable<
   NonNullable<FileViewerResult["data"]>["presentationPreview"]

@@ -37,7 +37,7 @@ Mention options are built from local configured state. The resolver is intention
 Configured integration rules:
 
 - Built-in integrations require both `enabled` state and local credentials. This covers Notion, Box, OneDrive, Dropbox, SharePoint, and AgentMail.
-- Google Workspace splits into **Gmail**, **Google Drive**, and **Google Calendar** when OAuth has an access token or refresh token. The menu does not show a single generic Google Workspace item for prompt mentions.
+- Built-in Google Workspace splits into **Gmail**, **Google Drive**, and **Google Calendar** when OAuth has an access token or refresh token. The connected Google Workspace MCP connector can also split into service-specific options such as **Google Docs**, **Google Sheets**, **Google Slides**, **Google Tasks**, and **Google Chat** based on its available tools. The menu does not show a single generic Google Workspace item for prompt mentions.
 - Gateway channels show connected enabled channels such as Slack. If more than one channel of the same type is connected, the label includes the workspace or channel name.
 - MCP connectors appear only when connected/configured. Multi-service MCP connectors split by detected service tool groups; otherwise the menu shows one connector option.
 - Inbox appears as an internal integration-style option when a mailbox backend is available through Google Workspace, AgentMail, or a connected email channel.
@@ -87,7 +87,7 @@ See [Ask Inbox Architecture](ask-inbox-architecture.md) for the run-scoped progr
 ## Reliability Notes
 
 - The resolver never refreshes OAuth tokens or calls remote services while filtering the `@` menu.
-- Google Workspace OAuth refresh failures that return a bad request clear stale access/refresh tokens and require reconnecting the integration. Saving changed Google client credentials or scopes also clears old tokens so the next connection uses the new OAuth configuration.
+- Google Workspace OAuth refresh failures that return a bad request clear stale access/refresh tokens and require reconnecting the integration. Missing required scopes for newer services such as Tasks or Slides also require reconnecting with the default scope set. Saving changed Google client credentials or scopes clears old tokens so the next connection uses the new OAuth configuration.
 - Azure OpenAI Responses fallback normalizes long tool-call ids before replaying tool results so provider `call_id` length limits do not break integration-heavy turns.
 
 ## Implementation Notes

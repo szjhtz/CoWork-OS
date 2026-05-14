@@ -191,6 +191,7 @@ interface AgentTeamItem {
   - `agent_teams.default_model_preference` -> `AgentConfig.modelKey` (e.g., "cheaper" -> `haiku-4-5`)
   - `agent_teams.default_personality` -> `AgentConfig.personalityId`
 - Team-run spawned child tasks set `AgentConfig.bypassQueue=false` so they respect the global task queue concurrency limit.
+- `/multitask` uses the same ephemeral collaborative team/run path, but its root task carries `AgentConfig.multitaskMode=true` and its team items are lane-specific assignments instead of one full-prompt item per selected agent.
 - Team runs now surface worker role intent, semantic completion labels, and graph node state through the same delegated-work timeline used elsewhere in the app.
 
 ## Events

@@ -19,6 +19,7 @@ WhatsApp is the best channel for personal mobile control of CoWork. It works wel
 - Editable progress messages when WhatsApp accepts edits.
 - Optional response prefix so CoWork messages stand out.
 - Link-research group support.
+- Per-group specialization for workspace, agent role, guidance, and tool policy.
 
 ## Daily Workflow
 
@@ -43,6 +44,7 @@ Draft a short reply to this customer complaint.
 - Use `/queue <message>` for explicit follow-up text during a running task.
 - Use `/steer <guidance>` for important corrections.
 - In groups, prefer mention-or-command routing unless the group exists only for CoWork tasks.
+- Use group specialization for trusted groups that should always route into the same workspace and role.
 - Use direct self-chat for approvals involving files, shell commands, or private data.
 
 ## Watch-Outs
@@ -55,5 +57,6 @@ Draft a short reply to this customer complaint.
 ## Related Docs
 
 - [Channel Integrations](../channels.md#whatsapp)
+- [Channel Specialization](../channels.md#channel-specialization)
 - [Gateway User Guide](../gateway-user-guide.md)
 - [Research Channels](../research-channels.md)

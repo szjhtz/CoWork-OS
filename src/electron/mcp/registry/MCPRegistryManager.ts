@@ -151,6 +151,17 @@ const SHIPPED_LOCAL_CONNECTOR_IDS = new Set([
   "drafts",
   "fantastical",
   "tomba",
+  "daloopa",
+  "morningstar",
+  "spglobal",
+  "factset",
+  "moodys",
+  "mtnewswires",
+  "aiera",
+  "lseg",
+  "pitchbook",
+  "chronograph",
+  "egnyte",
 ]);
 
 function isPackagedElectronApp(): boolean {
@@ -227,13 +238,26 @@ function getConnectorEntries(): MCPRegistryEntry[] {
   const similarwebCommand = getConnectorCommandArgs("similarweb-mcp");
   const msciCommand = getConnectorCommandArgs("msci-mcp");
   const legalzoomCommand = getConnectorCommandArgs("legalzoom-mcp");
-  const factsetCommand = getConnectorCommandArgs("factset-mcp");
   const wordpressCommand = getConnectorCommandArgs("wordpress-mcp");
   const harveyCommand = getConnectorCommandArgs("harvey-mcp");
-  const lsegCommand = getConnectorCommandArgs("lseg-mcp");
-  const spglobalCommand = getConnectorCommandArgs("spglobal-mcp");
   const commonroomCommand = getConnectorCommandArgs("commonroom-mcp");
   const tribeaiCommand = getConnectorCommandArgs("tribeai-mcp");
+  const financeDataCommand = getConnectorCommandArgs("finance-data-mcp");
+  const financeProviderCommand = (provider: string): { command: string; args: string[] } => ({
+    command: financeDataCommand.command,
+    args: [...financeDataCommand.args, "--provider", provider],
+  });
+  const factsetCommand = financeProviderCommand("factset");
+  const lsegCommand = financeProviderCommand("lseg");
+  const spglobalCommand = financeProviderCommand("spglobal");
+  const daloopaCommand = financeProviderCommand("daloopa");
+  const morningstarCommand = financeProviderCommand("morningstar");
+  const moodysCommand = financeProviderCommand("moodys");
+  const mtNewswiresCommand = financeProviderCommand("mtnewswires");
+  const aieraCommand = financeProviderCommand("aiera");
+  const pitchbookCommand = financeProviderCommand("pitchbook");
+  const chronographCommand = financeProviderCommand("chronograph");
+  const egnyteFinanceCommand = financeProviderCommand("egnyte");
 
   const entries: MCPRegistryEntry[] = [
     {
@@ -626,7 +650,7 @@ function getConnectorEntries(): MCPRegistryEntry[] {
       id: "google-workspace",
       name: "Google Workspace",
       description:
-        "Unified Google Workspace connector for CoWork OS. Access Sheets, Docs, Chat, Drive, Gmail, and Calendar through one OAuth connection. Requires Google OAuth credentials with full Workspace scopes.",
+        "Unified Google Workspace connector for CoWork OS. Access Sheets, Docs, Slides, Tasks, Chat, Drive, Gmail, and Calendar through one OAuth connection. Requires Google OAuth credentials with full Workspace scopes.",
       version: LOCAL_CONNECTOR_VERSION,
       author: "CoWork OS",
       homepage: "https://github.com/CoWork-OS/CoWork-OS",
@@ -641,6 +665,7 @@ function getConnectorEntries(): MCPRegistryEntry[] {
         GOOGLE_CLIENT_SECRET: "",
         GOOGLE_ACCESS_TOKEN: "",
         GOOGLE_REFRESH_TOKEN: "",
+        GOOGLE_SCOPES: "",
       },
       tools: [
         { name: "google-workspace.health", description: "Check connector health and auth status" },
@@ -657,8 +682,28 @@ function getConnectorEntries(): MCPRegistryEntry[] {
         { name: "google-workspace.chat_messages_create", description: "Send a message to a Chat space" },
         { name: "google-workspace.drive_files_list", description: "List or search Drive files" },
         { name: "google-workspace.drive_files_get", description: "Get Drive file metadata" },
+        { name: "google-workspace.tasks_lists_list", description: "List Google Tasks task lists" },
+        { name: "google-workspace.tasks_lists_create", description: "Create a Google Tasks task list" },
+        { name: "google-workspace.tasks_lists_update", description: "Update a Google Tasks task list" },
+        { name: "google-workspace.tasks_lists_delete", description: "Delete a Google Tasks task list" },
+        { name: "google-workspace.tasks_list", description: "List tasks in a task list" },
+        { name: "google-workspace.tasks_get", description: "Get a task" },
+        { name: "google-workspace.tasks_create", description: "Create a task" },
+        { name: "google-workspace.tasks_update", description: "Update a task" },
+        { name: "google-workspace.tasks_complete", description: "Mark a task completed" },
+        { name: "google-workspace.tasks_uncomplete", description: "Mark a task needsAction" },
+        { name: "google-workspace.tasks_move", description: "Move a task within a list" },
+        { name: "google-workspace.tasks_delete", description: "Delete a task" },
+        { name: "google-workspace.tasks_clear_completed", description: "Clear completed tasks" },
+        { name: "google-workspace.slides_create", description: "Create a new Google Slides presentation" },
+        { name: "google-workspace.slides_get", description: "Get Google Slides presentation structure" },
+        { name: "google-workspace.slides_create_slide", description: "Create a slide" },
+        { name: "google-workspace.slides_delete_slide", description: "Delete a slide" },
+        { name: "google-workspace.slides_add_text_box", description: "Add a text box to a slide" },
+        { name: "google-workspace.slides_replace_all_text", description: "Replace text in a presentation" },
+        { name: "google-workspace.slides_batch_update", description: "Run raw Slides batchUpdate requests" },
       ],
-      tags: ["google", "workspace", "sheets", "docs", "chat", "drive", "enterprise", "connector"],
+      tags: ["google", "workspace", "sheets", "docs", "slides", "tasks", "chat", "drive", "enterprise", "connector"],
       category: "enterprise",
       verified: true,
       featured: true,
@@ -1953,18 +1998,18 @@ function getConnectorEntries(): MCPRegistryEntry[] {
       defaultEnv: {
         FACTSET_USERNAME: "",
         FACTSET_API_KEY: "",
+        FACTSET_BASE_URL: "",
       },
       tools: [
         { name: "factset.health", description: "Check connector health and auth status" },
-        { name: "factset.get_prices", description: "Get historical price data" },
-        { name: "factset.get_fundamentals", description: "Get company fundamentals" },
-        { name: "factset.get_estimates", description: "Get consensus estimates" },
-        { name: "factset.search_companies", description: "Search for companies" },
+        { name: "factset.search", description: "Search FactSet read-only data" },
+        { name: "factset.get_company_profile", description: "Get company profile data" },
         { name: "factset.get_financials", description: "Get financial statements" },
-        { name: "factset.get_ratios", description: "Get financial ratios" },
+        { name: "factset.get_market_data", description: "Get market data" },
+        { name: "factset.get_news", description: "Get news and research headlines" },
       ],
       tags: ["factset", "financial-data", "research", "finance", "connector"],
-      category: "enterprise",
+      category: "finance",
       verified: true,
       featured: true,
     },
@@ -2046,18 +2091,18 @@ function getConnectorEntries(): MCPRegistryEntry[] {
       defaultEnv: {
         LSEG_API_KEY: "",
         LSEG_API_SECRET: "",
+        LSEG_BASE_URL: "",
       },
       tools: [
         { name: "lseg.health", description: "Check connector health and auth status" },
-        { name: "lseg.get_quote", description: "Get real-time quote for an instrument" },
-        { name: "lseg.get_historical_prices", description: "Get historical price data" },
-        { name: "lseg.search_instruments", description: "Search for instruments" },
+        { name: "lseg.search", description: "Search LSEG instruments and entities" },
+        { name: "lseg.get_company_profile", description: "Get company profile data" },
+        { name: "lseg.get_financials", description: "Get company financial data" },
+        { name: "lseg.get_market_data", description: "Get market and instrument data" },
         { name: "lseg.get_news", description: "Get news headlines and stories" },
-        { name: "lseg.get_fundamentals", description: "Get company fundamental data" },
-        { name: "lseg.get_estimates", description: "Get analyst estimates and consensus" },
       ],
       tags: ["lseg", "refinitiv", "market-data", "finance", "connector"],
-      category: "enterprise",
+      category: "finance",
       verified: true,
       featured: true,
     },
@@ -2078,19 +2123,220 @@ function getConnectorEntries(): MCPRegistryEntry[] {
       defaultEnv: {
         SPGLOBAL_USERNAME: "",
         SPGLOBAL_API_KEY: "",
+        SPGLOBAL_BASE_URL: "",
       },
       tools: [
         { name: "spglobal.health", description: "Check connector health and auth status" },
-        { name: "spglobal.get_credit_rating", description: "Get credit rating for an entity" },
-        { name: "spglobal.search_entities", description: "Search entities in S&P universe" },
+        { name: "spglobal.search", description: "Search S&P Global entities and datasets" },
+        { name: "spglobal.get_company_profile", description: "Get company or issuer profile data" },
         { name: "spglobal.get_financials", description: "Get company financial data" },
-        { name: "spglobal.get_industry_data", description: "Get industry analysis data" },
         { name: "spglobal.get_market_data", description: "Get market and index data" },
       ],
       tags: ["spglobal", "credit-ratings", "financial-data", "finance", "connector"],
-      category: "enterprise",
+      category: "finance",
       verified: true,
       featured: true,
+    },
+    {
+      id: "daloopa",
+      name: "Daloopa",
+      description:
+        "Daloopa connector for CoWork OS. Read-only normalized financial data and filings. Requires DALOOPA_API_KEY and DALOOPA_BASE_URL.",
+      version: LOCAL_CONNECTOR_VERSION,
+      author: "CoWork OS",
+      homepage: "https://github.com/CoWork-OS/CoWork-OS",
+      repository: "https://github.com/CoWork-OS/CoWork-OS",
+      license: "MIT",
+      installMethod: "manual",
+      transport: "stdio",
+      defaultCommand: daloopaCommand.command,
+      defaultArgs: daloopaCommand.args,
+      defaultEnv: { DALOOPA_API_KEY: "", DALOOPA_BASE_URL: "" },
+      tools: [
+        { name: "daloopa.health", description: "Check connector health and auth status" },
+        { name: "daloopa.search", description: "Search Daloopa data" },
+        { name: "daloopa.get_financials", description: "Get normalized financials" },
+        { name: "daloopa.get_documents", description: "Get filing or source documents" },
+      ],
+      tags: ["daloopa", "financial-data", "filings", "finance", "connector"],
+      category: "finance",
+      verified: true,
+    },
+    {
+      id: "morningstar",
+      name: "Morningstar",
+      description:
+        "Morningstar connector for CoWork OS. Read-only funds, market, company, and portfolio data. Requires MORNINGSTAR_API_KEY and MORNINGSTAR_BASE_URL.",
+      version: LOCAL_CONNECTOR_VERSION,
+      author: "CoWork OS",
+      homepage: "https://github.com/CoWork-OS/CoWork-OS",
+      repository: "https://github.com/CoWork-OS/CoWork-OS",
+      license: "MIT",
+      installMethod: "manual",
+      transport: "stdio",
+      defaultCommand: morningstarCommand.command,
+      defaultArgs: morningstarCommand.args,
+      defaultEnv: { MORNINGSTAR_API_KEY: "", MORNINGSTAR_BASE_URL: "" },
+      tools: [
+        { name: "morningstar.health", description: "Check connector health and auth status" },
+        { name: "morningstar.search", description: "Search Morningstar data" },
+        { name: "morningstar.get_company_profile", description: "Get company or fund profile data" },
+        { name: "morningstar.get_market_data", description: "Get market data" },
+        { name: "morningstar.get_financials", description: "Get financial data" },
+      ],
+      tags: ["morningstar", "funds", "market-data", "finance", "connector"],
+      category: "finance",
+      verified: true,
+    },
+    {
+      id: "moodys",
+      name: "Moody's",
+      description:
+        "Moody's connector for CoWork OS. Read-only ratings, entity, and risk documents. Requires MOODYS_API_KEY and MOODYS_BASE_URL.",
+      version: LOCAL_CONNECTOR_VERSION,
+      author: "CoWork OS",
+      homepage: "https://github.com/CoWork-OS/CoWork-OS",
+      repository: "https://github.com/CoWork-OS/CoWork-OS",
+      license: "MIT",
+      installMethod: "manual",
+      transport: "stdio",
+      defaultCommand: moodysCommand.command,
+      defaultArgs: moodysCommand.args,
+      defaultEnv: { MOODYS_API_KEY: "", MOODYS_BASE_URL: "" },
+      tools: [
+        { name: "moodys.health", description: "Check connector health and auth status" },
+        { name: "moodys.search", description: "Search Moody's entities and documents" },
+        { name: "moodys.get_company_profile", description: "Get issuer or entity profile data" },
+        { name: "moodys.get_market_data", description: "Get ratings or market data" },
+        { name: "moodys.get_documents", description: "Get ratings documents" },
+      ],
+      tags: ["moodys", "ratings", "kyc", "finance", "connector"],
+      category: "finance",
+      verified: true,
+    },
+    {
+      id: "mtnewswires",
+      name: "MT Newswires",
+      description:
+        "MT Newswires connector for CoWork OS. Read-only market news. Requires MTNEWSWIRES_API_KEY and MTNEWSWIRES_BASE_URL.",
+      version: LOCAL_CONNECTOR_VERSION,
+      author: "CoWork OS",
+      homepage: "https://github.com/CoWork-OS/CoWork-OS",
+      repository: "https://github.com/CoWork-OS/CoWork-OS",
+      license: "MIT",
+      installMethod: "manual",
+      transport: "stdio",
+      defaultCommand: mtNewswiresCommand.command,
+      defaultArgs: mtNewswiresCommand.args,
+      defaultEnv: { MTNEWSWIRES_API_KEY: "", MTNEWSWIRES_BASE_URL: "" },
+      tools: [
+        { name: "mtnewswires.health", description: "Check connector health and auth status" },
+        { name: "mtnewswires.search", description: "Search market news" },
+        { name: "mtnewswires.get_news", description: "Get news headlines and stories" },
+      ],
+      tags: ["mtnewswires", "news", "market-data", "finance", "connector"],
+      category: "finance",
+      verified: true,
+    },
+    {
+      id: "aiera",
+      name: "Aiera",
+      description:
+        "Aiera connector for CoWork OS. Read-only events, transcripts, and filings. Requires AIERA_API_KEY and AIERA_BASE_URL.",
+      version: LOCAL_CONNECTOR_VERSION,
+      author: "CoWork OS",
+      homepage: "https://github.com/CoWork-OS/CoWork-OS",
+      repository: "https://github.com/CoWork-OS/CoWork-OS",
+      license: "MIT",
+      installMethod: "manual",
+      transport: "stdio",
+      defaultCommand: aieraCommand.command,
+      defaultArgs: aieraCommand.args,
+      defaultEnv: { AIERA_API_KEY: "", AIERA_BASE_URL: "" },
+      tools: [
+        { name: "aiera.health", description: "Check connector health and auth status" },
+        { name: "aiera.search", description: "Search Aiera events and documents" },
+        { name: "aiera.get_documents", description: "Get transcripts or event documents" },
+        { name: "aiera.get_news", description: "Get event-related updates" },
+      ],
+      tags: ["aiera", "transcripts", "earnings", "finance", "connector"],
+      category: "finance",
+      verified: true,
+    },
+    {
+      id: "pitchbook",
+      name: "PitchBook",
+      description:
+        "PitchBook connector for CoWork OS. Read-only private market company and deal data. Requires PITCHBOOK_API_KEY and PITCHBOOK_BASE_URL.",
+      version: LOCAL_CONNECTOR_VERSION,
+      author: "CoWork OS",
+      homepage: "https://github.com/CoWork-OS/CoWork-OS",
+      repository: "https://github.com/CoWork-OS/CoWork-OS",
+      license: "MIT",
+      installMethod: "manual",
+      transport: "stdio",
+      defaultCommand: pitchbookCommand.command,
+      defaultArgs: pitchbookCommand.args,
+      defaultEnv: { PITCHBOOK_API_KEY: "", PITCHBOOK_BASE_URL: "" },
+      tools: [
+        { name: "pitchbook.health", description: "Check connector health and auth status" },
+        { name: "pitchbook.search", description: "Search private companies and deals" },
+        { name: "pitchbook.get_company_profile", description: "Get company profile data" },
+        { name: "pitchbook.get_financials", description: "Get available company financials" },
+      ],
+      tags: ["pitchbook", "private-markets", "deals", "finance", "connector"],
+      category: "finance",
+      verified: true,
+    },
+    {
+      id: "chronograph",
+      name: "Chronograph",
+      description:
+        "Chronograph connector for CoWork OS. Read-only portfolio monitoring and fund data. Requires CHRONOGRAPH_API_KEY and CHRONOGRAPH_BASE_URL.",
+      version: LOCAL_CONNECTOR_VERSION,
+      author: "CoWork OS",
+      homepage: "https://github.com/CoWork-OS/CoWork-OS",
+      repository: "https://github.com/CoWork-OS/CoWork-OS",
+      license: "MIT",
+      installMethod: "manual",
+      transport: "stdio",
+      defaultCommand: chronographCommand.command,
+      defaultArgs: chronographCommand.args,
+      defaultEnv: { CHRONOGRAPH_API_KEY: "", CHRONOGRAPH_BASE_URL: "" },
+      tools: [
+        { name: "chronograph.health", description: "Check connector health and auth status" },
+        { name: "chronograph.search", description: "Search portfolio or fund data" },
+        { name: "chronograph.get_company_profile", description: "Get portfolio company profile data" },
+        { name: "chronograph.get_financials", description: "Get portfolio company financials" },
+        { name: "chronograph.get_documents", description: "Get support documents" },
+      ],
+      tags: ["chronograph", "fund-admin", "portfolio-monitoring", "finance", "connector"],
+      category: "finance",
+      verified: true,
+    },
+    {
+      id: "egnyte",
+      name: "Egnyte",
+      description:
+        "Egnyte connector for CoWork OS finance workflows. Read-only document search and retrieval. Requires EGNYTE_API_KEY and EGNYTE_BASE_URL.",
+      version: LOCAL_CONNECTOR_VERSION,
+      author: "CoWork OS",
+      homepage: "https://github.com/CoWork-OS/CoWork-OS",
+      repository: "https://github.com/CoWork-OS/CoWork-OS",
+      license: "MIT",
+      installMethod: "manual",
+      transport: "stdio",
+      defaultCommand: egnyteFinanceCommand.command,
+      defaultArgs: egnyteFinanceCommand.args,
+      defaultEnv: { EGNYTE_API_KEY: "", EGNYTE_BASE_URL: "" },
+      tools: [
+        { name: "egnyte.health", description: "Check connector health and auth status" },
+        { name: "egnyte.search", description: "Search finance document repositories" },
+        { name: "egnyte.get_documents", description: "Get read-only source documents" },
+      ],
+      tags: ["egnyte", "documents", "kyc", "fund-admin", "finance", "connector"],
+      category: "finance",
+      verified: true,
     },
     {
       id: "commonroom",
@@ -2163,6 +2409,10 @@ function getBuiltinRegistry(): MCPRegistry {
     lastUpdated: new Date().toISOString(),
     servers: [...BASE_BUILTIN_SERVERS, ...getConnectorEntries()],
   };
+}
+
+export function getBuiltinRegistryServer(serverId: string): MCPRegistryEntry | undefined {
+  return getBuiltinRegistry().servers.find((server) => server.id === serverId);
 }
 
 function mergeLocalConnectors(registry: MCPRegistry): MCPRegistry {

@@ -9,6 +9,8 @@ import {
   ShellSessionManager,
   isLikelyInteractiveCommand,
 } from "./shell-session-manager";
+import { createSandbox } from "../sandbox/sandbox-factory";
+import { loadPolicies, type AdminPolicies } from "../../admin/policies";
 
 /**
  * Strip ANSI/VT control sequences and normalize line endings produced by the
@@ -38,6 +40,7 @@ function stripScriptControlCodes(text: string): string {
 const MAX_TIMEOUT = 5 * 60 * 1000; // 5 minutes max
 const DEFAULT_TIMEOUT = 60 * 1000; // 1 minute default
 const MAX_OUTPUT_SIZE = 100 * 1024; // 100KB max output
+const UNSANDBOXED_SHELL_OVERRIDE_ENV = "COWORK_ALLOW_UNSANDBOXED_SHELL";
 
 const SHELL_OUTPUT_REDACTION_PATTERNS: Array<{ pattern: RegExp; replacement: string }> = [
   {
@@ -282,6 +285,13 @@ function resolveCommandCwd(workspacePath: string, cwd?: string): string {
   return path.resolve(workspacePath, cwd);
 }
 
+function resolveDockerSandboxCwd(workspacePath: string, cwd: string): string {
+  const relative = path.relative(path.resolve(workspacePath), path.resolve(cwd));
+  if (relative === "") return "/workspace";
+  if (relative.startsWith("..") || path.isAbsolute(relative)) return cwd;
+  return path.posix.join("/workspace", relative.split(path.sep).join("/"));
+}
+
 /**
  * Get all descendant process IDs for a given parent PID.
  * Uses pgrep on Unix, wmic on Windows.
@@ -470,6 +480,207 @@ export class ShellTools {
    */
   setWorkspace(workspace: Workspace): void {
     this.workspace = workspace;
+  }
+
+  private allowUnsandboxedShellFallback(policies: AdminPolicies): boolean {
+    return (
+      policies.runtime.allowUnsandboxedShell === true &&
+      process.env[UNSANDBOXED_SHELL_OVERRIDE_ENV] === "1"
+    );
+  }
+
+  private shouldAllowShellNetwork(policies: AdminPolicies): boolean {
+    if (this.workspace.permissions?.network !== true) return false;
+    const network = policies.runtime.network;
+    return (
+      network.allowShellNetwork === true &&
+      network.defaultAction === "allow" &&
+      network.allowedDomains.length === 0 &&
+      network.blockedDomains.length === 0
+    );
+  }
+
+  private async runCommandInSandbox(
+    command: string,
+    options: {
+      cwd: string;
+      timeout: number;
+      promptPrefix: string;
+      env?: Record<string, string>;
+      policies: AdminPolicies;
+    },
+  ): Promise<{
+    success: boolean;
+    stdout: string;
+    stderr: string;
+    exitCode: number | null;
+    truncated?: boolean;
+    terminationReason?: CommandTerminationReason;
+  } | null> {
+    const sandbox = await createSandbox(this.workspace);
+    try {
+      const policies = options.policies;
+      const sandboxAllowed = policies.runtime.allowedSandboxTypes.includes(sandbox.type);
+      if (sandbox.type === "none" || !sandboxAllowed) {
+        if (!policies.runtime.requireSandboxForShell) {
+          this.daemon.logEvent(this.taskId, "shell_sandbox_unavailable", {
+            command,
+            cwd: options.cwd,
+            reason: sandbox.type === "none" ? "no_os_sandbox_available" : "sandbox_type_not_allowed",
+            sandboxType: sandbox.type,
+            requireSandboxForShell: policies.runtime.requireSandboxForShell,
+          });
+          return null;
+        }
+        if (this.allowUnsandboxedShellFallback(policies)) {
+          this.daemon.logEvent(this.taskId, "shell_sandbox_bypassed", {
+            command,
+            cwd: options.cwd,
+            reason: sandbox.type === "none" ? "no_os_sandbox_available" : "sandbox_type_not_allowed",
+            sandboxType: sandbox.type,
+            requireSandboxForShell: policies.runtime.requireSandboxForShell,
+            overrideEnv: UNSANDBOXED_SHELL_OVERRIDE_ENV,
+          });
+          return null;
+        }
+        this.daemon.logEvent(this.taskId, "sandbox_denied", {
+          tool: "run_command",
+          command,
+          cwd: options.cwd,
+          reason: sandbox.type === "none" ? "no_os_sandbox_available" : "sandbox_type_not_allowed",
+          sandboxType: sandbox.type,
+          allowedSandboxTypes: policies.runtime.allowedSandboxTypes,
+        });
+        throw new Error(
+          sandbox.type === "none"
+            ? `run_command requires an OS-level sandbox. Configure macOS sandboxing or Docker, or set ${UNSANDBOXED_SHELL_OVERRIDE_ENV}=1 with admin policy allowUnsandboxedShell=true for explicit local development fallback.`
+            : `run_command sandbox type "${sandbox.type}" is blocked by admin policy.`,
+        );
+      }
+
+      if (options.env && Object.keys(options.env).length > 0) {
+        this.daemon.logEvent(this.taskId, "tool_warning", {
+          tool: "run_command",
+          message:
+            "Custom command environment variables are not forwarded to sandboxed shell execution.",
+          envKeys: Object.keys(options.env),
+        });
+      }
+
+      this.daemon.logEvent(this.taskId, "command_output", {
+        command,
+        cwd: options.cwd,
+        type: "start",
+        output: `${options.promptPrefix}${command}\n`,
+        sandboxType: sandbox.type,
+      });
+
+      const allowShellNetwork = this.shouldAllowShellNetwork(policies);
+      if (this.workspace.permissions?.network === true) {
+        this.daemon.logEvent(this.taskId, "network_policy_decision", {
+          action: allowShellNetwork ? "allow" : "deny",
+          url: "shell://run_command",
+          domain: "",
+          toolName: "run_command",
+          reason: allowShellNetwork
+            ? "admin_shell_network_enabled"
+            : "shell_network_requires_admin_coarse_allow",
+          ruleSource: "admin_policy",
+          sandboxType: sandbox.type,
+        });
+      }
+
+      this.processSessionId++;
+      this.clearEscalationTimeouts();
+      this.userKillRequested = false;
+      const sandboxCwd =
+        sandbox.type === "docker"
+          ? resolveDockerSandboxCwd(this.workspace.path, options.cwd)
+          : options.cwd;
+      const result = await sandbox.execute(command, [], {
+        cwd: sandboxCwd,
+        timeout: options.timeout,
+        maxOutputSize: MAX_OUTPUT_SIZE,
+        allowNetwork: allowShellNetwork,
+        onProcess: (process) => {
+          this.activeProcess = process;
+        },
+      });
+
+      const stdout = this.sanitizeCommandOutput(result.stdout);
+      const stderr = this.sanitizeCommandOutput(result.stderr);
+      if (stdout) {
+        this.daemon.logEvent(this.taskId, "command_output", {
+          command,
+          cwd: options.cwd,
+          type: "stdout",
+          output: stdout,
+          sandboxType: sandbox.type,
+        });
+      }
+      if (stderr) {
+        this.daemon.logEvent(this.taskId, "command_output", {
+          command,
+          cwd: options.cwd,
+          type: "stderr",
+          output: stderr,
+          sandboxType: sandbox.type,
+        });
+      }
+
+      const terminationReason: CommandTerminationReason = this.userKillRequested
+        ? "user_stopped"
+        : result.timedOut
+          ? "timeout"
+          : result.error
+            ? "error"
+            : "normal";
+      const success = terminationReason === "normal" && result.exitCode === 0;
+      const errorMessage =
+        result.error ||
+        (terminationReason === "timeout"
+          ? "Command timed out"
+          : terminationReason === "user_stopped"
+            ? "Command stopped by user"
+          : !success
+            ? `Command exited with code ${result.exitCode}`
+            : undefined);
+
+      this.daemon.logEvent(this.taskId, "command_output", {
+        command,
+        cwd: options.cwd,
+        type: "end",
+        exitCode: result.exitCode,
+        success,
+        terminationReason,
+        sandboxType: sandbox.type,
+      });
+
+      this.daemon.logEvent(this.taskId, "tool_result", {
+        tool: "run_command",
+        success,
+        exitCode: result.exitCode,
+        terminationReason,
+        error: errorMessage,
+        sandboxType: sandbox.type,
+      });
+
+      return {
+        success,
+        stdout,
+        stderr,
+        exitCode: result.exitCode,
+        truncated:
+          result.stdout.includes("[Output truncated]") ||
+          result.stderr.includes("[Output truncated]"),
+        terminationReason,
+      };
+    } finally {
+      this.activeProcess = null;
+      this.clearEscalationTimeouts();
+      this.userKillRequested = false;
+      sandbox.cleanup();
+    }
   }
 
   /**
@@ -781,13 +992,28 @@ export class ShellTools {
       cwd: options?.cwd || this.workspace.path,
     });
 
-    const persistentShellAllowed = shouldUsePersistentShell(command);
     const cwd = resolveCommandCwd(this.workspace.path, options?.cwd);
     const dirName = (() => {
       const parts = cwd.replace(/\\/g, "/").split("/").filter(Boolean);
       return parts[parts.length - 1] ?? "";
     })();
     const promptPrefix = dirName ? `$ ${dirName} % ` : `$ `;
+    const timeout = Math.min(options?.timeout || DEFAULT_TIMEOUT, MAX_TIMEOUT);
+    const policies = loadPolicies();
+    const persistentShellAllowed = shouldUsePersistentShell(command);
+    if (!persistentShellAllowed || policies.runtime.requireSandboxForShell) {
+      const sandboxResult = await this.runCommandInSandbox(command, {
+        cwd,
+        timeout,
+        promptPrefix,
+        env: options?.env,
+        policies,
+      });
+      if (sandboxResult) {
+        return sandboxResult;
+      }
+    }
+
     if (persistentShellAllowed) {
       this.daemon.logEvent(this.taskId, "command_output", {
         command,
@@ -892,8 +1118,6 @@ export class ShellTools {
         }
       }
     }
-
-    const timeout = Math.min(options?.timeout || DEFAULT_TIMEOUT, MAX_TIMEOUT);
 
     // Create a minimal, safe environment (don't leak sensitive process.env vars like API keys)
     const resolvedShell = resolveShellForCommandExecution();

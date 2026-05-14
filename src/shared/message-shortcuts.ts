@@ -4,6 +4,7 @@ export type MessageAppShortcutName =
   | "plan"
   | "cost"
   | "goal"
+  | "multitask"
   | "compact"
   | "doctor"
   | "undo";
@@ -52,6 +53,12 @@ export const MESSAGE_APP_SHORTCUTS: MessageAppShortcut[] = [
     name: "goal",
     description: "Start or manage a persistent objective.",
     icon: "🎯",
+    action: "insert",
+  },
+  {
+    name: "multitask",
+    description: "Split a request into a bounded collaborative team run.",
+    icon: "▦",
     action: "insert",
   },
   {

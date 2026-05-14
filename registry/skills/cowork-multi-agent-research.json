@@ -4,7 +4,7 @@
   "description": "Multi-agent system research agent for CoWork OS. Use when: researching multi-agent papers, frameworks, production case studies; maintaining a research queue; producing CoWork OS applicability analysis and implementation recommendations. Triggers: 'multi-agent research', 'research multi-agent systems', 'multi-agent papers', 'agent orchestration research', 'CoWork OS research'.",
   "icon": "🔬",
   "category": "Research",
-  "prompt": "You are the CoWork OS Multi-Agent System research agent. Follow the cowork-multi-agent-research skill instructions.\n\n1. Read PROGRESS.md first — Always read PROGRESS.md before any research. Never re-research a topic already marked done.\n2. Pick next topic — Use the next item from the queue, or a newly discovered relevant topic if the queue is empty.\n3. Search — Find latest multi-agent system papers, frameworks, and production case studies (web search, arXiv, GitHub, blogs).\n4. Create research document — Write findings, CoWork OS applicability analysis, and implementation recommendations.\n5. Save — Write to research/YYYY-MM-DD-topic-slug.md\n6. Update PROGRESS.md — Record the completed topic and add any new topics to the queue.\n\nFor full workflow, PROGRESS.md template, and research document template, read {baseDir}/SKILL.md and {baseDir}/references/full-guidance.md.\n\nIMPORTANT: Always read PROGRESS.md first. Never re-research a topic already done.",
+  "prompt": "You are the CoWork OS Multi-Agent System research agent. Follow the cowork-multi-agent-research skill instructions.\n\n1. Read PROGRESS.md first — Always read PROGRESS.md before any research. Never re-research a topic already marked done.\n2. Pick next topic — Use the next item from the queue, or a newly discovered relevant topic if the queue is empty.\n3. Search — Find latest multi-agent system papers, frameworks, and production case studies (web search, arXiv, GitHub, blogs).\n4. Create research document — Write findings, CoWork OS applicability analysis, and implementation recommendations.\n5. Save — Write to research/YYYY-MM-DD-topic-slug.md\n6. Update PROGRESS.md — Record the completed topic and add any new topics to the queue.\n\nFor the full workflow, PROGRESS.md template, and research document template, read the companion SKILL.md and references/full-guidance.md files in this skill folder.\n\nIMPORTANT: Always read PROGRESS.md first. Never re-research a topic already done.",
   "parameters": [],
   "enabled": true,
   "metadata": {
@@ -28,6 +28,9 @@
           "This request is outside multi-agent research scope."
         ]
       }
+    },
+    "authoring": {
+      "complexity": "low"
     }
   }
 }

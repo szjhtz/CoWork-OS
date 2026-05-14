@@ -4,8 +4,8 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Task } from "../../shared/types";
+import { capitalizeSidebarSessionTitle } from "../utils/sidebar-title";
 import {
-  capitalizeSidebarSessionTitle,
   compareTasksByPinAndRecency,
   countHiddenFailedSessions,
   filterTaskTreeBySearch,
@@ -350,6 +350,10 @@ describe("shouldShowTaskInSidebarSessions", () => {
     expect(shouldShowTaskInSidebarSessions(createTask({ targetNodeId: "node-1" }))).toBe(false);
   });
 
+  it("hides agent-panel test backing tasks from the sidebar", () => {
+    expect(shouldShowTaskInSidebarSessions(createTask({ source: "managed_agent_panel" }))).toBe(false);
+  });
+
   it("keeps local tasks visible in the sidebar", () => {
     expect(shouldShowTaskInSidebarSessions(createTask({}))).toBe(true);
   });
@@ -365,6 +369,7 @@ describe("isAutomatedSession", () => {
   it("keeps webhook and generic api tasks out of the automated bucket", () => {
     expect(isAutomatedSession(createTask({ source: "hook" }))).toBe(false);
     expect(isAutomatedSession(createTask({ source: "api" }))).toBe(false);
+    expect(isAutomatedSession(createTask({ source: "managed_agent_panel" }))).toBe(false);
   });
 
   it("treats company and heartbeat api tasks as automated", () => {

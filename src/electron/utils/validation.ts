@@ -202,6 +202,9 @@ export const AgentConfigSchema = z
       .union([z.literal(1), z.literal(2), z.literal(3)])
       .optional(),
     collaborativeMode: z.boolean().optional(),
+    multitaskMode: z.boolean().optional(),
+    multitaskLaneCount: z.number().int().min(2).max(8).optional(),
+    multitaskAssignmentMode: z.literal("auto_split").optional(),
     multiLlmMode: z.boolean().optional(),
     multiLlmConfig: z
       .object({
@@ -645,6 +648,7 @@ export const OpenRouterSettingsSchema = z
     apiKey: z.string().max(500).optional(),
     model: z.string().max(200).optional(),
     baseUrl: z.string().max(500).optional(),
+    paretoMinCodingScore: z.number().min(0).max(1).optional(),
     ...ProviderRoutingSettingsSchema,
   })
   .optional();
@@ -1832,6 +1836,38 @@ export const UpdateChannelSchema = z.object({
   name: z.string().min(1).max(MAX_TITLE_LENGTH).optional(),
   securityMode: SecurityModeSchema.optional(),
   config: ChannelConfigSchema.optional(),
+});
+
+export const ChannelSpecializationCreateSchema = z.object({
+  channelId: z.string().uuid(),
+  chatId: z.string().trim().min(1).max(200).optional(),
+  threadId: z.string().trim().min(1).max(200).optional(),
+  name: z.string().trim().max(MAX_TITLE_LENGTH).optional(),
+  workspaceId: z.string().uuid().optional(),
+  agentRoleId: z.string().uuid().optional(),
+  systemGuidance: z.string().trim().max(4000).optional(),
+  toolRestrictions: z.array(z.string().trim().min(1).max(120)).max(100).optional(),
+  allowSharedContextMemory: z.boolean().optional(),
+  enabled: z.boolean().optional(),
+});
+
+export const ChannelSpecializationUpdateSchema = z.object({
+  id: z.string().uuid(),
+  chatId: z.string().trim().min(1).max(200).nullable().optional(),
+  threadId: z.string().trim().min(1).max(200).nullable().optional(),
+  name: z.string().trim().max(MAX_TITLE_LENGTH).nullable().optional(),
+  workspaceId: z.string().uuid().nullable().optional(),
+  agentRoleId: z.string().uuid().nullable().optional(),
+  systemGuidance: z.string().trim().max(4000).nullable().optional(),
+  toolRestrictions: z.array(z.string().trim().min(1).max(120)).max(100).optional(),
+  allowSharedContextMemory: z.boolean().optional(),
+  enabled: z.boolean().optional(),
+});
+
+export const ChannelSpecializationResolveSchema = z.object({
+  channelId: z.string().uuid(),
+  chatId: z.string().trim().min(1).max(200).optional(),
+  threadId: z.string().trim().min(1).max(200).optional(),
 });
 
 export const GrantAccessSchema = z.object({

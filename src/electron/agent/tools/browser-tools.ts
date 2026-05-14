@@ -4,12 +4,12 @@ import * as path from "path";
 import { Workspace } from "../../../shared/types";
 import { AgentDaemon } from "../daemon";
 import { BrowserService } from "../browser/browser-service";
-import { GuardrailManager } from "../../guardrails/guardrail-manager";
 import {
   BrowserWorkbenchService,
   getBrowserWorkbenchService,
 } from "../../browser/browser-workbench-service";
 import { normalizeBrowserUrl } from "../../browser/browser-session-manager";
+import { evaluateNetworkPolicy } from "../../security/network-policy";
 
 // oxlint-disable-next-line typescript-eslint/no-explicit-any
 type Any = any;
@@ -86,17 +86,13 @@ export class BrowserTools {
     if (!this.workspace.permissions?.network) {
       throw new Error("Workspace does not have network permission for browser navigation");
     }
-    if (!GuardrailManager.isDomainAllowed(url)) {
-      const settings = GuardrailManager.loadSettings();
-      const allowedDomainsStr =
-        settings.allowedDomains.length > 0
-          ? settings.allowedDomains.join(", ")
-          : "(none configured)";
-      throw new Error(
-        `Domain not allowed: "${url}"\n` +
-          `Allowed domains: ${allowedDomainsStr}\n` +
-          `You can modify allowed domains in Settings > Guardrails.`,
-      );
+    const decision = evaluateNetworkPolicy({ url, toolName: "browser_navigate" });
+    this.daemon.logEvent(this.taskId, "network_policy_decision", decision);
+    if (decision.action !== "allow") {
+      if (decision.reason === "legacy_guardrail_domain_denied") {
+        throw new Error(`Domain not allowed: "${url}"`);
+      }
+      throw new Error(`Network access denied for "${url}": ${decision.reason}`);
     }
     return url;
   }
@@ -791,7 +787,9 @@ export class BrowserTools {
       },
       {
         name: "browser_emulate",
-        description: "Set browser viewport/device emulation for responsive testing",
+        description:
+          "Set the visible in-app browser viewport/device emulation for responsive testing. " +
+          "Use this before screenshot/snapshot passes at common breakpoints such as desktop 1440x900, tablet 768x1024, and mobile 390x844.",
         input_schema: {
           type: "object" as const,
           properties: {
@@ -1685,7 +1683,16 @@ export class BrowserTools {
               typeof input?.device_scale_factor === "number" ? input.device_scale_factor : undefined,
             mobile: input?.mobile === true,
           });
-          if (result) return result;
+          if (result) {
+            this.daemon.logEvent(this.taskId, "browser_action", {
+              action: "emulate",
+              width: result.width,
+              height: result.height,
+              mobile: result.mobile,
+              visible: true,
+            });
+            return { ...result, visible: true };
+          }
         }
         return {
           success: false,

@@ -10,7 +10,7 @@ All improvements are opt-in (admin-toggleable), rate-limited, and governed by th
 
 The learning loop is now visible as part of the task and operator experience, not just as backend plumbing.
 
-- Task completion emits a standardized learning progression that shows memory capture, playbook reinforcement, and skill proposal review state
+- Task completion emits a standardized learning progression that shows memory capture, Dreaming candidate generation, playbook reinforcement, and skill proposal review state
 - Mission Control and task detail views render the same progression so operators can inspect the evidence behind each step
 - Unified recall spans tasks, messages, files, workspace notes, memory entries, and knowledge-graph context behind one search experience
 - Persistent shell sessions preserve cwd, env deltas, and aliases per task/workspace for longer operator workflows
@@ -81,6 +81,12 @@ Default runtime behavior:
 - `memory_curate` supports stable `id` values so replace/remove operations can be deterministic
 - Curated file sync into `.cowork/USER.md` and `.cowork/MEMORY.md` is serialized per workspace and retried on file-change races
 
+### Dreaming curation
+
+Dreaming runs above the layered memory runtime as a review-first memory hygiene pass. It reads recent transcript spans, structured observations, and curated hot memory, then proposes `dreaming_candidates` for stale entries, corrections, open loops, recurring tasks, constraints, ignored-noise patterns, or curated-memory cleanup.
+
+Dreaming does not change what is injected into prompts by itself. Accepted candidates still flow through the owning memory service before they affect `L0`, `L1`, topic packs, or recall behavior.
+
 ### Sources
 
 The runtime now thinks about sources by wake-up layer instead of one flat synthesis list:
@@ -91,6 +97,7 @@ The runtime now thinks about sources by wake-up layer instead of one flat synthe
 | **L1 Essential Story** | `PlaybookService`, `KnowledgeGraphService`, `DailyLogSummarizer`, optional archive fragments from `MemoryService` |
 | **L2 Topic Packs** | `memory_topics_load` over `.cowork/memory/topics/*.md` |
 | **L3 Deep Recall** | `search_quotes`, `search_sessions`, `search_memories` |
+| **Dreaming Evidence** | transcript spans, structured observations, curated hot memory, and heartbeat memory-drift signals |
 
 `daily_summary` fragments come from `.cowork/memory/summaries/<YYYY-MM-DD>.md` files produced by `DailyLogSummarizer`. Raw daily log files (`.cowork/memory/daily/`) are **never** injected into prompts.
 
@@ -475,6 +482,7 @@ All improvements respect CoWork OS's security-first positioning:
 |---------|-----------|
 | MemorySynthesizer | `src/electron/memory/__tests__/MemorySynthesizer.test.ts` |
 | CuratedMemoryService | `src/electron/memory/__tests__/CuratedMemoryService.test.ts` |
+| DreamingService | `src/electron/memory/__tests__/DreamingService.test.ts` |
 | SessionRecallService | `src/electron/memory/__tests__/SessionRecallService.test.ts` |
 | LayeredMemoryIndexService | `src/electron/memory/__tests__/LayeredMemoryIndexService.test.ts` |
 | AdaptiveStyleEngine | `src/electron/memory/__tests__/AdaptiveStyleEngine.test.ts` |

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { MCPSettingsManager } from "../../mcp/settings";
 import {
   resolveManagedAllowedMcpTools,
+  resolveManagedMcpToolAccess,
   sanitizeManagedEventPayload,
 } from "../ManagedSessionService";
 
@@ -29,15 +30,32 @@ describe("resolveManagedAllowedMcpTools", () => {
     vi.restoreAllMocks();
   });
 
-  it("fails closed when a referenced MCP server is missing", () => {
+  it("reports a missing requirement when a referenced MCP server is missing", () => {
     vi.spyOn(MCPSettingsManager, "loadSettings").mockReturnValue({ toolNamePrefix: "mcp_" } as Any);
     vi.spyOn(MCPSettingsManager, "getServer").mockReturnValue(undefined);
 
-    expect(() =>
+    expect(
       resolveManagedAllowedMcpTools({
         allowedMcpServerIds: ["missing-server"],
       }),
-    ).toThrow(/unknown MCP server/i);
+    ).toEqual([]);
+
+    expect(
+      resolveManagedMcpToolAccess({
+        allowedMcpServerIds: ["missing-server"],
+      }),
+    ).toMatchObject({
+      allowedTools: [],
+      hasMcpServerAllowlist: true,
+      missingConnections: [
+        {
+          id: "missing-server",
+          kind: "mcp_server",
+          label: "Missing Server",
+          status: "missing",
+        },
+      ],
+    });
   });
 
   it("returns a prefixed allowlist when cached tool metadata is available", () => {
@@ -52,5 +70,56 @@ describe("resolveManagedAllowedMcpTools", () => {
         allowedMcpServerIds: ["server-1"],
       }),
     ).toEqual(["mcp_search", "mcp_fetch"]);
+  });
+
+  it("falls back to shipped registry metadata for known finance template MCP servers", () => {
+    vi.spyOn(MCPSettingsManager, "loadSettings").mockReturnValue({ toolNamePrefix: "mcp_" } as Any);
+    vi.spyOn(MCPSettingsManager, "getServer").mockReturnValue(undefined);
+
+    expect(
+      resolveManagedAllowedMcpTools({
+        allowedMcpServerIds: [
+          "factset",
+          "spglobal",
+          "lseg",
+          "pitchbook",
+          "aiera",
+          "mtnewswires",
+          "daloopa",
+          "morningstar",
+          "chronograph",
+          "egnyte",
+          "moodys",
+        ],
+      }),
+    ).toEqual(
+      expect.arrayContaining([
+        "mcp_factset.get_financials",
+        "mcp_spglobal.get_market_data",
+        "mcp_lseg.get_news",
+        "mcp_pitchbook.get_company_profile",
+        "mcp_aiera.get_documents",
+        "mcp_mtnewswires.get_news",
+        "mcp_daloopa.get_documents",
+        "mcp_morningstar.get_financials",
+        "mcp_chronograph.get_documents",
+        "mcp_egnyte.get_documents",
+        "mcp_moodys.get_documents",
+      ]),
+    );
+  });
+
+  it("uses shipped registry metadata when an installed server has no cached tools yet", () => {
+    vi.spyOn(MCPSettingsManager, "loadSettings").mockReturnValue({ toolNamePrefix: "mcp_" } as Any);
+    vi.spyOn(MCPSettingsManager, "getServer").mockReturnValue({
+      id: "factset",
+      tools: [],
+    } as Any);
+
+    expect(
+      resolveManagedAllowedMcpTools({
+        allowedMcpServerIds: ["factset"],
+      }),
+    ).toContain("mcp_factset.get_financials");
   });
 });

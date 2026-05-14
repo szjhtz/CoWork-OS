@@ -10,6 +10,12 @@ type InlineHtmlPreviewProps = {
   onOpenViewer?: (path: string) => void;
 };
 
+type InlineHtmlSourcePreviewProps = {
+  htmlContent: string;
+  title?: string;
+  className?: string;
+};
+
 const formatFileSize = (bytes: number): string => {
   if (!Number.isFinite(bytes) || bytes <= 0) return "";
   if (bytes < 1024) return `${bytes} B`;
@@ -18,6 +24,92 @@ const formatFileSize = (bytes: number): string => {
   const mb = kb / 1024;
   return `${mb.toFixed(1)} MB`;
 };
+
+function extractHtmlTitle(htmlContent: string): string {
+  const titleMatch = htmlContent.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i);
+  const title = titleMatch?.[1]
+    ?.replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (title) return title;
+
+  const headingMatch = htmlContent.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>/i);
+  const heading = headingMatch?.[1]
+    ?.replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return heading || "Interactive HTML";
+}
+
+function InlineHtmlHeader({
+  displayTitle,
+  subtitle,
+  onOpen,
+}: {
+  displayTitle: string;
+  subtitle?: string;
+  onOpen?: () => void;
+}) {
+  return (
+    <div className="inline-html-header">
+      <div className="inline-html-header-left">
+        <div className="inline-html-icon">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <path d="M4 4h16v16H4z" stroke="currentColor" strokeWidth="2" />
+            <path
+              d="m9 10-2 2 2 2M15 10l2 2-2 2M13 8l-2 8"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </div>
+        <div className="inline-html-name-wrap">
+          <div className="inline-html-filename" title={displayTitle}>
+            {displayTitle}
+          </div>
+          {subtitle && <div className="inline-html-subtitle">{subtitle}</div>}
+        </div>
+      </div>
+      {onOpen && (
+        <div className="inline-html-header-actions">
+          <button
+            className="inline-html-action-btn"
+            type="button"
+            onClick={onOpen}
+            title="Open preview"
+            aria-label="Open HTML preview"
+          >
+            <ExternalLink size={16} strokeWidth={2.25} aria-hidden="true" />
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function InlineHtmlSourcePreview({
+  htmlContent,
+  title,
+  className = "",
+}: InlineHtmlSourcePreviewProps) {
+  const displayTitle = title || extractHtmlTitle(htmlContent);
+
+  return (
+    <div className={`inline-html-preview inline-html-preview-source ${className}`.trim()}>
+      <InlineHtmlHeader displayTitle={displayTitle} subtitle="HTML form" />
+      <div className="inline-html-frame-wrap">
+        <iframe
+          className="inline-html-frame"
+          srcDoc={htmlContent}
+          sandbox="allow-scripts allow-forms"
+          title={displayTitle}
+        />
+      </div>
+    </div>
+  );
+}
 
 export function InlineHtmlPreview({
   filePath,
@@ -96,45 +188,13 @@ export function InlineHtmlPreview({
 
       {!loading && !error && result?.htmlContent && (
         <>
-          <div className="inline-html-header">
-            <div className="inline-html-header-left">
-              <div className="inline-html-icon">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-                  <path d="M4 4h16v16H4z" stroke="currentColor" strokeWidth="2" />
-                  <path
-                    d="m9 10-2 2 2 2M15 10l2 2-2 2M13 8l-2 8"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              </div>
-              <div className="inline-html-name-wrap">
-                <div className="inline-html-filename" title={displayTitle}>
-                  {displayTitle}
-                </div>
-                {subtitle && <div className="inline-html-subtitle">{subtitle}</div>}
-              </div>
-            </div>
-            <div className="inline-html-header-actions">
-              <button
-                className="inline-html-action-btn"
-                type="button"
-                onClick={handleOpen}
-                title="Open preview"
-                aria-label="Open HTML preview"
-              >
-                <ExternalLink size={16} strokeWidth={2.25} aria-hidden="true" />
-              </button>
-            </div>
-          </div>
+          <InlineHtmlHeader displayTitle={displayTitle} subtitle={subtitle} onOpen={handleOpen} />
 
           <div className="inline-html-frame-wrap">
             <iframe
               className="inline-html-frame"
               srcDoc={result.htmlContent}
-              sandbox="allow-scripts"
+              sandbox="allow-scripts allow-forms"
               title={displayTitle}
             />
           </div>

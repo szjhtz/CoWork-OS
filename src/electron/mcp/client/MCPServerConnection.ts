@@ -24,6 +24,7 @@ import { StdioTransport } from "./transports/StdioTransport";
 import { SSETransport } from "./transports/SSETransport";
 import { WebSocketTransport } from "./transports/WebSocketTransport";
 import { createLogger } from "../../utils/logger";
+import { isLikelyIntegrationAuthError } from "../../notifications/integration-auth";
 
 // MCP Protocol version we support
 const PROTOCOL_VERSION = "2024-11-05";
@@ -525,6 +526,11 @@ export class MCPServerConnection extends EventEmitter {
   private handleDisconnection(error?: Error): void {
     this.connectedAt = null;
     this.cleanup();
+
+    if (error && isLikelyIntegrationAuthError(error)) {
+      this.setStatus("error", error.message || "Integration authorization failed");
+      return;
+    }
 
     if (this.reconnectAttempts < this.maxReconnectAttempts) {
       this.scheduleReconnect();

@@ -114,7 +114,9 @@ On minimal Linux images (and slim Docker images), Chromium may fail to launch un
   - SSH tunnel (simplest)
   - Tailscale Serve/Funnel (if you want private/public exposure)
 
-Avoid binding the Control Plane directly to `0.0.0.0` unless you fully understand the risk and have network-level protections.
+Headless/managed deployments fail closed on direct public Control Plane binds. `0.0.0.0`/`::` is blocked unless Tailscale is enabled, the daemon is running inside a privately published container with `COWORK_CONTROL_PLANE_BIND_CONTEXT=container`, or you set the explicit break-glass `COWORK_CONTROL_PLANE_ALLOW_INSECURE_PUBLIC_BIND=1`.
+
+For reverse proxies, keep the daemon bound to loopback/private networking where possible. Set `COWORK_CONTROL_PLANE_ALLOWED_ORIGINS` to the public HTTPS origin for browser WebSocket access, and only set `COWORK_CONTROL_PLANE_TRUST_PROXY=1` when the proxy controls forwarded headers.
 
 ## Data & Backups
 
@@ -152,4 +154,4 @@ In the encrypted settings store under the user data directory (see above). In he
 Approvals are visible and actionable over the Control Plane (Web UI + `approval.list` / `approval.respond`).
 
 **Can I expose Control Plane to the public internet?**  
-Not recommended. Prefer SSH tunnel or Tailscale. If you must, treat it like a high-value admin API and put it behind strong network controls.
+Not recommended. Prefer SSH tunnel or Tailscale. Headless/managed startup blocks direct public binds unless Tailscale, private container context, or `COWORK_CONTROL_PLANE_ALLOW_INSECURE_PUBLIC_BIND=1` is configured. If you must reverse proxy it, set `COWORK_CONTROL_PLANE_ALLOWED_ORIGINS` to the public HTTPS origin and treat it like a high-value admin API.

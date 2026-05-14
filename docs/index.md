@@ -27,6 +27,9 @@ hero:
       text: Workflow Intelligence
       link: /workflow-intelligence
     - theme: alt
+      text: Dreaming
+      link: /dreaming
+    - theme: alt
       text: 24/7 Learning Guide
       link: /continual-learning-in-cowork
     - theme: alt
@@ -41,6 +44,9 @@ hero:
     - theme: alt
       text: Message Box Shortcuts
       link: /message-box-shortcuts
+    - theme: alt
+      text: Claude-for-Legal
+      link: /claude-for-legal
     - theme: alt
       text: Gateway Lifecycle
       link: /gateway-message-lifecycle
@@ -127,11 +133,11 @@ features:
   - title: Production Runtime
     details: Local-first runtime with approvals, guardrails, and governance controls for production agent workflows.
   - title: Linux Server Package
-    details: GitHub Releases can ship a Linux x64 server tarball for VPS/systemd installs, with built daemon assets, full resources, connector runtimes, checksum verification, and a Control Plane smoke test. It runs `coworkd-node` without launching the desktop UI.
+    details: GitHub Releases can ship a Linux x64 server tarball for VPS/systemd installs, with built daemon assets, full resources, connector runtimes, checksum verification, Control Plane smoke tests, and fail-closed managed deployment posture checks. It runs `coworkd-node` without launching the desktop UI.
   - title: 30+ LLM Providers
-    details: Connect to Claude, GPT, Gemini, Ollama, and more. Bring your own keys, switch models per task or workflow phase, and get default-on prompt caching on supported routes.
+    details: Connect to Claude, GPT, Gemini, Ollama, OpenRouter, and more. Bring your own keys, switch models per task or workflow phase, use OpenRouter Pareto Code/Nitro for coding-score-based routing, and get default-on prompt caching on supported routes.
   - title: 17 Messaging Channels
-    details: WhatsApp, Telegram, Discord, Slack, iMessage, Teams, Google Chat, Feishu/Lark, WeCom, and more. Chat with your AI from anywhere.
+    details: WhatsApp, Telegram, Discord, Slack, iMessage, Teams, Google Chat, Feishu/Lark, WeCom, and more. Chat with your AI from anywhere, with channel/chat/thread specialization for workspace, agent role, prompt guidance, tool policy, and shared-memory opt-in.
   - title: Chat Mode
     details: Direct LLM chat with no tools by default, same-session follow-ups, chat-only streaming for supported providers, and a narrow read-only analysis exception for uploaded PDF turns that need deeper document reading.
   - title: Runtime Visibility
@@ -151,7 +157,7 @@ features:
   - title: Web Page Artifacts
     details: Generated HTML/HTM files and built React output entrypoints render as compact artifact cards and open into a persisted resizable right-sidebar sandboxed iframe preview with browser/folder/copy actions and fullscreen follow-up context; React-style projects without build output show a build-output-needed state instead of auto-starting a dev server.
   - title: Browser Workbench
-    details: Interactive browser-use tasks open a visible right-sidebar browser by default, with shared agent/user page state, functional navigation controls, screenshots, annotation, fullscreen follow-up context, and visible cursor movement during agent clicks, fills, reads, scrolls, and navigation.
+    details: Interactive browser-use tasks open a visible right-sidebar browser by default, with shared agent/user page state, functional navigation controls, responsive viewport presets, screenshots, annotation, fullscreen follow-up context, and visible cursor movement during agent clicks, fills, reads, scrolls, and navigation.
   - title: Chronicle
     details: Opt-in desktop recent-screen context for vague on-screen references, with Memory Hub controls, local passive capture, `screen_context` recall, pause/resume, and Mission Control evidence.
   - title: Optional Supermemory
@@ -159,11 +165,15 @@ features:
   - title: Runtime Orchestration
     details: SessionRuntime owns task-session state, session checklists, visible-tool render caching, prompt-cache state, resume snapshots, and task projection while the turn kernel handles each active turn; sectioned prompts, stable-prefix prompt caching, graph-backed delegation, typed worker roles, semantic batch summaries, and terminal-state-safe resume logic keep execution, verification, and follow-up work coherent.
   - title: Managed Agents
-    details: Versioned managed agents, reusable local environments, and durable managed sessions now sit on top of the existing task runtime through the control plane, while Mission Control and task surfaces observe the same backing tasks and team runs.
+    details: Agents Hub is the dedicated UI for reusable managed agents, templates, drafts, governance, channels, tools, skills, memory, and schedules. Clicking an agent opens a single-pane configuration detail view; test, preview, and starter-prompt actions create runtime managed sessions and open the backing task in the main window so work is observed through the standard task timeline, approvals, artifacts, and outputs.
   - title: Composer Mentions
     details: Type `@` in the composer to pick Agents, configured Integrations, or Files. Integration chips render with icon and label in prompts and user message history, and selected integration metadata reaches the runtime as soft routing guidance rather than tool restrictions.
   - title: Message Box Shortcuts
-    details: Type `/` in the composer to pick deterministic app commands and skill-backed workflow shortcuts from one menu, including `/schedule`, `/clear`, `/plan`, `/cost`, `/compact`, `/doctor`, `/undo`, direct skill IDs, plugin aliases, and the bundled CoWork Shortcuts pack.
+    details: Type `/` in the composer to pick deterministic app commands and skill-backed workflow shortcuts from one menu, including `/schedule`, `/clear`, `/plan`, `/cost`, `/multitask`, `/compact`, `/doctor`, `/undo`, direct skill IDs, plugin aliases, and the bundled CoWork Shortcuts pack. Skill-backed picker selections insert the command token so users can add context before sending.
+  - title: Claude-for-Legal Workflows
+    details: Bundled legal practice packs expose upstream-style slash commands through CoWork's plugin-pack system. Legal workflow selections are editable before launch, and matter-heavy tasks can show structured main-view intake cards such as the dedicated demand-letter intake form.
+  - title: Multitask Command
+    details: `/multitask [N] <task>` starts a fresh collaborative run, splits the prompt into 2-8 lane-specific child tasks, respects the global task queue, and synthesizes the lane outputs through the existing team orchestration flow.
   - title: Latest Release 0.5.44
     details: Browser V2 and gateway/channel documentation, Browser Use approval improvements, gateway routing updates, DeepSeek and NanoGPT provider coverage, active-runtime reliability fixes, and hardened release packaging for macOS, Windows, Linux server, npm, and GitHub artifacts.
   - title: Inbox Agent
@@ -171,7 +181,7 @@ features:
   - title: Managed Devices
     details: Connect local and remote CoWork nodes, inspect device summaries, browse remote workspaces, and launch tasks against selected machines from one Devices tab.
   - title: Core Automation
-    details: Workflow Intelligence now forms the strict always-on core: Memory is the source of truth, Heartbeat schedules reflection, Suggestions are reviewable outputs, and Mission Control remains the cockpit.
+    details: Workflow Intelligence now forms the strict always-on core: Memory is the source of truth, Heartbeat schedules reflection, Dreaming curates reviewable memory candidates, Suggestions are reviewable outputs, and Mission Control remains the cockpit.
   - title: Automations
     details: The automations surface now separates core automation from trigger ingress, device routing, schedules, webhooks, and optional twin features. Existing tasks can also become cron scheduled tasks from the task overflow menu with source task references preserved.
   - title: Heartbeat V3

@@ -19,6 +19,7 @@ Slack is best for workplace teams that coordinate in channels, DMs, and mentions
 - File uploads.
 - Editable progress messages for curated progress mode.
 - Minimal or curated progress relay settings.
+- Per-channel specialization for workspace, agent role, guidance, and tool policy.
 
 ## Daily Workflow
 
@@ -42,6 +43,7 @@ Slack only sends slash commands that are registered in the Slack app. If `/new` 
 - Use minimal progress in busy channels.
 - Use curated progress in operational channels where short updates help.
 - Keep each recurring workflow tied to a clear channel.
+- Specialize high-signal channels such as support, launch, or review channels so new tasks start in the right workspace automatically.
 
 ## Watch-Outs
 
@@ -53,5 +55,6 @@ Slack only sends slash commands that are registered in the Slack app. If `/new` 
 ## Related Docs
 
 - [Channel Integrations](../channels.md#slack)
+- [Channel Specialization](../channels.md#channel-specialization)
 - [Gateway User Guide](../gateway-user-guide.md#slack-tips)
 - [Gateway Message Lifecycle](../gateway-message-lifecycle.md)

@@ -14,6 +14,10 @@
 import * as fs from "fs";
 import * as path from "path";
 import { getUserDataDir } from "../utils/user-data-dir";
+import type { PermissionMode } from "../../shared/types";
+
+export type AdminSandboxType = "macos" | "docker" | "none";
+export type AdminNetworkDefault = "allow" | "deny";
 
 /**
  * Admin policy configuration schema
@@ -49,6 +53,35 @@ export interface AdminPolicies {
     maxConcurrentAgents: number;
   };
 
+  /** Runtime safety requirements */
+  runtime: {
+    /** Permission modes users/tasks may select. Empty = all modes allowed. */
+    allowedPermissionModes: PermissionMode[];
+    /** Sandbox backends permitted for shell/code execution. */
+    allowedSandboxTypes: AdminSandboxType[];
+    /** Require OS-level sandboxing for shell commands. */
+    requireSandboxForShell: boolean;
+    /** Whether explicit env-gated unsandboxed shell fallback is allowed. */
+    allowUnsandboxedShell: boolean;
+    /** Network policy applied before legacy guardrail domain checks. */
+    network: {
+      defaultAction: AdminNetworkDefault;
+      allowedDomains: string[];
+      blockedDomains: string[];
+      /** Coarse shell egress switch. Shell network cannot yet be domain-scoped. */
+      allowShellNetwork: boolean;
+    };
+    /** Narrow automatic review of low-risk permission prompts. */
+    autoReview: {
+      enabled: boolean;
+    };
+    /** Optional task-event telemetry export. */
+    telemetry: {
+      enabled: boolean;
+      otlpEndpoint?: string;
+    };
+  };
+
   /** General policies */
   general: {
     /** Whether users can install custom plugin packs */
@@ -79,6 +112,24 @@ const DEFAULT_POLICIES: AdminPolicies = {
   agents: {
     maxHeartbeatFrequencySec: 60,
     maxConcurrentAgents: 10,
+  },
+  runtime: {
+    allowedPermissionModes: [],
+    allowedSandboxTypes: ["macos", "docker"],
+    requireSandboxForShell: false,
+    allowUnsandboxedShell: false,
+    network: {
+      defaultAction: "allow",
+      allowedDomains: [],
+      blockedDomains: [],
+      allowShellNetwork: false,
+    },
+    autoReview: {
+      enabled: true,
+    },
+    telemetry: {
+      enabled: false,
+    },
   },
   general: {
     allowCustomPacks: true,
@@ -140,6 +191,34 @@ export function loadPolicies(): AdminPolicies {
       agents: {
         maxHeartbeatFrequencySec: Math.max(60, parsed.agents?.maxHeartbeatFrequencySec || 60),
         maxConcurrentAgents: Math.max(1, parsed.agents?.maxConcurrentAgents || 10),
+      },
+      runtime: {
+        allowedPermissionModes: normalizePermissionModes(parsed.runtime?.allowedPermissionModes),
+        allowedSandboxTypes: normalizeSandboxTypes(parsed.runtime?.allowedSandboxTypes),
+        requireSandboxForShell:
+          typeof parsed.runtime?.requireSandboxForShell === "boolean"
+            ? parsed.runtime.requireSandboxForShell
+            : DEFAULT_POLICIES.runtime.requireSandboxForShell,
+        allowUnsandboxedShell:
+          typeof parsed.runtime?.allowUnsandboxedShell === "boolean"
+            ? parsed.runtime.allowUnsandboxedShell
+            : DEFAULT_POLICIES.runtime.allowUnsandboxedShell,
+        network: {
+          defaultAction: parsed.runtime?.network?.defaultAction === "deny" ? "deny" : "allow",
+          allowedDomains: normalizeStringList(parsed.runtime?.network?.allowedDomains),
+          blockedDomains: normalizeStringList(parsed.runtime?.network?.blockedDomains),
+          allowShellNetwork: parsed.runtime?.network?.allowShellNetwork === true,
+        },
+        autoReview: {
+          enabled: parsed.runtime?.autoReview?.enabled !== false,
+        },
+        telemetry: {
+          enabled: parsed.runtime?.telemetry?.enabled === true,
+          otlpEndpoint:
+            typeof parsed.runtime?.telemetry?.otlpEndpoint === "string"
+              ? parsed.runtime.telemetry.otlpEndpoint
+              : undefined,
+        },
       },
       general: {
         allowCustomPacks: parsed.general?.allowCustomPacks !== false,
@@ -207,6 +286,38 @@ export function isConnectorBlocked(connectorId: string, policies?: AdminPolicies
   return p.connectors.blocked.includes(connectorId);
 }
 
+function normalizeStringList(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value
+        .map((item) => String(item || "").trim())
+        .filter(Boolean)
+    : [];
+}
+
+const VALID_PERMISSION_MODES = new Set<PermissionMode>([
+  "default",
+  "plan",
+  "dangerous_only",
+  "accept_edits",
+  "dont_ask",
+  "bypass_permissions",
+]);
+
+function normalizePermissionModes(value: unknown): PermissionMode[] {
+  return normalizeStringList(value).filter((mode): mode is PermissionMode =>
+    VALID_PERMISSION_MODES.has(mode as PermissionMode),
+  );
+}
+
+const VALID_SANDBOX_TYPES = new Set<AdminSandboxType>(["macos", "docker", "none"]);
+
+function normalizeSandboxTypes(value: unknown): AdminSandboxType[] {
+  const normalized = normalizeStringList(value).filter((mode): mode is AdminSandboxType =>
+    VALID_SANDBOX_TYPES.has(mode as AdminSandboxType),
+  );
+  return normalized.length > 0 ? normalized : [...DEFAULT_POLICIES.runtime.allowedSandboxTypes];
+}
+
 /**
  * Validate that a policy change is well-formed
  */
@@ -255,6 +366,69 @@ export function validatePolicies(policies: unknown): string | null {
       (typeof agents.maxConcurrentAgents !== "number" || agents.maxConcurrentAgents < 1)
     ) {
       return "agents.maxConcurrentAgents must be a number >= 1";
+    }
+  }
+
+  if (p.runtime && typeof p.runtime === "object") {
+    const runtime = p.runtime as Record<string, unknown>;
+    const allowedPermissionModes = runtime.allowedPermissionModes;
+    if (
+      allowedPermissionModes !== undefined &&
+      (!Array.isArray(allowedPermissionModes) ||
+        allowedPermissionModes.some((mode) => !VALID_PERMISSION_MODES.has(mode as PermissionMode)))
+    ) {
+      return "runtime.allowedPermissionModes contains an invalid permission mode";
+    }
+    const allowedSandboxTypes = runtime.allowedSandboxTypes;
+    if (
+      allowedSandboxTypes !== undefined &&
+      (!Array.isArray(allowedSandboxTypes) ||
+        allowedSandboxTypes.some((mode) => !VALID_SANDBOX_TYPES.has(mode as AdminSandboxType)))
+    ) {
+      return "runtime.allowedSandboxTypes contains an invalid sandbox type";
+    }
+    if (
+      runtime.requireSandboxForShell !== undefined &&
+      typeof runtime.requireSandboxForShell !== "boolean"
+    ) {
+      return "runtime.requireSandboxForShell must be a boolean";
+    }
+    if (
+      runtime.allowUnsandboxedShell !== undefined &&
+      typeof runtime.allowUnsandboxedShell !== "boolean"
+    ) {
+      return "runtime.allowUnsandboxedShell must be a boolean";
+    }
+    const network = runtime.network as Record<string, unknown> | undefined;
+    if (network) {
+      if (
+        network.defaultAction !== undefined &&
+        network.defaultAction !== "allow" &&
+        network.defaultAction !== "deny"
+      ) {
+        return "runtime.network.defaultAction must be allow or deny";
+      }
+      if (network.allowedDomains !== undefined && !Array.isArray(network.allowedDomains)) {
+        return "runtime.network.allowedDomains must be an array";
+      }
+      if (network.blockedDomains !== undefined && !Array.isArray(network.blockedDomains)) {
+        return "runtime.network.blockedDomains must be an array";
+      }
+      if (
+        network.allowShellNetwork !== undefined &&
+        typeof network.allowShellNetwork !== "boolean"
+      ) {
+        return "runtime.network.allowShellNetwork must be a boolean";
+      }
+    }
+    const telemetry = runtime.telemetry as Record<string, unknown> | undefined;
+    if (telemetry) {
+      if (telemetry.enabled !== undefined && typeof telemetry.enabled !== "boolean") {
+        return "runtime.telemetry.enabled must be a boolean";
+      }
+      if (telemetry.otlpEndpoint !== undefined && typeof telemetry.otlpEndpoint !== "string") {
+        return "runtime.telemetry.otlpEndpoint must be a string";
+      }
     }
   }
 

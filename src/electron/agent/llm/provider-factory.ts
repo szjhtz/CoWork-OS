@@ -625,6 +625,12 @@ function normalizeOptionalString(value?: string): string | undefined {
   return trimmed || undefined;
 }
 
+function normalizeOptionalUnitInterval(value?: number): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  if (value < 0 || value > 1) return undefined;
+  return value;
+}
+
 function normalizeProviderConfig(config: LLMProviderConfig): LLMProviderConfig {
   return {
     ...config,
@@ -640,6 +646,9 @@ function normalizeProviderConfig(config: LLMProviderConfig): LLMProviderConfig {
     geminiApiKey: normalizeSecret(config.geminiApiKey),
     openrouterApiKey: normalizeSecret(config.openrouterApiKey),
     openrouterBaseUrl: normalizeOptionalString(config.openrouterBaseUrl),
+    openrouterParetoMinCodingScore: normalizeOptionalUnitInterval(
+      config.openrouterParetoMinCodingScore,
+    ),
     deepseekApiKey: normalizeSecret(config.deepseekApiKey),
     deepseekBaseUrl: normalizeOptionalString(config.deepseekBaseUrl),
     openaiApiKey: normalizeSecret(config.openaiApiKey),
@@ -897,6 +906,7 @@ export interface LLMSettings {
     apiKey?: string;
     model?: string;
     baseUrl?: string;
+    paretoMinCodingScore?: number;
   } & ProviderRoutingSettings;
   deepseek?: {
     apiKey?: string;
@@ -2058,6 +2068,9 @@ export class LLMProviderFactory {
         settings.openrouter?.apiKey,
       openrouterBaseUrl:
         overrideConfig?.openrouterBaseUrl || settings.openrouter?.baseUrl,
+      openrouterParetoMinCodingScore:
+        overrideConfig?.openrouterParetoMinCodingScore ??
+        settings.openrouter?.paretoMinCodingScore,
       // DeepSeek config - from settings only
       deepseekApiKey:
         normalizeSecret(overrideConfig?.deepseekApiKey) ||
@@ -3751,6 +3764,16 @@ export class LLMProviderFactory {
 
     const defaultModels = [
       {
+        id: "openrouter/pareto-code",
+        name: "Pareto Code Router",
+        context_length: 200000,
+      },
+      {
+        id: "openrouter/pareto-code:nitro",
+        name: "Pareto Code Router (Nitro)",
+        context_length: 200000,
+      },
+      {
         id: "anthropic/claude-3.5-sonnet",
         name: "Claude 3.5 Sonnet",
         context_length: 200000,
@@ -3786,7 +3809,12 @@ export class LLMProviderFactory {
         openrouterApiKey: key,
         openrouterBaseUrl: resolvedBaseUrl,
       });
-      return await provider.getAvailableModels();
+      const remoteModels = await provider.getAvailableModels();
+      const seen = new Set(remoteModels.map((model) => model.id));
+      return [
+        ...remoteModels,
+        ...defaultModels.filter((model) => !seen.has(model.id)),
+      ];
     } catch (error: Any) {
       console.error("Failed to fetch OpenRouter models:", error);
       // Return default models on error instead of empty array

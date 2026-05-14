@@ -8,7 +8,7 @@
   "keywords": ["investment-banking", "m&a", "ipo", "deals", "pitch-book", "due-diligence"],
   "icon": "🏦",
   "category": "Finance",
-  "recommendedConnectors": ["factset-mcp", "spglobal-mcp"],
+  "recommendedConnectors": ["factset", "spglobal", "lseg", "pitchbook"],
   "tryAsking": [
     "Screen potential M&A targets in the healthcare SaaS space under $500M EV",
     "Prepare pitch book content for a mid-market tech company exploring a sale process",
@@ -86,7 +86,70 @@
         { "name": "sector", "type": "string", "description": "Sector or industry for peer selection", "required": false }
       ],
       "enabled": true
+    },
+    {
+      "id": "ib-one-pager",
+      "name": "One-Pager",
+      "description": "Draft a concise company or deal one-pager with source-backed facts.",
+      "icon": "📄",
+      "category": "Finance",
+      "prompt": "Draft an investment banking one-pager. Include company overview, key metrics, transaction rationale, valuation snapshot, strategic merits, risks, and a source ledger. Keep it draft-only for review.",
+      "enabled": true
+    },
+    {
+      "id": "ib-cim",
+      "name": "CIM",
+      "description": "Draft a confidential information memorandum outline and content plan.",
+      "icon": "📚",
+      "category": "Finance",
+      "prompt": "Draft a CIM outline or section draft. Cover executive summary, market, company, financials, growth initiatives, transaction process, risk factors, and source support. Do not send externally.",
+      "enabled": true
+    },
+    {
+      "id": "ib-teaser",
+      "name": "Teaser",
+      "description": "Draft an anonymized teaser for human review.",
+      "icon": "🎯",
+      "category": "Finance",
+      "prompt": "Draft an anonymized deal teaser with business overview, key highlights, financial snapshot, investment merits, and controlled disclosure notes. Preserve confidentiality and require review before external use.",
+      "enabled": true
+    },
+    {
+      "id": "ib-buyer-list",
+      "name": "Buyer List",
+      "description": "Build and rank a buyer universe with rationale and caveats.",
+      "icon": "🧭",
+      "category": "Finance",
+      "prompt": "Build a buyer universe. Segment strategic and financial buyers, rank fit, include rationale, ability to pay, likely interest, conflicts, source support, and next diligence questions.",
+      "enabled": true
+    },
+    {
+      "id": "ib-process-letter",
+      "name": "Process Letter",
+      "description": "Draft a sale process letter or bid instruction memo for review.",
+      "icon": "✉️",
+      "category": "Finance",
+      "prompt": "Draft a process letter or bid instruction memo. Include timeline, submission requirements, process rules, diligence access, confidentiality constraints, and review notes. Do not send externally.",
+      "enabled": true
+    },
+    {
+      "id": "ib-deal-tracker",
+      "name": "Deal Tracker",
+      "description": "Create a deal tracker with status, owners, next steps, and blockers.",
+      "icon": "📋",
+      "category": "Finance",
+      "prompt": "Create a deal tracker. Include parties, workstreams, status, owners, deadlines, documents, blockers, approval checkpoints, and next actions. Keep communication drafts staged for review.",
+      "enabled": true
     }
+  ],
+  "slashCommands": [
+    { "name": "one-pager", "description": "Draft a company or deal one-pager", "skillId": "ib-one-pager" },
+    { "name": "cim", "description": "Draft a CIM outline or section", "skillId": "ib-cim" },
+    { "name": "teaser", "description": "Draft an anonymized teaser", "skillId": "ib-teaser" },
+    { "name": "buyer-list", "description": "Build a buyer universe", "skillId": "ib-buyer-list" },
+    { "name": "merger-model", "description": "Run M&A analysis", "skillId": "ib-ma-analysis" },
+    { "name": "process-letter", "description": "Draft a process letter", "skillId": "ib-process-letter" },
+    { "name": "deal-tracker", "description": "Create a deal tracker", "skillId": "ib-deal-tracker" }
   ],
   "agentRoles": [
     {

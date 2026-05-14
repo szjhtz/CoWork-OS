@@ -3,10 +3,39 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+
+const sandboxMocks = vi.hoisted(() => ({
+  sandbox: {
+    type: 'macos' as const,
+    execute: vi.fn(),
+    executeCode: vi.fn(),
+    cleanup: vi.fn(),
+  },
+  createSandbox: vi.fn(),
+}));
+
+vi.mock('../../src/electron/agent/sandbox/sandbox-factory', () => ({
+  createSandbox: sandboxMocks.createSandbox,
+}));
+
+vi.mock('../../src/electron/admin/policies', () => ({
+  loadPolicies: vi.fn(() => ({
+    runtime: {
+      allowedSandboxTypes: ['macos', 'docker'],
+      requireSandboxForShell: true,
+      allowUnsandboxedShell: false,
+      network: { defaultAction: 'allow', allowedDomains: [], blockedDomains: [], allowShellNetwork: false },
+      autoReview: { enabled: true },
+      telemetry: { enabled: false },
+    },
+  })),
+}));
+
 import { GuardrailManager } from '../../src/electron/guardrails/guardrail-manager';
 import { BuiltinToolsSettingsManager } from '../../src/electron/agent/tools/builtin-settings';
 import { ShellSessionManager } from '../../src/electron/agent/tools/shell-session-manager';
 import { ShellTools } from '../../src/electron/agent/tools/shell-tools';
+import { loadPolicies } from '../../src/electron/admin/policies';
 import type { AgentDaemon } from '../../src/electron/agent/daemon';
 import type { Workspace } from '../../src/shared/types';
 
@@ -40,8 +69,25 @@ describe('ShellTools auto-approval', () => {
 
   beforeEach(() => {
     vi.restoreAllMocks();
+    delete process.env.COWORK_ALLOW_UNSANDBOXED_SHELL;
     (mockDaemon.requestApproval as any).mockReset().mockResolvedValue(true);
     (mockDaemon.logEvent as any).mockReset();
+    sandboxMocks.sandbox.execute.mockReset().mockImplementation(async (command: string) => ({
+      exitCode: 0,
+      stdout: command.includes('apply_patch mention')
+        ? 'apply_patch mention\n'
+        : command.includes(' -v')
+          ? `${process.version}\n`
+          : command.includes('ok1')
+            ? 'ok1'
+            : '',
+      stderr: '',
+      killed: false,
+      timedOut: false,
+    }));
+    sandboxMocks.sandbox.executeCode.mockReset();
+    sandboxMocks.sandbox.cleanup.mockReset();
+    sandboxMocks.createSandbox.mockReset().mockResolvedValue(sandboxMocks.sandbox);
     mockShellSessionManager.runCommand.mockReset().mockImplementation(async ({ command }: { command: string }) => ({
       success: true,
       stdout: command.includes('apply_patch mention')
@@ -120,6 +166,7 @@ describe('ShellTools auto-approval', () => {
     expect(second.success).toBe(true);
     expect(mockDaemon.requestApproval).toHaveBeenCalledTimes(1);
     expect((mockDaemon.requestApproval as any).mock.calls[0][2]).toMatch(/single approval bundle/i);
+    expect(sandboxMocks.createSandbox).toHaveBeenCalledTimes(2);
   });
 
   it('still requires explicit approval for unsafe commands even with bundle mode', async () => {
@@ -187,9 +234,269 @@ describe('ShellTools auto-approval', () => {
   it('does not treat apply_patch text in command arguments as a protocol violation', async () => {
     const result = await shellTools.runCommand('echo apply_patch mention', { cwd: process.cwd() });
     expect(result.success).toBe(true);
+    expect(result.stdout).toContain('apply_patch mention');
     const violations = (mockDaemon.logEvent as any).mock.calls.filter(
       (call: any[]) => call[1] === 'tool_protocol_violation'
     );
     expect(violations).toHaveLength(0);
+  });
+
+  it('disables shell sandbox networking by default even when workspace network is enabled', async () => {
+    await shellTools.runCommand(SAFE_CMD_1, { cwd: process.cwd() });
+
+    expect(sandboxMocks.sandbox.execute).toHaveBeenCalledWith(
+      SAFE_CMD_1,
+      [],
+      expect.objectContaining({
+        allowNetwork: false,
+      })
+    );
+    expect(mockDaemon.logEvent).toHaveBeenCalledWith(
+      'task-1',
+      'network_policy_decision',
+      expect.objectContaining({
+        action: 'deny',
+        toolName: 'run_command',
+        reason: 'shell_network_requires_admin_coarse_allow',
+      })
+    );
+  });
+
+  it('allows shell sandbox networking only with explicit coarse admin policy', async () => {
+    vi.mocked(loadPolicies).mockReturnValueOnce({
+      version: 1,
+      updatedAt: new Date().toISOString(),
+      packs: { allowed: [], blocked: [], required: [] },
+      connectors: { blocked: [] },
+      agents: { maxHeartbeatFrequencySec: 60, maxConcurrentAgents: 10 },
+      runtime: {
+        allowedPermissionModes: [],
+        allowedSandboxTypes: ['macos', 'docker'],
+        requireSandboxForShell: true,
+        allowUnsandboxedShell: false,
+        network: { defaultAction: 'allow', allowedDomains: [], blockedDomains: [], allowShellNetwork: true },
+        autoReview: { enabled: true },
+        telemetry: { enabled: false },
+      },
+      general: {
+        allowCustomPacks: true,
+        allowGitInstall: true,
+        allowUrlInstall: true,
+      },
+    });
+
+    await shellTools.runCommand(SAFE_CMD_1, { cwd: process.cwd() });
+
+    expect(sandboxMocks.sandbox.execute).toHaveBeenCalledWith(
+      SAFE_CMD_1,
+      [],
+      expect.objectContaining({
+        allowNetwork: true,
+      })
+    );
+  });
+
+  it('wires sandbox process handles for stdin support and clears them after completion', async () => {
+    const fakeProcess = {
+      stdin: { write: vi.fn() },
+      killed: false,
+      pid: 12345,
+    };
+    sandboxMocks.sandbox.execute.mockImplementationOnce(async (_command: string, _args: string[], options: any) => {
+      options.onProcess(fakeProcess);
+      expect(shellTools.hasActiveProcess()).toBe(true);
+      expect(shellTools.sendStdin('input\n')).toBe(true);
+      return {
+        exitCode: 0,
+        stdout: 'ok',
+        stderr: '',
+        killed: false,
+        timedOut: false,
+      };
+    });
+
+    const result = await shellTools.runCommand(SAFE_CMD_1, { cwd: process.cwd() });
+
+    expect(result.success).toBe(true);
+    expect(fakeProcess.stdin.write).toHaveBeenCalledWith('input\n');
+    expect(shellTools.hasActiveProcess()).toBe(false);
+  });
+
+  it('maps workspace cwd to /workspace for Docker sandbox execution', async () => {
+    sandboxMocks.createSandbox.mockResolvedValueOnce({
+      ...sandboxMocks.sandbox,
+      type: 'docker',
+      cleanup: vi.fn(),
+    });
+
+    const result = await shellTools.runCommand(SAFE_CMD_1, { cwd: '/Users/testuser/project/packages/app' });
+
+    expect(result.success).toBe(true);
+    expect(sandboxMocks.sandbox.execute).toHaveBeenCalledWith(
+      SAFE_CMD_1,
+      [],
+      expect.objectContaining({
+        cwd: '/workspace/packages/app',
+      })
+    );
+  });
+
+  it('fails closed when no OS sandbox is available', async () => {
+    vi.mocked(loadPolicies).mockReturnValueOnce({
+      version: 1,
+      updatedAt: new Date().toISOString(),
+      packs: { allowed: [], blocked: [], required: [] },
+      connectors: { blocked: [] },
+      agents: { maxHeartbeatFrequencySec: 60, maxConcurrentAgents: 10 },
+      runtime: {
+        allowedPermissionModes: [],
+        allowedSandboxTypes: ['macos', 'docker'],
+        requireSandboxForShell: true,
+        allowUnsandboxedShell: false,
+        network: { defaultAction: 'allow', allowedDomains: [], blockedDomains: [], allowShellNetwork: false },
+        autoReview: { enabled: true },
+        telemetry: { enabled: false },
+      },
+      general: {
+        allowCustomPacks: true,
+        allowGitInstall: true,
+        allowUrlInstall: true,
+      },
+    });
+    sandboxMocks.createSandbox.mockResolvedValueOnce({
+      ...sandboxMocks.sandbox,
+      type: 'none',
+      cleanup: vi.fn(),
+    });
+
+    await expect(shellTools.runCommand(SAFE_CMD_1, { cwd: process.cwd() })).rejects.toThrow(
+      /requires an OS-level sandbox/i
+    );
+    expect(mockDaemon.logEvent).toHaveBeenCalledWith(
+      'task-1',
+      'sandbox_denied',
+      expect.objectContaining({
+        tool: 'run_command',
+        reason: 'no_os_sandbox_available',
+      })
+    );
+  });
+
+  it('falls back without the explicit unsandboxed shell environment override when sandboxing is not required', async () => {
+    vi.mocked(loadPolicies).mockReturnValueOnce({
+      version: 1,
+      updatedAt: new Date().toISOString(),
+      packs: { allowed: [], blocked: [], required: [] },
+      connectors: { blocked: [] },
+      agents: { maxHeartbeatFrequencySec: 60, maxConcurrentAgents: 10 },
+      runtime: {
+        allowedPermissionModes: [],
+        allowedSandboxTypes: ['macos', 'docker'],
+        requireSandboxForShell: false,
+        allowUnsandboxedShell: true,
+        network: { defaultAction: 'allow', allowedDomains: [], blockedDomains: [], allowShellNetwork: false },
+        autoReview: { enabled: true },
+        telemetry: { enabled: false },
+      },
+      general: {
+        allowCustomPacks: true,
+        allowGitInstall: true,
+        allowUrlInstall: true,
+      },
+    });
+    sandboxMocks.createSandbox.mockResolvedValueOnce({
+      ...sandboxMocks.sandbox,
+      type: 'none',
+      cleanup: vi.fn(),
+    });
+
+    const result = await shellTools.runCommand(`${SAFE_CMD_1} | cat`, { cwd: process.cwd() });
+
+    expect(result.success).toBe(true);
+    expect(mockShellSessionManager.runCommand).not.toHaveBeenCalled();
+    expect(mockDaemon.logEvent).toHaveBeenCalledWith(
+      'task-1',
+      'shell_sandbox_unavailable',
+      expect.objectContaining({
+        reason: 'no_os_sandbox_available',
+      })
+    );
+  });
+
+  it('does not allow policy-only override when sandboxing is required and env is absent', async () => {
+    vi.mocked(loadPolicies).mockReturnValueOnce({
+      version: 1,
+      updatedAt: new Date().toISOString(),
+      packs: { allowed: [], blocked: [], required: [] },
+      connectors: { blocked: [] },
+      agents: { maxHeartbeatFrequencySec: 60, maxConcurrentAgents: 10 },
+      runtime: {
+        allowedPermissionModes: [],
+        allowedSandboxTypes: ['macos', 'docker'],
+        requireSandboxForShell: true,
+        allowUnsandboxedShell: true,
+        network: { defaultAction: 'allow', allowedDomains: [], blockedDomains: [], allowShellNetwork: false },
+        autoReview: { enabled: true },
+        telemetry: { enabled: false },
+      },
+      general: {
+        allowCustomPacks: true,
+        allowGitInstall: true,
+        allowUrlInstall: true,
+      },
+    });
+    sandboxMocks.createSandbox.mockResolvedValueOnce({
+      ...sandboxMocks.sandbox,
+      type: 'none',
+      cleanup: vi.fn(),
+    });
+
+    await expect(shellTools.runCommand(SAFE_CMD_1, { cwd: process.cwd() })).rejects.toThrow(
+      /requires an OS-level sandbox/i
+    );
+    expect(mockShellSessionManager.runCommand).not.toHaveBeenCalled();
+  });
+
+  it('allows explicit unsandboxed development fallback when requested', async () => {
+    process.env.COWORK_ALLOW_UNSANDBOXED_SHELL = '1';
+    vi.mocked(loadPolicies).mockReturnValueOnce({
+      version: 1,
+      updatedAt: new Date().toISOString(),
+      packs: { allowed: [], blocked: [], required: [] },
+      connectors: { blocked: [] },
+      agents: { maxHeartbeatFrequencySec: 60, maxConcurrentAgents: 10 },
+      runtime: {
+        allowedPermissionModes: [],
+        allowedSandboxTypes: ['macos', 'docker'],
+        requireSandboxForShell: true,
+        allowUnsandboxedShell: true,
+        network: { defaultAction: 'allow', allowedDomains: [], blockedDomains: [], allowShellNetwork: false },
+        autoReview: { enabled: true },
+        telemetry: { enabled: false },
+      },
+      general: {
+        allowCustomPacks: true,
+        allowGitInstall: true,
+        allowUrlInstall: true,
+      },
+    });
+    sandboxMocks.createSandbox.mockResolvedValueOnce({
+      ...sandboxMocks.sandbox,
+      type: 'none',
+      cleanup: vi.fn(),
+    });
+
+    const result = await shellTools.runCommand(SAFE_CMD_1, { cwd: process.cwd() });
+
+    expect(result.success).toBe(true);
+    expect(mockShellSessionManager.runCommand).toHaveBeenCalled();
+    expect(mockDaemon.logEvent).toHaveBeenCalledWith(
+      'task-1',
+      'shell_sandbox_bypassed',
+      expect.objectContaining({
+        reason: 'no_os_sandbox_available',
+        overrideEnv: 'COWORK_ALLOW_UNSANDBOXED_SHELL',
+      })
+    );
   });
 });

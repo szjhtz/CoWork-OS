@@ -8,7 +8,7 @@
   "keywords": ["private-equity", "lbo", "buyout", "portfolio", "fund-reporting", "exits"],
   "icon": "🏢",
   "category": "Finance",
-  "recommendedConnectors": ["factset-mcp", "spglobal-mcp"],
+  "recommendedConnectors": ["factset", "spglobal", "pitchbook", "chronograph"],
   "tryAsking": [
     "Screen for mid-market healthcare services companies suitable for a platform acquisition",
     "Build an LBO model for a $200M acquisition with 5x leverage and 20% equity",
@@ -87,7 +87,73 @@
         { "name": "period", "type": "string", "description": "Reporting period (e.g., Q4 2024, FY 2024)", "required": false }
       ],
       "enabled": true
+    },
+    {
+      "id": "pe-dd-checklist",
+      "name": "DD Checklist",
+      "description": "Create a private equity diligence checklist and workstream plan.",
+      "icon": "✅",
+      "category": "Finance",
+      "prompt": "Create a PE diligence checklist. Cover financial, commercial, legal, tax, tech, HR, insurance, environmental, and operations workstreams with owners, required documents, risks, and review checkpoints.",
+      "enabled": true
+    },
+    {
+      "id": "pe-dd-prep",
+      "name": "DD Prep",
+      "description": "Prepare diligence questions, data-room asks, and risk hypotheses.",
+      "icon": "🔎",
+      "category": "Finance",
+      "prompt": "Prepare diligence work from available deal materials. Return hypotheses, key questions, data-room requests, risks, red flags, and source-ledger entries.",
+      "enabled": true
+    },
+    {
+      "id": "pe-unit-economics",
+      "name": "Unit Economics",
+      "description": "Analyze unit economics, cohort quality, and margin drivers.",
+      "icon": "📐",
+      "category": "Finance",
+      "prompt": "Analyze unit economics. Include revenue per unit, contribution margin, CAC/LTV where applicable, cohort behavior, payback, retention, sensitivity, source support, and open data gaps.",
+      "enabled": true
+    },
+    {
+      "id": "pe-ic-memo",
+      "name": "IC Memo",
+      "description": "Draft an investment committee memo for review.",
+      "icon": "📝",
+      "category": "Finance",
+      "prompt": "Draft an IC memo. Include executive summary, thesis, market, company, financials, valuation, returns, diligence findings, risks, mitigants, value creation plan, and source ledger. Keep it draft-only.",
+      "enabled": true
+    },
+    {
+      "id": "pe-value-creation",
+      "name": "Value Creation",
+      "description": "Build a value creation plan with initiatives, metrics, and owners.",
+      "icon": "📈",
+      "category": "Finance",
+      "prompt": "Build a value creation plan. Include initiatives, estimated EBITDA/cash impact, timeline, owners, dependencies, KPIs, risks, and review checkpoints.",
+      "enabled": true
+    },
+    {
+      "id": "pe-ai-readiness",
+      "name": "AI Readiness",
+      "description": "Assess portfolio company AI readiness and value creation opportunities.",
+      "icon": "🤖",
+      "category": "Finance",
+      "prompt": "Assess AI readiness for a deal or portfolio company. Review data availability, workflow candidates, risk controls, ROI hypotheses, implementation sequencing, and diligence questions. Keep output as draft operational analysis.",
+      "enabled": true
     }
+  ],
+  "slashCommands": [
+    { "name": "source", "description": "Source PE targets", "skillId": "pe-deal-sourcing" },
+    { "name": "screen-deal", "description": "Screen a private equity deal", "skillId": "pe-deal-sourcing" },
+    { "name": "dd-checklist", "description": "Create a diligence checklist", "skillId": "pe-dd-checklist" },
+    { "name": "dd-prep", "description": "Prepare diligence questions and requests", "skillId": "pe-dd-prep" },
+    { "name": "unit-economics", "description": "Analyze unit economics", "skillId": "pe-unit-economics" },
+    { "name": "returns", "description": "Build returns analysis", "skillId": "pe-lbo-modeling" },
+    { "name": "ic-memo", "description": "Draft an IC memo", "skillId": "pe-ic-memo" },
+    { "name": "portfolio", "description": "Monitor portfolio performance", "skillId": "pe-portfolio-monitoring" },
+    { "name": "value-creation", "description": "Build a value creation plan", "skillId": "pe-value-creation" },
+    { "name": "ai-readiness", "description": "Assess AI readiness", "skillId": "pe-ai-readiness" }
   ],
   "agentRoles": [
     {

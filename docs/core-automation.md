@@ -9,6 +9,7 @@ The core runtime is **Workflow Intelligence**:
 - `Memory` is the source of truth.
 - `Heartbeat` owns scheduling and signal readiness.
 - `Reflection` evaluates evidence internally.
+- `Dreaming` curates memory evidence into reviewable candidates.
 - `Suggestions` are the default user-facing output.
 
 Everything else is a surrounding surface:
@@ -49,9 +50,11 @@ Digital Twin roles do not own automation profiles and do not create heartbeat or
 
 The intended flow is:
 
-`signal or evidence -> Heartbeat -> Reflection -> Suggestion -> user response -> Memory`
+`signal or evidence -> Heartbeat -> Reflection -> Dreaming when memory drift exists -> Suggestion or memory candidate -> user response -> Memory`
 
 Downstream surfaces can create visible work, but they do not become cognition owners themselves. User response to suggestions is part of the loop: acting reinforces a workflow pattern, editing captures a correction, and snooze/dismiss/ignore lowers similar future suggestions.
+
+Dreaming is the memory-maintenance branch of this path. It can run after task completion or from memory-specific Heartbeat signals, persists `dreaming_runs` and `dreaming_candidates`, and leaves final mutation to the existing memory services.
 
 ## Core Targets
 

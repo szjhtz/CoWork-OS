@@ -28,6 +28,7 @@ import {
   ChannelUserRepository,
   ChannelSessionRepository,
   ChannelMessageRepository,
+  ChannelSpecializationRepository,
   WorkspaceRepository,
   TaskRepository,
   ArtifactRepository,
@@ -146,6 +147,14 @@ type MessageSecurityContext = {
   agentRoleId?: string;
   /** Set when research chat routing applies; forwarded into new task agentConfig */
   researchWorkflowPreset?: boolean;
+  channelSpecialization?: {
+    id: string;
+    workspaceId?: string;
+    agentRoleId?: string;
+    systemGuidance?: string;
+    toolRestrictions?: string[];
+    allowSharedContextMemory?: boolean;
+  };
 };
 
 export class MessageRouter {
@@ -165,6 +174,7 @@ export class MessageRouter {
   private userRepo: ChannelUserRepository;
   private sessionRepo: ChannelSessionRepository;
   private messageRepo: ChannelMessageRepository;
+  private specializationRepo: ChannelSpecializationRepository;
   private workspaceRepo: WorkspaceRepository;
   private taskRepo: TaskRepository;
   private artifactRepo: ArtifactRepository;
@@ -278,6 +288,7 @@ export class MessageRouter {
     this.userRepo = new ChannelUserRepository(db);
     this.sessionRepo = new ChannelSessionRepository(db);
     this.messageRepo = new ChannelMessageRepository(db);
+    this.specializationRepo = new ChannelSpecializationRepository(db);
     this.workspaceRepo = new WorkspaceRepository(db);
     this.taskRepo = new TaskRepository(db);
     this.artifactRepo = new ArtifactRepository(db);
@@ -950,6 +961,47 @@ export class MessageRouter {
     }
 
     return true;
+  }
+
+  private getSessionChatKey(message: IncomingMessage): string {
+    const threadId =
+      typeof message.threadId === "string" && message.threadId.trim().length > 0
+        ? message.threadId.trim()
+        : undefined;
+    return threadId ? `${message.chatId}::thread:${threadId}` : message.chatId;
+  }
+
+  private resolveChannelSpecialization(channelId: string, message: IncomingMessage) {
+    try {
+      return this.specializationRepo.resolve({
+        channelId,
+        chatId: message.chatId,
+        threadId: message.threadId,
+      });
+    } catch (error) {
+      console.warn("[MessageRouter] Failed to resolve channel specialization:", error);
+      return undefined;
+    }
+  }
+
+  private canApplySpecializationToSession(session: { taskId?: string } | undefined | null): boolean {
+    if (!session?.taskId) return true;
+    const task = this.taskRepo.findById(session.taskId);
+    if (!task) return true;
+    return !["pending", "planning", "executing", "paused"].includes(task.status);
+  }
+
+  private formatSpecializedPrompt(messageText: string, guidance?: string): string {
+    const trimmedGuidance = typeof guidance === "string" ? guidance.trim() : "";
+    if (!trimmedGuidance) return messageText;
+    const trimmedMessage = messageText.trim();
+    return [
+      "Channel specialization guidance:",
+      trimmedGuidance,
+      "",
+      "User request:",
+      trimmedMessage || messageText,
+    ].join("\n");
   }
 
   /**
@@ -2068,27 +2120,54 @@ export class MessageRouter {
 
     // Get or create session
     // Channel-level workspace override takes priority over router default
+    const channelSpecialization = this.resolveChannelSpecialization(
+      channel.id,
+      message,
+    );
+    const sessionChatKey = this.getSessionChatKey(message);
     const channelDefaultWorkspaceId =
       typeof channel.config?.defaultWorkspaceId === "string"
         ? channel.config.defaultWorkspaceId
         : undefined;
     const session = await this.sessionManager.getOrCreateSession(
       channel,
-      message.chatId,
+      sessionChatKey,
       securityResult.user?.id,
-      channelDefaultWorkspaceId || this.config.defaultWorkspaceId,
+      channelSpecialization?.workspaceId ||
+        channelDefaultWorkspaceId ||
+        this.config.defaultWorkspaceId,
     );
 
     // Track last sender for this chat (useful for restoring after restarts).
     // Note: sessions are keyed by chatId (group chats share a session).
     this.sessionManager.updateSessionContext(session.id, {
+      channelChatId: message.chatId,
+      ...(message.threadId ? { channelThreadId: message.threadId } : {}),
+      ...(channelSpecialization?.id
+        ? { channelSpecializationId: channelSpecialization.id }
+        : {}),
       lastChannelUserId: message.userId,
       lastChannelUserName: message.userName,
       lastChannelMessageId: message.messageId,
     });
 
     // Handle the message based on content
-    await this.routeMessage(adapter, message, session.id, securityResult);
+    await this.routeMessage(adapter, message, session.id, {
+      ...securityResult,
+      ...(channelSpecialization
+        ? {
+            channelSpecialization: {
+              id: channelSpecialization.id,
+              workspaceId: channelSpecialization.workspaceId,
+              agentRoleId: channelSpecialization.agentRoleId,
+              systemGuidance: channelSpecialization.systemGuidance,
+              toolRestrictions: channelSpecialization.toolRestrictions,
+              allowSharedContextMemory:
+                channelSpecialization.allowSharedContextMemory,
+            },
+          }
+        : {}),
+    });
   }
 
   /**
@@ -2171,7 +2250,7 @@ export class MessageRouter {
       return;
     }
 
-    const session = this.sessionRepo.findById(sessionId);
+    let session = this.sessionRepo.findById(sessionId);
     const ctx = session?.context as Any;
     const pendingFeedback = ctx?.pendingFeedback as Any;
 
@@ -2396,6 +2475,19 @@ export class MessageRouter {
       }
     }
 
+    if (
+      securityContext?.channelSpecialization?.workspaceId &&
+      this.canApplySpecializationToSession(session)
+    ) {
+      const specializedWorkspace = this.workspaceRepo.findById(
+        securityContext.channelSpecialization.workspaceId,
+      );
+      if (specializedWorkspace) {
+        this.sessionManager.setSessionWorkspace(sessionId, specializedWorkspace.id);
+        session = this.sessionRepo.findById(sessionId);
+      }
+    }
+
     // Check if session has no workspace - might be workspace selection
     if (!session?.workspaceId) {
       // Check if this looks like workspace selection (number or short name)
@@ -2557,7 +2649,9 @@ export class MessageRouter {
       channelConfig,
       chatId: message.chatId,
       originalText: message.text.trim(),
-      currentAgentRoleId: securityContext?.agentRoleId,
+      currentAgentRoleId:
+        securityContext?.agentRoleId ||
+        securityContext?.channelSpecialization?.agentRoleId,
       roleExists: (id) => !!this.agentRoleRepo.findById(id),
     });
     if (researchResult) {
@@ -4636,7 +4730,7 @@ export class MessageRouter {
       session = this.sessionRepo.findById(sessionId);
     }
 
-    const workspace = session?.workspaceId
+    let workspace = session?.workspaceId
       ? this.workspaceRepo.findById(session.workspaceId)
       : undefined;
     if (!workspace) {
@@ -4773,7 +4867,7 @@ export class MessageRouter {
       session = this.sessionRepo.findById(sessionId);
     }
 
-    const workspace = session?.workspaceId
+    let workspace = session?.workspaceId
       ? this.workspaceRepo.findById(session.workspaceId)
       : undefined;
     if (!workspace) {
@@ -7043,13 +7137,17 @@ export class MessageRouter {
 
     // Auto-assign temp workspace if none selected
     if (!session?.workspaceId) {
-      const tempWorkspace = this.getOrCreateTempWorkspace(sessionId);
-      this.sessionManager.setSessionWorkspace(sessionId, tempWorkspace.id);
+      const specializedWorkspaceId = securityContext?.channelSpecialization?.workspaceId;
+      const specializedWorkspace = specializedWorkspaceId
+        ? this.workspaceRepo.findById(specializedWorkspaceId)
+        : undefined;
+      const workspaceToSet = specializedWorkspace || this.getOrCreateTempWorkspace(sessionId);
+      this.sessionManager.setSessionWorkspace(sessionId, workspaceToSet.id);
       session = this.sessionRepo.findById(sessionId);
     }
 
     // Get workspace
-    const workspace = session?.workspaceId
+    let workspace = session?.workspaceId
       ? this.workspaceRepo.findById(session.workspaceId)
       : undefined;
     if (!workspace) {
@@ -7129,14 +7227,11 @@ export class MessageRouter {
         // For completed tasks, also allow follow-up (continues the conversation)
         const activeStatuses = ["pending", "planning", "executing", "paused"];
         const isActive = activeStatuses.includes(existingTask.status);
-        const isCompleted = existingTask.status === "completed";
 
-        if (isActive || isCompleted) {
+        if (isActive) {
           if (this.agentDaemon) {
             try {
-              const statusMsg = isActive
-                ? "💬 Got it — adding that to the current task..."
-                : "💬 Picking up where we left off...";
+              const statusMsg = "💬 Got it — adding that to the current task...";
               await this.sendAdapterMessage(adapter, {
                 chatId: message.chatId,
                 text: statusMsg,
@@ -7177,8 +7272,19 @@ export class MessageRouter {
           }
           return;
         }
-        // Task is in failed/cancelled state - unlink and create new task
+        // Task is completed/failed/cancelled - unlink and create a new task so
+        // current channel specialization can be re-resolved.
         this.sessionManager.unlinkSessionFromTask(sessionId);
+        if (securityContext?.channelSpecialization?.workspaceId) {
+          const specializedWorkspace = this.workspaceRepo.findById(
+            securityContext.channelSpecialization.workspaceId,
+          );
+          if (specializedWorkspace) {
+            this.sessionManager.setSessionWorkspace(sessionId, specializedWorkspace.id);
+            session = this.sessionRepo.findById(sessionId);
+            workspace = specializedWorkspace;
+          }
+        }
       }
     }
 
@@ -7193,6 +7299,10 @@ export class MessageRouter {
     }
 
     // Create task
+    const taskPrompt = this.formatSpecializedPrompt(
+      message.text,
+      securityContext?.channelSpecialization?.systemGuidance,
+    );
     const taskTitle =
       message.text.length > 50
         ? message.text.substring(0, 50) + "..."
@@ -7201,19 +7311,22 @@ export class MessageRouter {
     const gatewayContext = contextType === "group" ? "group" : "private";
     const toolRestrictions = this.buildTaskToolRestrictions(
       adapter.type,
-      securityContext?.deniedTools?.filter(
-        (t) => typeof t === "string" && t.trim().length > 0,
-      ),
+      [
+        ...(securityContext?.deniedTools || []),
+        ...(securityContext?.channelSpecialization?.toolRestrictions || []),
+      ].filter((t) => typeof t === "string" && t.trim().length > 0),
     );
 
     // Resolve agent role: router rule > session preference > channel default
     const routedChannel = this.getChannelForAdapter(adapter);
     const trustedGroupMemoryOptIn =
-      routedChannel?.config?.trustedGroupMemoryOptIn === true;
+      routedChannel?.config?.trustedGroupMemoryOptIn === true ||
+      securityContext?.channelSpecialization?.allowSharedContextMemory === true;
     const allowSharedContextMemory =
       gatewayContext !== "private" && trustedGroupMemoryOptIn;
     const resolvedAgentRoleId =
       securityContext?.agentRoleId ||
+      securityContext?.channelSpecialization?.agentRoleId ||
       this.getSessionPreferredAgentRoleId(session) ||
       (typeof routedChannel?.config?.defaultAgentRoleId === "string"
         ? routedChannel.config.defaultAgentRoleId
@@ -7222,12 +7335,15 @@ export class MessageRouter {
     const task = this.taskRepo.create({
       workspaceId: workspace.id,
       title: taskTitle,
-      prompt: message.text,
+      prompt: taskPrompt,
       status: "pending",
       agentConfig: {
         gatewayContext,
         ...(allowSharedContextMemory ? { allowSharedContextMemory: true } : {}),
         ...(toolRestrictions.length > 0 ? { toolRestrictions } : {}),
+        ...(securityContext?.channelSpecialization?.id
+          ? { channelSpecializationId: securityContext.channelSpecialization.id }
+          : {}),
         originChannel: adapter.type,
         ...(securityContext?.researchWorkflowPreset
           ? {

@@ -330,6 +330,77 @@ describe("EmailClient MIME parsing", () => {
     expect(messages.map((message) => message.uid)).toEqual([14, 13, 12]);
   });
 
+  it("marks a message read by RFC Message-ID through IMAP UID search", async () => {
+    const client = new EmailClient({
+      imapHost: "imap-mail.outlook.com",
+      imapPort: 993,
+      imapSecure: true,
+      smtpHost: "smtp-mail.outlook.com",
+      smtpPort: 587,
+      smtpSecure: false,
+      email: "user@msn.com",
+      password: "test-password",
+      mailbox: "INBOX",
+      pollInterval: 30000,
+    });
+
+    const clientAccess = getTestAccess(client);
+    const connectSpy = vi.spyOn(clientAccess, "connectImap").mockResolvedValue(undefined);
+    const selectSpy = vi.spyOn(clientAccess, "selectMailbox").mockResolvedValue(undefined);
+    const disconnectSpy = vi.spyOn(clientAccess, "disconnectImap").mockResolvedValue(undefined);
+    const commandSpy = vi.spyOn(clientAccess, "imapCommand").mockImplementation(async (command: string) => {
+      if (command.startsWith("UID SEARCH")) {
+        return '* SEARCH 123\r\nA1 OK SEARCH completed.\r\n';
+      }
+      return "A2 OK STORE completed.\r\n";
+    });
+
+    await expect(client.markMessageIdAsRead('<legacy"message@example.com>')).resolves.toBe(123);
+
+    expect(connectSpy).toHaveBeenCalled();
+    expect(selectSpy).toHaveBeenCalled();
+    expect(commandSpy).toHaveBeenNthCalledWith(
+      1,
+      'UID SEARCH HEADER Message-ID "<legacy\\"message@example.com>"',
+    );
+    expect(commandSpy).toHaveBeenNthCalledWith(2, "UID STORE 123 +FLAGS (\\Seen)");
+    expect(disconnectSpy).toHaveBeenCalled();
+  });
+
+  it("marks a message unread by RFC Message-ID through IMAP UID search", async () => {
+    const client = new EmailClient({
+      imapHost: "imap-mail.outlook.com",
+      imapPort: 993,
+      imapSecure: true,
+      smtpHost: "smtp-mail.outlook.com",
+      smtpPort: 587,
+      smtpSecure: false,
+      email: "user@msn.com",
+      password: "test-password",
+      mailbox: "INBOX",
+      pollInterval: 30000,
+    });
+
+    const clientAccess = getTestAccess(client);
+    vi.spyOn(clientAccess, "connectImap").mockResolvedValue(undefined);
+    vi.spyOn(clientAccess, "selectMailbox").mockResolvedValue(undefined);
+    vi.spyOn(clientAccess, "disconnectImap").mockResolvedValue(undefined);
+    const commandSpy = vi.spyOn(clientAccess, "imapCommand").mockImplementation(async (command: string) => {
+      if (command.startsWith("UID SEARCH")) {
+        return "* SEARCH 124\r\nA1 OK SEARCH completed.\r\n";
+      }
+      return "A2 OK STORE completed.\r\n";
+    });
+
+    await expect(client.markMessageIdAsUnread("<legacy-message@example.com>")).resolves.toBe(124);
+
+    expect(commandSpy).toHaveBeenNthCalledWith(
+      1,
+      'UID SEARCH HEADER Message-ID "<legacy-message@example.com>"',
+    );
+    expect(commandSpy).toHaveBeenNthCalledWith(2, "UID STORE 124 -FLAGS (\\Seen)");
+  });
+
   it("resets the IMAP connection when a command times out", async () => {
     vi.useFakeTimers();
     const client = new EmailClient({
@@ -364,5 +435,39 @@ describe("EmailClient MIME parsing", () => {
     expect(socket.destroy).toHaveBeenCalled();
     expect(clientAccess.imapSocket).toBeUndefined();
     expect(clientAccess.connected).toBe(false);
+  });
+
+  it("disconnects cleanly when LOGOUT clears the IMAP socket", async () => {
+    const client = new EmailClient({
+      imapHost: "imap-mail.outlook.com",
+      imapPort: 993,
+      imapSecure: true,
+      smtpHost: "smtp-mail.outlook.com",
+      smtpPort: 587,
+      smtpSecure: false,
+      email: "user@msn.com",
+      password: "test-password",
+      mailbox: "INBOX",
+      pollInterval: 30000,
+    });
+    const clientAccess = getTestAccess(client);
+    const socket = {
+      destroyed: false,
+      destroy: vi.fn(() => {
+        socket.destroyed = true;
+      }),
+      write: vi.fn(),
+    };
+    clientAccess.imapSocket = socket;
+    const commandSpy = vi.spyOn(clientAccess, "imapCommand").mockImplementation(async () => {
+      clientAccess.imapSocket = undefined;
+      throw new Error("IMAP command timeout");
+    });
+
+    await expect(clientAccess.disconnectImap()).resolves.toBeUndefined();
+
+    expect(commandSpy).toHaveBeenCalledWith("LOGOUT");
+    expect(socket.destroy).toHaveBeenCalled();
+    expect(clientAccess.imapSocket).toBeUndefined();
   });
 });

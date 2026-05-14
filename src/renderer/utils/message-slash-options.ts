@@ -51,6 +51,32 @@ export type SlashCommandOption =
   | SkillSlashCommandOption
   | BuiltinSlashCommandOption;
 
+export type SlashCommandTextTarget = {
+  start: number;
+  end: number;
+};
+
+export function applySlashCommandSelection(params: {
+  value: string;
+  target: SlashCommandTextTarget;
+  commandName: string;
+}): { nextValue: string; cursorPosition: number } {
+  const before = params.value.slice(0, params.target.start);
+  const after = params.value.slice(params.target.end);
+  const commandText = `/${params.commandName}`;
+  if (/^[ \t]/.test(after)) {
+    return {
+      nextValue: `${before}${commandText}${after}`,
+      cursorPosition: before.length + commandText.length + 1,
+    };
+  }
+  const insertText = `${commandText} `;
+  return {
+    nextValue: `${before}${insertText}${after}`,
+    cursorPosition: before.length + insertText.length,
+  };
+}
+
 function skillHasRequiredParams(skill: CustomSkill): boolean {
   return skill.parameters?.some((parameter) => parameter.required === true) === true;
 }

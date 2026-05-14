@@ -2008,6 +2008,8 @@ export interface AgentConfig {
   integrationMentions?: IntegrationMentionSelection[];
   /** Optional origin channel that created the task (used for channel-aware gating) */
   originChannel?: ChannelType;
+  /** Resolved gateway specialization record that shaped the task. */
+  channelSpecializationId?: string;
   /** Explicit maximum number of LLM turns before forcing completion. Unset means no window cap for normal main-task routing. */
   maxTurns?: number;
   /** Turn-window policy for explicit window caps. Ignored when no explicit maxTurns/windowTurnCap is set. */
@@ -2110,6 +2112,12 @@ export interface AgentConfig {
   qualityPasses?: 1 | 2 | 3;
   /** Auto-create an ephemeral collaborative team for this task */
   collaborativeMode?: boolean;
+  /** Create a collaborative run from a /multitask command with lane-specific child tasks */
+  multitaskMode?: boolean;
+  /** Requested number of /multitask lanes */
+  multitaskLaneCount?: number;
+  /** How /multitask assigns work to lanes */
+  multitaskAssignmentMode?: "auto_split";
   /** Send the same task to multiple LLMs and have a judge synthesize results */
   multiLlmMode?: boolean;
   /** Configuration for multi-LLM mode: which providers/models to use and which is the judge */
@@ -2314,7 +2322,15 @@ export interface Task {
   branchLabel?: string; // Human label for the branch shown in UI/debug surfaces
   resumeStrategy?: "snapshot" | "checkpoint" | "transcript"; // Preferred resume source
   // Origin source for distinguishing how the task was created
-  source?: "manual" | "cron" | "hook" | "api" | "improvement" | "subconscious" | "symphony";
+  source?:
+    | "manual"
+    | "cron"
+    | "hook"
+    | "api"
+    | "improvement"
+    | "subconscious"
+    | "symphony"
+    | "managed_agent_panel";
   // Strategy/routing controls
   strategyLock?: boolean; // When true, do not re-route intent at runtime
   budgetProfile?: "balanced" | "strict" | "aggressive";
@@ -4201,6 +4217,107 @@ export interface ListCoreMemoryDistillRunsRequest {
   limit?: number;
 }
 
+export type DreamingScopeKind =
+  | "workspace"
+  | "agent_role"
+  | "topic"
+  | "recent_sessions";
+
+export type DreamingTriggerSource =
+  | "heartbeat"
+  | "task_completion"
+  | "manual"
+  | "system";
+
+export type DreamingRunStatus =
+  | "running"
+  | "completed"
+  | "failed"
+  | "skipped";
+
+export type DreamingCandidateAction =
+  | "curated_add"
+  | "curated_replace"
+  | "curated_archive"
+  | "archive_mark_stale"
+  | "topic_pack_update"
+  | "ignored_noise_pattern"
+  | "open_loop"
+  | "recurring_task"
+  | "constraint"
+  | "correction";
+
+export type DreamingCandidateTarget =
+  | "curated_memory"
+  | "archive_memory"
+  | "topic_pack"
+  | "core_memory"
+  | "suggestion_policy";
+
+export type DreamingCandidateStatus =
+  | "proposed"
+  | "accepted"
+  | "rejected"
+  | "applied"
+  | "merged";
+
+export interface DreamingRun {
+  id: string;
+  workspaceId: string;
+  scopeKind: DreamingScopeKind;
+  scopeRef: string;
+  status: DreamingRunStatus;
+  triggerSource: DreamingTriggerSource;
+  triggerHeartbeatRunId?: string;
+  sourceTaskId?: string;
+  instructions?: string;
+  summary?: string;
+  evidenceCount: number;
+  candidateCount: number;
+  error?: string;
+  startedAt: number;
+  completedAt?: number;
+  createdAt: number;
+}
+
+export interface DreamingCandidate {
+  id: string;
+  runId: string;
+  workspaceId: string;
+  action: DreamingCandidateAction;
+  target: DreamingCandidateTarget;
+  currentValue?: string;
+  proposedValue: string;
+  rationale: string;
+  confidence: number;
+  evidenceRefs: EvidenceRef[];
+  status: DreamingCandidateStatus;
+  createdAt: number;
+  reviewedAt?: number;
+  resolution?: string;
+}
+
+export interface ListDreamingRunsRequest {
+  workspaceId?: string;
+  scopeKind?: DreamingScopeKind;
+  status?: DreamingRunStatus;
+  limit?: number;
+}
+
+export interface ListDreamingCandidatesRequest {
+  workspaceId?: string;
+  runId?: string;
+  action?: DreamingCandidateAction;
+  status?: DreamingCandidateStatus;
+  limit?: number;
+}
+
+export interface ReviewDreamingCandidateRequest {
+  id: string;
+  status: Extract<DreamingCandidateStatus, "accepted" | "rejected" | "merged" | "applied">;
+  resolution?: string;
+}
+
 export interface RunCoreMemoryDistillNowRequest {
   profileId: string;
   workspaceId?: string;
@@ -5055,6 +5172,7 @@ export interface ManagedSession {
   environmentId: string;
   title: string;
   status: ManagedSessionStatus;
+  surface?: ManagedSessionSurface;
   workspaceId: string;
   backingTaskId?: string;
   backingTeamRunId?: string;
@@ -5066,6 +5184,8 @@ export interface ManagedSession {
   completedAt?: number;
 }
 
+export type ManagedSessionSurface = "runtime" | "agent_panel" | "studio_preview";
+
 export type ManagedSessionInputContent =
   | { type: "text"; text: string }
   | { type: "file"; artifactId: string };
@@ -5074,10 +5194,16 @@ export interface ManagedSessionCreateInput {
   agentId: string;
   environmentId: string;
   title: string;
+  surface?: ManagedSessionSurface;
   initialEvent?: {
     type: "user.message";
     content: ManagedSessionInputContent[];
   };
+}
+
+export interface ManagedSessionUserMessageRequest {
+  sessionId: string;
+  content: ManagedSessionInputContent[];
 }
 
 export type ManagedSessionEventType =
@@ -5141,6 +5267,7 @@ export interface ManagedAgentRuntimeToolCatalog {
   environmentId?: string;
   chatgpt: ManagedAgentRuntimeToolCatalogEntry[];
   slack: ManagedAgentRuntimeToolCatalogEntry[];
+  missingConnections?: AgentBuilderConnectionRequirement[];
 }
 
 export interface ManagedAgentFileRef {
@@ -5174,6 +5301,112 @@ export interface ManagedAgentScheduleConfig {
   label?: string;
   cadenceMinutes?: number;
   activeHours?: HeartbeatActiveHours | null;
+}
+
+export interface AgentStarterPrompt {
+  id: string;
+  title: string;
+  prompt: string;
+  description?: string;
+  icon?: string;
+}
+
+export interface AgentBuilderConnectionRequirement {
+  id: string;
+  kind: "connector" | "mcp_server" | "channel" | "skill" | "app";
+  label: string;
+  status: "missing" | "needs_auth" | "disabled" | "not_installed";
+  reason: string;
+  connectAction?: {
+    type: "settings" | "connector" | "channel" | "skill";
+    targetId?: string;
+    label?: string;
+  };
+}
+
+export interface AgentBuilderRoutinePlan {
+  name: string;
+  description?: string;
+  enabled: boolean;
+  trigger: ManagedAgentRoutineTriggerConfig;
+}
+
+export type AgentBuilderSelectionRequirementKind = "integration" | "tool" | "skill";
+
+export interface AgentBuilderSelectionOption {
+  id: string;
+  label: string;
+  description?: string;
+  status: "available" | "missing" | "needs_auth" | "disabled";
+  selectedToolFamilies?: ManagedAgentToolFamily[];
+  selectedMcpServers?: string[];
+  selectedSkills?: string[];
+  missingConnections?: AgentBuilderConnectionRequirement[];
+}
+
+export interface AgentBuilderSelectionRequirement {
+  id: string;
+  kind: AgentBuilderSelectionRequirementKind;
+  title: string;
+  reason: string;
+  required: boolean;
+  options: AgentBuilderSelectionOption[];
+  selectedOptionId?: string;
+}
+
+export interface AgentBuilderPlan {
+  id: string;
+  sourcePrompt: string;
+  name: string;
+  subtitle: string;
+  description: string;
+  icon: string;
+  color: string;
+  templateId?: string;
+  workflowBrief: string;
+  capabilities: string[];
+  selectedToolFamilies: ManagedAgentToolFamily[];
+  selectedMcpServers: string[];
+  connectedMcpServers: string[];
+  recommendedMissingIntegrations: AgentBuilderConnectionRequirement[];
+  missingConnections: AgentBuilderConnectionRequirement[];
+  selectedSkills: string[];
+  selectionRequirements: AgentBuilderSelectionRequirement[];
+  instructions: string;
+  operatingNotes: string;
+  starterPrompts: AgentStarterPrompt[];
+  scheduleSuggestion?: string;
+  scheduleConfig: ManagedAgentScheduleConfig;
+  routines: AgentBuilderRoutinePlan[];
+  memoryConfig: ManagedAgentMemoryConfig;
+  approvalPolicy: ManagedAgentApprovalPolicy;
+  sharing: ManagedAgentSharingConfig;
+  deployment: ManagedAgentDeploymentConfig;
+  enableShell: boolean;
+  enableBrowser: boolean;
+  enableComputerUse: boolean;
+  rationale: string[];
+  checklist: string[];
+  generatedAt: number;
+  fallbackUsed?: boolean;
+}
+
+export interface AgentBuilderPlanRequest {
+  prompt: string;
+  workspaceId?: string;
+}
+
+export interface AgentBuilderCreateRequest {
+  plan: AgentBuilderPlan;
+  workspaceId?: string;
+  activate?: boolean;
+}
+
+export interface AgentBuilderCreateResult {
+  agent: ManagedAgent;
+  version: ManagedAgentVersion;
+  environment: ManagedEnvironment;
+  routines: ManagedAgentRoutineRecord[];
 }
 
 export interface AudioSummaryConfig {
@@ -5226,9 +5459,17 @@ export interface ManagedAgentDeploymentConfig {
 export interface ManagedAgentStudioConfig {
   templateId?: string;
   workflowBrief?: string;
+  appearance?: {
+    icon?: string;
+    color?: string;
+  };
+  subtitle?: string;
   instructions?: {
     operatingNotes?: string;
   };
+  starterPrompts?: AgentStarterPrompt[];
+  builderPlan?: AgentBuilderPlan;
+  missingConnections?: AgentBuilderConnectionRequirement[];
   skills?: string[];
   apps?: {
     mcpServers?: string[];
@@ -5248,6 +5489,10 @@ export interface ManagedAgentStudioConfig {
   routineIds?: string[];
   linkedRoutines?: ManagedAgentLinkedRoutineRef[];
   scheduleSummary?: string;
+  requiredPackIds?: string[];
+  requiredConnectorIds?: string[];
+  expectedArtifacts?: ("xlsx" | "pptx" | "docx" | "pdf" | "json")[];
+  teamRoleNames?: string[];
   conversion?: ManagedAgentConversionProvenance;
   legacyMirror?: ManagedAgentLegacyMirror;
 }
@@ -5259,7 +5504,7 @@ export interface AgentTemplate {
   tagline?: string;
   icon: string;
   color: string;
-  category: "operations" | "support" | "planning" | "research" | "engineering";
+  category: "operations" | "support" | "planning" | "research" | "engineering" | "finance";
   featured?: boolean;
   systemPrompt: string;
   executionMode: ManagedAgentExecutionMode;
@@ -5267,6 +5512,10 @@ export interface AgentTemplate {
   skills?: string[];
   mcpServers?: string[];
   teamTemplate?: ManagedAgentTeamTemplate;
+  requiredPackIds?: string[];
+  requiredConnectorIds?: string[];
+  expectedArtifacts?: ("xlsx" | "pptx" | "docx" | "pdf" | "json")[];
+  teamRoleNames?: string[];
   environmentConfig?: Partial<ManagedEnvironmentConfig>;
   studio?: Partial<ManagedAgentStudioConfig>;
 }
@@ -5522,6 +5771,86 @@ export const DEFAULT_AGENT_ROLES: Omit<
     isSystem: true,
     isActive: true,
     sortOrder: 15,
+  },
+  {
+    name: "finance-lead",
+    displayName: "Finance Lead",
+    description:
+      "Coordinates finance workflows, assigns specialists, and keeps review checkpoints explicit",
+    icon: "📊",
+    color: "#0f766e",
+    capabilities: ["manage", "plan", "analyze"],
+    autonomyLevel: "lead",
+    isSystem: true,
+    isActive: true,
+    sortOrder: 16,
+  },
+  {
+    name: "finance-data-reader",
+    displayName: "Research/Data Reader",
+    description:
+      "Gathers read-only market, company, filing, ledger, and document evidence with source trails",
+    icon: "🔎",
+    color: "#2563eb",
+    capabilities: ["research", "analyze", "document"],
+    toolRestrictions: { deniedTools: ["group:write", "group:destructive"] },
+    autonomyLevel: "specialist",
+    isSystem: true,
+    isActive: true,
+    sortOrder: 17,
+  },
+  {
+    name: "finance-model-builder",
+    displayName: "Model Builder",
+    description:
+      "Builds reviewable finance workbooks with inputs, calculations, checks, and source-ledger links",
+    icon: "🧮",
+    color: "#7c3aed",
+    capabilities: ["analyze", "document"],
+    autonomyLevel: "specialist",
+    isSystem: true,
+    isActive: true,
+    sortOrder: 18,
+  },
+  {
+    name: "finance-document-writer",
+    displayName: "Deck/Note Writer",
+    description:
+      "Turns approved analysis into draft decks, memos, and workpapers for human review",
+    icon: "📝",
+    color: "#db2777",
+    capabilities: ["write", "document", "research"],
+    autonomyLevel: "specialist",
+    isSystem: true,
+    isActive: true,
+    sortOrder: 19,
+  },
+  {
+    name: "finance-reviewer",
+    displayName: "Reviewer/Critic",
+    description:
+      "Reviews assumptions, source support, math checks, presentation quality, and guardrail compliance",
+    icon: "✅",
+    color: "#f59e0b",
+    capabilities: ["review", "analyze", "research"],
+    toolRestrictions: { deniedTools: ["group:write", "group:destructive"] },
+    autonomyLevel: "specialist",
+    isSystem: true,
+    isActive: true,
+    sortOrder: 20,
+  },
+  {
+    name: "finance-controller",
+    displayName: "Resolver/Controller",
+    description:
+      "Reconciles exceptions, traces breaks, prepares variance narratives, and keeps postings human-approved",
+    icon: "🧾",
+    color: "#475569",
+    capabilities: ["analyze", "review", "document"],
+    autonomyLevel: "specialist",
+    isSystem: true,
+    isActive: true,
+    sortOrder: 21,
   },
 ];
 
@@ -5839,6 +6168,8 @@ export interface HeartbeatResult {
   checklistDueCount?: number;
   reflectionRunId?: string;
   reflectionOutcome?: string;
+  dreamingRunId?: string;
+  dreamingCandidateCount?: number;
   cooldownUntil?: number;
   dispatchesToday?: number;
   maxDispatchesPerDay?: number;
@@ -6480,6 +6811,7 @@ export const IPC_CHANNELS = {
   BROWSER_WORKBENCH_SCREENSHOT: "browserWorkbench:screenshot",
   BROWSER_WORKBENCH_OPEN_REQUEST: "browserWorkbench:openRequest",
   BROWSER_WORKBENCH_CURSOR: "browserWorkbench:cursor",
+  BROWSER_WORKBENCH_VIEWPORT: "browserWorkbench:viewport",
   LLM_WIKI_GET_VAULT_SUMMARY: "llmWiki:getVaultSummary",
   FILE_IMPORT_TO_WORKSPACE: "file:importToWorkspace",
   FILE_IMPORT_DATA_TO_WORKSPACE: "file:importDataToWorkspace",
@@ -6501,8 +6833,12 @@ export const IPC_CHANNELS = {
   MAILBOX_ATTACHMENT_EXTRACT_TEXT: "mailbox:attachmentExtractText",
   MAILBOX_CREATE_DRAFT: "mailbox:createDraft",
   MAILBOX_UPDATE_DRAFT: "mailbox:updateDraft",
+  MAILBOX_ADD_DRAFT_ATTACHMENT: "mailbox:addDraftAttachment",
+  MAILBOX_REMOVE_DRAFT_ATTACHMENT: "mailbox:removeDraftAttachment",
   MAILBOX_SEND_DRAFT: "mailbox:sendDraft",
   MAILBOX_SCHEDULE_SEND: "mailbox:scheduleSend",
+  MAILBOX_UPDATE_CLIENT_SETTINGS: "mailbox:updateClientSettings",
+  MAILBOX_RETRY_ACTION: "mailbox:retryAction",
   MAILBOX_DISCARD_COMPOSE_DRAFT: "mailbox:discardComposeDraft",
   MAILBOX_UNDO_ACTION: "mailbox:undoAction",
   MAILBOX_SUMMARIZE_THREAD: "mailbox:summarizeThread",
@@ -6796,6 +7132,11 @@ export const IPC_CHANNELS = {
   CONTEXT_POLICY_DELETE: "contextPolicy:delete",
   CONTEXT_POLICY_CREATE_DEFAULTS: "contextPolicy:createDefaults",
   CONTEXT_POLICY_IS_TOOL_ALLOWED: "contextPolicy:isToolAllowed",
+  CHANNEL_SPECIALIZATION_LIST: "channelSpecialization:list",
+  CHANNEL_SPECIALIZATION_CREATE: "channelSpecialization:create",
+  CHANNEL_SPECIALIZATION_UPDATE: "channelSpecialization:update",
+  CHANNEL_SPECIALIZATION_DELETE: "channelSpecialization:delete",
+  CHANNEL_SPECIALIZATION_RESOLVE: "channelSpecialization:resolve",
 
   // Task events (streaming and history)
   TASK_EVENT: "task:event",
@@ -7211,6 +7552,8 @@ export const IPC_CHANNELS = {
   MANAGED_AGENT_LIST_IPC: "managedAgent:listIpc",
   MANAGED_AGENT_GET_IPC: "managedAgent:getIpc",
   MANAGED_AGENT_CREATE_IPC: "managedAgent:createIpc",
+  MANAGED_AGENT_GENERATE_PLAN_IPC: "managedAgent:generatePlanIpc",
+  MANAGED_AGENT_CREATE_FROM_PLAN_IPC: "managedAgent:createFromPlanIpc",
   MANAGED_AGENT_UPDATE_IPC: "managedAgent:updateIpc",
   MANAGED_AGENT_ARCHIVE_IPC: "managedAgent:archiveIpc",
   MANAGED_AGENT_PUBLISH_IPC: "managedAgent:publishIpc",
@@ -7233,6 +7576,7 @@ export const IPC_CHANNELS = {
   MANAGED_SESSION_LIST_IPC: "managedSession:listIpc",
   MANAGED_SESSION_GET_IPC: "managedSession:getIpc",
   MANAGED_SESSION_CREATE_IPC: "managedSession:createIpc",
+  MANAGED_SESSION_SEND_USER_MESSAGE_IPC: "managedSession:sendUserMessageIpc",
   MANAGED_SESSION_RESUME_IPC: "managedSession:resumeIpc",
   MANAGED_SESSION_CANCEL_IPC: "managedSession:cancelIpc",
   MANAGED_SESSION_EVENTS_LIST_IPC: "managedSession:eventsListIpc",
@@ -7710,6 +8054,7 @@ export interface LLMSettingsData {
     apiKey?: string;
     model?: string;
     baseUrl?: string;
+    paretoMinCodingScore?: number;
   } & ProviderRoutingSettings;
   deepseek?: {
     apiKey?: string;
@@ -7942,6 +8287,48 @@ export interface ContextPolicy {
   toolRestrictions?: string[];
   createdAt: number;
   updatedAt: number;
+}
+
+export interface ChannelSpecialization {
+  id: string;
+  channelId: string;
+  chatId?: string;
+  threadId?: string;
+  name?: string;
+  workspaceId?: string;
+  agentRoleId?: string;
+  systemGuidance?: string;
+  toolRestrictions?: string[];
+  allowSharedContextMemory: boolean;
+  enabled: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface CreateChannelSpecializationRequest {
+  channelId: string;
+  chatId?: string;
+  threadId?: string;
+  name?: string;
+  workspaceId?: string;
+  agentRoleId?: string;
+  systemGuidance?: string;
+  toolRestrictions?: string[];
+  allowSharedContextMemory?: boolean;
+  enabled?: boolean;
+}
+
+export interface UpdateChannelSpecializationRequest {
+  id: string;
+  chatId?: string | null;
+  threadId?: string | null;
+  name?: string | null;
+  workspaceId?: string | null;
+  agentRoleId?: string | null;
+  systemGuidance?: string | null;
+  toolRestrictions?: string[];
+  allowSharedContextMemory?: boolean;
+  enabled?: boolean;
 }
 
 /**
@@ -8372,6 +8759,7 @@ export interface GoogleWorkspaceConnectionTestResult {
   name?: string;
   userId?: string;
   email?: string;
+  missingScopes?: string[];
 }
 
 export interface AgentMailSettingsData {

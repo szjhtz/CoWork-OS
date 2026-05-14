@@ -25,12 +25,12 @@ The model is:
 Managed Agents V1 is intentionally narrow:
 
 - local execution only through `ManagedEnvironment.kind = "cowork_local"`
-- control-plane and backend first
-- no dedicated renderer screen yet
+- renderer support through the Agents Hub for creation, inspection, governance, and manual runs
 - existing task APIs remain supported
-- Mission Control and task surfaces observe the backing task or team run created by the managed session
+- Mission Control and task surfaces observe the backing task or team run created by each managed session
+- no private agent-detail chat surface; every runnable action is processed as a normal main-window task
 
-This means Managed Agents is ready for backend integration and operator testing before a polished end-user creation UI exists.
+This means Managed Agents is an additive product surface on top of the existing task runtime. The Agents Hub configures reusable agents, but the main task window remains the only place where agent work, questions, responses, approvals, and outputs are shown.
 
 ## Control-Plane Surface
 
@@ -82,8 +82,40 @@ Managed Agents is not a second executor. It maps onto the existing runtime:
 - team-mode `ManagedSession` also creates a backing `AgentTeamRun`
 - `task_events` and daemon notifications are mirrored into `managed_session_events`
 - `session_runtime_v2` remains task-scoped runtime state owned by `SessionRuntime`
+- Agents Hub manual actions create `runtime` managed sessions and then open the backing task in the main task view
 
 The important contract is that `ManagedSession` is the API-facing durable run, while `Task` remains the execution worker.
+
+## Agents Hub Concept
+
+The Agents Hub is the user-facing managed-agent surface in the renderer.
+
+It owns:
+
+- agent discovery across managed agents, templates, scheduled agents, and migrated personas
+- natural-language agent creation through the builder
+- template-backed drafts, required connectors, selected skills, runtime tools, memory, files, schedule, channels, approvals, sharing, and deployment posture
+- managed-agent inspection, publish/suspend controls, Slack/channel status, runtime tool catalog, audit hints, and current instructions
+
+The selected-agent detail screen is intentionally single-pane. It is not a chat room and it does not have a bottom ask box. Clicking a managed agent shows its configuration and action buttons in the main detail page.
+
+The supported action model is:
+
+- **Test this agent** creates a managed session with `surface: "runtime"` and opens the session's backing task in the main task window
+- **Preview** follows the same runtime task path
+- starter prompt cards follow the same runtime task path
+- **Add advanced logic** and **Optimize this agent** open the agent draft/editor surface instead of starting a local conversation
+- any follow-up questions, approvals, responses, files, and final outputs belong to the opened task, not to the Agents Hub detail screen
+
+This keeps all agent execution observable through the same task timeline, right-panel artifacts, approvals, notifications, and completion behavior as ordinary user-created tasks.
+
+## Relation To Dreaming
+
+Managed Agents do not own memory curation policy.
+
+Managed sessions can produce task transcripts, task results, and memory observations like ordinary tasks. Dreaming may later review that evidence after task completion or from memory-specific Heartbeat signals, but it writes reviewable `dreaming_candidates` through the normal Workflow Intelligence memory-curation path.
+
+That keeps Managed Agents focused on reusable execution identity while Memory, Heartbeat, Reflection, Dreaming, and Suggestions remain the core Workflow Intelligence runtime. See [Dreaming](dreaming.md).
 
 ## Managed Turn Budgets
 
@@ -112,16 +144,18 @@ These rules keep the managed control-plane surface suitable for UI/backend consu
 
 ## Current UI State
 
-There is not yet a dedicated Managed Agents screen in the renderer.
+Managed Agents now has a dedicated renderer surface: **Agents Hub**.
 
-Today’s operator workflow is:
+Today’s product workflow is:
 
-1. enable and start the Control Plane in app settings
-2. open the built-in Control Plane page
-3. use its `request(method, params)` helper to create a managed environment, managed agent, and managed session
-4. observe the resulting backing task or team run in the normal task UI and Mission Control
+1. open **Agents** from the primary app navigation
+2. create an agent from a prompt, a template, or an existing role/profile conversion
+3. review and adjust tools, skills, files, memory, approvals, schedule, channels, and instructions
+4. save or publish the agent
+5. click **Test this agent**, **Preview**, or a starter prompt
+6. observe the resulting backing task in the normal main task UI and Mission Control
 
-This is the current practical test path from the desktop app.
+The Control Plane remains available for API-level creation and smoke testing, but it is no longer the only practical test path from the desktop app.
 
 ## Manual App Test Flow
 
@@ -167,6 +201,7 @@ Then verify:
 - the task starts through the normal daemon lifecycle
 - `managedSession.get` shows the backing task link and current status
 - `managedSession.events.list` returns sanitized event payloads
+- Agents Hub-created manual runs open the backing task in the main window rather than rendering a separate agent-panel transcript
 
 For team mode:
 

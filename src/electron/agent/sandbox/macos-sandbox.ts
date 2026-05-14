@@ -31,7 +31,17 @@ const DEFAULT_OPTIONS: Required<SandboxOptions> = {
   allowedReadPaths: [],
   allowedWritePaths: [],
   envPassthrough: ["PATH", "HOME", "USER", "SHELL", "LANG", "TERM", "TMPDIR"],
+  onProcess: () => undefined,
 };
+
+const PROTECTED_WORKSPACE_WRITE_RELATIVE_PATHS = [
+  ".git",
+  ".cowork",
+  ".env",
+  ".env.local",
+  ".env.production",
+  ".env.development",
+];
 
 /**
  * macOS sandbox-exec based sandbox implementation
@@ -52,7 +62,6 @@ export class MacOSSandbox implements ISandbox {
     if (process.platform !== "darwin") {
       throw new Error("MacOSSandbox can only be used on macOS");
     }
-    this.sandboxProfile = this.generateSandboxProfile();
   }
 
   /**
@@ -65,6 +74,7 @@ export class MacOSSandbox implements ISandbox {
   ): Promise<SandboxResult> {
     const opts = { ...DEFAULT_OPTIONS, ...options };
     const cwd = opts.cwd || this.workspace.path;
+    this.sandboxProfile = this.generateSandboxProfile(opts.allowNetwork === true);
 
     // Validate working directory is within allowed paths
     if (!this.isPathAllowed(cwd, "read")) {
@@ -86,7 +96,7 @@ export class MacOSSandbox implements ISandbox {
       cwd,
       env,
       shell: true,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["pipe", "pipe", "pipe"],
     };
 
     if (this.sandboxProfile) {
@@ -103,6 +113,7 @@ export class MacOSSandbox implements ISandbox {
       // Fallback without sandbox profile
       proc = spawn("/bin/sh", ["-c", `${command} ${args.join(" ")}`], spawnOptions);
     }
+    opts.onProcess?.(proc);
 
     return new Promise((resolve) => {
       let stdout = "";
@@ -297,7 +308,7 @@ export class MacOSSandbox implements ISandbox {
    * Generate macOS sandbox-exec profile
    * Paths are escaped to prevent sandbox profile injection attacks
    */
-  private generateSandboxProfile(): string {
+  private generateSandboxProfile(allowNetwork: boolean): string {
     const permissions = this.workspace.permissions;
     const tempDir = os.tmpdir();
 
@@ -347,6 +358,17 @@ export class MacOSSandbox implements ISandbox {
 ; Allow writing to workspace
 (allow file-write* (subpath "${escapedWorkspace}"))
 `;
+      for (const relativePath of PROTECTED_WORKSPACE_WRITE_RELATIVE_PATHS) {
+        const protectedPath = path.join(this.workspace.path, relativePath);
+        try {
+          validatePathForSandboxProfile(protectedPath);
+          const escapedProtectedPath = escapeSandboxProfileString(protectedPath);
+          profile += `(deny file-write* (subpath "${escapedProtectedPath}"))\n`;
+          profile += `(deny file-write* (literal "${escapedProtectedPath}"))\n`;
+        } catch (err) {
+          console.warn(`[MacOSSandbox] Skipping unsafe protected path: ${protectedPath}`, err);
+        }
+      }
     }
 
     // Allow writing to temp directories
@@ -360,7 +382,7 @@ export class MacOSSandbox implements ISandbox {
 `;
 
     // Allow network if permitted
-    if (permissions.network) {
+    if (allowNetwork) {
       profile += `
 ; Allow network access
 (allow network*)

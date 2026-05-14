@@ -6,8 +6,6 @@ import type { Task, TaskEvent, Workspace } from "../../../shared/types";
 import {
   collectLatestEndOfTaskArtifactCards,
   collectInlineRunCommandSessionIds,
-  buildTaskAutomationCronJobCreate,
-  buildTaskAutomationSchedule,
   composeMessageWithAttachments,
   deriveAgentReasoningPanelState,
   deriveTaskHeaderPresentation,
@@ -20,7 +18,6 @@ import {
   getBootstrapProgressTitle,
   getDefaultTranscriptMode,
   hasInactiveStringSetEntries,
-  isTaskActivelyWorking,
   pruneStringSetToActiveIds,
   selectVisibleTaskFeedRows,
   shouldCreateFreshTaskForSend,
@@ -28,8 +25,13 @@ import {
   shouldShowBootstrapProgressRow,
   shouldScheduleAutoScrollWrite,
   TaskAutomationModal,
-  TASK_AUTOMATION_TEMPLATES,
 } from "../MainContent";
+import { isTaskActivelyWorking } from "../../utils/task-working-state";
+import {
+  buildTaskAutomationCronJobCreate,
+  buildTaskAutomationSchedule,
+  TASK_AUTOMATION_TEMPLATES,
+} from "../task-automation-utils";
 
 afterEach(() => {
   vi.unstubAllGlobals();

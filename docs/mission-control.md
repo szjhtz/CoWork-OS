@@ -2,7 +2,7 @@
 
 Mission Control is a centralized agent orchestration and monitoring dashboard. It provides the main cockpit for managing agents, tracking tasks across a Kanban board, monitoring real-time activity, and overseeing team-based collaboration.
 
-Heartbeat v3 is the default background automation model exposed here. Mission Control should be read as pulse/defer/dispatch truth, not as a wake-queue monitor. It also surfaces the `Core Harness` that learns from runtime traces. See [Heartbeat v3](heartbeat-v3.md) and [Core Automation](core-automation.md) for the runtime model.
+Heartbeat v3 is the default background automation model exposed here. Mission Control should be read as pulse/defer/dispatch truth, not as a wake-queue monitor. Mission Control also surfaces the `Core Harness` and should eventually surface Dreaming runs/candidates as the reviewable memory-curation lane. See [Heartbeat v3](heartbeat-v3.md), [Dreaming](dreaming.md), and [Core Automation](core-automation.md) for the runtime model.
 
 Access it from **Settings** > **Mission Control**. For company-ops workflows, you can also jump into it directly from **Settings** > **Companies** with the selected company preloaded.
 
@@ -10,6 +10,7 @@ Mission Control now sits alongside the other operational entry points:
 
 - **Devices** for machine-level task routing and remote execution
 - **Settings > Automations** for routines, core automation, queueing, scheduling, triggers, briefing, and Workflow Intelligence policies
+- **Settings > Memory Hub** for durable memory, structured observations, and future Dreaming candidate review
 - **Settings > Companies** for company graph editing and operator assignment
 
 ## Layout
@@ -60,7 +61,7 @@ Configure agent roles with:
 - Autonomy level (lead / specialist / intern)
 - link-out to the attached automation profile when the role participates in the always-on core
 
-Heartbeat and Workflow Intelligence ownership no longer live directly in the general role editor. Core-runtime settings are managed through the dedicated automation surfaces.
+Heartbeat, Dreaming, and Workflow Intelligence ownership no longer live directly in the general role editor. Core-runtime settings are managed through the dedicated automation and memory surfaces.
 
 ---
 
@@ -207,6 +208,7 @@ Access from the **Teams** button in the header. Full management UI for coordinat
 - **Create teams**: Name, description, lead agent, max parallel agents, model and personality preferences
 - **Manage members**: Add/remove agents, reorder, provide guidance
 - **Create team runs**: Execute coordinated multi-agent tasks
+- **Multitask runs**: `/multitask [N] <task>` creates an ephemeral team run with lane-specific checklist items and uses the same tracking surfaces
 - **Track items**: Shared checklists within a run with status tracking
 - **Real-time events**: Live tracking of team activity (member changes, run status, item updates)
 - **Graph-backed runs**: team work now rides on the same orchestration graph engine used by spawned agents and ACP delegation, so run state and projections stay consistent across surfaces
@@ -215,16 +217,17 @@ See [Features — Agent Teams](features.md#agent-teams) for more details.
 
 ## Managed Agents
 
-Managed Agents V1 does not have a dedicated Mission Control creation flow yet.
+Managed Agents are created and configured in **Agents Hub**, not inside Mission Control.
 
 Current behavior:
 
-- managed sessions are created through the Control Plane
+- managed sessions are created through Agents Hub actions or the Control Plane
 - each managed session creates a backing task
 - team-mode managed sessions also create a backing team run
 - Mission Control remains the main place to observe those backing tasks and team runs once they exist
+- the selected-agent detail screen in Agents Hub does not host its own chat transcript; test, preview, and starter-prompt actions open the backing task in the main task UI
 
-Use this together with [Managed Agents](managed-agents.md) when manually testing the feature from the app today.
+Use this together with [Managed Agents](managed-agents.md) when testing reusable agents from the app.
 
 ---
 

@@ -18,6 +18,7 @@ import { getSpreadsheetFormatLabel } from "../../shared/spreadsheet-formats";
 import { useVoiceInput } from "../hooks/useVoiceInput";
 import { ModelDropdown } from "./MainContent";
 import { SpreadsheetArtifactCard } from "./SpreadsheetArtifactCard";
+import "./artifact-viewers.css";
 
 type SpreadsheetArtifactViewerMode = "sidebar" | "fullscreen";
 type SpreadsheetSettingsTab =

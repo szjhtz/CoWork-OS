@@ -4,9 +4,9 @@ Digital Twin Personas are pre-built AI agent templates that create role-specific
 
 A persona template now bundles prompt/personality defaults, recommended skills, display metadata, and cognitive offload categories. Activating a template creates a fully configured role preset in one click, but it does not automatically enroll that role into the always-on core runtime.
 
-Access from **Settings** > **Digital Twins** or **Mission Control** > **Add Digital Twin**. For company-ops workflows, you can also open Digital Twins from **Settings** > **Companies** to create operators in company context. Digital twins can also be activated through [Plugin Packs](plugin-packs.md) — 9 of the 19 bundled packs link directly to a persona template.
+Access from **Settings** > **Digital Twins** or **Mission Control** > **Add Digital Twin**. For company-ops workflows, you can also open Digital Twins from **Settings** > **Companies** to create operators in company context. Digital twins can also be activated through [Plugin Packs](plugin-packs.md) when a pack links directly to a persona template.
 
-Digital Twins are intentionally separate from the core automation runtime. See [Workflow Intelligence](workflow-intelligence.md), [Core Automation](core-automation.md), and [Heartbeat v3](heartbeat-v3.md) for the architecture source of truth.
+Digital Twins are intentionally separate from the core automation runtime. See [Workflow Intelligence](workflow-intelligence.md), [Dreaming](dreaming.md), [Core Automation](core-automation.md), and [Heartbeat v3](heartbeat-v3.md) for the architecture source of truth.
 
 ---
 
@@ -30,7 +30,7 @@ Digital Twins are not direct heartbeat or Workflow Intelligence owners.
 That means:
 
 - Twin activation does not automatically create an automation profile
-- Twin templates do not own heartbeat cadence, cooldown, budget, or workflow-intelligence target state
+- Twin templates do not own heartbeat cadence, cooldown, budget, Dreaming policy, or workflow-intelligence target state
 - Mission Control can still show the role, but core automation is attached separately through automation profiles
 
 If you want a twin-backed operator to become always-on, activate the template first, then attach a separate automation profile to that role.
@@ -175,7 +175,7 @@ Once activated, a twin mainly operates as a role/persona surface plus an on-dema
 If a twin-backed role also has an automation profile, it can participate in:
 
 - Heartbeat v3 review
-- Workflow Intelligence reflection and suggestions
+- Workflow Intelligence reflection, Dreaming memory curation, and suggestions
 - core traces and learnings
 - Mission Control core-harness monitoring
 

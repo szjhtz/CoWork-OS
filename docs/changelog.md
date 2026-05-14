@@ -7,8 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Claude-for-Legal workflow docs**: documented bundled legal plugin-pack slash commands, editable picker selection, main-view demand/generic legal intake cards, management-command exclusions, safety behavior, and focused validation in the new Claude-for-Legal workflow guide.
+- **Browser Workbench responsive QA docs**: documented visible `browser_emulate` viewport control, desktop/tablet/mobile workbench presets, screenshot expectations, IPC/architecture changes, troubleshooting guidance, and verification steps for responsive browser testing.
+- **Multitask command docs**: documented `/multitask [N] <task>` as a bounded collaborative lane fan-out command, including syntax, lane planning, queue behavior, worktree safety, implementation landmarks, and focused validation.
+- **Google Workspace Tasks and Slides**: added first-class Google Workspace MCP coverage for Google Tasks task-list/task CRUD, completion, move, delete, clear-completed flows, plus Google Slides create/get, slide creation/deletion, text boxes, replace-all-text, and raw `batchUpdate` for advanced edits.
+- **OpenRouter Pareto Code docs**: documented `openrouter/pareto-code`, `openrouter/pareto-code:nitro`, the optional `0..1` Pareto minimum coding score, Nitro behavior, routed-model usage reporting, and the documented `200,000` context fallback in provider/setup docs.
+- **Control Plane Pareto configuration**: `llm.configure` now accepts OpenRouter `settings.paretoMinCodingScore` for headless/VPS installs and rejects percent-style values outside `0..1`.
+- **Dreaming documentation**: documented Dreaming as the Workflow Intelligence memory-curation phase, including trigger sources, evidence sources, `dreaming_runs` / `dreaming_candidates`, review-first behavior, and its relationship to Memory, Heartbeat, Reflection, and Suggestions.
+- **Managed deployment hardening docs**: documented fail-closed Control Plane posture checks, reverse-proxy allowed origins, trusted proxy guidance, and hardened Docker/systemd defaults for headless/VPS deployments.
+
 ### Changed
+- **Message-box shortcut docs**: clarified that skill-backed slash picker selections insert the command token for user context before launch, and added Claude-for-Legal intake-card implementation landmarks and tests.
+- **Google Workspace OAuth and mentions**: expanded the shared Google Workspace OAuth defaults for Tasks, Presentations, Docs, Sheets, and Chat; status checks now report missing scopes so older connections can reconnect. Composer/docs now describe Google Workspace as service-specific options for built-in Gmail/Drive/Calendar plus MCP-backed Docs/Sheets/Slides/Tasks/Chat.
+- **Managed Agents concept docs**: refreshed Managed Agents, Agents Hub, Mission Control, architecture, getting started, docs home, README, and status documentation so the current model is explicit: clicked-agent detail is a single-pane configuration surface, and test/preview/starter prompt actions open normal main-window tasks rather than running in a private sidebar chat.
 - **macOS unsigned DMG distribution**: release builds continue to publish unsigned macOS DMG/ZIP artifacts without requiring a personal Developer ID certificate. macOS smoke tests explicitly allow the unsigned fallback, and user-facing docs now explain the **System Settings > Privacy & Security > Open Anyway** flow required by Gatekeeper on first launch.
+- **Renderer task-surface performance**: documented the lazy `MainContent` / `RightPanel` boundaries, task-view skeleton, surface-specific CSS ownership, lazy markdown/code rendering, renderer perf startup marks, and `npm run qa:renderer-perf` validation path.
+
+### Fixed
+- **Google Workspace destructive safeguards**: documented and enforced explicit confirmation for destructive or broad Tasks/Slides MCP tools, including task-list deletion, task deletion, clear completed, slide deletion, replace-all-text, and raw Slides `batchUpdate`.
+- **Task surface restart styling**: kept critical welcome/composer control chrome in startup CSS and heavier task-surface styles in `main-content.css` so the center task view does not restart with unstyled native controls while lazy chunks are still unloaded.
 
 ## [0.5.44] - 2026-05-05
 

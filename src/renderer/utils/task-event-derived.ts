@@ -22,6 +22,10 @@ import {
 } from "./task-event-visibility";
 import { getEffectiveTaskEventType } from "./task-event-compat";
 import { normalizeEventsForTimelineUi } from "./timeline-projection";
+import {
+  classifyLiveTaskEvent,
+  getLiveTaskEventCoalesceFingerprint,
+} from "./live-task-event-policy";
 
 export type RendererEventVisibility = "live" | "inspect-only" | "debug-only";
 
@@ -70,6 +74,8 @@ export interface ToolCallPairing {
 }
 
 export interface SharedTaskEventUiState {
+  projectionMode: "live" | "inspect";
+  rawEventCount: number;
   normalizedEvents: TaskEvent[];
   filteredEvents: TaskEvent[];
   liveEvents: TaskEvent[];
@@ -96,6 +102,111 @@ export interface DeriveSharedTaskEventUiStateParams {
   task?: Task | null;
   workspace?: Workspace | null;
   verboseSteps?: boolean;
+  projectionMode?: "live" | "inspect";
+  liveWindowSize?: number;
+}
+
+const DEFAULT_LIVE_PROJECTION_WINDOW_SIZE = 160;
+const LIVE_COALESCE_WINDOW_MS = 10_000;
+const LIVE_PROJECTION_FORCE_VISIBLE_TYPES = new Set([
+  "assistant_message",
+  "user_message",
+  "approval_requested",
+  "input_request_created",
+  "task_completed",
+  "task_cancelled",
+  "error",
+  "timeline_error",
+  "follow_up_failed",
+  "step_failed",
+]);
+
+function isLiveAnchorEvent(event: TaskEvent): boolean {
+  const effectiveType = getEffectiveTaskEventType(event);
+  return (
+    effectiveType === "user_message" ||
+    effectiveType === "assistant_message" ||
+    effectiveType === "approval_requested" ||
+    effectiveType === "input_request_created" ||
+    effectiveType === "task_completed" ||
+    effectiveType === "task_cancelled" ||
+    effectiveType === "error" ||
+    effectiveType === "timeline_error" ||
+    event.type === "timeline_error" ||
+    effectiveType === "artifact_created" ||
+    event.type === "timeline_artifact_emitted"
+  );
+}
+
+function liveAnchorKey(event: TaskEvent): string | null {
+  const effectiveType = getEffectiveTaskEventType(event);
+  if (effectiveType === "user_message") return "latest-user";
+  if (effectiveType === "assistant_message" && event.payload?.internal !== true) {
+    return "latest-assistant";
+  }
+  if (effectiveType === "approval_requested") return "latest-approval";
+  if (effectiveType === "input_request_created") return "latest-input";
+  if (effectiveType === "task_completed" || effectiveType === "task_cancelled") return "terminal";
+  if (effectiveType === "error" || effectiveType === "timeline_error" || event.type === "timeline_error") {
+    return "latest-error";
+  }
+  if (effectiveType === "artifact_created" || event.type === "timeline_artifact_emitted") {
+    return "latest-artifact";
+  }
+  return null;
+}
+
+function selectLiveProjectionRawEvents(events: TaskEvent[], liveWindowSize: number): TaskEvent[] {
+  if (events.length <= liveWindowSize) return events;
+
+  const keepIds = new Set<string>();
+  const anchorSeen = new Set<string>();
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    const key = liveAnchorKey(event);
+    if (!key || anchorSeen.has(key)) continue;
+    anchorSeen.add(key);
+    keepIds.add(event.id);
+    if (anchorSeen.size >= 7) break;
+  }
+
+  const startIndex = Math.max(0, events.length - liveWindowSize);
+  const selected: TaskEvent[] = [];
+  for (let index = 0; index < events.length; index += 1) {
+    const event = events[index];
+    if (index >= startIndex || keepIds.has(event.id)) {
+      selected.push(event);
+    }
+  }
+  return selected;
+}
+
+function filterLiveProjectionEvents(events: TaskEvent[]): TaskEvent[] {
+  const lastCoalescedByFingerprint = new Map<string, number>();
+  const visible: TaskEvent[] = [];
+
+  for (const event of events) {
+    const lane = classifyLiveTaskEvent(event);
+    if (lane === "hiddenLiveNoise" && !isLiveAnchorEvent(event)) {
+      continue;
+    }
+
+    const fingerprint = getLiveTaskEventCoalesceFingerprint(event);
+    if (fingerprint) {
+      const previousTimestamp = lastCoalescedByFingerprint.get(fingerprint);
+      if (
+        typeof previousTimestamp === "number" &&
+        event.timestamp - previousTimestamp <= LIVE_COALESCE_WINDOW_MS
+      ) {
+        continue;
+      }
+      lastCoalescedByFingerprint.set(fingerprint, event.timestamp);
+    }
+
+    visible.push(event);
+  }
+
+  return visible;
 }
 
 function asObject(value: unknown): Record<string, unknown> {
@@ -654,7 +765,15 @@ function getLatestVisibleTaskEvent(
 export function deriveSharedTaskEventUiState(
   params: DeriveSharedTaskEventUiStateParams,
 ): SharedTaskEventUiState {
-  const normalizedEvents = normalizeEventsForTimelineUi(params.rawEvents);
+  const projectionMode = params.projectionMode ?? "inspect";
+  const rawEvents =
+    projectionMode === "live"
+      ? selectLiveProjectionRawEvents(
+          params.rawEvents,
+          Math.max(1, params.liveWindowSize ?? DEFAULT_LIVE_PROJECTION_WINDOW_SIZE),
+        )
+      : params.rawEvents;
+  const normalizedEvents = normalizeEventsForTimelineUi(rawEvents);
   const candidateEvents = params.verboseSteps
     ? filterVerboseTimelineNoise(normalizedEvents)
     : normalizedEvents;
@@ -663,11 +782,21 @@ export function deriveSharedTaskEventUiState(
   const inspectOnlyEvents: TaskEvent[] = [];
   const debugOnlyEvents: TaskEvent[] = [];
 
-  for (const event of candidateEvents) {
-    const visibility = classifyTaskEventForRenderer(event, {
-      taskStatus: params.task?.status,
-      verboseSteps: params.verboseSteps,
-    });
+  const projectedEvents =
+    projectionMode === "live" && !params.verboseSteps
+      ? filterLiveProjectionEvents(candidateEvents)
+      : candidateEvents;
+
+  for (const event of projectedEvents) {
+    const forceLive =
+      projectionMode === "live" &&
+      LIVE_PROJECTION_FORCE_VISIBLE_TYPES.has(getEffectiveTaskEventType(event));
+    const visibility = forceLive
+      ? "live"
+      : classifyTaskEventForRenderer(event, {
+          taskStatus: params.task?.status,
+          verboseSteps: params.verboseSteps,
+        });
     if (visibility === "live") {
       liveEvents.push(event);
     } else if (visibility === "inspect-only") {
@@ -692,6 +821,8 @@ export function deriveSharedTaskEventUiState(
   const latestVisibleTaskEvent = getLatestVisibleTaskEvent(baseTimelineItems, liveEvents);
 
   return {
+    projectionMode,
+    rawEventCount: params.rawEvents.length,
     normalizedEvents,
     filteredEvents: liveEvents,
     liveEvents,

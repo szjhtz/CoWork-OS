@@ -52,6 +52,8 @@ Notes:
 
 - `bin/coworkd-node.js` will rebuild `better-sqlite3` for the current Node ABI if needed.
 - By default the Control Plane binds to loopback (`127.0.0.1`) for safety. Use SSH tunnel/Tailscale for remote access.
+- Managed/headless startup blocks public Control Plane binds (`0.0.0.0`/`::`) unless Tailscale is enabled, `COWORK_CONTROL_PLANE_BIND_CONTEXT=container` is set for a privately published container, or `COWORK_CONTROL_PLANE_ALLOW_INSECURE_PUBLIC_BIND=1` is set as an explicit break-glass override.
+- Reverse-proxied dashboards should set `COWORK_CONTROL_PLANE_ALLOWED_ORIGINS` to the public HTTPS origin. Only set `COWORK_CONTROL_PLANE_TRUST_PROXY=1` behind a proxy you control.
 
 ## Remote Use (No Desktop Required)
 
@@ -75,6 +77,7 @@ export COWORK_CONTROL_PLANE_TOKEN=... # printed on first token generation or via
 
 node bin/coworkctl.js call config.get
 node bin/coworkctl.js call llm.configure '{"providerType":"openai","apiKey":"sk-...","model":"gpt-4o-mini"}'
+node bin/coworkctl.js call llm.configure '{"providerType":"openrouter","apiKey":"sk-or-...","model":"openrouter/pareto-code","settings":{"paretoMinCodingScore":0.8}}'
 node bin/coworkctl.js call workspace.create '{"name":"main","path":"/srv/cowork/workspace"}'
 node bin/coworkctl.js call task.create '{"workspaceId":"...","title":"Test","prompt":"Say hi"}'
 node bin/coworkctl.js watch --event task.event

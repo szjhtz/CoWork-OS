@@ -92,9 +92,7 @@ export function getMailboxProviderCapabilities(backend: MailboxProviderBackend):
       return [
         "sync",
         "send",
-        "provider_drafts",
         "reply_all",
-        "forward",
         "attachments_download",
         "archive",
         "trash",

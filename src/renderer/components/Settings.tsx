@@ -4,6 +4,9 @@ import {
   useCallback,
   useMemo,
   useRef,
+  lazy,
+  Suspense,
+  type ComponentType,
   type ReactNode,
   type SetStateAction,
 } from "react";
@@ -74,63 +77,6 @@ import {
   type LLMProviderFallbackConfig,
 } from "../../shared/types";
 import { CUSTOM_PROVIDER_MAP } from "../../shared/llm-provider-catalog";
-import { TelegramSettings } from "./TelegramSettings";
-import { DiscordSettings } from "./DiscordSettings";
-import { SlackSettings } from "./SlackSettings";
-import { WhatsAppSettings } from "./WhatsAppSettings";
-import { ImessageSettings } from "./ImessageSettings";
-import { SignalSettings } from "./SignalSettings";
-import { MattermostSettings } from "./MattermostSettings";
-import { MatrixSettings } from "./MatrixSettings";
-import { TwitchSettings } from "./TwitchSettings";
-import { LineSettings } from "./LineSettings";
-import { BlueBubblesSettings } from "./BlueBubblesSettings";
-import { EmailSettings } from "./EmailSettings";
-import { TeamsSettings } from "./TeamsSettings";
-import { GoogleChatSettings } from "./GoogleChatSettings";
-import { FeishuSettings } from "./FeishuSettings";
-import { WeComSettings } from "./WeComSettings";
-import { XSettings } from "./XSettings";
-import { SearchSettings } from "./SearchSettings";
-import { UpdateSettings } from "./UpdateSettings";
-import { GuardrailSettings } from "./GuardrailSettings";
-import { PermissionSettingsPanel } from "./PermissionSettingsPanel";
-import { AppearanceSettings } from "./AppearanceSettings";
-import { QueueSettings } from "./QueueSettings";
-import { SkillsSettings } from "./SkillsSettings";
-import { SkillHubBrowser } from "./SkillHubBrowser";
-import { MCPSettings } from "./MCPSettings";
-import { ConnectorsSettings } from "./ConnectorsSettings";
-import { BuiltinToolsSettings } from "./BuiltinToolsSettings";
-import { ChronicleSettingsCard } from "./ChronicleSettings";
-import { ComputerUseSettings } from "./ComputerUseSettings";
-import { TraySettings } from "./TraySettings";
-import { ScheduledTasksSettings } from "./ScheduledTasksSettings";
-import { HooksSettings } from "./HooksSettings";
-import { ControlPlaneSettings } from "./ControlPlaneSettings";
-import { PersonalitySettings } from "./PersonalitySettings";
-import { NodesSettings } from "./NodesSettings";
-import { ExtensionsSettings } from "./ExtensionsSettings";
-import { VoiceSettings } from "./VoiceSettings";
-import { MemoryHubSettings } from "./MemoryHubSettings";
-import { WorktreeSettings } from "./WorktreeSettings";
-import { UsageInsightsPanel } from "./UsageInsightsPanel";
-import { SuggestionsPanel } from "./SuggestionsPanel";
-import { CustomizePanel } from "./CustomizePanel";
-import { ProfileSettings } from "./ProfileSettings";
-import { AdminPoliciesPanel } from "./AdminPoliciesPanel";
-import { EventTriggersPanel } from "./EventTriggersPanel";
-import { BriefingPanel } from "./BriefingPanel";
-import { WebAccessSettingsPanel } from "./WebAccessSettingsPanel";
-import { InfraSettings } from "./InfraSettings";
-import { DigitalTwinsPanel } from "./DigitalTwinsPanel";
-import { SubconsciousSettingsPanel } from "./SubconsciousSettingsPanel";
-import { CompaniesPanel } from "./CompaniesPanel";
-import { HealthPanel } from "./HealthPanel";
-import { CouncilSettings } from "./CouncilSettings";
-import { RoutineSettingsPanel } from "./RoutineSettingsPanel";
-import { ContactIdentitySettings } from "./ContactIdentitySettings";
-import { TaskTraceDebuggerPanel } from "./TaskTraceDebuggerPanel";
 import {
   buildClaudeCredentialInput,
   resolveOpenAIReasoningEffort,
@@ -138,6 +84,72 @@ import {
   resolveClaudeAuthMethod,
   selectClaudeModelKey,
 } from "./settings-llm-helpers";
+import "./settings.css";
+
+function lazySettingsPanel<T extends ComponentType<Any>>(
+  loader: () => Promise<Any>,
+  exportName: string,
+) {
+  return lazy(async () => ({ default: (await loader())[exportName] as T }));
+}
+
+const TelegramSettings = lazySettingsPanel(() => import("./TelegramSettings"), "TelegramSettings");
+const DiscordSettings = lazySettingsPanel(() => import("./DiscordSettings"), "DiscordSettings");
+const SlackSettings = lazySettingsPanel(() => import("./SlackSettings"), "SlackSettings");
+const WhatsAppSettings = lazySettingsPanel(() => import("./WhatsAppSettings"), "WhatsAppSettings");
+const ImessageSettings = lazySettingsPanel(() => import("./ImessageSettings"), "ImessageSettings");
+const SignalSettings = lazySettingsPanel(() => import("./SignalSettings"), "SignalSettings");
+const MattermostSettings = lazySettingsPanel(() => import("./MattermostSettings"), "MattermostSettings");
+const MatrixSettings = lazySettingsPanel(() => import("./MatrixSettings"), "MatrixSettings");
+const TwitchSettings = lazySettingsPanel(() => import("./TwitchSettings"), "TwitchSettings");
+const LineSettings = lazySettingsPanel(() => import("./LineSettings"), "LineSettings");
+const BlueBubblesSettings = lazySettingsPanel(() => import("./BlueBubblesSettings"), "BlueBubblesSettings");
+const EmailSettings = lazySettingsPanel(() => import("./EmailSettings"), "EmailSettings");
+const TeamsSettings = lazySettingsPanel(() => import("./TeamsSettings"), "TeamsSettings");
+const GoogleChatSettings = lazySettingsPanel(() => import("./GoogleChatSettings"), "GoogleChatSettings");
+const FeishuSettings = lazySettingsPanel(() => import("./FeishuSettings"), "FeishuSettings");
+const WeComSettings = lazySettingsPanel(() => import("./WeComSettings"), "WeComSettings");
+const XSettings = lazySettingsPanel(() => import("./XSettings"), "XSettings");
+const SearchSettings = lazySettingsPanel(() => import("./SearchSettings"), "SearchSettings");
+const UpdateSettings = lazySettingsPanel(() => import("./UpdateSettings"), "UpdateSettings");
+const GuardrailSettings = lazySettingsPanel(() => import("./GuardrailSettings"), "GuardrailSettings");
+const PermissionSettingsPanel = lazySettingsPanel(() => import("./PermissionSettingsPanel"), "PermissionSettingsPanel");
+const AppearanceSettings = lazySettingsPanel(() => import("./AppearanceSettings"), "AppearanceSettings");
+const QueueSettings = lazySettingsPanel(() => import("./QueueSettings"), "QueueSettings");
+const SkillsSettings = lazySettingsPanel(() => import("./SkillsSettings"), "SkillsSettings");
+const SkillHubBrowser = lazySettingsPanel(() => import("./SkillHubBrowser"), "SkillHubBrowser");
+const MCPSettings = lazySettingsPanel(() => import("./MCPSettings"), "MCPSettings");
+const ConnectorsSettings = lazySettingsPanel(() => import("./ConnectorsSettings"), "ConnectorsSettings");
+const BuiltinToolsSettings = lazySettingsPanel(() => import("./BuiltinToolsSettings"), "BuiltinToolsSettings");
+const ChronicleSettingsCard = lazySettingsPanel(() => import("./ChronicleSettings"), "ChronicleSettingsCard");
+const ComputerUseSettings = lazySettingsPanel(() => import("./ComputerUseSettings"), "ComputerUseSettings");
+const TraySettings = lazySettingsPanel(() => import("./TraySettings"), "TraySettings");
+const ScheduledTasksSettings = lazySettingsPanel(() => import("./ScheduledTasksSettings"), "ScheduledTasksSettings");
+const HooksSettings = lazySettingsPanel(() => import("./HooksSettings"), "HooksSettings");
+const ControlPlaneSettings = lazySettingsPanel(() => import("./ControlPlaneSettings"), "ControlPlaneSettings");
+const PersonalitySettings = lazySettingsPanel(() => import("./PersonalitySettings"), "PersonalitySettings");
+const NodesSettings = lazySettingsPanel(() => import("./NodesSettings"), "NodesSettings");
+const ExtensionsSettings = lazySettingsPanel(() => import("./ExtensionsSettings"), "ExtensionsSettings");
+const VoiceSettings = lazySettingsPanel(() => import("./VoiceSettings"), "VoiceSettings");
+const MemoryHubSettings = lazySettingsPanel(() => import("./MemoryHubSettings"), "MemoryHubSettings");
+const WorktreeSettings = lazySettingsPanel(() => import("./WorktreeSettings"), "WorktreeSettings");
+const UsageInsightsPanel = lazySettingsPanel(() => import("./UsageInsightsPanel"), "UsageInsightsPanel");
+const SuggestionsPanel = lazySettingsPanel(() => import("./SuggestionsPanel"), "SuggestionsPanel");
+const CustomizePanel = lazySettingsPanel(() => import("./CustomizePanel"), "CustomizePanel");
+const ProfileSettings = lazySettingsPanel(() => import("./ProfileSettings"), "ProfileSettings");
+const AdminPoliciesPanel = lazySettingsPanel(() => import("./AdminPoliciesPanel"), "AdminPoliciesPanel");
+const EventTriggersPanel = lazySettingsPanel(() => import("./EventTriggersPanel"), "EventTriggersPanel");
+const BriefingPanel = lazySettingsPanel(() => import("./BriefingPanel"), "BriefingPanel");
+const WebAccessSettingsPanel = lazySettingsPanel(() => import("./WebAccessSettingsPanel"), "WebAccessSettingsPanel");
+const InfraSettings = lazySettingsPanel(() => import("./InfraSettings"), "InfraSettings");
+const DigitalTwinsPanel = lazySettingsPanel(() => import("./DigitalTwinsPanel"), "DigitalTwinsPanel");
+const SubconsciousSettingsPanel = lazySettingsPanel(() => import("./SubconsciousSettingsPanel"), "SubconsciousSettingsPanel");
+const CompaniesPanel = lazySettingsPanel(() => import("./CompaniesPanel"), "CompaniesPanel");
+const HealthPanel = lazySettingsPanel(() => import("./HealthPanel"), "HealthPanel");
+const CouncilSettings = lazySettingsPanel(() => import("./CouncilSettings"), "CouncilSettings");
+const RoutineSettingsPanel = lazySettingsPanel(() => import("./RoutineSettingsPanel"), "RoutineSettingsPanel");
+const ContactIdentitySettings = lazySettingsPanel(() => import("./ContactIdentitySettings"), "ContactIdentitySettings");
+const TaskTraceDebuggerPanel = lazySettingsPanel(() => import("./TaskTraceDebuggerPanel"), "TaskTraceDebuggerPanel");
 
 type SettingsTab =
   | "appearance"
@@ -233,6 +245,17 @@ interface SettingsProps {
 interface ModelOption {
   key: string;
   displayName: string;
+}
+
+const OPENROUTER_PARETO_CODE_MODEL = "openrouter/pareto-code";
+const OPENROUTER_PARETO_SCORE_ERROR =
+  "Pareto minimum coding score must be a decimal number from 0 to 1.";
+
+function isOpenRouterParetoCodeModel(model: string): boolean {
+  return (
+    model.trim().toLowerCase().split(":")[0] ===
+    OPENROUTER_PARETO_CODE_MODEL
+  );
 }
 
 interface ProviderInfo {
@@ -1310,6 +1333,8 @@ export function Settings({
   const [openrouterModel, setOpenrouterModel] = useState(
     "anthropic/claude-3.5-sonnet",
   );
+  const [openrouterParetoMinCodingScore, setOpenrouterParetoMinCodingScore] =
+    useState("");
   const [openrouterModels, setOpenrouterModels] = useState<
     Array<{ id: string; name: string; context_length: number }>
   >([]);
@@ -2268,6 +2293,11 @@ export function Settings({
       if (loadedSettings.openrouter?.model) {
         setOpenrouterModel(loadedSettings.openrouter.model);
       }
+      setOpenrouterParetoMinCodingScore(
+        typeof loadedSettings.openrouter?.paretoMinCodingScore === "number"
+          ? String(loadedSettings.openrouter.paretoMinCodingScore)
+          : "",
+      );
 
       // Set OpenAI form state
       if (loadedSettings.openai?.apiKey) {
@@ -3309,12 +3339,38 @@ export function Settings({
     }
   };
 
+  const parseOpenRouterParetoMinCodingScore = (): {
+    value?: number;
+    error?: string;
+    shouldSave: boolean;
+  } => {
+    if (!isOpenRouterParetoCodeModel(openrouterModel)) {
+      return { shouldSave: false };
+    }
+    const trimmed = openrouterParetoMinCodingScore.trim();
+    if (!trimmed) return { shouldSave: true };
+    const parsed = Number(trimmed);
+    if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
+      return { error: OPENROUTER_PARETO_SCORE_ERROR, shouldSave: true };
+    }
+    return { value: parsed, shouldSave: true };
+  };
+
   const handleSave = async () => {
     try {
       setSaving(true);
       setTestResult(null);
 
       const currentSettings = settingsRef.current;
+      const openrouterParetoScore = parseOpenRouterParetoMinCodingScore();
+      const shouldValidateOpenRouterParetoScore =
+        currentSettings.providerType === "openrouter" &&
+        openrouterParetoScore.shouldSave;
+      if (shouldValidateOpenRouterParetoScore && openrouterParetoScore.error) {
+        setTestResult({ success: false, error: openrouterParetoScore.error });
+        return;
+      }
+
       const sanitizedCustomProviders =
         sanitizeCustomProviders(customProviders) || {};
       const resolvedProviderTypeForSave = resolveCustomProviderId(
@@ -3443,6 +3499,9 @@ export function Settings({
           apiKey: openrouterApiKey || undefined,
           model: openrouterModel || undefined,
           baseUrl: openrouterBaseUrl || undefined,
+          ...(shouldValidateOpenRouterParetoScore
+            ? { paretoMinCodingScore: openrouterParetoScore.value }
+            : {}),
           ...routingFor("openrouter"),
           ...failoverFor("openrouter"),
         },
@@ -3662,6 +3721,15 @@ export function Settings({
       setTesting(true);
       setTestResult(null);
 
+      const openrouterParetoScore = parseOpenRouterParetoMinCodingScore();
+      const shouldValidateOpenRouterParetoScore =
+        settings.providerType === "openrouter" &&
+        openrouterParetoScore.shouldSave;
+      if (shouldValidateOpenRouterParetoScore && openrouterParetoScore.error) {
+        setTestResult({ success: false, error: openrouterParetoScore.error });
+        return;
+      }
+
       const sanitizedCustomProviders =
         sanitizeCustomProviders(customProviders) || {};
       const azureSettings = buildAzureSettings();
@@ -3714,6 +3782,9 @@ export function Settings({
                 apiKey: openrouterApiKey || undefined,
                 model: openrouterModel || undefined,
                 baseUrl: openrouterBaseUrl || undefined,
+                ...(shouldValidateOpenRouterParetoScore
+                  ? { paretoMinCodingScore: openrouterParetoScore.value }
+                  : {}),
               }
             : undefined,
         openai:
@@ -3881,6 +3952,10 @@ export function Settings({
     !!strongRoutingModel &&
     !!cheapRoutingModel &&
     strongRoutingModel === cheapRoutingModel;
+  const openrouterParetoSelected = isOpenRouterParetoCodeModel(openrouterModel);
+  const openrouterParetoScoreError = openrouterParetoSelected
+    ? parseOpenRouterParetoMinCodingScore().error
+    : undefined;
 
   useEffect(() => {
     for (const entry of providerFailover.fallbackProviders || []) {
@@ -4972,6 +5047,7 @@ export function Settings({
                   value={openrouterModel}
                   onChange={setOpenrouterModel}
                   placeholder="Select a model..."
+                  allowCustomValue
                 />
               ) : (
                 <input
@@ -4987,6 +5063,41 @@ export function Settings({
                 providers (Claude, GPT-4, Llama, etc.) through a unified API.
               </p>
             </div>
+
+            {openrouterParetoSelected && (
+              <div className="settings-section">
+                <h3>Pareto Router</h3>
+                <p className="settings-description">
+                  Optional minimum coding score for OpenRouter's Pareto Code
+                  router. Leave blank to use OpenRouter's default high tier.
+                </p>
+                <input
+                  type="number"
+                  className="settings-input"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  placeholder="0.8"
+                  value={openrouterParetoMinCodingScore}
+                  aria-invalid={!!openrouterParetoScoreError}
+                  onChange={(e) =>
+                    setOpenrouterParetoMinCodingScore(e.target.value)
+                  }
+                />
+                {openrouterParetoScoreError && (
+                  <p
+                    className="settings-hint"
+                    style={{ color: "var(--color-error, #dc2626)" }}
+                  >
+                    {openrouterParetoScoreError}
+                  </p>
+                )}
+                <p className="settings-hint">
+                  Use 0.66 or higher for the high tier, 0.33 to 0.65 for the
+                  medium tier, and below 0.33 for cheaper low-tier routing.
+                </p>
+              </div>
+            )}
           </>
         )}
 
@@ -7412,6 +7523,7 @@ export function Settings({
 
         <div className="settings-content-card">
           <div className="settings-content">
+            <Suspense fallback={<div className="settings-loading">Loading settings...</div>}>
             {activeTab === "appearance" ? (
               <AppearanceSettings
                 themeMode={themeMode}
@@ -7435,10 +7547,10 @@ export function Settings({
               <PersonalitySettings onSettingsChanged={onSettingsChanged} />
             ) : activeTab === "companies" ? (
               <CompaniesPanel
-                onOpenMissionControl={(companyId) =>
+                onOpenMissionControl={(companyId: string) =>
                   onNavigateToMissionControl?.(companyId)
                 }
-                onOpenDigitalTwins={(companyId) => {
+                onOpenDigitalTwins={(companyId: string) => {
                   setDigitalTwinsCompanyId(companyId);
                   setActiveTab("digitaltwins");
                 }}
@@ -7849,6 +7961,7 @@ export function Settings({
             ) : (
               renderLLMPanel()
             )}
+            </Suspense>
           </div>
         </div>
       </div>

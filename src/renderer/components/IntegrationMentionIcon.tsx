@@ -68,6 +68,16 @@ const ICON_META: Record<string, IntegrationIconMeta> = {
       { tag: "line", attrs: { x1: 15, y1: 10, x2: 15, y2: 20 } },
     ],
   },
+  "google-tasks": {
+    glyph: "T",
+    bg: "#e8f0fe",
+    fg: "#1a73e8",
+    nodes: [
+      { tag: "rect", attrs: { x: 4, y: 4, width: 16, height: 16, rx: 2 } },
+      { tag: "path", attrs: { d: "m8 9 2 2 4-4" } },
+      { tag: "path", attrs: { d: "m8 15 2 2 6-6" } },
+    ],
+  },
   "google-slides": {
     glyph: "P",
     bg: "#fef7e0",

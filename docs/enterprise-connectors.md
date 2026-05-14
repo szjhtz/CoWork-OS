@@ -30,7 +30,7 @@ The main message composer exposes connected/configured connectors through the gr
 Connector mention behavior:
 
 - native and Tier-1 integrations appear only when locally usable
-- Google Workspace is shown as Gmail, Google Drive, and Google Calendar instead of one broad connector option
+- Google Workspace is shown as service-specific options instead of one broad connector option: built-in Gmail, Google Drive, and Google Calendar plus MCP-backed Google Docs, Google Sheets, Google Slides, Google Tasks, and Google Chat when those tools are available
 - multi-service MCP connectors split into service-level mention options when their exposed tool names make that safe
 - unknown MCP connectors appear as one connector option only when connected/configured
 - selected connectors render as icon+name chips in the prompt and user message history
@@ -259,13 +259,19 @@ Note: This REST API connector is separate from the Discord gateway adapter (`src
 
 ## Google Workspace Connector (OAuth)
 
-Three Google integrations using shared OAuth with PKCE flow:
+Google Workspace uses one shared OAuth connection for the built-in Google tools and the `google-workspace` MCP connector:
 
-- `google_calendar.*` — List calendars, get/create/update/delete events
-- `google_drive.*` — List files, search, read, upload, manage permissions
-- `gmail.*` — List messages, search, read, send, manage labels
+- Gmail: list/search/read/send/manage labels through native Gmail tooling and MCP Gmail tools where configured
+- Calendar: list calendars and get/create/update/delete events through native Calendar tooling
+- Drive: list/search/read files and metadata through native Drive tooling and MCP Drive tools where configured
+- Docs and Sheets: create, read, and update practical document and spreadsheet content through MCP tools
+- Tasks: task-list CRUD, task CRUD, complete/uncomplete, move, delete, and clear completed through MCP tools
+- Slides: create/get presentations, create/delete slides, add text boxes, replace text, and raw `batchUpdate` through MCP tools
+- Chat: message and space tools when the Google Workspace MCP connector exposes them
 
-Authentication: OAuth 2.0 with PKCE via local callback server (port 18765). Scopes are mapped per service (Calendar, Drive, Gmail).
+Authentication is OAuth 2.0 with PKCE. Settings uses local callback port `18766`; connector OAuth/setup uses local callback port `18765`. The default consent set includes Drive, Gmail read/send/modify, Calendar, Spreadsheets, Documents, Tasks, Presentations, Chat messages, and Chat spaces readonly. CoWork merges these required scopes during setup and reports missing scopes in Google Workspace health/status responses; existing users with older tokens must reconnect to grant newly added scopes such as Tasks or Slides.
+
+Destructive or broad Google Workspace MCP actions require explicit confirmation fields, including task-list deletion, task deletion, clearing completed tasks, slide deletion, replace-all-text, and raw Slides `batchUpdate`.
 
 ## Connector Template
 

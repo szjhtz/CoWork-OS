@@ -323,6 +323,7 @@ The structured brief is used for:
 
 - native child tasks
 - orchestration-graph delegation
+- `/multitask` lane child tasks
 - ACP-targeted delegation
 - external runtime delegation
 

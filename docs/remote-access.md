@@ -24,6 +24,8 @@ When the server is running, it also serves a minimal web dashboard at `/` (same 
 This is useful for headless/VPS setups: open the URL in a browser (via tunnel/Tailscale), paste the token, and manage tasks, approvals, and pending structured input requests.
 It also includes basic workspace, channel, and account management so you can bring up a fresh VPS without a desktop UI.
 
+In headless/managed deployments, CoWork fails closed on raw public binds. Binding the Control Plane to `0.0.0.0` or `::` is blocked unless Tailscale is enabled, the process is running inside a privately published container (`COWORK_CONTROL_PLANE_BIND_CONTEXT=container`), or you set the break-glass `COWORK_CONTROL_PLANE_ALLOW_INSECURE_PUBLIC_BIND=1`.
+
 ## Finding the Remote Address
 
 Before connecting from your main CoWork machine, determine the address that is actually reachable from the client.
@@ -59,7 +61,8 @@ If the remote machine is not on the same local network:
 
 - Preferred: use **Tailscale** and connect with the Tailscale hostname / `wss://` URL
 - Safe fallback: use an **SSH tunnel** and connect locally to `ws://127.0.0.1:18789`
-- Direct public IP is possible, but only if you intentionally expose the port and protect it with firewall rules, TLS, and a strong token
+- Direct public IP is possible only with an explicit break-glass public-bind override, firewall rules, TLS, and a strong token
+- Reverse proxies should preserve a loopback/private daemon bind when possible. If the browser dashboard is served through a public origin, set `COWORK_CONTROL_PLANE_ALLOWED_ORIGINS=https://your-host.example`; only set `COWORK_CONTROL_PLANE_TRUST_PROXY=1` behind a proxy you control.
 
 If you are using a VPS or another network you do not fully control, prefer Tailscale or SSH tunnel over a raw public WebSocket endpoint.
 
@@ -153,11 +156,12 @@ Exposes your Control Plane to the public internet (requires Tailscale subscripti
 
 ### Best Practices
 
-1. **Keep gateway loopback-only**: Never bind to `0.0.0.0` unless absolutely necessary
+1. **Keep gateway loopback-only**: Headless/managed startup blocks `0.0.0.0`/`::` unless Tailscale, private container context, or a break-glass override is configured
 2. **Use strong tokens**: CoWork generates 256-bit tokens by default
-3. **Rotate tokens regularly**: Use the "Regenerate Token" button periodically
-4. **Enable TLS**: Use `wss://` over public networks (automatic with Tailscale)
-5. **Rate limiting**: CoWork automatically blocks IPs after 5 failed auth attempts
+3. **Pin browser origins behind proxies**: set `COWORK_CONTROL_PLANE_ALLOWED_ORIGINS` for reverse-proxied dashboards
+4. **Rotate tokens regularly**: Use the "Regenerate Token" button periodically
+5. **Enable TLS**: Use `wss://` over public networks (automatic with Tailscale)
+6. **Rate limiting**: CoWork automatically blocks IPs after 5 failed auth attempts
 
 ### Authentication Flow
 

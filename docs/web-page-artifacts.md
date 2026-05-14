@@ -6,7 +6,7 @@ This page documents the current web artifact concept for generated `.html` / `.h
 
 Web page artifacts are one surface of the broader [Everything Workbench](everything-workbench.md): generated knowledge-work files open in-place, can be reviewed in context, and keep the follow-up composer beside the artifact.
 
-Live website testing uses a related but separate surface: the [Browser Workbench](browser-workbench.md). Prompts such as "go to llmwizard.com and test the application as a normal user" open a visible Browser V2 session in the resizable right sidebar so the agent and user share the same page, snapshot refs, diagnostics, and cursor movement. Generated `.html` files remain durable web page artifacts; live URLs use browser automation.
+Live website testing uses a related but separate surface: the [Browser Workbench](browser-workbench.md). Prompts such as "go to llmwizard.com and test the application as a normal user" open a visible Browser V2 session in the resizable right sidebar so the agent and user share the same page, responsive viewport state, snapshot refs, diagnostics, and cursor movement. Generated `.html` files remain durable web page artifacts; live URLs use browser automation.
 
 ## Supported Outputs
 
@@ -116,7 +116,7 @@ Web page artifacts and browser-use testing are intentionally different:
 
 - **Web page artifacts** are local files created or updated by a task. They open from artifact cards into a sandboxed iframe preview and refresh only after the relevant output changes or the follow-up task completes.
 - **Browser workbench sessions** are live websites or local app URLs being used, clicked, filled, tested, diagnosed, uploaded/downloaded through, or screenshotted by the agent. They open in a visible Electron webview in the same resizable right sidebar and use a persistent workspace browser profile.
-- Browser Workbench controls include URL navigation, tabs, profile/security indicator, back/forward/reload, fullscreen, close, screenshot capture, screenshot annotation, diagnostics, and Browser V2 snapshot overlay.
+- Browser Workbench controls include URL navigation, tabs, profile/security indicator, desktop/tablet/mobile viewport presets, back/forward/reload, fullscreen, close, screenshot capture, screenshot annotation, diagnostics, and Browser V2 snapshot overlay.
 - Browser Workbench automation shows visible cursor movement and action pulses while the agent snapshots, clicks, fills, types, selects, waits, reads, scrolls, uploads, downloads, and navigates.
 - `Open in browser` on a web artifact still means the external system browser.
 - Browser-use prompts can load a generated page into the browser workbench when the user explicitly asks to test it as a live site, but the default artifact-card open path remains the iframe artifact viewer.

@@ -130,6 +130,10 @@ export function ParallelGroupFeed({
   defaultExpanded = false,
 }: ParallelGroupFeedProps) {
   void _formatTime;
+  if (group.lanes.length === 0) {
+    return null;
+  }
+
   const singleLane = group.lanes.length === 1 ? group.lanes[0] : null;
   const isActive =
     isActiveStatus(group.status) || group.lanes.some((lane) => isActiveStatus(lane.status));

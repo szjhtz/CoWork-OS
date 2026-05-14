@@ -1036,7 +1036,7 @@ function EmailProviderModal({
                         </li>
                         <li>
                           Under API permissions, grant delegated{" "}
-                          <code>IMAP.AccessAsUser.All</code> and <code>SMTP.Send</code>.
+                          Microsoft Graph <code>Mail.ReadWrite</code> and <code>Mail.Send</code>.
                         </li>
                         <li>
                           Paste the Application (client) ID here, keep tenant{" "}

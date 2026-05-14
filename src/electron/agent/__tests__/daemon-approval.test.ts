@@ -1,9 +1,45 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
 import { AgentDaemon } from "../daemon";
 
+vi.mock("../../admin/policies", () => ({
+  loadPolicies: vi.fn(() => ({
+    runtime: {
+      allowedPermissionModes: [],
+      autoReview: { enabled: true },
+      network: {
+        defaultAction: "allow",
+        allowedDomains: [],
+        blockedDomains: [],
+        allowShellNetwork: false,
+      },
+    },
+  })),
+}));
+
+vi.mock("../../security/network-policy", () => ({
+  evaluateNetworkPolicy: vi.fn(() => ({
+    action: "allow",
+    url: "https://docs.example.com/page",
+    domain: "docs.example.com",
+    toolName: "web_fetch",
+    reason: "allowed",
+    ruleSource: "admin_policy",
+  })),
+}));
+
+import { evaluateNetworkPolicy } from "../../security/network-policy";
+
 describe("AgentDaemon.requestApproval auto-approve controls", () => {
   afterEach(() => {
     vi.useRealTimers();
+    vi.mocked(evaluateNetworkPolicy).mockReturnValue({
+      action: "allow",
+      url: "https://docs.example.com/page",
+      domain: "docs.example.com",
+      toolName: "web_fetch",
+      reason: "allowed",
+      ruleSource: "admin_policy",
+    });
   });
 
   it("keeps session approve-all behavior for safe network reads", async () => {
@@ -34,6 +70,8 @@ describe("AgentDaemon.requestApproval auto-approve controls", () => {
       updateTask: vi.fn(),
       evaluatePermissionRequest,
       canSessionAutoApproveType: AgentDaemon.prototype["canSessionAutoApproveType"],
+      canAutoReviewApprove: AgentDaemon.prototype["canAutoReviewApprove"],
+      isAutoReviewSafeCommand: AgentDaemon.prototype["isAutoReviewSafeCommand"],
       taskRepo: {
         findById: vi.fn().mockReturnValue({ agentConfig: { autonomousMode: true } }),
       },
@@ -55,6 +93,84 @@ describe("AgentDaemon.requestApproval auto-approve controls", () => {
       }),
     );
     expect(evaluatePermissionRequest).toHaveBeenCalled();
+    expect(evaluateNetworkPolicy).toHaveBeenCalledWith({
+      url: "https://docs.example.com/page",
+      toolName: "web_fetch",
+    });
+  });
+
+  it("does not session auto-approve network reads denied by network policy", async () => {
+    vi.useFakeTimers();
+    vi.mocked(evaluateNetworkPolicy).mockReturnValueOnce({
+      action: "deny",
+      url: "https://blocked.example/page",
+      domain: "blocked.example",
+      toolName: "web_fetch",
+      reason: "blocked_domain",
+      ruleSource: "admin_policy",
+    });
+
+    const approvalRepo = {
+      create: vi.fn().mockReturnValue({ id: "approval-denied-net" }),
+      update: vi.fn(),
+    };
+    const evaluatePermissionRequest = vi.fn().mockReturnValue({
+      evaluation: {
+        decision: "ask",
+        reason: { type: "mode", mode: "default", summary: "Prompt for network read." },
+      },
+      promptDetails: {
+        reason: { type: "mode", mode: "default", summary: "Prompt for network read." },
+        scopePreview: "domain blocked.example",
+        suggestedActions: [],
+      },
+      scope: { kind: "domain", toolName: "web_fetch", domain: "blocked.example" },
+      trackingKey: "domain:web_fetch:blocked.example",
+      runtime: null,
+      workspace: undefined,
+    });
+
+    const daemonLike = {
+      sessionAutoApproveAll: true,
+      approvalRepo,
+      logEvent: vi.fn(),
+      updateTask: vi.fn(),
+      evaluatePermissionRequest,
+      canSessionAutoApproveType: AgentDaemon.prototype["canSessionAutoApproveType"],
+      canAutoReviewApprove: AgentDaemon.prototype["canAutoReviewApprove"],
+      isAutoReviewSafeCommand: AgentDaemon.prototype["isAutoReviewSafeCommand"],
+      taskRepo: {
+        findById: vi.fn().mockReturnValue({ agentConfig: { autonomousMode: true } }),
+      },
+      pendingApprovals: new Map(),
+    } as Any;
+
+    const approvalPromise = AgentDaemon.prototype.requestApproval.call(
+      daemonLike,
+      "task-denied-net",
+      "network_access",
+      "Approve action",
+      { tool: "web_fetch", params: { url: "https://blocked.example/page" } },
+    );
+
+    expect(approvalRepo.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "pending",
+      }),
+    );
+    expect(daemonLike.pendingApprovals.size).toBe(1);
+
+    const pending = daemonLike.pendingApprovals.get("approval-denied-net");
+    clearTimeout(pending.timeoutHandle);
+    pending.resolve(false);
+
+    await expect(approvalPromise).resolves.toBe(false);
+  });
+
+  it("does not treat project test commands as auto-review safe shell commands", () => {
+    expect(AgentDaemon.prototype["isAutoReviewSafeCommand"].call({} as Any, "npm test")).toBe(false);
+    expect(AgentDaemon.prototype["isAutoReviewSafeCommand"].call({} as Any, "pytest")).toBe(false);
+    expect(AgentDaemon.prototype["isAutoReviewSafeCommand"].call({} as Any, "git status")).toBe(true);
   });
 
   it("disables auto-approve when allowAutoApprove=false is passed", async () => {
@@ -87,6 +203,8 @@ describe("AgentDaemon.requestApproval auto-approve controls", () => {
       updateTask: vi.fn(),
       evaluatePermissionRequest,
       canSessionAutoApproveType: AgentDaemon.prototype["canSessionAutoApproveType"],
+      canAutoReviewApprove: AgentDaemon.prototype["canAutoReviewApprove"],
+      isAutoReviewSafeCommand: AgentDaemon.prototype["isAutoReviewSafeCommand"],
       taskRepo: {
         findById: vi.fn().mockReturnValue({ agentConfig: { autonomousMode: true } }),
       },
@@ -146,6 +264,8 @@ describe("AgentDaemon.requestApproval auto-approve controls", () => {
       updateTask: vi.fn(),
       evaluatePermissionRequest,
       canSessionAutoApproveType: AgentDaemon.prototype["canSessionAutoApproveType"],
+      canAutoReviewApprove: AgentDaemon.prototype["canAutoReviewApprove"],
+      isAutoReviewSafeCommand: AgentDaemon.prototype["isAutoReviewSafeCommand"],
       taskRepo: {
         findById: vi.fn().mockReturnValue({
           agentConfig: {
@@ -210,6 +330,8 @@ describe("AgentDaemon.requestApproval auto-approve controls", () => {
       updateTask: vi.fn(),
       evaluatePermissionRequest,
       canSessionAutoApproveType: AgentDaemon.prototype["canSessionAutoApproveType"],
+      canAutoReviewApprove: AgentDaemon.prototype["canAutoReviewApprove"],
+      isAutoReviewSafeCommand: AgentDaemon.prototype["isAutoReviewSafeCommand"],
       taskRepo: {
         findById: vi.fn().mockReturnValue({ agentConfig: { autonomousMode: true } }),
       },
@@ -263,6 +385,8 @@ describe("AgentDaemon.requestApproval auto-approve controls", () => {
       updateTask: vi.fn(),
       evaluatePermissionRequest,
       canSessionAutoApproveType: AgentDaemon.prototype["canSessionAutoApproveType"],
+      canAutoReviewApprove: AgentDaemon.prototype["canAutoReviewApprove"],
+      isAutoReviewSafeCommand: AgentDaemon.prototype["isAutoReviewSafeCommand"],
       taskRepo: {
         findById: vi.fn().mockReturnValue({ agentConfig: { autonomousMode: true } }),
       },
@@ -319,6 +443,8 @@ describe("AgentDaemon.requestApproval auto-approve controls", () => {
       updateTask,
       evaluatePermissionRequest,
       canSessionAutoApproveType: AgentDaemon.prototype["canSessionAutoApproveType"],
+      canAutoReviewApprove: AgentDaemon.prototype["canAutoReviewApprove"],
+      isAutoReviewSafeCommand: AgentDaemon.prototype["isAutoReviewSafeCommand"],
       taskRepo: {
         findById: vi.fn().mockReturnValue({
           id: "task-timeout",

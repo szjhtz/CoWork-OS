@@ -4,6 +4,8 @@ This guide explains how to use each CoWork messaging channel after it is connect
 
 For setup steps, see [Channel Integrations](channels.md). For shared command behavior, see [Gateway Message Lifecycle](gateway-message-lifecycle.md). For daily command examples, see [Using CoWork from WhatsApp and Other Channels](gateway-user-guide.md).
 
+Admins can configure [Channel Specialization](channels.md#channel-specialization) for a whole channel, specific chat/group, or topic/thread so new tasks from that scope default to the right workspace, agent role, prompt guidance, tool restrictions, and shared-memory policy.
+
 ## Separate Channel Guides
 
 Use these dedicated guides when you want channel-specific details without scanning the full comparison page:
@@ -43,6 +45,7 @@ All messaging channels use the same core gateway model:
 Best practices for every channel:
 
 - Pick one channel per workflow when possible so context stays coherent.
+- Use channel specialization for dedicated groups, channels, or topics that should always start in the same workspace or role.
 - Select the workspace before asking CoWork to edit project files.
 - Use `/new` before changing topics.
 - Use `/new temp` for scratch work that should not attach to a normal project workspace.

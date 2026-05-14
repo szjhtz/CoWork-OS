@@ -97,6 +97,8 @@ describe("DEFAULT_CONTROL_PLANE_SETTINGS", () => {
     expect(DEFAULT_CONTROL_PLANE_SETTINGS.handshakeTimeoutMs).toBe(10000);
     expect(DEFAULT_CONTROL_PLANE_SETTINGS.heartbeatIntervalMs).toBe(30000);
     expect(DEFAULT_CONTROL_PLANE_SETTINGS.maxPayloadBytes).toBe(10 * 1024 * 1024);
+    expect(DEFAULT_CONTROL_PLANE_SETTINGS.trustProxy).toBe(false);
+    expect(DEFAULT_CONTROL_PLANE_SETTINGS.allowedOrigins).toEqual([]);
   });
 
   it("should have expected Tailscale defaults", () => {
@@ -127,6 +129,8 @@ describe("ControlPlaneSettingsManager", () => {
       expect(settings.port).toBe(18789);
       expect(settings.host).toBe("127.0.0.1");
       expect(settings.token).toBe("");
+      expect(settings.trustProxy).toBe(false);
+      expect(settings.allowedOrigins).toEqual([]);
       expect(settings.tailscale.mode).toBe("off");
     });
 
@@ -136,6 +140,8 @@ describe("ControlPlaneSettingsManager", () => {
         port: 9999,
         host: "0.0.0.0",
         token: "test-token",
+        trustProxy: true,
+        allowedOrigins: ["https://cowork.example.com"],
         tailscale: {
           mode: "serve",
           resetOnExit: false,
@@ -149,6 +155,8 @@ describe("ControlPlaneSettingsManager", () => {
       expect(settings.host).toBe("0.0.0.0");
       expect(settings.token).toBe("test-token");
       expect(settings.nodeToken).toHaveLength(64);
+      expect(settings.trustProxy).toBe(true);
+      expect(settings.allowedOrigins).toEqual(["https://cowork.example.com"]);
       expect(settings.tailscale.mode).toBe("serve");
       expect(settings.tailscale.resetOnExit).toBe(false);
     });

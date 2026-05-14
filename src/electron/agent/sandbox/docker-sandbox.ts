@@ -54,7 +54,17 @@ const DEFAULT_OPTIONS: Required<SandboxOptions> = {
   allowedReadPaths: [],
   allowedWritePaths: [],
   envPassthrough: ["LANG", "TERM"],
+  onProcess: () => undefined,
 };
+
+const PROTECTED_WORKSPACE_WRITE_RELATIVE_PATHS = [
+  ".git",
+  ".cowork",
+  ".env",
+  ".env.local",
+  ".env.production",
+  ".env.development",
+];
 
 /**
  * Docker container-based sandbox implementation
@@ -127,8 +137,9 @@ export class DockerSandbox implements ISandbox {
       let timedOut = false;
 
       const proc = spawn("docker", dockerArgs, {
-        stdio: ["ignore", "pipe", "pipe"],
+        stdio: ["pipe", "pipe", "pipe"],
       });
+      opts.onProcess?.(proc);
 
       const timeoutHandle = setTimeout(() => {
         timedOut = true;
@@ -341,6 +352,15 @@ export class DockerSandbox implements ISandbox {
     const workspacePath = this.convertToDockerPath(this.workspace.path);
     const writeMode = this.workspace.permissions.write ? "rw" : "ro";
     args.push("-v", `${workspacePath}:/workspace:${writeMode}`);
+    if (this.workspace.permissions.write) {
+      for (const relativePath of PROTECTED_WORKSPACE_WRITE_RELATIVE_PATHS) {
+        const hostPath = path.join(this.workspace.path, relativePath);
+        if (!fs.existsSync(hostPath)) continue;
+        const dockerPath = this.convertToDockerPath(hostPath);
+        const containerPath = `/workspace/${relativePath.replace(/\\/g, "/")}`;
+        args.push("-v", `${dockerPath}:${containerPath}:ro`);
+      }
+    }
 
     // Set working directory
     args.push("-w", options.cwd || "/workspace");

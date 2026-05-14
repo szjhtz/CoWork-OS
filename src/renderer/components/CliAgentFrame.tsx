@@ -13,6 +13,7 @@ interface CliAgentFrameProps {
   events: TaskEvent[];
   agentType: CliAgentType;
   defaultExpanded?: boolean;
+  onOpenAgent?: (taskId: string) => void;
 }
 
 /** Event types worth showing in the CLI agent frame (checked against effective type) */
@@ -354,7 +355,13 @@ function StatusChip({ status }: { status: Task["status"] }) {
   );
 }
 
-export function CliAgentFrame({ task, events, agentType, defaultExpanded }: CliAgentFrameProps) {
+export function CliAgentFrame({
+  task,
+  events,
+  agentType,
+  defaultExpanded,
+  onOpenAgent,
+}: CliAgentFrameProps) {
   const isTerminal =
     task.status === "completed" || task.status === "failed" || task.status === "cancelled";
   const [expanded, setExpanded] = useState(defaultExpanded ?? !isTerminal);
@@ -391,7 +398,16 @@ export function CliAgentFrame({ task, events, agentType, defaultExpanded }: CliA
       className={`cli-agent-frame ${task.status === "executing" ? "cli-agent-frame-executing" : ""} ${isTerminal ? `cli-agent-frame-${task.status}` : ""}`}
     >
       {/* Header */}
-      <button className="cli-agent-frame-header" onClick={() => setExpanded(!expanded)}>
+      <button
+        className="cli-agent-frame-header"
+        onClick={() => {
+          if (onOpenAgent) {
+            onOpenAgent(task.id);
+            return;
+          }
+          setExpanded(!expanded);
+        }}
+      >
         <div className="cli-agent-frame-header-left">
           {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
           <span className="cli-agent-icon">

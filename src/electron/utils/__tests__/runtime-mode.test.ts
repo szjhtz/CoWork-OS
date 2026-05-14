@@ -7,10 +7,15 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   hasArgFlag,
   getArgValue,
+  getControlPlaneAllowedOriginsFromEnv,
+  getControlPlaneBindContextFromEnv,
   isHeadlessMode,
+  shouldAllowInsecureControlPlanePublicBindFromEnv,
   shouldEnableControlPlaneFromArgsOrEnv,
   shouldPrintControlPlaneTokenFromArgsOrEnv,
   shouldImportEnvSettingsFromArgsOrEnv,
+  shouldTrustControlPlaneProxyFromEnv,
+  shouldUseManagedDeploymentModeFromEnv,
   getEnvSettingsImportModeFromArgsOrEnv,
 } from "../runtime-mode";
 
@@ -203,6 +208,42 @@ describe("runtime-mode", () => {
       process.argv = ["node", "app"];
       process.env.COWORK_IMPORT_ENV_SETTINGS_MODE = "something_else";
       expect(getEnvSettingsImportModeFromArgsOrEnv()).toBe("merge");
+    });
+  });
+
+  describe("managed Control Plane env helpers", () => {
+    it("detects managed deployment mode", () => {
+      process.env.COWORK_MANAGED_DEPLOYMENT = "1";
+      expect(shouldUseManagedDeploymentModeFromEnv()).toBe(true);
+    });
+
+    it("defaults bind context to host", () => {
+      delete process.env.COWORK_CONTROL_PLANE_BIND_CONTEXT;
+      expect(getControlPlaneBindContextFromEnv()).toBe("host");
+    });
+
+    it("reads container bind context", () => {
+      process.env.COWORK_CONTROL_PLANE_BIND_CONTEXT = "container";
+      expect(getControlPlaneBindContextFromEnv()).toBe("container");
+    });
+
+    it("detects insecure public bind break-glass", () => {
+      process.env.COWORK_CONTROL_PLANE_ALLOW_INSECURE_PUBLIC_BIND = "true";
+      expect(shouldAllowInsecureControlPlanePublicBindFromEnv()).toBe(true);
+    });
+
+    it("detects trusted proxy mode", () => {
+      process.env.COWORK_CONTROL_PLANE_TRUST_PROXY = "yes";
+      expect(shouldTrustControlPlaneProxyFromEnv()).toBe(true);
+    });
+
+    it("parses allowed origins", () => {
+      process.env.COWORK_CONTROL_PLANE_ALLOWED_ORIGINS =
+        "https://cowork.example.com, http://localhost:18789";
+      expect(getControlPlaneAllowedOriginsFromEnv()).toEqual([
+        "https://cowork.example.com",
+        "http://localhost:18789",
+      ]);
     });
   });
 });

@@ -7,12 +7,16 @@ import {
   Briefcase,
   Bug,
   CalendarDays,
+  CheckCircle2,
   ChevronLeft,
+  Clock3,
+  Circle,
   FileText,
   Image as ImageIcon,
   Inbox,
   Library,
   MessageSquare,
+  MoreHorizontal,
   Play,
   Plus,
   Save,
@@ -20,15 +24,18 @@ import {
   Send,
   ShieldCheck,
   Slack,
-  Volume2,
+  Sparkles,
   Wrench,
 } from "lucide-react";
 import type {
   AgentTemplate,
-  AgentWorkspaceMembership,
+  AgentBuilderConnectionRequirement,
+  AgentBuilderPlan,
+  AgentBuilderSelectionOption,
+  AgentBuilderSelectionRequirement,
+  AgentStarterPrompt,
   AgentWorkspacePermissionSnapshot,
   ApprovalType,
-  AudioSummaryResult,
   ChannelData,
   ImageGenProfile,
   ManagedAgent,
@@ -47,6 +54,7 @@ import type {
   ManagedAgentScheduleConfig,
   ManagedAgentSharingConfig,
   ManagedAgentStudioConfig,
+  ManagedAgentTeamTemplate,
   ManagedAgentToolFamily,
   ManagedAgentVersion,
   ManagedEnvironment,
@@ -64,8 +72,15 @@ type SkillLite = {
   description?: string;
 };
 
+type PluginPackLite = {
+  name: string;
+  displayName: string;
+  recommendedConnectors?: string[];
+};
+
 type AgentsHubAgentRole = {
   id: string;
+  name?: string;
   displayName: string;
   description?: string;
   icon?: string;
@@ -80,7 +95,7 @@ type AgentsHubAgentRole = {
   pulseEveryMinutes?: number;
 };
 
-type AgentsLibraryTab = "library" | "recent" | "shared" | "scheduled" | "templates";
+type AgentsLibraryTab = "all" | "recent" | "mine" | "scheduled" | "templates";
 
 type AgentDraft = {
   agentId?: string;
@@ -88,11 +103,21 @@ type AgentDraft = {
   templateId?: string;
   workflowBrief: string;
   name: string;
+  subtitle?: string;
   description: string;
   icon: string;
+  color?: string;
   systemPrompt: string;
   operatingNotes: string;
+  starterPrompts: AgentStarterPrompt[];
+  builderPlan?: AgentBuilderPlan;
+  missingConnections: AgentBuilderConnectionRequirement[];
   executionMode: ManagedAgentVersion["executionMode"];
+  teamTemplate?: ManagedAgentTeamTemplate;
+  templateRequiredPackIds: string[];
+  templateRequiredConnectorIds: string[];
+  expectedArtifacts: NonNullable<AgentTemplate["expectedArtifacts"]>;
+  teamRoleNames: string[];
   selectedSkills: string[];
   selectedMcpServers: string[];
   selectedToolFamilies: ManagedAgentToolFamily[];
@@ -127,10 +152,14 @@ type PersistStudioDraftResult = {
   environmentId: string;
 };
 
+type AgentConnectionSettingsTab = "integrations" | "mcp" | "skills" | "morechannels" | "slack";
+
 interface AgentsHubPanelProps {
   onOpenMissionControl?: () => void;
   onOpenAgentPersonas?: () => void;
   onOpenSlackSettings?: () => void;
+  onOpenSettings?: (tab: AgentConnectionSettingsTab) => void;
+  onOpenTask?: (taskId: string) => void;
 }
 
 const TOOL_FAMILY_OPTIONS: Array<{ id: ManagedAgentToolFamily; label: string }> = [
@@ -175,15 +204,6 @@ const APPROVAL_TYPE_LABELS: Record<ApprovalType, string> = {
   risk_gate: "Risk gate",
   computer_use: "Computer use",
 };
-
-const RUNTIME_APPROVAL_KIND_LABELS = {
-  none: "No runtime gate",
-  workspace_policy: "Workspace policy",
-  external_service: "External service",
-  data_export: "Data export",
-  destructive: "Destructive",
-  shell_sensitive: "Shell sensitive",
-} as const;
 
 const TOOL_APPROVAL_BEHAVIOR_ORDER: Record<
   ManagedAgentRuntimeToolCatalogEntry["approvalBehavior"],
@@ -261,6 +281,126 @@ function formatRelative(timestamp?: number): string {
   return `${diffDays}d ago`;
 }
 
+function formatCountLabel(count: number, singular: string, plural = `${singular}s`): string {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
+function formatSharingLabel(sharing?: ManagedAgentSharingConfig): string {
+  if (sharing?.ownerLabel) return sharing.ownerLabel;
+  if (sharing?.visibility) return sharing.visibility;
+  return "Sharing not configured";
+}
+
+function formatIdentifierLabel(value: string): string {
+  return value
+    .replace(/[-_]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (char) => char.toLocaleUpperCase());
+}
+
+function parseNumberedInstructionList(
+  paragraph: string,
+): { lead?: string; items: string[] } | null {
+  const matches = [...paragraph.matchAll(/(?:^|\s)(\d{1,2})\.\s+/g)];
+  if (matches.length < 2 || matches[0].index === undefined) return null;
+
+  const firstMarkerIndex = matches[0].index + (matches[0][0].startsWith(" ") ? 1 : 0);
+  const lead = paragraph.slice(0, firstMarkerIndex).trim();
+  const items = matches
+    .map((match, index) => {
+      const markerOffset = match[0].startsWith(" ") ? 1 : 0;
+      const start = (match.index || 0) + markerOffset + match[1].length + 2;
+      const next = matches[index + 1];
+      const end =
+        next && next.index !== undefined ? next.index + (next[0].startsWith(" ") ? 1 : 0) : paragraph.length;
+      return paragraph.slice(start, end).trim();
+    })
+    .filter(Boolean);
+
+  return items.length > 1 ? { lead: lead || undefined, items } : null;
+}
+
+function resolveConnectionSettingsTab(
+  connection: AgentBuilderConnectionRequirement,
+): AgentConnectionSettingsTab {
+  const haystack = `${connection.id} ${connection.label} ${connection.reason}`.toLowerCase();
+  if (haystack.includes("slack")) return "slack";
+  if (connection.kind === "skill" || connection.connectAction?.type === "skill") return "skills";
+  if (connection.kind === "mcp_server") return "mcp";
+  if (connection.kind === "channel" || connection.connectAction?.type === "channel") {
+    return "morechannels";
+  }
+  return "integrations";
+}
+
+function uniqueValues<T>(values: T[]): T[] {
+  return Array.from(new Set(values));
+}
+
+function optionConnectionKeys(option: AgentBuilderSelectionOption): Set<string> {
+  return new Set((option.missingConnections || []).map((connection) => `${connection.kind}:${connection.id}`));
+}
+
+export function getUnresolvedBuilderSelectionRequirements(
+  plan?: AgentBuilderPlan | null,
+): AgentBuilderSelectionRequirement[] {
+  return (plan?.selectionRequirements || []).filter(
+    (requirement) => requirement.required && !requirement.selectedOptionId,
+  );
+}
+
+export function applyBuilderSelectionRequirement(
+  plan: AgentBuilderPlan,
+  requirementId: string,
+  optionId: string,
+): AgentBuilderPlan {
+  const requirement = (plan.selectionRequirements || []).find((entry) => entry.id === requirementId);
+  const option = requirement?.options.find((entry) => entry.id === optionId);
+  if (!requirement || !option) return plan;
+
+  const requirementToolFamilies = new Set(
+    requirement.options.flatMap((entry) => entry.selectedToolFamilies || []),
+  );
+  const requirementMcpServers = new Set(requirement.options.flatMap((entry) => entry.selectedMcpServers || []));
+  const requirementSkills = new Set(requirement.options.flatMap((entry) => entry.selectedSkills || []));
+  const requirementConnectionKeys = new Set(
+    requirement.options.flatMap((entry) => Array.from(optionConnectionKeys(entry))),
+  );
+
+  const missingConnections = [
+    ...(plan.missingConnections || []).filter(
+      (connection) => !requirementConnectionKeys.has(`${connection.kind}:${connection.id}`),
+    ),
+    ...(option.missingConnections || []),
+  ];
+
+  return {
+    ...plan,
+    selectedToolFamilies: uniqueValues([
+      ...(plan.selectedToolFamilies || []).filter((family) => !requirementToolFamilies.has(family)),
+      ...(option.selectedToolFamilies || []),
+    ]),
+    selectedMcpServers: uniqueValues([
+      ...(plan.selectedMcpServers || []).filter((serverId) => !requirementMcpServers.has(serverId)),
+      ...(option.selectedMcpServers || []),
+    ]),
+    connectedMcpServers: uniqueValues([
+      ...(plan.connectedMcpServers || []).filter((serverId) => !requirementMcpServers.has(serverId)),
+      ...(option.selectedMcpServers || []),
+    ]),
+    selectedSkills: uniqueValues([
+      ...(plan.selectedSkills || []).filter((skillId) => !requirementSkills.has(skillId)),
+      ...(option.selectedSkills || []),
+    ]),
+    missingConnections,
+    recommendedMissingIntegrations: missingConnections,
+    selectionRequirements: (plan.selectionRequirements || []).map((entry) =>
+      entry.id === requirementId ? { ...entry, selectedOptionId: optionId } : entry,
+    ),
+  };
+}
+
 function isTerminalManagedSessionStatus(status?: ManagedSession["status"]): boolean {
   return status === "completed" || status === "failed" || status === "cancelled";
 }
@@ -294,12 +434,33 @@ export function getMissionControlActiveAgentRoles<T extends AgentsHubAgentRole>(
   );
 }
 
-function getManagedSessionEventText(event: ManagedSessionEvent): string {
+function extractManagedSessionContentText(content: unknown): string | undefined {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return undefined;
+  const text = content
+    .map((item) => {
+      if (!item || typeof item !== "object") return "";
+      const record = item as Record<string, unknown>;
+      if (record.type === "text" && typeof record.text === "string") return record.text;
+      if (record.type === "file" && typeof record.artifactId === "string") {
+        return `Attached file ${record.artifactId}`;
+      }
+      return "";
+    })
+    .filter(Boolean)
+    .join("\n");
+  return text || undefined;
+}
+
+export function getManagedSessionEventText(event: ManagedSessionEvent): string {
   const payload = event.payload as Record<string, unknown> | undefined;
   const fromMessage = typeof payload?.message === "string" ? payload.message : undefined;
-  const fromContent = typeof payload?.content === "string" ? payload.content : undefined;
+  const fromContent = extractManagedSessionContentText(payload?.content);
   const fromSummary = typeof payload?.summary === "string" ? payload.summary : undefined;
-  return fromMessage || fromContent || fromSummary || event.type.replace(/\./g, " ");
+  const fromName = typeof payload?.name === "string" ? payload.name : undefined;
+  const fromStatus = typeof payload?.status === "string" ? payload.status : undefined;
+  const fromError = typeof payload?.error === "string" ? payload.error : undefined;
+  return fromMessage || fromContent || fromSummary || fromError || fromName || fromStatus || event.type.replace(/\./g, " ");
 }
 
 export function buildDraftFromTemplate(template: AgentTemplate, workspaces: Workspace[]): AgentDraft {
@@ -308,11 +469,22 @@ export function buildDraftFromTemplate(template: AgentTemplate, workspaces: Work
     templateId: template.id,
     workflowBrief: template.description,
     name: template.name,
+    subtitle: template.studio?.subtitle,
     description: template.description,
     icon: template.icon,
+    color: template.color,
     systemPrompt: template.systemPrompt,
     operatingNotes: template.studio?.instructions?.operatingNotes || "",
+    starterPrompts: template.studio?.starterPrompts || [],
+    builderPlan: template.studio?.builderPlan,
+    missingConnections: template.studio?.missingConnections || [],
     executionMode: template.executionMode,
+    teamTemplate: template.teamTemplate,
+    templateRequiredPackIds: template.requiredPackIds || template.studio?.requiredPackIds || [],
+    templateRequiredConnectorIds:
+      template.requiredConnectorIds || template.studio?.requiredConnectorIds || [],
+    expectedArtifacts: template.expectedArtifacts || template.studio?.expectedArtifacts || [],
+    teamRoleNames: template.teamRoleNames || template.studio?.teamRoleNames || [],
     selectedSkills: template.skills || template.studio?.skills || [],
     selectedMcpServers: template.mcpServers || template.studio?.apps?.mcpServers || [],
     selectedToolFamilies: template.studio?.apps?.allowedToolFamilies || [],
@@ -365,11 +537,21 @@ export function buildDraftFromAgent(
     templateId: studio?.templateId,
     workflowBrief: studio?.workflowBrief || agent.description || "",
     name: agent.name,
+    subtitle: studio?.subtitle,
     description: agent.description || "",
-    icon: studio?.templateId ? "🤖" : "🤖",
+    icon: studio?.appearance?.icon || "🤖",
+    color: studio?.appearance?.color,
     systemPrompt: version?.systemPrompt || "",
     operatingNotes: studio?.instructions?.operatingNotes || "",
+    starterPrompts: studio?.starterPrompts || [],
+    builderPlan: studio?.builderPlan,
+    missingConnections: studio?.missingConnections || [],
     executionMode: version?.executionMode || "solo",
+    teamTemplate: version?.teamTemplate,
+    templateRequiredPackIds: studio?.requiredPackIds || [],
+    templateRequiredConnectorIds: studio?.requiredConnectorIds || [],
+    expectedArtifacts: studio?.expectedArtifacts || [],
+    teamRoleNames: studio?.teamRoleNames || [],
     selectedSkills: studio?.skills || version?.skills || [],
     selectedMcpServers: studio?.apps?.mcpServers || version?.mcpServers || [],
     selectedToolFamilies: studio?.apps?.allowedToolFamilies || [],
@@ -412,11 +594,19 @@ export function makeBlankDraft(workspaces: Workspace[]): AgentDraft {
   return {
     workflowBrief: "",
     name: "New Agent",
+    subtitle: "Private in CoWork OS",
     description: "",
     icon: "🤖",
+    color: "#1570ef",
     systemPrompt: "You are a focused CoWork OS agent.",
     operatingNotes: "",
+    starterPrompts: [],
+    missingConnections: [],
     executionMode: "solo",
+    templateRequiredPackIds: [],
+    templateRequiredConnectorIds: [],
+    expectedArtifacts: [],
+    teamRoleNames: [],
     selectedSkills: [],
     selectedMcpServers: [],
     selectedToolFamilies: ["communication", "search", "files"],
@@ -466,6 +656,101 @@ export function buildDraftFromWorkflowBrief(
     systemPrompt: trimmed
       ? `${baseDraft.systemPrompt}\n\nPrimary workflow:\n${trimmed}\n\nFollow the team process, ask for approval when required, and leave reviewable outputs.`
       : baseDraft.systemPrompt,
+  };
+}
+
+export function buildDraftFromBuilderPlan(
+  plan: AgentBuilderPlan,
+  workspaces: Workspace[],
+): AgentDraft {
+  return {
+    workflowBrief: plan.workflowBrief || plan.sourcePrompt,
+    name: plan.name,
+    subtitle: plan.subtitle,
+    description: plan.description,
+    icon: plan.icon,
+    color: plan.color,
+    systemPrompt: plan.instructions,
+    operatingNotes: plan.operatingNotes,
+    starterPrompts: plan.starterPrompts || [],
+    builderPlan: plan,
+    missingConnections: plan.missingConnections || plan.recommendedMissingIntegrations || [],
+    executionMode: "solo",
+    templateId: plan.templateId,
+    templateRequiredPackIds: [],
+    templateRequiredConnectorIds: (plan.missingConnections || [])
+      .filter((connection) => connection.kind !== "channel")
+      .map((connection) => connection.id),
+    expectedArtifacts: [],
+    teamRoleNames: [],
+    selectedSkills: plan.selectedSkills || [],
+    selectedMcpServers: plan.selectedMcpServers || [],
+    selectedToolFamilies: plan.selectedToolFamilies || [],
+    fileRefs: [],
+    memoryConfig: plan.memoryConfig || { mode: "default", sources: ["workspace"] },
+    scheduleConfig: plan.scheduleConfig || { enabled: false, mode: "manual" },
+    channelTargets: [],
+    audioSummaryEnabled: false,
+    audioSummaryStyle: "executive-briefing",
+    sharing: { visibility: "private", ownerLabel: "You" },
+    approvalPolicy: plan.approvalPolicy || {
+      autoApproveReadOnly: true,
+      requireApprovalFor: [],
+    },
+    deployment: { surfaces: ["chatgpt"] },
+    workspaceId: workspaces[0]?.id || "",
+    enableShell: plan.enableShell,
+    enableBrowser: plan.enableBrowser !== false,
+    enableComputerUse: plan.enableComputerUse,
+    routines: (plan.routines || [
+      {
+        name: `${plan.name} manual run`,
+        enabled: true,
+        trigger: { type: "manual" as const, enabled: true },
+      },
+    ]).filter((routine) => routine.trigger.type !== "schedule" || plan.scheduleConfig.enabled),
+  };
+}
+
+function normalizeRoleKey(value?: string): string {
+  return (value || "").toLocaleLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
+function buildTeamTemplateFromRoleNames(
+  roleNames: string[],
+  agentRoles: AgentsHubAgentRole[],
+): ManagedAgentTeamTemplate | undefined {
+  if (roleNames.length === 0) return undefined;
+  const activeRoles = agentRoles.filter((role) => role.isActive !== false);
+  const byKey = new Map<string, AgentsHubAgentRole>();
+  for (const role of activeRoles) {
+    byKey.set(normalizeRoleKey(role.name), role);
+    byKey.set(normalizeRoleKey(role.displayName), role);
+  }
+  const resolved = roleNames
+    .map((roleName) => byKey.get(normalizeRoleKey(roleName)))
+    .filter((role): role is AgentsHubAgentRole => Boolean(role));
+  if (resolved.length === 0) return undefined;
+  const [lead, ...members] = resolved;
+  return {
+    leadAgentRoleId: lead.id,
+    memberAgentRoleIds: members.map((role) => role.id),
+    maxParallelAgents: Math.max(1, Math.min(4, members.length || 1)),
+    collaborativeMode: true,
+    multiLlmMode: false,
+  };
+}
+
+function buildDraftFromTemplateWithRoles(
+  template: AgentTemplate,
+  workspaces: Workspace[],
+  agentRoles: AgentsHubAgentRole[],
+): AgentDraft {
+  const draft = buildDraftFromTemplate(template, workspaces);
+  if (draft.executionMode !== "team" || draft.teamTemplate) return draft;
+  return {
+    ...draft,
+    teamTemplate: buildTeamTemplateFromRoleNames(draft.teamRoleNames, agentRoles),
   };
 }
 
@@ -552,31 +837,6 @@ export function sortRuntimeToolCatalogEntries(
     }
     return left.name.localeCompare(right.name);
   });
-}
-
-function getAgentAnalytics(
-  agent: ManagedAgent,
-  sessions: ManagedSession[],
-  studio: ManagedAgentStudioConfig | undefined,
-) {
-  const agentSessions = sessions.filter((session) => session.agentId === agent.id);
-  const completedRuns = agentSessions.filter((session) => session.status === "completed").length;
-  const activeRuns = agentSessions.filter(
-    (session) => session.status === "pending" || session.status === "running",
-  ).length;
-  const latestRunAt = agentSessions[0]?.updatedAt;
-
-  return {
-    totalRuns: agentSessions.length,
-    completedRuns,
-    activeRuns,
-    successRate:
-      agentSessions.length > 0 ? Math.round((completedRuns / agentSessions.length) * 100) : 0,
-    latestRunAt,
-    slackTargets: studio?.channelTargets?.length || 0,
-    approvalActions: studio?.approvalPolicy?.requireApprovalFor?.length || 0,
-    surfaces: studio?.deployment?.surfaces || ["chatgpt"],
-  };
 }
 
 function makeBlankRoutine(
@@ -695,6 +955,8 @@ function getTemplateGlyph(template: AgentTemplate) {
           return Briefcase;
         case "research":
           return Search;
+        case "finance":
+          return BarChart3;
         default:
           return Bot;
       }
@@ -705,9 +967,10 @@ export function AgentsHubPanel({
   onOpenMissionControl,
   onOpenAgentPersonas,
   onOpenSlackSettings,
+  onOpenSettings,
+  onOpenTask,
 }: AgentsHubPanelProps) {
   void onOpenMissionControl;
-  void onOpenSlackSettings;
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -716,6 +979,7 @@ export function AgentsHubPanel({
   const [sessions, setSessions] = useState<ManagedSession[]>([]);
   const [templates, setTemplates] = useState<AgentTemplate[]>([]);
   const [skills, setSkills] = useState<SkillLite[]>([]);
+  const [pluginPacks, setPluginPacks] = useState<PluginPackLite[]>([]);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [environments, setEnvironments] = useState<ManagedEnvironment[]>([]);
   const [slackChannels, setSlackChannels] = useState<ChannelData[]>([]);
@@ -723,7 +987,6 @@ export function AgentsHubPanel({
   const [imageProfiles, setImageProfiles] = useState<ImageGenProfile[]>([]);
   const [studioDraft, setStudioDraft] = useState<AgentDraft | null>(null);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
-  const [audioResults, setAudioResults] = useState<Record<string, AudioSummaryResult>>({});
   const [agentRoutines, setAgentRoutines] = useState<Record<string, ManagedAgentRoutineRecord[]>>({});
   const [agentInsights, setAgentInsights] = useState<Record<string, ManagedAgentInsights>>({});
   const [agentAudit, setAgentAudit] = useState<Record<string, ManagedAgentAuditEntry[]>>({});
@@ -736,11 +999,10 @@ export function AgentsHubPanel({
   >({});
   const [runtimeCatalogErrors, setRuntimeCatalogErrors] = useState<Record<string, string>>({});
   const [runtimeCatalogLoadingId, setRuntimeCatalogLoadingId] = useState<string | null>(null);
-  const [libraryTab, setLibraryTab] = useState<AgentsLibraryTab>("library");
+  const [libraryTab, setLibraryTab] = useState<AgentsLibraryTab>("all");
   const [workflowComposer, setWorkflowComposer] = useState("");
   const [newProfileName, setNewProfileName] = useState("");
   const [newProfileDescription, setNewProfileDescription] = useState("");
-  const [workspaceMemberships, setWorkspaceMemberships] = useState<AgentWorkspaceMembership[]>([]);
   const [workspacePermissions, setWorkspacePermissions] = useState<
     Record<string, AgentWorkspacePermissionSnapshot>
   >({});
@@ -750,11 +1012,37 @@ export function AgentsHubPanel({
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [showcaseIndex, setShowcaseIndex] = useState(0);
   const [isCreateComposerOpen, setIsCreateComposerOpen] = useState(false);
+  const [builderPlan, setBuilderPlan] = useState<AgentBuilderPlan | null>(null);
+  const [builderStage, setBuilderStage] = useState<"idle" | "thinking" | "plan" | "creating" | "created">(
+    "idle",
+  );
+  const [builderError, setBuilderError] = useState<string | null>(null);
   const [studioTestPrompt, setStudioTestPrompt] = useState("");
   const [studioTestSessionId, setStudioTestSessionId] = useState<string | null>(null);
   const [studioSessionEvents, setStudioSessionEvents] = useState<Record<string, ManagedSessionEvent[]>>({});
   const [studioTestRunning, setStudioTestRunning] = useState(false);
   const [studioTestError, setStudioTestError] = useState<string | null>(null);
+  const [agentRunSubmitting, setAgentRunSubmitting] = useState(false);
+  const [agentRunError, setAgentRunError] = useState<string | null>(null);
+  const unresolvedBuilderSelections = getUnresolvedBuilderSelectionRequirements(builderPlan);
+
+  const handleConnectionRequirementAction = (connection: AgentBuilderConnectionRequirement) => {
+    const targetTab = resolveConnectionSettingsTab(connection);
+    if (targetTab === "slack" && onOpenSlackSettings) {
+      onOpenSlackSettings();
+      return;
+    }
+    if (onOpenSettings) {
+      onOpenSettings(targetTab);
+      return;
+    }
+    const message = `Connect ${connection.label} from Settings or Integrations.`;
+    if (isCreateComposerOpen) {
+      setBuilderError(message);
+    } else {
+      setError(message);
+    }
+  };
 
   const loadData = async () => {
     try {
@@ -764,6 +1052,7 @@ export function AgentsHubPanel({
         managedSessions,
         agentTemplates,
         availableSkills,
+        availablePluginPacks,
         availableWorkspaces,
         gatewayChannels,
         imageGenProfiles,
@@ -771,12 +1060,12 @@ export function AgentsHubPanel({
         mcpSettings,
         legacyAgentRoles,
         legacyAutomationProfiles,
-        memberships,
       ] = await Promise.all([
         window.electronAPI.listManagedAgents(),
-        window.electronAPI.listManagedSessions({ limit: 40 }),
+        window.electronAPI.listManagedSessions({ limit: 40, surface: "runtime" }),
         window.electronAPI.listAgentTemplates(),
         window.electronAPI.listSkills(),
+        window.electronAPI.listPluginPacks(),
         window.electronAPI.listWorkspaces(),
         window.electronAPI.getGatewayChannels(),
         window.electronAPI.listImageGenProfiles(),
@@ -784,7 +1073,6 @@ export function AgentsHubPanel({
         window.electronAPI.getMCPSettings(),
         window.electronAPI.getAgentRoles(true),
         window.electronAPI.listAutomationProfiles(),
-        window.electronAPI.listAgentWorkspaceMemberships(),
       ]);
       const detailEntries = await Promise.all(
         managedAgents.map(async (agent) => {
@@ -798,23 +1086,39 @@ export function AgentsHubPanel({
           return [agent.id, routines] as const;
         }),
       );
+      const insightEntries = await Promise.all(
+        managedAgents.map(async (agent) => {
+          try {
+            const insights = await window.electronAPI.getManagedAgentInsights(agent.id);
+            return [agent.id, insights] as const;
+          } catch {
+            return [agent.id, undefined] as const;
+          }
+        }),
+      );
       setAgents(managedAgents);
       setSessions(managedSessions);
       setTemplates(agentTemplates);
       setSkills((availableSkills || []) as SkillLite[]);
+      setPluginPacks((availablePluginPacks || []) as PluginPackLite[]);
       setWorkspaces(availableWorkspaces);
       setEnvironments(managedEnvironments);
       setSlackChannels((gatewayChannels || []).filter((channel) => channel.type === "slack"));
       setImageProfiles(imageGenProfiles);
       setAgentDetails(Object.fromEntries(detailEntries));
       setAgentRoutines(Object.fromEntries(routineEntries));
-      setSelectedAgentId((current) => current || managedAgents[0]?.id || null);
+      setAgentInsights(
+        Object.fromEntries(
+          insightEntries.filter(
+            (entry): entry is readonly [string, ManagedAgentInsights] => Boolean(entry[1]),
+          ),
+        ),
+      );
       setRuntimeCatalogs({});
       setRuntimeCatalogErrors({});
       setRuntimeCatalogLoadingId(null);
       setAgentRoles(legacyAgentRoles || []);
       setAutomationProfiles(legacyAutomationProfiles || []);
-      setWorkspaceMemberships(memberships || []);
 
       const serversRaw = (mcpSettings as Any)?.servers;
       const serverList: Array<{ id: string; name: string }> = Array.isArray(serversRaw)
@@ -949,7 +1253,10 @@ export function AgentsHubPanel({
   useEffect(() => {
     const sessionId =
       selectedSessionId ||
-      sessions.find((session) => session.agentId === selectedAgentId)?.id ||
+      sessions.find(
+        (session) =>
+          session.agentId === selectedAgentId && (session.surface || "runtime") !== "agent_panel",
+      )?.id ||
       null;
     if (!sessionId || sessionWorkpapers[sessionId]) return;
     setSelectedSessionId(sessionId);
@@ -1011,7 +1318,9 @@ export function AgentsHubPanel({
   }, [studioTestSessionId, sessions]);
 
   const recentAgentIds = useMemo(() => {
-    const ordered = sessions.map((session) => session.agentId);
+    const ordered = sessions
+      .filter((session) => (session.surface || "runtime") !== "agent_panel")
+      .map((session) => session.agentId);
     return Array.from(new Set(ordered));
   }, [sessions]);
 
@@ -1026,10 +1335,6 @@ export function AgentsHubPanel({
     () => getMissionControlActiveAgentRoles(agentRoles),
     [agentRoles],
   );
-  const sharedAgents = agents.filter((agent) => {
-    const visibility = getStudioConfig(agentDetails[agent.id])?.sharing?.visibility;
-    return visibility === "team" || visibility === "workspace";
-  });
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId) || null;
   const selectedAgentWorkspaceId = selectedAgent
     ? environments.find(
@@ -1054,8 +1359,8 @@ export function AgentsHubPanel({
     switch (libraryTab) {
       case "recent":
         return recentlyUsedAgents;
-      case "shared":
-        return sharedAgents;
+      case "mine":
+        return agents;
       case "scheduled":
         return scheduledAgents;
       case "templates":
@@ -1063,13 +1368,24 @@ export function AgentsHubPanel({
       default:
         return agents;
     }
-  }, [agents, libraryTab, recentlyUsedAgents, scheduledAgents, sharedAgents]);
+  }, [agents, libraryTab, recentlyUsedAgents, scheduledAgents]);
+  const slackChannelTargetCount = agents.reduce(
+    (count, agent) => count + (getStudioConfig(agentDetails[agent.id])?.channelTargets?.length || 0),
+    0,
+  );
   const visibleLibraryAgents = libraryAgents.slice(0, 6);
   const visibleMissionControlAgentRoles =
-    libraryTab === "library"
+    libraryTab === "all"
       ? activeMissionControlAgentRoles.slice(0, Math.max(0, 6 - visibleLibraryAgents.length))
       : [];
   const visibleAgentCount = agents.length + activeMissionControlAgentRoles.length;
+  const managedAgentInsights = agents
+    .map((agent) => agentInsights[agent.id])
+    .filter((insights): insights is ManagedAgentInsights => Boolean(insights));
+  const managedAgentInsightsComplete = managedAgentInsights.length === agents.length;
+  const managedAgentTotalRuns = managedAgentInsightsComplete
+    ? managedAgentInsights.reduce((total, insights) => total + insights.totalRuns, 0)
+    : null;
 
   const featuredTemplates = useMemo(() => {
     const preferred = templates.filter((template) => template.featured);
@@ -1179,10 +1495,69 @@ export function AgentsHubPanel({
     const trimmed = workflowComposer.trim();
     if (!trimmed) return;
     setIsCreateComposerOpen(false);
-    setStudioDraft(buildDraftFromWorkflowBrief(trimmed, templates, workspaces));
+    const draft = buildDraftFromWorkflowBrief(trimmed, templates, workspaces);
+    setStudioDraft(
+      draft.executionMode === "team" && !draft.teamTemplate
+        ? {
+            ...draft,
+            teamTemplate: buildTeamTemplateFromRoleNames(draft.teamRoleNames, agentRoles),
+          }
+        : draft,
+    );
+  };
+
+  const handleGenerateBuilderPlan = async (promptOverride?: string) => {
+    const trimmed = (promptOverride ?? workflowComposer).trim();
+    if (!trimmed) return;
+    setWorkflowComposer(trimmed);
+    setBuilderError(null);
+    setBuilderStage("thinking");
+    setBuilderPlan(null);
+    try {
+      const plan = await window.electronAPI.generateManagedAgentPlan({
+        prompt: trimmed,
+        workspaceId: workspaces[0]?.id,
+      });
+      setBuilderPlan(plan);
+      setBuilderStage("plan");
+    } catch (planError) {
+      setBuilderError(planError instanceof Error ? planError.message : "Failed to generate agent plan");
+      setBuilderStage("idle");
+    }
+  };
+
+  const handleCreateFromBuilderPlan = async () => {
+    if (!builderPlan) return;
+    setBuilderError(null);
+    setBuilderStage("creating");
+    try {
+      const created = await window.electronAPI.createManagedAgentFromPlan({
+        plan: builderPlan,
+        workspaceId: workspaces[0]?.id,
+        activate: true,
+      });
+      setSelectedAgentId(created.agent.id);
+      await loadData();
+      setBuilderStage("created");
+      setIsCreateComposerOpen(false);
+      setWorkflowComposer("");
+      setBuilderPlan(null);
+    } catch (createError) {
+      setBuilderError(createError instanceof Error ? createError.message : "Failed to create agent");
+      setBuilderStage("plan");
+    }
+  };
+
+  const handleEditBuilderPlan = () => {
+    if (!builderPlan) return;
+    setIsCreateComposerOpen(false);
+    setStudioDraft(buildDraftFromBuilderPlan(builderPlan, workspaces));
   };
 
   const handleOpenCreateComposer = () => {
+    setBuilderPlan(null);
+    setBuilderStage("idle");
+    setBuilderError(null);
     setIsCreateComposerOpen(true);
   };
 
@@ -1211,9 +1586,17 @@ export function AgentsHubPanel({
     const studioMetadata: ManagedAgentStudioConfig = {
       templateId: studioDraft.templateId,
       workflowBrief: studioDraft.workflowBrief,
+      appearance: {
+        icon: studioDraft.icon,
+        color: studioDraft.color,
+      },
+      subtitle: studioDraft.subtitle,
       instructions: {
         operatingNotes: studioDraft.operatingNotes,
       },
+      starterPrompts: studioDraft.starterPrompts,
+      builderPlan: studioDraft.builderPlan,
+      missingConnections: studioDraft.missingConnections,
       skills: studioDraft.selectedSkills,
       apps: {
         mcpServers: studioDraft.selectedMcpServers,
@@ -1232,6 +1615,10 @@ export function AgentsHubPanel({
       sharing: studioDraft.sharing,
       deployment: studioDraft.deployment,
       defaultEnvironmentId: environment.id,
+      requiredPackIds: studioDraft.templateRequiredPackIds,
+      requiredConnectorIds: studioDraft.templateRequiredConnectorIds,
+      expectedArtifacts: studioDraft.expectedArtifacts,
+      teamRoleNames: studioDraft.teamRoleNames,
     };
 
     let savedAgentId = studioDraft.agentId;
@@ -1242,6 +1629,8 @@ export function AgentsHubPanel({
         description: studioDraft.description,
         systemPrompt: studioDraft.systemPrompt,
         executionMode: studioDraft.executionMode,
+        teamTemplate:
+          studioDraft.executionMode === "team" ? studioDraft.teamTemplate : undefined,
         skills: studioDraft.selectedSkills,
         mcpServers: studioDraft.selectedMcpServers,
         runtimeDefaults: {
@@ -1257,6 +1646,8 @@ export function AgentsHubPanel({
         description: studioDraft.description,
         systemPrompt: studioDraft.systemPrompt,
         executionMode: studioDraft.executionMode,
+        teamTemplate:
+          studioDraft.executionMode === "team" ? studioDraft.teamTemplate : undefined,
         skills: studioDraft.selectedSkills,
         mcpServers: studioDraft.selectedMcpServers,
         runtimeDefaults: {
@@ -1355,6 +1746,7 @@ export function AgentsHubPanel({
         agentId: persisted.agentId,
         environmentId: persisted.environmentId,
         title: `${studioDraft.name} preview`,
+        surface: "studio_preview",
         initialEvent: {
           type: "user.message",
           content: [{ type: "text", text: prompt }],
@@ -1378,36 +1770,51 @@ export function AgentsHubPanel({
     }
   };
 
-  const handleRunAgent = async (agent: ManagedAgent) => {
+  const handleRunAgentInMainTask = async (
+    agent: ManagedAgent,
+    prompt: string,
+    title: string,
+  ) => {
+    const trimmedPrompt = prompt.trim();
+    if (!trimmedPrompt) return;
     if (agent.status === "suspended") {
-      setError("This agent is suspended. Publish it again before running.");
+      setAgentRunError("This agent is suspended. Publish it again before running it.");
       return;
     }
-    const detail = await window.electronAPI.getManagedAgent(agent.id);
-    const studio = getStudioConfig(detail?.currentVersion);
-    const environmentId = studio?.defaultEnvironmentId;
-    if (!environmentId) {
-      setError("This agent does not have a default environment yet. Edit it and save first.");
-      return;
-    }
-    await window.electronAPI.createManagedSession({
-      agentId: agent.id,
-      environmentId,
-      title: `${agent.name} run`,
-      initialEvent: {
-        type: "user.message",
-        content: [{ type: "text", text: `Run the configured workflow for ${agent.name}.` }],
-      },
-    });
-    await loadData();
-  };
 
-  const handleGenerateAudio = async (session: ManagedSession) => {
     try {
-      const result = await window.electronAPI.generateManagedSessionAudioSummary(session.id);
-      setAudioResults((current) => ({ ...current, [session.id]: result }));
-    } catch (audioError) {
-      setError(audioError instanceof Error ? audioError.message : "Failed to generate audio summary");
+      setAgentRunSubmitting(true);
+      setAgentRunError(null);
+      const studio = getStudioConfig(agentDetails[agent.id]);
+      const environmentId = studio?.defaultEnvironmentId;
+      if (!environmentId) {
+        throw new Error("This agent does not have a default environment yet. Edit it and save first.");
+      }
+
+      const session = await window.electronAPI.createManagedSession({
+        agentId: agent.id,
+        environmentId,
+        title,
+        surface: "runtime",
+        initialEvent: {
+          type: "user.message",
+          content: [{ type: "text", text: trimmedPrompt }],
+        },
+      });
+      setSessions((current) => {
+        const next = current.filter((entry) => entry.id !== session.id);
+        return [session, ...next].sort((left, right) => right.updatedAt - left.updatedAt);
+      });
+      setSelectedSessionId(session.id);
+      if (session.backingTaskId) {
+        onOpenTask?.(session.backingTaskId);
+      } else {
+        setAgentRunError("The agent run started, but no backing task was returned.");
+      }
+    } catch (panelError) {
+      setAgentRunError(panelError instanceof Error ? panelError.message : "Failed to run this agent");
+    } finally {
+      setAgentRunSubmitting(false);
     }
   };
 
@@ -2547,26 +2954,44 @@ export function AgentsHubPanel({
     return (
       <div className="agents-panel agents-create-screen">
         <div className="agents-create-screen-bar">
-          <button className="agents-link-btn agents-create-screen-back" onClick={() => setIsCreateComposerOpen(false)}>
+          <button
+            className="agents-link-btn agents-create-screen-back"
+            onClick={() => setIsCreateComposerOpen(false)}
+          >
             <ArrowLeft size={18} />
             Back
           </button>
-          <button
-            className="agents-link-btn agents-create-screen-blank"
-            onClick={() => {
-              setIsCreateComposerOpen(false);
-              setStudioDraft(makeBlankDraft(workspaces));
-            }}
-          >
-            Start blank
-          </button>
+          <div className="agents-create-screen-actions">
+            <button
+              className="agents-link-btn agents-create-screen-blank"
+              onClick={() => {
+                setIsCreateComposerOpen(false);
+                setStudioDraft(makeBlankDraft(workspaces));
+              }}
+            >
+              Start blank
+            </button>
+            <button
+              className="agents-link-btn agents-create-screen-blank"
+              onClick={() => {
+                if (workflowComposer.trim()) {
+                  handleDraftFromWorkflow();
+                } else {
+                  setIsCreateComposerOpen(false);
+                  setStudioDraft(makeBlankDraft(workspaces));
+                }
+              }}
+            >
+              Skip to builder
+            </button>
+          </div>
         </div>
 
         <section className="agents-create-screen-hero">
           <div className="agents-create-screen-icon">
-            <Bot size={34} />
+            <Sparkles size={34} />
           </div>
-          <h1>Build a new agent</h1>
+          <h1>What should your agent do?</h1>
           <div className="agents-create-screen-input">
             <div className="agents-create-screen-input-leading">
               <Plus size={18} />
@@ -2575,39 +3000,568 @@ export function AgentsHubPanel({
               value={workflowComposer}
               placeholder="Describe what it should do"
               onChange={(event) => setWorkflowComposer(event.target.value)}
+              disabled={builderStage === "thinking" || builderStage === "creating"}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  void handleGenerateBuilderPlan();
+                }
+              }}
             />
             <button
               className="agents-create-screen-submit"
-              onClick={handleDraftFromWorkflow}
-              disabled={!workflowComposer.trim()}
-              aria-label="Create agent draft"
+              onClick={() => void handleGenerateBuilderPlan()}
+              disabled={!workflowComposer.trim() || builderStage === "thinking" || builderStage === "creating"}
+              aria-label="Generate agent plan"
             >
               <ArrowUp size={18} />
             </button>
           </div>
 
-          <div className="agents-create-screen-suggestions">
-            {quickCreateTemplates.map((template) => {
-              const TemplateGlyph = getTemplateGlyph(template);
-              return (
-                <button
-                  key={template.id}
-                  className="agents-create-screen-row"
-                  onClick={() => {
-                    setIsCreateComposerOpen(false);
-                    setStudioDraft(buildDraftFromTemplate(template, workspaces));
-                  }}
+          {builderError ? <p className="agents-create-screen-error">{builderError}</p> : null}
+
+          {builderStage === "thinking" || builderStage === "creating" ? (
+            <div className="agents-builder-progress-card">
+              <div className="agents-builder-progress-heading">
+                <Sparkles size={20} />
+                <strong>
+                  {builderStage === "creating" ? "Creating your agent" : "Designing your agent"}
+                </strong>
+              </div>
+              {[
+                "Reading the request",
+                "Checking available tools, skills, and integrations",
+                "Choosing approval and privacy defaults",
+                builderStage === "creating" ? "Saving the runnable agent" : "Preparing the build plan",
+              ].map((step, index) => (
+                <div key={step} className="agents-builder-progress-row">
+                  {builderStage === "creating" || index < 3 ? (
+                    <CheckCircle2 size={17} />
+                  ) : (
+                    <Circle size={17} />
+                  )}
+                  <span>{step}</span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          {builderPlan && builderStage === "plan" ? (
+            <div className="agents-builder-plan-card">
+              <div className="agents-builder-plan-header">
+                <div
+                  className="agents-builder-plan-icon"
+                  style={{ color: builderPlan.color || "#1570ef" }}
                 >
-                  <span className="agents-create-screen-row-icon">
-                    <TemplateGlyph size={18} />
-                  </span>
-                  <strong>{template.name}</strong>
-                  <span>{template.description}</span>
+                  <Bot size={28} />
+                </div>
+                <div>
+                  <span>{builderPlan.subtitle || "Private in CoWork OS"}</span>
+                  <h2>{builderPlan.name}</h2>
+                  <p>{builderPlan.description}</p>
+                </div>
+              </div>
+
+              <div className="agents-builder-plan-pills">
+                {builderPlan.selectedToolFamilies.slice(0, 8).map((family) => (
+                  <span key={family}>{TOOL_FAMILY_OPTIONS.find((option) => option.id === family)?.label || family}</span>
+                ))}
+                {builderPlan.selectedMcpServers.map((serverId) => (
+                  <span key={serverId}>Connected: {serverId}</span>
+                ))}
+              </div>
+
+              <div className="agents-builder-plan-grid">
+                <section>
+                  <h3>Capabilities</h3>
+                  {builderPlan.capabilities.slice(0, 5).map((capability) => (
+                    <div key={capability} className="agents-builder-plan-check">
+                      <CheckCircle2 size={16} />
+                      <span>{capability}</span>
+                    </div>
+                  ))}
+                </section>
+                <section>
+                  <h3>Approval defaults</h3>
+                  <div className="agents-builder-plan-check">
+                    <ShieldCheck size={16} />
+                    <span>Read-only and search work auto-approved</span>
+                  </div>
+                  <div className="agents-builder-plan-check">
+                    <ShieldCheck size={16} />
+                    <span>Write actions ask before running</span>
+                  </div>
+                  {builderPlan.scheduleSuggestion ? (
+                    <div className="agents-builder-plan-check">
+                      <CalendarDays size={16} />
+                      <span>{builderPlan.scheduleSuggestion}</span>
+                    </div>
+                  ) : null}
+                </section>
+              </div>
+
+              {builderPlan.selectionRequirements?.length > 0 ? (
+                <section className="agents-builder-choice-list">
+                  <h3>Choose before creating</h3>
+                  {builderPlan.selectionRequirements.map((requirement) => (
+                    <div key={requirement.id} className="agents-builder-choice-group">
+                      <div>
+                        <strong>{requirement.title}</strong>
+                        <span>{requirement.reason}</span>
+                      </div>
+                      <div className="agents-builder-choice-options">
+                        {requirement.options.map((option) => (
+                          <button
+                            key={option.id}
+                            className={requirement.selectedOptionId === option.id ? "active" : ""}
+                            onClick={() =>
+                              setBuilderPlan(
+                                applyBuilderSelectionRequirement(builderPlan, requirement.id, option.id),
+                              )
+                            }
+                          >
+                            <strong>{option.label}</strong>
+                            {option.description ? <span>{option.description}</span> : null}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </section>
+              ) : null}
+
+              {builderPlan.missingConnections.length > 0 ? (
+                <section className="agents-builder-connect-list">
+                  <h3>Connect next</h3>
+                  {builderPlan.missingConnections.map((connection) => (
+                    <div key={`${connection.kind}:${connection.id}`} className="agents-builder-connect-row">
+                      <div>
+                        <strong>{connection.label}</strong>
+                        <span>{connection.reason}</span>
+                      </div>
+                      <button onClick={() => handleConnectionRequirementAction(connection)}>
+                        {connection.connectAction?.label || "Connect"}
+                      </button>
+                    </div>
+                  ))}
+                </section>
+              ) : null}
+
+              <section className="agents-builder-starters">
+                <h3>Starter prompts</h3>
+                <div>
+                  {builderPlan.starterPrompts.slice(0, 3).map((starter) => (
+                    <button key={starter.id}>{starter.title}</button>
+                  ))}
+                </div>
+              </section>
+
+              <div className="agents-builder-plan-actions">
+                <button className="agents-secondary-btn" onClick={handleEditBuilderPlan}>
+                  Edit plan
                 </button>
-              );
-            })}
-          </div>
+                <button
+                  className="agents-primary-btn"
+                  onClick={() => void handleCreateFromBuilderPlan()}
+                  disabled={unresolvedBuilderSelections.length > 0}
+                >
+                  Create
+                </button>
+              </div>
+              {unresolvedBuilderSelections.length > 0 ? (
+                <p className="agents-builder-plan-blocked">
+                  {unresolvedBuilderSelections[0]?.title || "Choose an option"} before creating.
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+
+          {builderStage === "idle" ? (
+            <div className="agents-create-screen-suggestions">
+              {quickCreateTemplates.map((template) => {
+                const TemplateGlyph = getTemplateGlyph(template);
+                return (
+                  <button
+                    key={template.id}
+                    className="agents-create-screen-row"
+                    onClick={() => void handleGenerateBuilderPlan(template.description)}
+                  >
+                    <span className="agents-create-screen-row-icon">
+                      <TemplateGlyph size={18} />
+                    </span>
+                    <strong>{template.name}</strong>
+                    <span>{template.description}</span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
         </section>
+        {renderAgentsStyles()}
+      </div>
+    );
+  }
+
+  if (selectedAgent) {
+    const version = agentDetails[selectedAgent.id];
+    const studio = getStudioConfig(version);
+    const linkedRoutines = agentRoutines[selectedAgent.id] || [];
+    const permissions = selectedAgentWorkspaceId
+      ? workspacePermissions[selectedAgentWorkspaceId]
+      : undefined;
+    const latestAgentSession =
+      sessions.find(
+        (session) =>
+          session.agentId === selectedAgent.id && (session.surface || "runtime") === "runtime",
+      ) || null;
+    const templateRecord = studio?.templateId
+      ? templates.find((entry) => entry.id === studio.templateId) || {
+          id: studio.templateId,
+          name: studio.templateId,
+          description: "",
+          icon: "",
+          color: "#1570ef",
+          category: "operations",
+          systemPrompt: "",
+          executionMode: "solo",
+        }
+      : null;
+    const AgentGlyph = templateRecord ? getTemplateGlyph(templateRecord) : Bot;
+    const customIcon = studio?.appearance?.icon;
+    const customColor = studio?.appearance?.color || templateRecord?.color || "#1570ef";
+    const starterPrompts = studio?.starterPrompts || [];
+    const selectedSkillLabels = (studio?.skills || version?.skills || [])
+      .map((skillId) => skills.find((skill) => skill.id === skillId)?.name || skillId)
+      .slice(0, 4);
+    const runtimeCatalog = runtimeCatalogs[selectedAgent.id];
+    const runtimeCatalogError = runtimeCatalogErrors[selectedAgent.id];
+    const missingConnectionMap = new Map(
+      [
+        ...(studio?.missingConnections || []),
+        ...(runtimeCatalog?.missingConnections || []),
+      ].map((connection) => [`${connection.kind}:${connection.id}`, connection]),
+    );
+    const missingConnections = Array.from(missingConnectionMap.values());
+    const runtimeToolLabels = sortRuntimeToolCatalogEntries(runtimeCatalog?.chatgpt || [])
+      .slice(0, 5)
+      .map((tool) => ({
+        key: `runtime:${tool.name}`,
+        label: tool.name,
+      }));
+    const toolLabels = runtimeCatalogError || runtimeCatalog === undefined ? [] : runtimeToolLabels;
+    const toolStatusNote = runtimeCatalogError
+      ? runtimeCatalogError
+      : runtimeCatalog === undefined
+        ? "Loading real runtime tools..."
+        : runtimeToolLabels.length === 0
+          ? "No runtime tools available."
+          : null;
+    const deploymentHealth = normalizeSlackDeploymentHealth(
+      slackHealth[selectedAgent.id],
+      getSlackDeploymentHealth(studio, slackChannels, selectedAgent.id),
+    );
+    const slackTargets = deploymentHealth.targets;
+    const auditEntries = agentAudit[selectedAgent.id] || [];
+    const fileRefs = studio?.fileRefs || [];
+    const memoryMode = studio?.memoryConfig?.mode;
+    const instructionParagraphs = version?.systemPrompt
+      .split(/\n{2,}/)
+      .map((paragraph) => paragraph.trim())
+      .filter(Boolean) || [];
+    const runAgentPrompt = `Run the configured workflow for ${selectedAgent.name}.`;
+    const canRunSelectedAgent =
+      selectedAgent.status !== "suspended" && !(permissions ? !permissions.canRunAgents : false);
+    const canEditSelectedAgent = !(permissions ? !permissions.canEditDrafts : false);
+    const openSelectedAgentDraft = () =>
+      setStudioDraft(
+        buildDraftFromAgent(
+          selectedAgent,
+          agentDetails[selectedAgent.id],
+          environments,
+          workspaces,
+          linkedRoutines,
+        ),
+      );
+
+    return (
+      <div className="agents-panel agents-agent-detail-screen">
+        <main className="agents-agent-editor">
+          <div className="agents-agent-editor-bar">
+            <button className="agents-agent-back" onClick={() => setSelectedAgentId(null)}>
+              <ArrowLeft size={18} />
+              Agents
+            </button>
+            <div className="agents-agent-editor-bar-actions">
+              <span>
+                {latestAgentSession
+                  ? `Updated ${formatRelative(latestAgentSession.updatedAt)}`
+                  : "No runs recorded"}
+              </span>
+              <button>
+                <CalendarDays size={16} />
+                Schedule
+              </button>
+              <button
+                onClick={() => void handlePublishAgent(selectedAgent.id)}
+                disabled={
+                  selectedAgent.status === "active" || (permissions ? !permissions.canPublishAgents : false)
+                }
+              >
+                Publish
+              </button>
+              <button
+                onClick={() => void handleSuspendAgent(selectedAgent.id)}
+                disabled={
+                  selectedAgent.status === "suspended" || (permissions ? !permissions.canPublishAgents : false)
+                }
+              >
+                Suspend
+              </button>
+              <button
+                onClick={() =>
+                  void handleRunAgentInMainTask(
+                    selectedAgent,
+                    runAgentPrompt,
+                    `${selectedAgent.name} preview`,
+                  )
+                }
+                disabled={!canRunSelectedAgent || agentRunSubmitting}
+              >
+                <Play size={16} />
+                Preview
+              </button>
+              <button aria-label="More agent actions">
+                <MoreHorizontal size={18} />
+              </button>
+            </div>
+          </div>
+
+          <section className="agents-agent-profile">
+            <div className="agents-agent-avatar" style={{ color: customColor }}>
+              {customIcon && customIcon !== "Bot" && customIcon.length <= 4 ? (
+                <span>{customIcon}</span>
+              ) : (
+                <AgentGlyph size={34} />
+              )}
+            </div>
+            <h1>{selectedAgent.name}</h1>
+            {studio?.subtitle ? <p>{studio.subtitle}</p> : null}
+          </section>
+
+          <section className="agents-agent-action-strip" aria-label="Agent actions">
+            <h2>Actions</h2>
+            <div className="agents-agent-action-buttons">
+              <button
+                className="agents-agent-action-button primary"
+                onClick={() =>
+                  void handleRunAgentInMainTask(
+                    selectedAgent,
+                    runAgentPrompt,
+                    `${selectedAgent.name} agent test`,
+                  )
+                }
+                disabled={!canRunSelectedAgent || agentRunSubmitting}
+              >
+                <Play size={16} />
+                Test this agent
+              </button>
+              <button
+                className="agents-agent-action-button"
+                onClick={openSelectedAgentDraft}
+                disabled={!canEditSelectedAgent}
+              >
+                <Library size={16} />
+                Add advanced logic
+              </button>
+              <button
+                className="agents-agent-action-button"
+                onClick={openSelectedAgentDraft}
+                disabled={!canEditSelectedAgent}
+              >
+                <Wrench size={16} />
+                Optimize this agent
+              </button>
+            </div>
+            {agentRunError ? <p className="agents-agent-action-error">{agentRunError}</p> : null}
+          </section>
+
+          <section className="agents-agent-section">
+            <h2>Channels</h2>
+            <div className="agents-agent-channel-grid">
+              <button className="agents-agent-channel-card">
+                <MessageSquare size={20} />
+                <strong>CoWork OS</strong>
+                <span>Customize and share your agent</span>
+              </button>
+              {(studio?.deployment?.surfaces || []).includes("slack") && slackTargets[0] ? (
+                <button className="agents-agent-channel-card">
+                  <Slack size={20} />
+                  <strong>{slackTargets[0].channelName}</strong>
+                  <span>{slackTargets[0].misconfigured ? "Needs attention" : "Responds to messages"}</span>
+                </button>
+              ) : (
+                <button className="agents-agent-channel-card">
+                  <Slack size={20} />
+                  <strong>Slack</strong>
+                  <span>{(studio?.deployment?.surfaces || []).includes("slack") ? "No channel selected" : "Deployment off"}</span>
+                </button>
+              )}
+              <button className="agents-agent-channel-card">
+                <Plus size={20} />
+                <strong>Add channel</strong>
+                <span>Use your agent in Slack</span>
+              </button>
+            </div>
+          </section>
+
+          {starterPrompts.length > 0 ? (
+            <section className="agents-agent-section">
+              <h2>Starter prompts</h2>
+              <div className="agents-agent-starter-grid">
+                {starterPrompts.slice(0, 4).map((starter) => (
+                  <button
+                    key={starter.id}
+                    className="agents-agent-starter-card"
+                    onClick={() =>
+                      void handleRunAgentInMainTask(
+                        selectedAgent,
+                        starter.prompt,
+                        `${selectedAgent.name} prompt: ${starter.title}`,
+                      )
+                    }
+                    disabled={!canRunSelectedAgent || agentRunSubmitting}
+                  >
+                    <strong>{starter.title}</strong>
+                    <span>{starter.description || starter.prompt}</span>
+                  </button>
+                ))}
+              </div>
+            </section>
+          ) : null}
+
+          {missingConnections.length > 0 ? (
+            <section className="agents-agent-section">
+              <h2>Connect next</h2>
+              <div className="agents-agent-connect-list">
+                {missingConnections.map((connection) => (
+                  <div key={`${connection.kind}:${connection.id}`} className="agents-agent-connect-row">
+                    <div>
+                      <strong>{connection.label}</strong>
+                      <span>{connection.reason}</span>
+                    </div>
+                    <button onClick={() => handleConnectionRequirementAction(connection)}>
+                      {connection.connectAction?.label || "Connect"}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </section>
+          ) : null}
+
+          <section className="agents-agent-resource-list">
+            <div className="agents-agent-resource-row">
+              <span>Tools</span>
+              <div>
+                {toolLabels.length > 0 ? (
+                  toolLabels.map((tool) => (
+                    <button key={tool.key} className="agents-agent-pill">
+                      <Wrench size={15} />
+                      {tool.label}
+                    </button>
+                  ))
+                ) : null}
+                <button className="agents-agent-add">
+                  <Plus size={15} />
+                  Add tool
+                </button>
+                {toolStatusNote ? <span className="agents-agent-inline-note">{toolStatusNote}</span> : null}
+              </div>
+            </div>
+            <div className="agents-agent-resource-row">
+              <span>Skills</span>
+              <div>
+                {selectedSkillLabels.length > 0 ? (
+                  selectedSkillLabels.map((skill) => (
+                    <button key={skill} className="agents-agent-pill">
+                      <Briefcase size={15} />
+                      {skill}
+                    </button>
+                  ))
+                ) : (
+                  <button className="agents-agent-pill muted">No skills selected</button>
+                )}
+                <button className="agents-agent-add">
+                  <Plus size={15} />
+                  Add skill
+                </button>
+              </div>
+            </div>
+            <div className="agents-agent-resource-row">
+              <span>Files</span>
+              <div>
+                {fileRefs.map((file) => (
+                  <button key={file.id} className="agents-agent-pill">
+                    <FileText size={15} />
+                    {file.name}
+                  </button>
+                ))}
+                {memoryMode ? (
+                  <button className="agents-agent-pill">
+                    <FileText size={15} />
+                    Memory: {memoryMode}
+                  </button>
+                ) : null}
+                {auditEntries.length > 0 ? (
+                  <button className="agents-agent-pill">
+                    <Clock3 size={15} />
+                    {auditEntries.length} audit updates
+                  </button>
+                ) : null}
+                <button className="agents-agent-add">
+                  <Plus size={15} />
+                  Add
+                </button>
+                {fileRefs.length === 0 && !memoryMode ? (
+                  <span className="agents-agent-inline-note">No files or memory configured.</span>
+                ) : null}
+              </div>
+            </div>
+          </section>
+
+          <section className="agents-agent-instructions">
+            <span>Instructions</span>
+            <h2>Role</h2>
+            {selectedAgent.description || studio?.workflowBrief ? (
+              <p>{selectedAgent.description || studio?.workflowBrief}</p>
+            ) : (
+              <p className="agents-agent-empty">No role description configured.</p>
+            )}
+            {instructionParagraphs[0] ? <p>{instructionParagraphs[0]}</p> : null}
+            {instructionParagraphs.slice(1, 4).length > 0 ? (
+              <>
+                <h2>What you handle</h2>
+                {instructionParagraphs.slice(1, 4).map((paragraph) => {
+                  const numberedList = parseNumberedInstructionList(paragraph);
+                  if (!numberedList) return <p key={paragraph}>{paragraph}</p>;
+                  return (
+                    <div className="agents-agent-instruction-block" key={paragraph}>
+                      {numberedList.lead ? (
+                        <p className="agents-agent-instruction-lead">{numberedList.lead}</p>
+                      ) : null}
+                      <ol className="agents-agent-instruction-list">
+                        {numberedList.items.map((item) => (
+                          <li key={item}>{item}</li>
+                        ))}
+                      </ol>
+                    </div>
+                  );
+                })}
+              </>
+            ) : (
+              <p className="agents-agent-empty">No additional handling instructions configured.</p>
+            )}
+          </section>
+        </main>
         {renderAgentsStyles()}
       </div>
     );
@@ -2670,7 +3624,9 @@ export function AgentsHubPanel({
                 <button
                   key={template.id}
                   className="agents-showcase-side-card"
-                  onClick={() => setStudioDraft(buildDraftFromTemplate(template, workspaces))}
+                  onClick={() =>
+                    setStudioDraft(buildDraftFromTemplateWithRoles(template, workspaces, agentRoles))
+                  }
                 >
                   <div className="agents-showcase-side-icon">
                     <TemplateGlyph size={18} />
@@ -2682,8 +3638,23 @@ export function AgentsHubPanel({
                 </button>
               );
             })()}
-            <div className="agents-showcase-status">
-              <span>Slack</span>
+          <div className="agents-showcase-status">
+              {(
+                activeShowcaseTemplate.requiredConnectorIds ||
+                activeShowcaseTemplate.studio?.requiredConnectorIds ||
+                []
+              )
+                .slice(0, 1)
+                .map((connectorId) => (
+                  <span key={connectorId}>{formatIdentifierLabel(connectorId)}</span>
+                ))}
+              {(
+                activeShowcaseTemplate.requiredConnectorIds ||
+                activeShowcaseTemplate.studio?.requiredConnectorIds ||
+                []
+              ).length === 0 ? (
+                <span>No connector required</span>
+              ) : null}
               <span>{activeShowcaseTemplate.studio?.scheduleConfig?.enabled ? "Scheduled" : "On demand"}</span>
             </div>
           </div>
@@ -2707,7 +3678,7 @@ export function AgentsHubPanel({
                 <div key={entry.id} className="agents-list-row">
                   <div>
                     <strong>{entry.displayName || entry.id}</strong>
-                    <span>{entry.description || entry.profile || "Legacy configuration"}</span>
+                    <span>{entry.description || entry.profile || "No description configured."}</span>
                   </div>
                   <button
                     className="agents-link-btn"
@@ -2746,17 +3717,13 @@ export function AgentsHubPanel({
           ) : null}
         </div>
         <div className="agents-metric-pill">
-          <span>Total runs</span>
-          <strong>{sessions.length}</strong>
+          <span>Managed runs</span>
+          <strong>{managedAgentTotalRuns ?? "Unavailable"}</strong>
+          {managedAgentTotalRuns === null ? <small>Insights did not load</small> : null}
         </div>
         <div className="agents-metric-pill">
-          <span>Slack deployments</span>
-          <strong>
-            {agents.reduce(
-              (count, agent) => count + (getStudioConfig(agentDetails[agent.id])?.channelTargets?.length || 0),
-              0,
-            )}
-          </strong>
+          <span>Slack channel targets</span>
+          <strong>{slackChannelTargetCount}</strong>
         </div>
         <div className="agents-metric-pill">
           <span>Scheduled</span>
@@ -2767,34 +3734,20 @@ export function AgentsHubPanel({
       <section className="agents-library-surface">
         <div className="agents-library-header">
           <div className="agents-section-head agents-section-head-stack">
-            <h2>Shared workflow library</h2>
-            <span>Templates, recent runs, and reusable operators for the workspace.</span>
+            <h2>Keep work moving 24/7 with workspace agents</h2>
+            <span>Build agents that run reports, answer Slack questions, and update systems.</span>
           </div>
-          <div className="agents-tab-row agents-tab-row-primary">
+          <div className="agents-tab-row agents-tab-row-primary agents-directory-tabs">
             {[
               ["recent", "Recently used"],
-              ["library", "Built by me"],
-            ].map(([id, label]) => (
-              <button
-                key={id}
-                type="button"
-                className={`agents-tab ${libraryTab === id ? "active" : ""}`}
-                onClick={() => setLibraryTab(id as AgentsLibraryTab)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          <div className="agents-tab-row agents-tab-row-secondary">
-            {[
-              ["shared", "Shared"],
-              ["scheduled", "Scheduled"],
+              ["mine", "Built by me"],
+              ["all", "All agents"],
               ["templates", "Templates"],
             ].map(([id, label]) => (
               <button
                 key={id}
                 type="button"
-                className={`agents-tab subtle ${libraryTab === id ? "active" : ""}`}
+                className={`agents-tab ${libraryTab === id ? "active" : ""}`}
                 onClick={() => setLibraryTab(id as AgentsLibraryTab)}
               >
                 {label}
@@ -2807,12 +3760,22 @@ export function AgentsHubPanel({
           <div className="agents-template-grid">
             {templates.map((template) => {
               const TemplateGlyph = getTemplateGlyph(template);
+              const availablePackIds = new Set(pluginPacks.map((pack) => pack.name));
+              const configuredConnectorIds = new Set(mcpServerIds.map((server) => server.id));
+              const missingPacks = (template.requiredPackIds || []).filter(
+                (packId) => !availablePackIds.has(packId),
+              );
+              const missingConnectors = (template.requiredConnectorIds || []).filter(
+                (connectorId) => !configuredConnectorIds.has(connectorId),
+              );
               return (
                 <button
                   key={template.id}
                   className="agents-template-card"
                   style={{ ["--template-accent" as string]: template.color }}
-                  onClick={() => setStudioDraft(buildDraftFromTemplate(template, workspaces))}
+                  onClick={() =>
+                    setStudioDraft(buildDraftFromTemplateWithRoles(template, workspaces, agentRoles))
+                  }
                 >
                   <span className="agents-template-icon">
                     <TemplateGlyph size={22} />
@@ -2820,6 +3783,20 @@ export function AgentsHubPanel({
                   <div>
                     <strong>{template.name}</strong>
                     <p>{template.description}</p>
+                    <div className="agents-template-meta">
+                      <span>{template.category}</span>
+                      {(template.expectedArtifacts || []).slice(0, 3).map((artifact) => (
+                        <span key={artifact}>{artifact}</span>
+                      ))}
+                      {(template.requiredConnectorIds || []).length > 0 ? (
+                        <span>{template.requiredConnectorIds?.length || 0} connectors</span>
+                      ) : null}
+                      {missingPacks.length > 0 || missingConnectors.length > 0 ? (
+                        <span className="agents-template-warning">
+                          Missing setup: {missingPacks.length + missingConnectors.length}
+                        </span>
+                      ) : null}
+                    </div>
                   </div>
                 </button>
               );
@@ -2827,71 +3804,79 @@ export function AgentsHubPanel({
           </div>
         ) : visibleLibraryAgents.length > 0 || visibleMissionControlAgentRoles.length > 0 ? (
           <div className="agents-library-grid">
-            {visibleLibraryAgents.map((agent, index) => {
+            {visibleLibraryAgents.map((agent) => {
               const studio = getStudioConfig(agentDetails[agent.id]);
-              const analytics = getAgentAnalytics(agent, sessions, studio);
-              const TemplateGlyph = studio?.templateId
-                ? getTemplateGlyph(
-                    templates.find((entry) => entry.id === studio.templateId) || {
-                      id: studio.templateId,
-                      name: studio.templateId,
-                      description: "",
-                      icon: "",
-                      color: "#1570ef",
-                      category: "operations",
-                      systemPrompt: "",
-                      executionMode: "solo",
-                    },
-                  )
-                : Bot;
+              const insights = agentInsights[agent.id];
+              const templateRecord = studio?.templateId
+                ? templates.find((entry) => entry.id === studio.templateId) || {
+                    id: studio.templateId,
+                    name: studio.templateId,
+                    description: "",
+                    icon: "",
+                    color: "#1570ef",
+                    category: "operations",
+                    systemPrompt: "",
+                    executionMode: "solo",
+                  }
+                : null;
+              const TemplateGlyph = templateRecord ? getTemplateGlyph(templateRecord) : Bot;
+              const cardColor = studio?.appearance?.color || templateRecord?.color || "#1570ef";
               return (
                 <button
                   key={agent.id}
-                  className={`agents-library-card ${index === 0 ? "feature" : ""}`}
+                  className="agents-library-card"
                   onClick={() => setSelectedAgentId(agent.id)}
                 >
                   <div className="agents-library-card-top">
-                    <span className="agents-library-card-icon">
-                      <TemplateGlyph size={index === 0 ? 20 : 18} />
+                    <span
+                      className="agents-library-card-icon"
+                      style={{ color: cardColor }}
+                    >
+                      <TemplateGlyph size={28} />
                     </span>
-                    <span className="agents-library-card-status">{agent.status}</span>
                   </div>
                   <div className="agents-library-card-copy">
                     <strong>{agent.name}</strong>
                     <p>{agent.description || studio?.workflowBrief || "No description yet."}</p>
                   </div>
                   <div className="agents-library-card-meta">
-                    <span>{studio?.sharing?.ownerLabel || studio?.sharing?.visibility || "team"}</span>
-                    <span>{analytics.latestRunAt ? formatRelative(analytics.latestRunAt) : "No runs yet"}</span>
+                    <span>{formatSharingLabel(studio?.sharing)}</span>
+                    {insights ? (
+                      <span className="agents-library-card-count">
+                        <Play size={18} />
+                        {formatCountLabel(insights.totalRuns, "run")}
+                      </span>
+                    ) : (
+                      <span className="agents-library-card-count muted">Stats unavailable</span>
+                    )}
                   </div>
                 </button>
               );
             })}
-            {visibleMissionControlAgentRoles.map((agentRole, offset) => {
+            {visibleMissionControlAgentRoles.map((agentRole) => {
               const Icon = getEmojiIcon(agentRole.icon || "🤖");
-              const cardIndex = visibleLibraryAgents.length + offset;
               const cadence = agentRole.heartbeatPolicy?.cadenceMinutes || agentRole.pulseEveryMinutes;
               return (
                 <button
                   key={`mission-control-${agentRole.id}`}
-                  className={`agents-library-card legacy ${cardIndex === 0 ? "feature" : ""}`}
+                  className="agents-library-card legacy"
                   onClick={() => setConversionPanel("agent-role")}
                 >
                   <div className="agents-library-card-top">
                     <span className="agents-library-card-icon" style={{ color: agentRole.color }}>
-                      <Icon size={cardIndex === 0 ? 20 : 18} />
-                    </span>
-                    <span className="agents-library-card-status mission-control">
-                      Mission Control
+                      <Icon size={28} />
                     </span>
                   </div>
                   <div className="agents-library-card-copy">
                     <strong>{agentRole.displayName}</strong>
-                    <p>{agentRole.description || "Active Agent Persona running in Mission Control."}</p>
+                    <p>{agentRole.description || "No description configured."}</p>
                   </div>
                   <div className="agents-library-card-meta">
                     <span>Agent Persona</span>
-                    <span>{cadence ? `${cadence}m cadence` : "heartbeat enabled"}</span>
+                    <span className="agents-library-card-count">
+                      <Clock3 size={18} />
+                      {cadence ? `Every ${cadence}m` : "Heartbeat enabled"}
+                    </span>
                   </div>
                 </button>
               );
@@ -2915,614 +3900,8 @@ export function AgentsHubPanel({
           <Send size={16} />
           <span>Deploy into Slack without a separate bot flow</span>
         </div>
-        <div className="agents-governance-item">
-          <BarChart3 size={16} />
-          <span>{workspaceMemberships.length} workspace membership rules loaded</span>
-        </div>
       </section>
 
-      <section className="agents-detail-surface">
-        <div className="agents-section-head">
-          <h2>Agent detail</h2>
-          <span>Deployment, controls, analytics, and recent runs.</span>
-        </div>
-        {selectedAgent ? (
-          <div className="agents-detail-grid">
-            <div className="agents-detail-card">
-              {(() => {
-                const studio = getStudioConfig(agentDetails[selectedAgent.id]);
-                const fallbackAnalytics = getAgentAnalytics(selectedAgent, sessions, studio);
-                const insights = agentInsights[selectedAgent.id];
-                const analytics = insights
-                  ? {
-                      ...fallbackAnalytics,
-                      totalRuns: insights.totalRuns,
-                      successRate:
-                        insights.totalRuns > 0
-                          ? Math.round((insights.successCount / insights.totalRuns) * 100)
-                          : 0,
-                    }
-                  : fallbackAnalytics;
-                const approvalPreview = getEffectiveApprovalPreview(
-                  studio?.approvalPolicy,
-                  studio?.deployment,
-                );
-                const approvalRuntimeMatrix = getApprovalRuntimeMatrix(studio?.approvalPolicy);
-                const runtimeCatalog = runtimeCatalogs[selectedAgent.id];
-                const runtimeCatalogError = runtimeCatalogErrors[selectedAgent.id];
-                const runtimeCatalogLoading = runtimeCatalogLoadingId === selectedAgent.id;
-                const chatgptTools = sortRuntimeToolCatalogEntries(runtimeCatalog?.chatgpt || []);
-                const slackTools = sortRuntimeToolCatalogEntries(runtimeCatalog?.slack || []);
-                const linkedRoutines = agentRoutines[selectedAgent.id] || [];
-                const deploymentHealth = normalizeSlackDeploymentHealth(
-                  slackHealth[selectedAgent.id],
-                  getSlackDeploymentHealth(studio, slackChannels, selectedAgent.id),
-                );
-                const permissions = selectedAgentWorkspaceId
-                  ? workspacePermissions[selectedAgentWorkspaceId]
-                  : undefined;
-                const memberships = selectedAgentWorkspaceId
-                  ? workspaceMemberships.filter(
-                      (membership) => membership.workspaceId === selectedAgentWorkspaceId,
-                    )
-                  : [];
-                return (
-                  <>
-              <div className="agents-detail-header">
-                <div>
-                  <h3>{selectedAgent.name}</h3>
-                  <p>{selectedAgent.description || "No description yet."}</p>
-                </div>
-                <div className="agents-row-actions">
-                  <button
-                    className="agents-secondary-btn"
-                    onClick={() =>
-                      setStudioDraft(
-                        buildDraftFromAgent(
-                          selectedAgent,
-                          agentDetails[selectedAgent.id],
-                          environments,
-                          workspaces,
-                          linkedRoutines,
-                        ),
-                      )
-                    }
-                    disabled={permissions ? !permissions.canEditDrafts : false}
-                  >
-                    <Wrench size={16} />
-                    Edit
-                  </button>
-                  <button
-                    className="agents-secondary-btn"
-                    onClick={() => void handlePublishAgent(selectedAgent.id)}
-                    disabled={
-                      selectedAgent.status === "active" || (permissions ? !permissions.canPublishAgents : false)
-                    }
-                  >
-                    Publish
-                  </button>
-                  <button
-                    className="agents-secondary-btn"
-                    onClick={() => void handleSuspendAgent(selectedAgent.id)}
-                    disabled={
-                      selectedAgent.status === "suspended" ||
-                      (permissions ? !permissions.canPublishAgents : false)
-                    }
-                  >
-                    Suspend
-                  </button>
-                  <button
-                    className="agents-primary-btn"
-                    onClick={() => handleRunAgent(selectedAgent)}
-                    disabled={
-                      selectedAgent.status === "suspended" || (permissions ? !permissions.canRunAgents : false)
-                    }
-                  >
-                    <Play size={16} />
-                    Run now
-                  </button>
-                </div>
-              </div>
-
-              {studio?.workflowBrief && (
-                <div className="agents-note-card">
-                  <strong>Workflow</strong>
-                  <p>{studio.workflowBrief}</p>
-                </div>
-              )}
-
-              <div className="agents-detail-meta">
-                <div>
-                  <span>Template</span>
-                  <strong>{studio?.templateId || "Blank"}</strong>
-                </div>
-                <div>
-                  <span>Status</span>
-                  <strong>{selectedAgent.status}</strong>
-                </div>
-                <div>
-                  <span>Total runs</span>
-                  <strong>{analytics.totalRuns}</strong>
-                </div>
-                <div>
-                  <span>Success rate</span>
-                  <strong>{analytics.successRate}%</strong>
-                </div>
-                <div>
-                  <span>Active runs</span>
-                  <strong>{analytics.activeRuns}</strong>
-                </div>
-              </div>
-
-              <div className="agents-detail-meta agents-detail-meta-secondary">
-                <div>
-                  <span>Deploys to</span>
-                  <strong>{analytics.surfaces.join(", ")}</strong>
-                </div>
-                <div>
-                  <span>Slack targets</span>
-                  <strong>{analytics.slackTargets}</strong>
-                </div>
-                <div>
-                  <span>Approvals</span>
-                  <strong>{analytics.approvalActions || 0}</strong>
-                </div>
-                <div>
-                  <span>Shared as</span>
-                  <strong>{studio?.sharing?.visibility || "team"}</strong>
-                </div>
-                <div>
-                  <span>Owner</span>
-                  <strong>{studio?.sharing?.ownerLabel || "Unassigned"}</strong>
-                </div>
-                <div>
-                  <span>Latest run</span>
-                  <strong>{analytics.latestRunAt ? formatRelative(analytics.latestRunAt) : "No runs yet"}</strong>
-                </div>
-                <div>
-                  <span>Approvals resolved</span>
-                  <strong>{insights ? `${insights.approvalRate}%` : "N/A"}</strong>
-                </div>
-                <div>
-                  <span>Audio summary</span>
-                  <strong>
-                    {studio?.audioSummaryConfig?.enabled ? "Enabled" : "Off"}
-                  </strong>
-                </div>
-                <div>
-                  <span>Auto-approve read-only</span>
-                  <strong>{studio?.approvalPolicy?.autoApproveReadOnly === false ? "No" : "Yes"}</strong>
-                </div>
-              </div>
-
-              <div className="agents-surface-preview-grid agents-surface-preview-grid-detail">
-                <div className="agents-surface-preview-card">
-                  <strong>Effective approvals</strong>
-                  <p>{approvalPreview.sharedSummary}</p>
-                  <p className="agents-surface-preview-foot">
-                    Auto-approved:{" "}
-                    {approvalPreview.autoApproved.length > 0
-                      ? approvalPreview.autoApproved.join(", ")
-                      : "none"}
-                  </p>
-                </div>
-                <div className="agents-surface-preview-card">
-                  <strong>CoWork OS</strong>
-                  <p>{approvalPreview.chatgptSummary}</p>
-                </div>
-                <div className="agents-surface-preview-card">
-                  <strong>Slack</strong>
-                  <p>{approvalPreview.slackSummary}</p>
-                </div>
-              </div>
-
-              <div className="agents-approval-preview-card agents-approval-matrix-card agents-approval-matrix-card-detail">
-                <strong>Runtime approval mapping</strong>
-                <div className="agents-approval-matrix">
-                  <div className="agents-approval-matrix-header">
-                    <div className="agents-approval-matrix-head">Action</div>
-                    <div className="agents-approval-matrix-head">Runtime class</div>
-                    <div className="agents-approval-matrix-head">Behavior</div>
-                  </div>
-                  {approvalRuntimeMatrix.map((row) => (
-                    <div key={row.semanticAction} className="agents-approval-matrix-row">
-                      <div className="agents-approval-matrix-cell">
-                        <span className="agents-approval-matrix-label">Action</span>
-                        <span>{row.semanticAction}</span>
-                      </div>
-                      <div className="agents-approval-matrix-cell">
-                        <span className="agents-approval-matrix-label">Runtime class</span>
-                        <code className="agents-approval-runtime-code">{row.runtimeType}</code>
-                      </div>
-                      <div
-                        className={`agents-approval-matrix-cell ${
-                          row.behavior === "require_approval" ? "danger" : "safe"
-                        }`}
-                      >
-                        <span className="agents-approval-matrix-label">Behavior</span>
-                        <span
-                          className={`agents-approval-behavior-pill ${
-                            row.behavior === "require_approval" ? "danger" : "safe"
-                          }`}
-                        >
-                          {row.behavior === "require_approval" ? "Requires approval" : "Auto-approves"}
-                        </span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="agents-note-card">
-                <strong>Governance and deployment</strong>
-                <p>
-                  Workspace role: {permissions?.role || "loading"} · Slack channels using agent:{" "}
-                  {deploymentHealth.targets.length} · Connected: {deploymentHealth.connectedCount} · Misconfigured:{" "}
-                  {deploymentHealth.misconfiguredCount}
-                </p>
-              </div>
-
-              <div className="agents-approval-preview-card">
-                <strong>Workspace access</strong>
-                <div className="agents-list">
-                  {memberships.map((membership) => (
-                    <div key={membership.id} className="agents-list-row">
-                      <div>
-                        <strong>{membership.principalId}</strong>
-                        <span>{membership.role}</span>
-                      </div>
-                      {permissions?.canManageMemberships ? (
-                        <select
-                          value={membership.role}
-                          onChange={(event) =>
-                            void window.electronAPI
-                              .updateAgentWorkspaceMembership({
-                                workspaceId: membership.workspaceId,
-                                principalId: membership.principalId,
-                                role: event.target.value as AgentWorkspaceMembership["role"],
-                              })
-                              .then((updated) =>
-                                setWorkspaceMemberships((current) =>
-                                  current.map((entry) => (entry.id === updated.id ? updated : entry)),
-                                ),
-                              )
-                          }
-                        >
-                          <option value="viewer">viewer</option>
-                          <option value="operator">operator</option>
-                          <option value="builder">builder</option>
-                          <option value="publisher">publisher</option>
-                          <option value="admin">admin</option>
-                        </select>
-                      ) : null}
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="agents-approval-preview-card">
-                <strong>Linked routines</strong>
-                <div className="agents-list">
-                  {linkedRoutines.map((routine) => (
-                    <div key={routine.id} className="agents-list-row">
-                      <div>
-                        <strong>{routine.name}</strong>
-                        <span>
-                          {routine.trigger.type.replace(/_/g, " ")} · {routine.enabled ? "enabled" : "disabled"}
-                        </span>
-                      </div>
-                      <code>{routine.trigger.type}</code>
-                    </div>
-                  ))}
-                  {linkedRoutines.length === 0 ? (
-                    <span className="agents-empty-note">No linked routines yet.</span>
-                  ) : null}
-                </div>
-              </div>
-
-              {insights ? (
-                <div className="agents-approval-preview-card">
-                  <strong>Insights</strong>
-                  <div className="agents-detail-meta agents-detail-meta-secondary">
-                    <div>
-                      <span>Unique users</span>
-                      <strong>{insights.uniqueUsers}</strong>
-                    </div>
-                    <div>
-                      <span>Failures</span>
-                      <strong>{insights.failureCount}</strong>
-                    </div>
-                    <div>
-                      <span>Avg completion</span>
-                      <strong>
-                        {insights.averageCompletionTimeMs > 0
-                          ? `${Math.round(insights.averageCompletionTimeMs / 60000)}m`
-                          : "N/A"}
-                      </strong>
-                    </div>
-                  </div>
-                  <div className="agents-surface-preview-grid agents-surface-preview-grid-detail">
-                    <div className="agents-surface-preview-card">
-                      <strong>Top tools</strong>
-                      <p>
-                        {insights.topTools.length > 0
-                          ? insights.topTools.map((tool) => `${tool.toolName} (${tool.count})`).join(", ")
-                          : "No tool usage yet."}
-                      </p>
-                    </div>
-                    <div className="agents-surface-preview-card">
-                      <strong>Trigger sources</strong>
-                      <p>
-                        {insights.triggerBreakdown.length > 0
-                          ? insights.triggerBreakdown.map((entry) => `${entry.key} (${entry.count})`).join(", ")
-                          : "No trigger history yet."}
-                      </p>
-                    </div>
-                    <div className="agents-surface-preview-card">
-                      <strong>Recent errors</strong>
-                      <p>
-                        {insights.recentErrors.length > 0
-                          ? insights.recentErrors.map((entry) => entry.message).join(" · ")
-                          : "No recent errors."}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              ) : null}
-
-              <div className="agents-approval-preview-card">
-                <strong>Slack deployment health</strong>
-                <p>
-                  {deploymentHealth.lastSuccessfulRoutedRunAt
-                    ? `Last successful routed run ${formatRelative(deploymentHealth.lastSuccessfulRoutedRunAt)}.`
-                    : "No successful routed Slack run recorded yet."}
-                </p>
-                <p>
-                  {deploymentHealth.lastDeploymentError
-                    ? `Latest deployment issue: ${deploymentHealth.lastDeploymentError}`
-                    : "No deployment errors currently recorded."}
-                </p>
-                <div className="agents-list">
-                  {deploymentHealth.targets.map((target) => (
-                    <div key={target.channelId} className="agents-list-row">
-                      <div>
-                        <strong>{target.channelName}</strong>
-                        <span>
-                          {target.status} · {target.securityMode || "pairing"} ·{" "}
-                          {target.progressRelayMode || "minimal"}
-                        </span>
-                      </div>
-                      <span>{target.misconfigured ? "Needs attention" : "Healthy"}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="agents-approval-preview-card agents-runtime-catalog-card">
-                <strong>Live runtime tool catalog</strong>
-                <p className="agents-runtime-catalog-copy">
-                  This list comes from the real runtime registry after workspace permissions,
-                  managed-environment limits, tool families, MCP allowlists, and deployment
-                  surface rules are applied.
-                </p>
-                {runtimeCatalogLoading ? (
-                  <div className="agents-empty-note">Loading runtime tools...</div>
-                ) : runtimeCatalogError ? (
-                  <div className="agents-empty-note">{runtimeCatalogError}</div>
-                ) : (
-                  <div className="agents-runtime-surface-grid">
-                    {[
-                      {
-                        key: "chatgpt",
-                        title: "CoWork OS surface",
-                        enabled: (studio?.deployment?.surfaces || ["chatgpt"]).includes("chatgpt"),
-                        tools: chatgptTools,
-                      },
-                      {
-                        key: "slack",
-                        title: "Slack surface",
-                        enabled: (studio?.deployment?.surfaces || []).includes("slack"),
-                        tools: slackTools,
-                      },
-                    ].map((surface) => (
-                      <div key={surface.key} className="agents-runtime-surface-card">
-                        <div className="agents-runtime-surface-head">
-                          <strong>{surface.title}</strong>
-                          <span>
-                            {surface.enabled ? `${surface.tools.length} tools` : "Deployment off"}
-                          </span>
-                        </div>
-                        {!surface.enabled ? (
-                          <div className="agents-empty-note">
-                            Enable this deployment surface to publish the agent there.
-                          </div>
-                        ) : surface.tools.length === 0 ? (
-                          <div className="agents-empty-note">
-                            No tools are currently exposed on this surface.
-                          </div>
-                        ) : (
-                          <div className="agents-runtime-tool-list">
-                            {surface.tools.slice(0, 18).map((tool) => (
-                              <div key={`${surface.key}:${tool.name}`} className="agents-runtime-tool-row">
-                                <div>
-                                  <div className="agents-runtime-tool-title">
-                                    <code>{tool.name}</code>
-                                    {tool.family ? <span>{tool.family}</span> : null}
-                                    {tool.mcpServerName ? <span>{tool.mcpServerName}</span> : null}
-                                  </div>
-                                  <p>{tool.description}</p>
-                                </div>
-                                <div className="agents-runtime-tool-meta">
-                                  <span
-                                    className={`agents-runtime-pill ${
-                                      tool.approvalBehavior === "require_approval"
-                                        ? "danger"
-                                        : tool.approvalBehavior === "auto_approve"
-                                          ? "safe"
-                                          : ""
-                                    }`}
-                                  >
-                                    {tool.approvalBehavior === "require_approval"
-                                      ? "Requires approval"
-                                      : tool.approvalBehavior === "auto_approve"
-                                        ? "Auto-approves"
-                                        : tool.approvalBehavior === "workspace_policy"
-                                          ? "Workspace policy"
-                                          : "No approval gate"}
-                                  </span>
-                                  <span className="agents-runtime-meta-line">
-                                    Runtime kind:{" "}
-                                    {RUNTIME_APPROVAL_KIND_LABELS[tool.approvalKind]}
-                                  </span>
-                                  <span className="agents-runtime-meta-line">
-                                    Approval type:{" "}
-                                    {tool.approvalType
-                                      ? APPROVAL_TYPE_LABELS[tool.approvalType]
-                                      : "None"}
-                                  </span>
-                                  <span className="agents-runtime-meta-line">
-                                    Side effects: {tool.sideEffectLevel}
-                                  </span>
-                                </div>
-                              </div>
-                            ))}
-                            {surface.tools.length > 18 ? (
-                              <div className="agents-empty-note">
-                                Showing the first 18 tools by approval severity.
-                              </div>
-                            ) : null}
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-                  </>
-                );
-              })()}
-            </div>
-
-            <div className="agents-detail-card">
-              <div className="agents-section-head">
-                <h3>Recent runs</h3>
-                <span>Managed sessions for this agent</span>
-              </div>
-              <div className="agents-list">
-                {sessions
-                  .filter((session) => session.agentId === selectedAgent.id)
-                  .slice(0, 6)
-                  .map((session) => (
-                    <div key={session.id} className="agents-session-row">
-                      <div>
-                        <strong>{session.title}</strong>
-                        <span>
-                          {sessionStatusLabel(session)} · {formatRelative(session.updatedAt)}
-                        </span>
-                      </div>
-                      <div className="agents-row-actions">
-                        <button
-                          className="agents-link-btn"
-                          onClick={() => {
-                            setSelectedSessionId(session.id);
-                            void window.electronAPI
-                              .getManagedSessionWorkpaper(session.id)
-                              .then((workpaper) =>
-                                setSessionWorkpapers((current) => ({
-                                  ...current,
-                                  [session.id]: workpaper,
-                                })),
-                              );
-                          }}
-                        >
-                          Workpaper
-                        </button>
-                        <button
-                          className="agents-link-btn"
-                          onClick={() => handleGenerateAudio(session)}
-                        >
-                          <Volume2 size={16} />
-                          Audio
-                        </button>
-                        <button
-                          className="agents-link-btn"
-                          onClick={() => void window.electronAPI.resumeManagedSession(session.id)}
-                        >
-                          Resume
-                        </button>
-                      </div>
-                      {audioResults[session.id]?.playbackUrl && (
-                        <audio
-                          controls
-                          src={audioResults[session.id].playbackUrl}
-                          className="agents-audio-player"
-                        />
-                      )}
-                    </div>
-                  ))}
-              </div>
-              {selectedSessionId && sessionWorkpapers[selectedSessionId] ? (
-                <div className="agents-approval-preview-card">
-                  <strong>Run workpaper</strong>
-                  <p>{sessionWorkpapers[selectedSessionId].summary}</p>
-                  <div className="agents-list">
-                    <div className="agents-list-row">
-                      <div>
-                        <strong>Decisions</strong>
-                        <span>
-                          {sessionWorkpapers[selectedSessionId].decisions.length > 0
-                            ? sessionWorkpapers[selectedSessionId].decisions
-                                .map((entry) => entry.summary)
-                                .join(" · ")
-                            : "No decision trail yet."}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="agents-list-row">
-                      <div>
-                        <strong>Approvals</strong>
-                        <span>
-                          {sessionWorkpapers[selectedSessionId].approvals.length > 0
-                            ? sessionWorkpapers[selectedSessionId].approvals
-                                .map((entry) => `${entry.status}: ${entry.summary}`)
-                                .join(" · ")
-                            : "No approval requests."}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="agents-list-row">
-                      <div>
-                        <strong>Artifacts</strong>
-                        <span>
-                          {sessionWorkpapers[selectedSessionId].artifacts.length > 0
-                            ? sessionWorkpapers[selectedSessionId].artifacts
-                                .map((entry) => entry.label)
-                                .join(", ")
-                            : "No artifacts recorded."}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="agents-list-row">
-                      <div>
-                        <strong>Audit trail</strong>
-                        <span>
-                          {(agentAudit[selectedAgent.id] || []).length > 0
-                            ? (agentAudit[selectedAgent.id] || [])
-                                .map((entry) => entry.summary)
-                                .join(" · ")
-                            : "No audit history yet."}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ) : null}
-            </div>
-          </div>
-        ) : (
-          <div className="agents-empty-state">Create or select an agent to see the detail view.</div>
-        )}
-      </section>
       {renderAgentsStyles()}
     </div>
   );
@@ -3560,10 +3939,381 @@ function renderAgentsStyles() {
       }
       .agents-create-screen {
         min-height: 100%;
+        background: #ffffff;
       }
       .agents-panel-loading,
       .agents-empty-state {
         padding: 32px;
+        color: var(--agents-muted);
+      }
+      .agents-agent-detail-screen {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        padding: 0;
+        height: 100%;
+        min-height: 0;
+        overflow: hidden;
+        background: #ffffff;
+      }
+      .agents-agent-back {
+        width: fit-content;
+        display: inline-flex;
+        align-items: center;
+        justify-content: flex-start;
+        gap: 8px;
+        padding: 0;
+        color: var(--agents-text);
+        background: transparent;
+        font-size: 1rem;
+      }
+      .agents-agent-editor {
+        width: 100%;
+        min-height: 0;
+        height: 100%;
+        justify-self: stretch;
+        padding: 10px clamp(22px, 5vw, 72px) 84px;
+        overflow-y: auto;
+      }
+      .agents-agent-editor-bar {
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        min-height: 34px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+        padding: 12px 0;
+        background: rgba(255, 255, 255, 0.94);
+        backdrop-filter: blur(12px);
+        color: var(--agents-subtle);
+        font-size: 0.92rem;
+      }
+      .agents-agent-editor-bar-actions {
+        display: inline-flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 18px;
+        min-width: 0;
+      }
+      .agents-agent-editor-bar button {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        padding: 4px 0;
+        background: transparent;
+        color: var(--agents-muted);
+        font-size: 0.92rem;
+      }
+      .agents-agent-editor-bar button:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+      .agents-agent-profile {
+        display: grid;
+        justify-items: center;
+        gap: 22px;
+        padding: 54px 0 38px;
+      }
+      .agents-agent-avatar {
+        width: 72px;
+        height: 72px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 24px;
+        background:
+          linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(255, 255, 255, 0.6)),
+          rgba(255, 255, 255, 0.82);
+        box-shadow:
+          inset 0 1px 0 rgba(255, 255, 255, 0.95),
+          0 18px 38px -28px rgba(15, 23, 42, 0.3);
+      }
+      .agents-agent-profile h1 {
+        margin: 0;
+        font-size: clamp(2.1rem, 3.2vw, 3rem);
+        line-height: 1.05;
+        letter-spacing: 0;
+        font-weight: 500;
+      }
+      .agents-agent-profile p {
+        margin: -12px 0 0;
+        color: var(--agents-muted);
+        font-size: 0.98rem;
+      }
+      .agents-agent-avatar span {
+        font-size: 2rem;
+        line-height: 1;
+      }
+      .agents-agent-action-strip {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+        flex-wrap: wrap;
+        border-top: 1px solid rgba(15, 23, 42, 0.08);
+        padding: 22px 0 26px;
+      }
+      .agents-agent-action-strip h2 {
+        margin: 0;
+        color: var(--agents-subtle);
+        font-size: 0.98rem;
+        font-weight: 500;
+      }
+      .agents-agent-action-buttons {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      .agents-agent-action-button {
+        min-height: 38px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        padding: 8px 13px;
+        border-radius: 999px;
+        border: 1px solid rgba(15, 23, 42, 0.1);
+        background: #ffffff;
+        color: var(--agents-text);
+        font-size: 0.92rem;
+        font-weight: 600;
+      }
+      .agents-agent-action-button.primary {
+        border-color: #111827;
+        background: #111827;
+        color: #ffffff;
+      }
+      .agents-agent-action-button:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+      .agents-agent-action-error {
+        flex-basis: 100%;
+        margin: 0;
+        padding: 10px 12px;
+        border-radius: 12px;
+        background: rgba(180, 35, 24, 0.08);
+        color: #b42318;
+        font-size: 0.88rem;
+      }
+      .agents-agent-section,
+      .agents-agent-resource-list,
+      .agents-agent-instructions {
+        border-top: 1px solid rgba(15, 23, 42, 0.08);
+        padding: 26px 0;
+      }
+      .agents-agent-section h2,
+      .agents-agent-resource-row > span,
+      .agents-agent-instructions > span {
+        display: block;
+        margin: 0 0 14px;
+        color: var(--agents-subtle);
+        font-size: 0.98rem;
+        font-weight: 500;
+      }
+      .agents-agent-channel-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+      }
+      .agents-agent-channel-card {
+        min-height: 96px;
+        display: grid;
+        align-content: center;
+        justify-items: start;
+        justify-content: stretch;
+        gap: 5px;
+        padding: 18px;
+        border-radius: 16px;
+        border: 1px solid rgba(15, 23, 42, 0.08);
+        background: #ffffff;
+        color: var(--agents-text);
+        text-align: left;
+      }
+      .agents-agent-channel-card strong {
+        margin-top: 8px;
+        font-size: 1rem;
+      }
+      .agents-agent-channel-card span {
+        color: var(--agents-muted);
+        font-size: 0.88rem;
+      }
+      .agents-agent-starter-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+        align-items: stretch;
+      }
+      .agents-agent-starter-card {
+        min-height: 116px;
+        height: 100%;
+        display: grid;
+        align-content: center;
+        justify-items: center;
+        gap: 10px;
+        padding: 18px 16px;
+        border-radius: 14px;
+        border: 1px solid rgba(15, 23, 42, 0.08);
+        background: #ffffff;
+        color: var(--agents-text);
+        text-align: center;
+      }
+      .agents-agent-starter-card strong {
+        font-size: 0.98rem;
+        line-height: 1.25;
+      }
+      .agents-agent-starter-card span {
+        color: var(--agents-muted);
+        font-size: 0.88rem;
+        line-height: 1.45;
+        max-width: 28ch;
+      }
+      .agents-agent-connect-list {
+        display: grid;
+        gap: 10px;
+      }
+      .agents-agent-connect-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 16px;
+        padding: 14px 16px;
+        border-radius: 14px;
+        border: 1px solid rgba(15, 23, 42, 0.08);
+        background: #ffffff;
+      }
+      .agents-agent-connect-row div {
+        display: grid;
+        gap: 4px;
+        min-width: 0;
+      }
+      .agents-agent-connect-row strong {
+        font-size: 0.98rem;
+      }
+      .agents-agent-connect-row span {
+        color: var(--agents-muted);
+        font-size: 0.88rem;
+      }
+      .agents-agent-connect-row button {
+        min-height: 34px;
+        padding: 0 14px;
+        border-radius: 999px;
+        background: #111827;
+        color: #ffffff;
+      }
+      .agents-agent-resource-list {
+        display: grid;
+        gap: 14px;
+      }
+      .agents-agent-resource-row {
+        display: grid;
+        grid-template-columns: 74px minmax(0, 1fr);
+        gap: 18px;
+        align-items: start;
+      }
+      .agents-agent-resource-row > span {
+        margin: 7px 0 0;
+      }
+      .agents-agent-resource-row > div {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        min-width: 0;
+      }
+      .agents-agent-pill,
+      .agents-agent-add {
+        min-height: 34px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: flex-start;
+        gap: 8px;
+        max-width: 100%;
+        padding: 7px 12px;
+        border-radius: 999px;
+        border: 1px solid rgba(15, 23, 42, 0.08);
+        background: #ffffff;
+        color: var(--agents-text);
+        white-space: nowrap;
+      }
+      .agents-agent-pill.muted,
+      .agents-agent-add {
+        border-color: transparent;
+        background: transparent;
+        color: var(--agents-subtle);
+      }
+      .agents-agent-inline-note {
+        align-self: center;
+        color: var(--agents-muted);
+        font-size: 0.84rem;
+      }
+      .agents-agent-instructions {
+        padding-bottom: 0;
+      }
+      .agents-agent-instructions h2 {
+        margin: 26px 0 12px;
+        color: var(--agents-text);
+        font-size: 1.45rem;
+        line-height: 1.2;
+        font-weight: 500;
+      }
+      .agents-agent-instructions h2:first-of-type {
+        margin-top: 0;
+      }
+      .agents-agent-instructions p {
+        max-width: 78ch;
+        margin: 0 0 18px;
+        color: var(--agents-text);
+        font-size: 0.96rem;
+        line-height: 1.55;
+      }
+      .agents-agent-instruction-block {
+        max-width: 82ch;
+      }
+      .agents-agent-instructions .agents-agent-instruction-lead {
+        margin-bottom: 12px;
+        color: var(--agents-muted);
+        font-size: 0.9rem;
+        line-height: 1.4;
+      }
+      .agents-agent-instruction-list {
+        display: grid;
+        gap: 10px;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        counter-reset: instruction-step;
+      }
+      .agents-agent-instruction-list li {
+        counter-increment: instruction-step;
+        position: relative;
+        min-height: 44px;
+        padding: 12px 14px 12px 52px;
+        border: 1px solid rgba(15, 23, 42, 0.08);
+        border-radius: 14px;
+        background: rgba(248, 250, 252, 0.74);
+        color: var(--agents-text);
+        font-size: 0.92rem;
+        line-height: 1.48;
+      }
+      .agents-agent-instruction-list li::before {
+        content: counter(instruction-step);
+        position: absolute;
+        left: 14px;
+        top: 12px;
+        display: inline-grid;
+        width: 24px;
+        height: 24px;
+        place-items: center;
+        border-radius: 999px;
+        background: #111827;
+        color: #ffffff;
+        font-size: 0.78rem;
+        font-weight: 650;
+      }
+      .agents-agent-instructions .agents-agent-empty {
         color: var(--agents-muted);
       }
       .agents-create-screen-bar {
@@ -3571,6 +4321,11 @@ function renderAgentsStyles() {
         align-items: center;
         justify-content: space-between;
         gap: 16px;
+      }
+      .agents-create-screen-actions {
+        display: inline-flex;
+        align-items: center;
+        gap: 18px;
       }
       .agents-create-screen-back,
       .agents-create-screen-blank {
@@ -3611,7 +4366,7 @@ function renderAgentsStyles() {
         margin: 22px 0 0;
         font-size: clamp(2.5rem, 2vw + 1.9rem, 3.35rem);
         line-height: 1.04;
-        letter-spacing: -0.04em;
+        letter-spacing: 0;
         font-weight: 500;
         text-align: center;
       }
@@ -3664,6 +4419,222 @@ function renderAgentsStyles() {
         color: #ffffff;
         cursor: pointer;
         box-shadow: 0 12px 24px -18px rgba(17, 24, 39, 0.42);
+      }
+      .agents-create-screen-submit:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+      .agents-create-screen-error {
+        margin: 14px 0 0;
+        color: #b42318;
+        font-size: 0.95rem;
+      }
+      .agents-builder-progress-card,
+      .agents-builder-plan-card {
+        width: min(100%, 880px);
+        margin-top: 32px;
+        border-radius: 18px;
+        border: 1px solid rgba(15, 23, 42, 0.1);
+        background: #ffffff;
+        box-shadow: 0 18px 56px -38px rgba(15, 23, 42, 0.32);
+        text-align: left;
+      }
+      .agents-builder-progress-card {
+        display: grid;
+        gap: 12px;
+        padding: 22px;
+      }
+      .agents-builder-progress-heading {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        color: var(--agents-text);
+      }
+      .agents-builder-progress-row,
+      .agents-builder-plan-check {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        color: var(--agents-muted);
+        line-height: 1.45;
+      }
+      .agents-builder-progress-row svg,
+      .agents-builder-plan-check svg {
+        flex: 0 0 auto;
+        color: #12b76a;
+      }
+      .agents-builder-plan-card {
+        padding: 24px;
+      }
+      .agents-builder-plan-header {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr);
+        gap: 16px;
+        align-items: start;
+      }
+      .agents-builder-plan-icon {
+        width: 56px;
+        height: 56px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 16px;
+        background: #f8fafc;
+        border: 1px solid rgba(15, 23, 42, 0.08);
+      }
+      .agents-builder-plan-header span {
+        color: var(--agents-muted);
+        font-size: 0.9rem;
+      }
+      .agents-builder-plan-header h2 {
+        margin: 4px 0 6px;
+        font-size: 1.6rem;
+        line-height: 1.16;
+        font-weight: 600;
+      }
+      .agents-builder-plan-header p {
+        margin: 0;
+        color: var(--agents-muted);
+        line-height: 1.5;
+      }
+      .agents-builder-plan-pills {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 18px;
+      }
+      .agents-builder-plan-pills span {
+        display: inline-flex;
+        align-items: center;
+        min-height: 30px;
+        padding: 0 10px;
+        border-radius: 999px;
+        background: #f2f4f7;
+        color: var(--agents-text);
+        font-size: 0.86rem;
+      }
+      .agents-builder-plan-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 18px;
+        margin-top: 22px;
+      }
+      .agents-builder-plan-grid section,
+      .agents-builder-choice-list,
+      .agents-builder-connect-list,
+      .agents-builder-starters {
+        display: grid;
+        gap: 10px;
+        min-width: 0;
+      }
+      .agents-builder-plan-grid h3,
+      .agents-builder-choice-list h3,
+      .agents-builder-connect-list h3,
+      .agents-builder-starters h3 {
+        margin: 0;
+        color: var(--agents-text);
+        font-size: 0.98rem;
+      }
+      .agents-builder-choice-list,
+      .agents-builder-connect-list,
+      .agents-builder-starters {
+        margin-top: 22px;
+      }
+      .agents-builder-choice-group {
+        display: grid;
+        gap: 10px;
+        padding: 14px;
+        border-radius: 16px;
+        border: 1px solid rgba(124, 58, 237, 0.18);
+        background: rgba(250, 245, 255, 0.44);
+      }
+      .agents-builder-choice-group > div:first-child {
+        display: grid;
+        gap: 4px;
+      }
+      .agents-builder-choice-group strong {
+        color: var(--agents-text);
+        font-size: 0.95rem;
+      }
+      .agents-builder-choice-group span {
+        color: var(--agents-muted);
+        font-size: 0.86rem;
+        line-height: 1.4;
+      }
+      .agents-builder-choice-options {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 8px;
+      }
+      .agents-builder-choice-options button {
+        display: grid;
+        gap: 4px;
+        min-height: 72px;
+        padding: 12px;
+        border-radius: 14px;
+        border: 1px solid rgba(15, 23, 42, 0.09);
+        background: #ffffff;
+        color: var(--agents-text);
+        text-align: left;
+      }
+      .agents-builder-choice-options button.active {
+        border-color: rgba(124, 58, 237, 0.58);
+        box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.13);
+      }
+      .agents-builder-connect-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 14px;
+        padding: 12px 14px;
+        border-radius: 14px;
+        border: 1px solid rgba(15, 23, 42, 0.08);
+        background: #fcfcfd;
+      }
+      .agents-builder-connect-row div {
+        display: grid;
+        gap: 4px;
+        min-width: 0;
+      }
+      .agents-builder-connect-row strong {
+        font-size: 0.95rem;
+      }
+      .agents-builder-connect-row span {
+        color: var(--agents-muted);
+        font-size: 0.86rem;
+        line-height: 1.4;
+      }
+      .agents-builder-connect-row button {
+        min-height: 34px;
+        padding: 0 14px;
+        border-radius: 999px;
+        background: #111827;
+        color: #ffffff;
+      }
+      .agents-builder-starters > div {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .agents-builder-starters button {
+        min-height: 34px;
+        padding: 0 12px;
+        border-radius: 999px;
+        border: 1px solid rgba(15, 23, 42, 0.08);
+        background: #ffffff;
+        color: var(--agents-text);
+      }
+      .agents-builder-plan-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+        margin-top: 24px;
+      }
+      .agents-builder-plan-blocked {
+        margin: 10px 0 0;
+        color: var(--agents-muted);
+        font-size: 0.86rem;
+        text-align: right;
       }
       .agents-create-screen-suggestions {
         width: min(100%, 1020px);
@@ -4481,25 +5452,47 @@ function renderAgentsStyles() {
         color: var(--agents-muted);
       }
       .agents-library-surface {
-        margin-bottom: 22px;
+        margin-bottom: 28px;
+        padding: 20px;
+        border-radius: 24px;
       }
       .agents-library-header {
         display: grid;
-        gap: 10px;
+        gap: 20px;
         margin-bottom: 18px;
+      }
+      .agents-library-header .agents-section-head {
+        margin-bottom: 0;
+      }
+      .agents-library-header .agents-section-head h2 {
+        max-width: 800px;
+        font-size: clamp(1.8rem, 3vw, 3.2rem);
+        line-height: 1.08;
+        letter-spacing: 0;
+        font-weight: 500;
+      }
+      .agents-library-header .agents-section-head span {
+        color: var(--agents-muted);
+        font-size: clamp(0.96rem, 1.2vw, 1.18rem);
+        line-height: 1.35;
       }
       .agents-tab-row {
         display: flex;
         flex-wrap: wrap;
         gap: 10px;
       }
+      .agents-directory-tabs {
+        gap: 12px;
+      }
       .agents-tab {
-        border: 1px solid var(--agents-border);
-        background: rgba(255, 255, 255, 0.88);
+        border: 1px solid transparent;
+        background: transparent;
         color: var(--agents-muted);
-        padding: 11px 16px;
+        padding: 8px 14px;
         border-radius: 999px;
         cursor: pointer;
+        font-size: 0.94rem;
+        line-height: 1.2;
         transition:
           transform 0.28s cubic-bezier(0.16, 1, 0.3, 1),
           border-color 0.28s cubic-bezier(0.16, 1, 0.3, 1),
@@ -4507,9 +5500,9 @@ function renderAgentsStyles() {
       }
       .agents-tab.active {
         color: var(--agents-text);
-        border-color: rgba(17, 24, 39, 0.14);
+        border-color: rgba(17, 24, 39, 0.58);
         background: #ffffff;
-        box-shadow: 0 10px 22px -20px rgba(15, 23, 42, 0.22);
+        box-shadow: none;
       }
       .agents-tab.subtle {
         background: rgba(255, 255, 255, 0.64);
@@ -4520,38 +5513,31 @@ function renderAgentsStyles() {
       }
       .agents-library-grid {
         display: grid;
-        grid-template-columns: minmax(0, 1.16fr) minmax(0, 0.84fr);
-        gap: 16px;
+        grid-template-columns: repeat(3, minmax(200px, 1fr));
+        gap: 14px;
       }
       .agents-library-card {
         display: grid;
-        gap: 16px;
+        align-content: space-between;
+        justify-content: stretch;
+        gap: 14px;
+        min-height: 190px;
         padding: 22px;
         text-align: left;
-        border-radius: 28px;
+        border-radius: 18px;
         border: 1px solid var(--agents-border);
-        background:
-          linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(255, 255, 255, 0.78)),
-          rgba(255, 255, 255, 0.88);
-        box-shadow: 0 18px 42px -30px rgba(15, 23, 42, 0.16);
+        background: rgba(255, 255, 255, 0.86);
+        box-shadow: none;
         transition:
           transform 0.32s cubic-bezier(0.16, 1, 0.3, 1),
           box-shadow 0.32s cubic-bezier(0.16, 1, 0.3, 1);
       }
       .agents-library-card:hover {
         transform: translateY(-2px);
-        box-shadow: 0 28px 54px -36px rgba(15, 23, 42, 0.22);
+        box-shadow: 0 18px 44px -34px rgba(15, 23, 42, 0.28);
       }
       .agents-library-card.legacy {
         border-style: dashed;
-      }
-      .agents-library-card.feature {
-        grid-row: span 2;
-        min-height: 260px;
-        align-content: space-between;
-        background:
-          radial-gradient(circle at top right, rgba(21, 112, 239, 0.12), transparent 28%),
-          linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(255, 255, 255, 0.86));
       }
       .agents-library-card-top,
       .agents-library-card-meta {
@@ -4559,6 +5545,14 @@ function renderAgentsStyles() {
         align-items: center;
         justify-content: space-between;
         gap: 12px;
+      }
+      .agents-library-card-top {
+        justify-content: flex-start;
+      }
+      .agents-library-card-icon {
+        width: 44px;
+        height: 44px;
+        border-radius: 16px;
       }
       .agents-library-card-status {
         border-radius: 999px;
@@ -4574,19 +5568,29 @@ function renderAgentsStyles() {
       }
       .agents-library-card-copy strong {
         display: block;
-        font-size: 1.18rem;
+        font-size: 1.16rem;
         line-height: 1.15;
-        letter-spacing: -0.02em;
+        letter-spacing: 0;
         font-weight: 500;
       }
       .agents-library-card-copy p {
-        margin: 10px 0 0;
+        margin: 9px 0 0;
         color: var(--agents-muted);
-        line-height: 1.58;
+        font-size: 0.92rem;
+        line-height: 1.38;
       }
       .agents-library-card-meta span {
         color: var(--agents-muted);
-        font-size: 0.82rem;
+        font-size: 0.86rem;
+      }
+      .agents-library-card-count {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        white-space: nowrap;
+      }
+      .agents-library-card-count.muted {
+        color: var(--agents-subtle);
       }
       .agents-template-grid,
       .agents-chip-grid {
@@ -4594,20 +5598,63 @@ function renderAgentsStyles() {
         gap: 12px;
       }
       .agents-template-grid {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+        grid-template-columns: repeat(3, minmax(0, 1fr));
       }
       .agents-template-card {
         display: flex;
         align-items: flex-start;
-        gap: 14px;
-        padding: 22px;
-        border-radius: 26px;
+        justify-content: flex-start;
+        gap: 12px;
+        width: 100%;
+        min-width: 0;
+        padding: 18px;
+        border-radius: 18px;
         background:
           linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.84)),
           radial-gradient(circle at top left, color-mix(in srgb, var(--template-accent), transparent 78%), transparent 42%);
         color: inherit;
         text-align: left;
         border: 1px solid var(--agents-border);
+      }
+      .agents-template-card > div {
+        min-width: 0;
+      }
+      .agents-template-icon {
+        width: 42px;
+        height: 42px;
+        border-radius: 15px;
+      }
+      .agents-template-card strong {
+        display: block;
+        font-size: 1rem;
+        line-height: 1.18;
+        font-weight: 500;
+      }
+      .agents-template-card p {
+        margin: 8px 0 0;
+        color: var(--agents-muted);
+        font-size: 0.86rem;
+        line-height: 1.38;
+      }
+      .agents-template-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 5px;
+        margin-top: 10px;
+      }
+      .agents-template-meta span {
+        border: 1px solid rgba(15, 23, 42, 0.1);
+        border-radius: 999px;
+        padding: 2px 7px;
+        background: rgba(255, 255, 255, 0.68);
+        color: var(--agents-muted);
+        font-size: 0.68rem;
+        line-height: 1.2;
+      }
+      .agents-template-meta .agents-template-warning {
+        border-color: rgba(217, 119, 6, 0.28);
+        background: rgba(254, 243, 199, 0.72);
+        color: #92400e;
       }
       .agents-section-head {
         display: flex;
@@ -5005,7 +6052,9 @@ function renderAgentsStyles() {
         .agents-approval-matrix-header,
         .agents-runtime-tool-row,
         .agents-studio-test-grid,
-        .agents-studio-test-compose {
+        .agents-studio-test-compose,
+        .agents-builder-plan-grid,
+        .agents-agent-starter-grid {
           grid-template-columns: 1fr;
         }
         .agents-approval-matrix-header {
@@ -5029,6 +6078,12 @@ function renderAgentsStyles() {
           min-height: 0;
           padding: 32px;
         }
+        .agents-library-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+        .agents-template-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
         .agents-showcase-core-card,
         .agents-showcase-side-card,
         .agents-showcase-message {
@@ -5036,14 +6091,59 @@ function renderAgentsStyles() {
           max-width: none;
           margin-right: 0;
         }
+        .agents-agent-detail-screen {
+          grid-template-columns: minmax(0, 1fr);
+        }
+        .agents-agent-editor {
+          padding: 10px 28px 64px;
+        }
+        .agents-agent-editor-bar,
+        .agents-agent-editor-bar-actions,
+        .agents-agent-action-strip {
+          align-items: flex-start;
+          justify-content: flex-start;
+          flex-wrap: wrap;
+        }
       }
       @media (max-width: 768px) {
         .agents-panel,
         .agents-studio {
           padding: 18px;
         }
+        .agents-agent-detail-screen {
+          padding: 0;
+        }
+        .agents-agent-editor {
+          padding: 8px 18px 48px;
+        }
+        .agents-agent-editor-bar {
+          justify-content: flex-start;
+          flex-wrap: wrap;
+        }
+        .agents-agent-editor-bar-actions {
+          width: 100%;
+          justify-content: flex-start;
+          flex-wrap: wrap;
+        }
+        .agents-agent-profile {
+          padding: 34px 0 28px;
+        }
+        .agents-agent-channel-grid {
+          grid-template-columns: 1fr;
+        }
+        .agents-agent-resource-row {
+          grid-template-columns: 1fr;
+          gap: 8px;
+        }
+        .agents-agent-resource-row > span {
+          margin-top: 0;
+        }
         .agents-create-screen-bar {
           align-items: flex-start;
+          flex-direction: column;
+        }
+        .agents-create-screen-actions {
+          flex-wrap: wrap;
         }
         .agents-create-screen-hero {
           min-height: calc(100dvh - 110px);
@@ -5100,6 +6200,16 @@ function renderAgentsStyles() {
         .agents-tab-row-secondary,
         .agents-shell-actions {
           justify-content: flex-start;
+        }
+        .agents-library-grid {
+          grid-template-columns: 1fr;
+        }
+        .agents-template-grid {
+          grid-template-columns: 1fr;
+        }
+        .agents-library-card {
+          min-height: 176px;
+          padding: 20px;
         }
       }
     `}</style>

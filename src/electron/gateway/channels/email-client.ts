@@ -352,6 +352,22 @@ function extractImapLiteral(response: string, section: "HEADER" | "TEXT"): strin
   return literal.toString(section === "HEADER" ? "utf8" : "latin1");
 }
 
+function quoteImapString(value: string): string {
+  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+
+function parseSearchUids(response: string): number[] {
+  const uidMatch = response.match(/SEARCH\s+([\d\s]+)/i);
+  return uidMatch
+    ? uidMatch[1]
+        .trim()
+        .split(/\s+/)
+        .filter((uid) => uid)
+        .map((uid) => parseInt(uid, 10))
+        .filter((uid) => Number.isFinite(uid))
+    : [];
+}
+
 /**
  * Email message
  */
@@ -1074,13 +1090,16 @@ export class EmailClient extends EventEmitter {
    * Disconnect IMAP
    */
   private async disconnectImap(): Promise<void> {
-    if (this.imapSocket) {
+    const socket = this.imapSocket;
+    if (socket) {
       try {
         await this.imapCommand("LOGOUT");
       } catch {
         // Ignore logout errors
       }
-      this.imapSocket.destroy();
+      if (!socket.destroyed) {
+        socket.destroy();
+      }
       this.imapSocket = undefined;
     }
   }
@@ -1111,6 +1130,7 @@ export class EmailClient extends EventEmitter {
     html?: string;
     inReplyTo?: string;
     references?: string[];
+    attachments?: EmailAttachment[];
   }): Promise<string> {
     const authCommand = await this.getSmtpAuthCommand();
 
@@ -1142,6 +1162,8 @@ export class EmailClient extends EventEmitter {
         ? sanitizeHeaderValue(this.options.displayName)
         : "";
       const fromAddress = sanitizeHeaderValue(this.options.email);
+      const attachments = (options.attachments || []).filter((attachment) => attachment.content?.length);
+      const boundary = `cowork-${Date.now()}-${Math.random().toString(36).slice(2)}`;
       const headers = [
         `From: ${displayName ? `"${displayName}" ` : ""}<${fromAddress}>`,
         `To: ${toAddresses.join(", ")}`,
@@ -1149,7 +1171,9 @@ export class EmailClient extends EventEmitter {
         `Message-ID: ${messageId}`,
         `Date: ${new Date().toUTCString()}`,
         "MIME-Version: 1.0",
-        "Content-Type: text/plain; charset=UTF-8",
+        attachments.length > 0
+          ? `Content-Type: multipart/mixed; boundary="${boundary}"`
+          : "Content-Type: text/plain; charset=UTF-8",
       ];
       if (ccAddresses.length > 0) {
         headers.splice(2, 0, `Cc: ${ccAddresses.join(", ")}`);
@@ -1166,7 +1190,27 @@ export class EmailClient extends EventEmitter {
       }
 
       const body = options.text || "";
-      const email = headers.join("\r\n") + "\r\n\r\n" + body + "\r\n.\r\n";
+      const emailBody =
+        attachments.length > 0
+          ? [
+              `--${boundary}`,
+              "Content-Type: text/plain; charset=UTF-8",
+              "Content-Transfer-Encoding: 7bit",
+              "",
+              body,
+              ...attachments.flatMap((attachment) => [
+                `--${boundary}`,
+                `Content-Type: ${sanitizeHeaderValue(attachment.contentType || "application/octet-stream")}; name="${sanitizeHeaderValue(attachment.filename)}"`,
+                "Content-Transfer-Encoding: base64",
+                `Content-Disposition: attachment; filename="${sanitizeHeaderValue(attachment.filename)}"`,
+                "",
+                (attachment.content || Buffer.alloc(0)).toString("base64").replace(/(.{76})/g, "$1\r\n"),
+              ]),
+              `--${boundary}--`,
+              "",
+            ].join("\r\n")
+          : `${body}\r\n`;
+      const email = headers.join("\r\n") + "\r\n\r\n" + emailBody + "\r\n.\r\n";
 
       // Connect to SMTP
       const connectSmtp = () => {
@@ -1325,6 +1369,26 @@ export class EmailClient extends EventEmitter {
    */
   async markAsUnread(uid: number): Promise<void> {
     await this.withSelectedMailbox(() => this.imapCommand(`UID STORE ${uid} -FLAGS (\\Seen)`));
+  }
+
+  async markMessageIdAsRead(messageId: string): Promise<number | null> {
+    return this.markMessageIdReadState(messageId, true);
+  }
+
+  async markMessageIdAsUnread(messageId: string): Promise<number | null> {
+    return this.markMessageIdReadState(messageId, false);
+  }
+
+  private async markMessageIdReadState(messageId: string, read: boolean): Promise<number | null> {
+    const normalizedMessageId = messageId.trim();
+    if (!normalizedMessageId) return null;
+    return this.withSelectedMailbox(async () => {
+      const response = await this.imapCommand(`UID SEARCH HEADER Message-ID ${quoteImapString(normalizedMessageId)}`);
+      const uid = parseSearchUids(response).slice(-1)[0];
+      if (!Number.isFinite(uid)) return null;
+      await this.imapCommand(`UID STORE ${uid} ${read ? "+" : "-"}FLAGS (\\Seen)`);
+      return uid;
+    });
   }
 
   private async withSelectedMailbox<T>(operation: () => Promise<T>): Promise<T> {

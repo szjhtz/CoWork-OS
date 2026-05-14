@@ -37,4 +37,13 @@ describe("MailboxProviderClient capability mapping", () => {
     );
     expect(mergeMailboxCapabilities(["threads"], "gmail_api")).not.toContain("threads");
   });
+
+  it("keeps AgentMail capability gates honest for unsupported compose modes", () => {
+    const capabilities = getMailboxProviderCapabilities("agentmail");
+
+    expect(capabilities).toEqual(expect.arrayContaining(["send", "reply_all", "labels", "attachments_download"]));
+    expect(capabilities).not.toContain("forward");
+    expect(capabilities).not.toContain("provider_drafts");
+    expect(capabilities).not.toContain("attachments_upload");
+  });
 });

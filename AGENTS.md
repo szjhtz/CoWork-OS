@@ -50,11 +50,15 @@ When a user reports a failure, error, or unexpected behavior that likely involve
 
 - Use `npm run package` for standard local installer packaging after a full build.
 - Use `npm run package:win:x64` to produce a Windows x64 installer build.
+- `npm run package:win:x64` does not run the full workspace build; run `npm run build` first when renderer/electron/daemon/connectors outputs may be stale.
+- `npm run package:win:x64` also runs `scripts/release-artifact-names.mjs` and `scripts/release-artifact-names.mjs --check` after packaging.
 - Use `npm run package:linux:server` to produce a Linux server bundle (daemon/connectors plus launcher assets).
 - `npm run package` also runs `scripts/release-artifact-names.mjs` and `scripts/release-artifact-names.mjs --check` to align and verify updater metadata artifact filenames in `release/`.
-- On macOS distribution/signing flows, use `npm run package:mac`; it loads optional repo-root `.env.mac` (see `scripts/mac-notarize.env.example`) before running build + `electron-builder --mac --publish never`.
+- On macOS distribution/signing flows, use `npm run package:mac`; it loads optional repo-root `.env.mac` (see `scripts/mac-notarize.env.example`), runs build + `electron-builder --mac --publish never`, aligns updater artifact names, and runs the macOS artifact smoke check.
 - Use `npm run package:mac:unsigned` to force an unsigned macOS fallback build (sets `COWORK_MAC_UNSIGNED=1` and disables certificate auto-discovery).
+- Unsigned macOS artifacts may require a manual **System Settings -> Privacy & Security -> Open Anyway** first-launch bypass on the target machine.
 - `npm run package:mac` also respects `CSC_IDENTITY_AUTO_DISCOVERY=false`; when set, packaging uses unsigned macOS fallback settings (`identity: null`, notarization off, Gatekeeper assess off).
+- For CI signing gate checks (before running `npm run package:mac`), use `node scripts/prepare_macos_signing_ci.mjs`; it validates Developer ID signing + notarization env inputs and can materialize `APPLE_API_KEY` from `APPLE_API_KEY_BASE64`/`APPLE_API_KEY_CONTENT`.
 - Use `npm run package:desktop:smoke` for a cross-platform packaged desktop artifact smoke check.
 - Use `npm run package:mac:smoke` or `npm run package:win:smoke` to isolate macOS/Windows packaged artifact smoke checks.
 - Use `npm run package:linux:server:smoke` to validate the Linux server package output.
@@ -95,6 +99,7 @@ When a user reports a failure, error, or unexpected behavior that likely involve
 ## QA and Reliability Commands
 
 - Use `npm run kit:lint` to run workspace kit health checks from the CLI (human-readable by default, JSON export supported by the CLI).
+- `npm run kit:lint` runs `npm run build:electron` first, so expect an Electron TypeScript compile before lint output.
 - Use `npm run kit:lint -- --json` for machine-readable kit health output.
 - Use `npm run kit:lint -- --strict` to fail on warnings or missing tracked entries.
 - Use `npm run skills:check` before test/merge when touching bundled skills; it runs routing/content/audit/eval quality gates.
@@ -123,6 +128,7 @@ When a user reports a failure, error, or unexpected behavior that likely involve
 
 ## Setup Commands
 
+- Use Node.js `>=24.0.0` to match the repo engine requirement before running setup/build/test commands.
 - Use `npm run setup` for workstation setup; it chains native rebuild/install safeguards.
 - `npm run setup` bootstraps dependencies with `npm install --ignore-scripts --no-audit --no-fund` when Electron is missing from local/parent `node_modules`.
 - `npm run setup` retries `setup:native` when the native step is killed (SIGKILL/OOM style failures); tune retry count with `COWORK_SETUP_NATIVE_OUTER_ATTEMPTS` (default `6`).
@@ -132,4 +138,5 @@ When a user reports a failure, error, or unexpected behavior that likely involve
 - Use `npm run setup:server` for server-only dependency/bootstrap flows (for example Linux VPS daemon/connectors).
 - `npm run setup:server` runs `npm install` followed by `npm rebuild --ignore-scripts=false better-sqlite3` to ensure native SQLite bindings are rebuilt for the host.
 - `npm install` triggers `postinstall` (`scripts/codesign_electron_dev.mjs`) to dev-sign local `node_modules` Electron on macOS when available.
+- Use `npm run postinstall` to rerun local Electron dev codesigning when you need to repair/refresh that step without reinstalling dependencies.
 - If local dev codesigning needs overrides, use `COWORK_CODESIGN_IDENTITY` to pin an identity or `COWORK_CODESIGN_SKIP=1` to skip.

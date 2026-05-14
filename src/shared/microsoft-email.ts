@@ -1,6 +1,6 @@
 export const MICROSOFT_EMAIL_OAUTH_DEFAULT_SCOPES = [
-  "https://outlook.office.com/IMAP.AccessAsUser.All",
-  "https://outlook.office.com/SMTP.Send",
+  "https://graph.microsoft.com/Mail.ReadWrite",
+  "https://graph.microsoft.com/Mail.Send",
   "offline_access",
 ] as const;
 

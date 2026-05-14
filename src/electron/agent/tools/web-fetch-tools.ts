@@ -1,7 +1,7 @@
 import { Workspace } from "../../../shared/types";
 import { AgentDaemon } from "../daemon";
 import { LLMTool } from "../llm/types";
-import { GuardrailManager } from "../../guardrails/guardrail-manager";
+import { evaluateNetworkPolicy } from "../../security/network-policy";
 
 /**
  * WebFetchTools provides lightweight URL fetching without browser automation.
@@ -24,15 +24,13 @@ export class WebFetchTools {
   }
 
   private ensureDomainAllowed(url: string): void {
-    if (GuardrailManager.isDomainAllowed(url)) return;
-    const settings = GuardrailManager.loadSettings();
-    const allowedDomainsStr =
-      settings.allowedDomains.length > 0 ? settings.allowedDomains.join(", ") : "(none configured)";
-    throw new Error(
-      `Domain not allowed: "${url}"\n` +
-        `Allowed domains: ${allowedDomainsStr}\n` +
-        `You can modify allowed domains in Settings > Guardrails.`,
-    );
+    const decision = evaluateNetworkPolicy({ url, toolName: "web_fetch" });
+    this.daemon.logEvent(this.taskId, "network_policy_decision", decision);
+    if (decision.action === "allow") return;
+    if (decision.reason === "legacy_guardrail_domain_denied") {
+      throw new Error(`Domain not allowed: "${url}"`);
+    }
+    throw new Error(`Network access denied for "${url}": ${decision.reason}`);
   }
 
   /**
@@ -281,7 +279,17 @@ export class WebFetchTools {
       if (!["http:", "https:"].includes(parsedUrl.protocol)) {
         throw new Error("Only HTTP and HTTPS URLs are supported");
       }
-      this.ensureDomainAllowed(parsedUrl.toString());
+      const decision = evaluateNetworkPolicy({
+        url: parsedUrl.toString(),
+        toolName: "http_request",
+      });
+      this.daemon.logEvent(this.taskId, "network_policy_decision", decision);
+      if (decision.action !== "allow") {
+        if (decision.reason === "legacy_guardrail_domain_denied") {
+          throw new Error(`Domain not allowed: "${parsedUrl.toString()}"`);
+        }
+        throw new Error(`Network access denied for "${parsedUrl.toString()}": ${decision.reason}`);
+      }
 
       // Setup abort controller for timeout
       const controller = new AbortController();

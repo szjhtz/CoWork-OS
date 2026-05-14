@@ -282,6 +282,13 @@ const MCP_SERVICE_DEFS: Array<{
     matches: (toolName) => /\bsheets\b|sheets[_\-.]|spreadsheet[_\-.]/.test(toolName),
   },
   {
+    key: "tasks",
+    label: "Google Tasks",
+    iconKey: "google-tasks",
+    aliases: ["tasks", "todos", "to-do"],
+    matches: (toolName) => /\btasks\b|tasks[_\-.]|tasklist[_\-.]/.test(toolName),
+  },
+  {
     key: "slides",
     label: "Google Slides",
     iconKey: "google-slides",

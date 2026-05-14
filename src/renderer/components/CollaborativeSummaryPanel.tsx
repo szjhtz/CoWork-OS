@@ -37,6 +37,7 @@ interface CollaborativeSummaryPanelProps {
   childEvents?: TaskEvent[];
   userPrompt?: string;
   onSelectChildTask?: (taskId: string) => void;
+  onOpenChildAgentSidebar?: (taskId: string) => void;
   onWrapUp?: () => void;
   isWrappingUp?: boolean;
   /** When true, main task is done — hide Wrap Up */
@@ -49,6 +50,7 @@ export function CollaborativeSummaryPanel({
   childEvents = [],
   userPrompt,
   onSelectChildTask,
+  onOpenChildAgentSidebar,
   onWrapUp,
   isWrappingUp,
   mainTaskCompleted = false,
@@ -315,6 +317,7 @@ export function CollaborativeSummaryPanel({
 
   const isErrorLike = (text: string) =>
     /unable|error|failed|cannot|no team member|not provided/i.test(text);
+  const openChildAgent = onOpenChildAgentSidebar ?? onSelectChildTask;
 
   return (
     <div className="collaborative-summary-panel">
@@ -365,9 +368,13 @@ export function CollaborativeSummaryPanel({
                       onClick={() =>
                         entry.taskId &&
                         entry.title !== SYNTHESIS_TASK_TITLE &&
-                        onSelectChildTask?.(entry.taskId)
+                        openChildAgent?.(entry.taskId)
                       }
-                      role={entry.taskId && entry.title !== SYNTHESIS_TASK_TITLE ? "button" : undefined}
+                      role={
+                        openChildAgent && entry.taskId && entry.title !== SYNTHESIS_TASK_TITLE
+                          ? "button"
+                          : undefined
+                      }
                     >
                       Created {stripLeadingEmoji(entry.title)}
                     </span>

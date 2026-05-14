@@ -7,6 +7,7 @@ It replaces the older product framing around `Subconscious` with a clearer model
 - `Memory` is the source of truth.
 - `Heartbeat` owns scheduling and signal readiness.
 - `Reflection` is the internal evaluation phase.
+- `Dreaming` is the background memory-curation phase.
 - `Suggestions` are the default user-facing output.
 
 The goal is not opaque background autonomy. The goal is reviewable help that gets better from how the user responds.
@@ -22,9 +23,12 @@ The new model makes the boundaries explicit:
 | `Memory` | Stores durable preferences, workflow patterns, corrections, open loops, recurring tasks, and ignored-noise signals | Yes, through Memory Hub and retrieved context |
 | `Heartbeat` | Decides when enough fresh signal exists to think again | Mostly visible through Mission Control status |
 | `Reflection` | Evaluates evidence, generates hypotheses, critiques them, and chooses a recommended next action | No, except in diagnostics/settings |
+| `Dreaming` | Reviews recent sessions, memory observations, corrections, and drift signals to propose memory updates | Yes, through reviewable memory candidates |
 | `Suggestions` | Presents reviewable next actions with evidence, confidence, and controls | Yes |
 
 `Subconscious` remains an internal compatibility name in some code paths, database tables, artifact folders, and logs. Product copy and docs should use `Workflow Intelligence` unless they are describing those internals directly.
+
+`Dreaming` is the new name for the memory-curation phase inside this loop. It should not be described as a generic reflective loop or as a second memory system.
 
 ## Operating Loop
 
@@ -35,6 +39,7 @@ workspace activity, memory, mailbox, tasks, git, schedules, triggers
     -> Heartbeat signal ledger
     -> Heartbeat Pulse decides whether reflection is useful now
     -> Reflection collects evidence, critiques options, and selects a recommendation
+    -> Dreaming curates recent memory/session evidence into reviewable candidates when drift signals justify it
     -> Memory receives candidates and durable feedback signals
     -> Suggestions show reviewable next actions
     -> user acts, edits, snoozes, dismisses, or ignores
@@ -87,6 +92,16 @@ Reflection outputs are converted into core memory candidates, including:
 
 Accepted candidates flow through the core memory distillation path. This keeps durable learning in the existing memory stack instead of creating a parallel source of truth.
 
+## Dreaming As Memory Curation
+
+Dreaming is the offline memory-maintenance lane. It runs after meaningful task completion and can also be triggered by Heartbeat when `memory_drift`, `correction_learning`, or `cross_workspace_patterns` signals appear.
+
+Dreaming reads bounded evidence from session checkpoints, transcript spans, structured memory observations, and curated hot memory. It writes `dreaming_runs` and `dreaming_candidates`, not final memory mutations. Candidates remain reviewable by default and can propose curated-memory adds/replacements/archives, stale archive flags, topic-pack refreshes, ignored-noise patterns, open loops, recurring tasks, constraints, or corrections.
+
+This keeps Dreaming useful without making it a second memory system: accepted candidates still flow through existing Memory, Curated Memory, topic-pack, or Core Harness paths.
+
+See [Dreaming](dreaming.md) for the canonical memory-curation contract.
+
 ## Heartbeat As Scheduler
 
 Heartbeat owns the "when should we think?" decision.
@@ -124,7 +139,7 @@ Workflow Intelligence appears in:
 - **Settings > Automations > Workflow Intelligence**: policy, target, run, and diagnostic controls
 - **Suggestions panel**: review, act, snooze, and dismiss active suggestions
 - **Mission Control**: heartbeat state, traces, core harness learning, and dispatched work
-- **Memory Hub**: durable memories and candidate learning created from accepted/corrected/ignored patterns
+- **Memory Hub**: durable memories, Dreaming candidates, and candidate learning created from accepted/corrected/ignored patterns
 
 Reflection internals remain inspectable for power users, but suggestions are the primary user-facing output.
 
@@ -173,6 +188,7 @@ The core harness is the measurable improvement system. Workflow Intelligence is 
 ## Related Docs
 
 - [Core Automation](core-automation.md)
+- [Dreaming](dreaming.md)
 - [Heartbeat v3](heartbeat-v3.md)
 - [Mission Control](mission-control.md)
 - [Memory and Workspace Flow](workspace-memory-flow.md)

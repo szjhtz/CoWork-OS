@@ -90,6 +90,22 @@ function readOptionalSettingBoolean(
   return value;
 }
 
+function readOptionalSettingUnitInterval(
+  settings: Record<string, unknown> | undefined,
+  key: string,
+): number | undefined {
+  if (!settings || !(key in settings)) return undefined;
+  const value = settings[key];
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw createInvalidParamsError(`settings.${key} must be a number from 0 to 1`);
+  }
+  if (value < 0 || value > 1) {
+    throw createInvalidParamsError(`settings.${key} must be a number from 0 to 1`);
+  }
+  return value;
+}
+
 function applyProviderApiKeyAndBaseUrl(
   updatedSettings: Any,
   providerKey: string,
@@ -132,6 +148,10 @@ export function configureLlmFromControlPlaneParams(params: unknown): {
   const profile = readOptionalSettingString(settingsPatch, "profile", 200);
   const useDefaultCredentials = readOptionalSettingBoolean(settingsPatch, "useDefaultCredentials");
   const piProvider = readOptionalSettingString(settingsPatch, "provider", 100);
+  const paretoMinCodingScore = readOptionalSettingUnitInterval(
+    settingsPatch,
+    "paretoMinCodingScore",
+  );
 
   let updatedSettings: Any = {
     ...LLMProviderFactory.loadSettings(),
@@ -215,6 +235,18 @@ export function configureLlmFromControlPlaneParams(params: unknown): {
           ...updatedSettings.pi,
           ...(validated.apiKey ? { apiKey: validated.apiKey } : {}),
           ...(piProvider ? { provider: piProvider } : {}),
+        };
+      }
+      break;
+    case "openrouter":
+      if (validated.apiKey || baseUrl || paretoMinCodingScore !== undefined) {
+        updatedSettings.openrouter = {
+          ...updatedSettings.openrouter,
+          ...(validated.apiKey ? { apiKey: validated.apiKey } : {}),
+          ...(baseUrl ? { baseUrl } : {}),
+          ...(paretoMinCodingScore !== undefined
+            ? { paretoMinCodingScore }
+            : {}),
         };
       }
       break;

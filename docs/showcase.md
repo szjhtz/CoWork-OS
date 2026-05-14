@@ -771,10 +771,10 @@ Turn this meeting transcript into action items. For each item:
 
 Scrape websites, monitor prices, map site structures, and extract structured data with anti-bot bypass.
 
-For normal-user website testing, JavaScript-heavy app checks, forms, screenshots, or visual QA, CoWork opens the [Browser Workbench](browser-workbench.md): a visible right-sidebar/fullscreen Browser V2 surface where the agent and user share the same page, with cursor movement, snapshot refs, diagnostics, screenshot capture, downloads/uploads, and annotation.
+For normal-user website testing, JavaScript-heavy app checks, forms, screenshots, responsive breakpoints, or visual QA, CoWork opens the [Browser Workbench](browser-workbench.md): a visible right-sidebar/fullscreen Browser V2 surface where the agent and user share the same page, with cursor movement, desktop/tablet/mobile viewport control, snapshot refs, diagnostics, screenshot capture, downloads/uploads, and annotation.
 
 **What it handles:**
-- Visible browser-use testing for live websites and local apps
+- Visible browser-use testing for live websites and local apps, including responsive viewport checks
 - Shared right-sidebar/fullscreen browser sessions with persistent workspace profile
 - Screenshots and screenshot annotation for visual feedback
 - Single and batch URL scraping with TLS fingerprinting
@@ -928,8 +928,10 @@ Run CoWork OS as a headless daemon on Linux servers with remote access via Tails
 - Remote WebSocket API for programmatic access
 - Tailscale mesh networking for secure remote access
 - SSH tunnel configuration
+- Fail-closed Control Plane exposure checks for public binds
+- Hardened Docker/systemd defaults for long-running deployments
 
-**Powered by:** Headless daemon, WebSocket API, remote access layer
+**Powered by:** Headless daemon, WebSocket API, deployment posture checks, remote access layer
 
 ---
 

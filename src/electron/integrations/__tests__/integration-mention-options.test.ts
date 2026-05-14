@@ -104,7 +104,7 @@ describe("buildIntegrationMentionOptionsFromState", () => {
     });
   });
 
-  it("splits multi-service MCP Google Workspace tools by service", () => {
+  it("splits multi-service MCP Google Workspace tools by service including Tasks and Slides", () => {
     const options = buildIntegrationMentionOptionsFromState({
       mcp: {
         settings: {
@@ -128,6 +128,8 @@ describe("buildIntegrationMentionOptionsFromState", () => {
               { name: "drive_files_list", inputSchema: { type: "object" } },
               { name: "docs_create", inputSchema: { type: "object" } },
               { name: "sheets_create", inputSchema: { type: "object" } },
+              { name: "tasks_create", inputSchema: { type: "object" } },
+              { name: "slides_batch_update", inputSchema: { type: "object" } },
             ],
           },
         ],
@@ -139,8 +141,16 @@ describe("buildIntegrationMentionOptionsFromState", () => {
       "Google Drive",
       "Google Docs",
       "Google Sheets",
+      "Google Tasks",
+      "Google Slides",
     ]);
     expect(options.flatMap((option) => option.tools)).toContain("mcp_drive_files_list");
+    expect(options.find((option) => option.label === "Google Tasks")?.tools).toEqual([
+      "mcp_tasks_create",
+    ]);
+    expect(options.find((option) => option.label === "Google Slides")?.tools).toEqual([
+      "mcp_slides_batch_update",
+    ]);
   });
 
   it("shows unknown MCP servers only when connected", () => {

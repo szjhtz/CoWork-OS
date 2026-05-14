@@ -44,6 +44,17 @@ export interface BrowserWorkbenchCursorEvent {
   at: number;
 }
 
+export interface BrowserWorkbenchViewportEvent {
+  taskId: string;
+  sessionId: string;
+  width: number;
+  height: number;
+  deviceScaleFactor: number;
+  mobile: boolean;
+  label: string;
+  at: number;
+}
+
 type BrowserWorkbenchSession = BrowserWorkbenchSessionRegistration & {
   registeredAt: number;
 };
@@ -341,7 +352,27 @@ export class BrowserWorkbenchService {
     deviceScaleFactor?: number;
     mobile?: boolean;
   }): Promise<AnyRecord | null> {
-    return await this.browserSessionManager.emulate(input);
+    const result = await this.browserSessionManager.emulate(input);
+    if (result?.success) {
+      const session = this.getSession(input.taskId, input.sessionId);
+      const width =
+        typeof result.width === "number" ? result.width : Math.max(320, Math.round(input.width || 1280));
+      const height =
+        typeof result.height === "number" ? result.height : Math.max(320, Math.round(input.height || 720));
+      const deviceScaleFactor =
+        typeof result.deviceScaleFactor === "number"
+          ? result.deviceScaleFactor
+          : Math.max(1, input.deviceScaleFactor || 1);
+      const mobile = result.mobile === true;
+      this.emitViewport(session, {
+        width,
+        height,
+        deviceScaleFactor,
+        mobile,
+        label: `${mobile ? "Mobile" : "Desktop"} ${width}x${height}`,
+      });
+    }
+    return result;
   }
 
   async traceStart(taskId: string, sessionId?: unknown): Promise<AnyRecord | null> {
@@ -626,6 +657,23 @@ export class BrowserWorkbenchService {
       pulse: event.pulse,
       at: Date.now(),
     } satisfies BrowserWorkbenchCursorEvent);
+  }
+
+  private emitViewport(
+    session: BrowserWorkbenchSession | null,
+    event: Omit<BrowserWorkbenchViewportEvent, "taskId" | "sessionId" | "at">,
+  ): void {
+    if (!session || !this.mainWindow || this.mainWindow.isDestroyed?.()) return;
+    this.mainWindow.webContents.send(IPC_CHANNELS.BROWSER_WORKBENCH_VIEWPORT, {
+      taskId: session.taskId,
+      sessionId: session.sessionId,
+      width: Math.max(320, Math.round(event.width)),
+      height: Math.max(320, Math.round(event.height)),
+      deviceScaleFactor: Math.max(1, Number(event.deviceScaleFactor) || 1),
+      mobile: event.mobile === true,
+      label: event.label,
+      at: Date.now(),
+    } satisfies BrowserWorkbenchViewportEvent);
   }
 
   private async moveCursorToElement(

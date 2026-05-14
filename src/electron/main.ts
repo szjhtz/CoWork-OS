@@ -129,6 +129,8 @@ import {
 } from "./cron/workspace-context";
 import { MemoryService } from "./memory/MemoryService";
 import { CuratedMemoryService } from "./memory/CuratedMemoryService";
+import { DreamingRepository } from "./memory/DreamingRepository";
+import { DreamingService } from "./memory/DreamingService";
 import { ChronicleCaptureService, ChronicleMemoryService, ChronicleSettingsManager } from "./chronicle";
 import { revealWindow } from "./utils/window-visibility";
 import { KnowledgeGraphService } from "./knowledge-graph/KnowledgeGraphService";
@@ -146,11 +148,15 @@ import {
 import { sanitizeTaskMessageParams } from "./control-plane/sanitize";
 import {
   getArgValue,
+  getControlPlaneAllowedOriginsFromEnv,
+  getControlPlaneBindContextFromEnv,
   getEnvSettingsImportModeFromArgsOrEnv,
   isHeadlessMode,
+  shouldAllowInsecureControlPlanePublicBindFromEnv,
   shouldEnableControlPlaneFromArgsOrEnv,
   shouldImportEnvSettingsFromArgsOrEnv,
   shouldPrintControlPlaneTokenFromArgsOrEnv,
+  shouldTrustControlPlaneProxyFromEnv,
 } from "./utils/runtime-mode";
 import {
   getActiveProfileId,
@@ -275,8 +281,25 @@ const IMPORT_ENV_SETTINGS = shouldImportEnvSettingsFromArgsOrEnv();
 const IMPORT_ENV_SETTINGS_MODE = getEnvSettingsImportModeFromArgsOrEnv();
 const logger = createLogger("Main");
 const cronLogger = createLogger("Cron");
-const TRANSIENT_MAIN_PROCESS_ERROR_RE =
-  /(ECONNRESET|ETIMEDOUT|EPIPE|ENOTFOUND|ENETUNREACH|EHOSTUNREACH|socket hang up|Timed Out|Connection Closed)/i;
+const TRANSIENT_MAIN_PROCESS_ERROR_RE = new RegExp(
+  [
+    "ECONNRESET",
+    "ETIMEDOUT",
+    "EPIPE",
+    "ENOTCONN",
+    "ENOTFOUND",
+    "ENETUNREACH",
+    "EHOSTUNREACH",
+    "ECONNABORTED",
+    "ERR_SOCKET_CLOSED",
+    "socket hang up",
+    "Timed Out",
+    "Connection Closed",
+    "Client network socket disconnected before secure TLS connection was established",
+    "read ENOTCONN",
+  ].join("|"),
+  "i",
+);
 let processErrorGuardsInstalled = false;
 const STARTER_AUTOMATION_ROLE_NAMES = ["assistant", "project_manager"];
 const MAIN_WINDOW_STATE_FILE = "main-window-state.json";
@@ -2490,6 +2513,28 @@ if (!gotTheLock) {
           const run = await subconsciousLoopService?.runFromHeartbeat(workspaceId);
           return run ? { id: run.id, outcome: run.outcome } : null;
         },
+        runMemoryDreaming: async ({
+          workspaceId,
+          workspacePath,
+          reason,
+          signalCount,
+          heartbeatRunId,
+        }) => {
+          const result = await new DreamingService(
+            new DreamingRepository(dbManager.getDatabase()),
+          ).run({
+            workspaceId,
+            workspacePath,
+            triggerSource: "heartbeat",
+            triggerHeartbeatRunId: heartbeatRunId,
+            instructions: `Heartbeat saw ${signalCount} memory signal(s): ${reason}`,
+          });
+          return {
+            id: result.run.id,
+            status: result.run.status,
+            candidateCount: result.candidates.length,
+          };
+        },
         addNotification: async (params) => {
           const notificationService = getNotificationService();
           await notificationService?.add(params);
@@ -2763,9 +2808,12 @@ if (!gotTheLock) {
         process.env.COWORK_CONTROL_PLANE_PORT ||
         getArgValue("--control-plane-port");
       const cpPort = cpPortRaw ? Number.parseInt(cpPortRaw, 10) : undefined;
+      const cpAllowedOrigins = getControlPlaneAllowedOriginsFromEnv();
       if (
         (typeof cpHost === "string" && cpHost.trim()) ||
-        (typeof cpPort === "number" && Number.isFinite(cpPort))
+        (typeof cpPort === "number" && Number.isFinite(cpPort)) ||
+        typeof cpAllowedOrigins !== "undefined" ||
+        process.env.COWORK_CONTROL_PLANE_TRUST_PROXY !== undefined
       ) {
         try {
           ControlPlaneSettingsManager.updateSettings({
@@ -2774,6 +2822,12 @@ if (!gotTheLock) {
               : {}),
             ...(typeof cpPort === "number" && Number.isFinite(cpPort)
               ? { port: cpPort }
+              : {}),
+            ...(typeof cpAllowedOrigins !== "undefined"
+              ? { allowedOrigins: cpAllowedOrigins }
+              : {}),
+            ...(process.env.COWORK_CONTROL_PLANE_TRUST_PROXY !== undefined
+              ? { trustProxy: shouldTrustControlPlaneProxyFromEnv() }
               : {}),
           });
         } catch (error) {

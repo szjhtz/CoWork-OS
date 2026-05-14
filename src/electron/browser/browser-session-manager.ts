@@ -610,13 +610,17 @@ export class BrowserSessionManager {
     const contents = await this.getWebContents(session);
     if (!session || !contents) return null;
     await this.ensureDebugger(session, contents);
+    const width = Math.max(320, Math.round(input.width || 1280));
+    const height = Math.max(320, Math.round(input.height || 720));
+    const deviceScaleFactor = Math.max(1, input.deviceScaleFactor || 1);
+    const mobile = input.mobile === true;
     await this.sendCommand(contents, "Emulation.setDeviceMetricsOverride", {
-      width: Math.max(320, Math.round(input.width || 1280)),
-      height: Math.max(320, Math.round(input.height || 720)),
-      deviceScaleFactor: Math.max(1, input.deviceScaleFactor || 1),
-      mobile: input.mobile === true,
+      width,
+      height,
+      deviceScaleFactor,
+      mobile,
     });
-    return { success: true };
+    return { success: true, width, height, deviceScaleFactor, mobile };
   }
 
   async traceStart(taskId: string, sessionId?: unknown): Promise<Any | null> {

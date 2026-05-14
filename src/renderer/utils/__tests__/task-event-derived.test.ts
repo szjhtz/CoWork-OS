@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 
+import {
+  taskSurfaceFailureStormEvents,
+  taskSurfaceFailureStormTask,
+} from "../../perf-fixtures/task-surface-failure-storm.fixture";
 import { deriveSharedTaskEventUiState } from "../task-event-derived";
 
 function makeEvent(
@@ -86,5 +90,58 @@ describe("deriveSharedTaskEventUiState action blocks", () => {
     expect(shared.filteredEvents.map((event) => event.id)).toContain("assistant-preview");
     expect(shared.outputSummary?.primaryOutputPath).toBe("artifacts/hyperframes-demo.mp4");
     expect(shared.files.map((file) => file.path)).toContain("artifacts/hyperframes-demo.mp4");
+  });
+
+  it("bounds live projection while retaining required anchors", () => {
+    const shared = deriveSharedTaskEventUiState({
+      rawEvents: taskSurfaceFailureStormEvents,
+      task: taskSurfaceFailureStormTask,
+      workspace: null,
+      verboseSteps: false,
+      projectionMode: "live",
+      liveWindowSize: 160,
+    });
+
+    const ids = new Set(shared.normalizedEvents.map((event) => event.id));
+    expect(shared.projectionMode).toBe("live");
+    expect(shared.rawEventCount).toBeGreaterThan(600);
+    expect(shared.normalizedEvents.length).toBeLessThanOrEqual(167);
+    expect(ids.has("user-1")).toBe(true);
+    expect(ids.has("assistant-2")).toBe(true);
+    expect(ids.has("artifact-1")).toBe(true);
+    expect(ids.has("terminal-1")).toBe(true);
+  });
+
+  it("coalesces identical provider failures in live projection", () => {
+    const shared = deriveSharedTaskEventUiState({
+      rawEvents: [
+        makeEvent("user-1", 100, "user_message", { message: "search" }),
+        makeEvent("error-1", 1_000, "error", {
+          provider: "search",
+          code: "FETCH_FAILED",
+          message: "fetch failed: network timeout",
+        }),
+        makeEvent("error-2", 5_000, "error", {
+          provider: "search",
+          code: "FETCH_FAILED",
+          message: "fetch failed: network timeout",
+        }),
+        makeEvent("error-3", 13_000, "error", {
+          provider: "search",
+          code: "FETCH_FAILED",
+          message: "fetch failed: network timeout",
+        }),
+      ],
+      task: { id: "task-1", status: "executing" } as Any,
+      workspace: null,
+      verboseSteps: false,
+      projectionMode: "live",
+    });
+
+    expect(shared.filteredEvents.map((event) => event.id)).toEqual([
+      "user-1",
+      "error-1",
+      "error-3",
+    ]);
   });
 });

@@ -32,10 +32,18 @@ type TaskEventTrace = {
   visibleRecorded?: boolean;
 };
 
+type StartupMark = {
+  name: string;
+  atMs: number;
+  details?: Record<string, unknown>;
+  emitted: boolean;
+};
+
 type RendererPerfState = {
   metrics: Map<string, MetricBucket>;
   renders: Map<string, RenderBucket>;
   counters: Map<string, CounterBucket>;
+  startupMarks: Map<string, StartupMark>;
   taskEvents: Map<string, TaskEventTrace>;
   taskEventAliases: Map<string, string>;
   settledVisibleEvents: Map<string, number>;
@@ -43,6 +51,12 @@ type RendererPerfState = {
   reportTimer: number | null;
   visibleFrame1: number | null;
   visibleFrame2: number | null;
+  frameMonitorStarted: boolean;
+  frameMonitorTimer: number | null;
+  frameMonitorFrame: number | null;
+  lastFrameAtMs: number | null;
+  longTaskObserverStarted: boolean;
+  longTaskObserver: PerformanceObserver | null;
 };
 
 declare global {
@@ -70,6 +84,7 @@ function getState(): RendererPerfState | null {
       metrics: new Map(),
       renders: new Map(),
       counters: new Map(),
+      startupMarks: new Map(),
       taskEvents: new Map(),
       taskEventAliases: new Map(),
       settledVisibleEvents: new Map(),
@@ -77,6 +92,12 @@ function getState(): RendererPerfState | null {
       reportTimer: null,
       visibleFrame1: null,
       visibleFrame2: null,
+      frameMonitorStarted: false,
+      frameMonitorTimer: null,
+      frameMonitorFrame: null,
+      lastFrameAtMs: null,
+      longTaskObserverStarted: false,
+      longTaskObserver: null,
     };
   }
   return window.__coworkRendererPerfState__;
@@ -170,7 +191,38 @@ function isTaskEventVisibilitySettled(
   return canonicalId ? state.settledVisibleEvents.has(canonicalId) : false;
 }
 
-function emitRendererPerfLog(_message: string): void {}
+function emitRendererPerfLog(message: string): void {
+  try {
+    void window.electronAPI?.logRendererPerf?.({
+      timestamp: new Date().toISOString(),
+      message,
+    });
+  } catch {
+    // Perf logging must never affect renderer interaction.
+  }
+}
+
+function formatStartupMark(mark: StartupMark): string {
+  let details = "";
+  if (mark.details && Object.keys(mark.details).length > 0) {
+    try {
+      details = ` ${JSON.stringify(mark.details)}`;
+    } catch {
+      details = "";
+    }
+  }
+  return `[Startup] ${mark.name} at ${mark.atMs.toFixed(1)}ms${details}`;
+}
+
+function addRendererPerfSample(state: RendererPerfState, name: string, valueMs: number): void {
+  if (!Number.isFinite(valueMs) || valueMs < 0) return;
+  const bucket = state.metrics.get(name) ?? { samples: [] };
+  bucket.samples.push(valueMs);
+  if (bucket.samples.length > MAX_METRIC_SAMPLES) {
+    bucket.samples.splice(0, bucket.samples.length - MAX_METRIC_SAMPLES);
+  }
+  state.metrics.set(name, bucket);
+}
 
 function flushRendererPerfReport(state: RendererPerfState): void {
   const metricSummaries = [...state.metrics.entries()]
@@ -212,12 +264,59 @@ function flushRendererPerfReport(state: RendererPerfState): void {
 }
 
 function scheduleRendererPerfReport(state: RendererPerfState): void {
+  startRendererPerfMonitors(state);
   if (state.reportTimer != null) return;
   state.reportTimer = window.setTimeout(() => {
     state.reportTimer = null;
     cleanupTaskEventTraces(state, performance.now());
     flushRendererPerfReport(state);
   }, REPORT_INTERVAL_MS);
+}
+
+function startRendererPerfMonitors(state: RendererPerfState): void {
+  if (!state.frameMonitorStarted && typeof window.requestAnimationFrame === "function") {
+    state.frameMonitorStarted = true;
+    const scheduleNextFrame = () => {
+      if (state.frameMonitorTimer != null) return;
+      state.frameMonitorTimer = window.setTimeout(() => {
+        state.frameMonitorTimer = null;
+        state.frameMonitorFrame = window.requestAnimationFrame((nowMs) => {
+          state.frameMonitorFrame = null;
+          if (state.lastFrameAtMs != null) {
+            const gapMs = nowMs - state.lastFrameAtMs;
+            if (gapMs > 50) {
+              recordRendererPerfSample("renderer.frame_gap_ms", gapMs, true);
+            }
+            if (gapMs > 80) {
+              incrementRendererPerfCounter("renderer.frame_gap_count", true);
+            }
+          }
+          state.lastFrameAtMs = nowMs;
+          scheduleNextFrame();
+        });
+      }, 0);
+    };
+    scheduleNextFrame();
+  }
+
+  if (
+    !state.longTaskObserverStarted &&
+    typeof PerformanceObserver !== "undefined"
+  ) {
+    state.longTaskObserverStarted = true;
+    try {
+      const observer = new PerformanceObserver((list) => {
+        for (const entry of list.getEntries()) {
+          recordRendererPerfSample("renderer.long_task_ms", entry.duration, true);
+          incrementRendererPerfCounter("renderer.long_task_count", true);
+        }
+      });
+      observer.observe({ entryTypes: ["longtask"] });
+      state.longTaskObserver = observer;
+    } catch {
+      state.longTaskObserver = null;
+    }
+  }
 }
 
 export function measureRendererPerf<T>(name: string, enabled: boolean | undefined, fn: () => T): T {
@@ -242,13 +341,44 @@ export function recordRendererPerfSample(
   }
   const state = getState();
   if (!state) return;
-  const bucket = state.metrics.get(name) ?? { samples: [] };
-  bucket.samples.push(valueMs);
-  if (bucket.samples.length > MAX_METRIC_SAMPLES) {
-    bucket.samples.splice(0, bucket.samples.length - MAX_METRIC_SAMPLES);
-  }
-  state.metrics.set(name, bucket);
+  addRendererPerfSample(state, name, valueMs);
   scheduleRendererPerfReport(state);
+}
+
+export function markRendererStartup(
+  name: string,
+  enabled?: boolean,
+  details?: Record<string, unknown>,
+): void {
+  if (typeof window === "undefined" || typeof performance === "undefined") return;
+  const state = getState();
+  if (!state) return;
+  if (!state.startupMarks.has(name)) {
+    state.startupMarks.set(name, {
+      name,
+      atMs: performance.now(),
+      details,
+      emitted: false,
+    });
+  }
+  flushRendererStartupMarks(enabled);
+}
+
+export function flushRendererStartupMarks(enabled?: boolean): void {
+  if (!isRendererPerfEnabled(enabled)) return;
+  const state = getState();
+  if (!state) return;
+  let emittedAny = false;
+  for (const mark of state.startupMarks.values()) {
+    if (mark.emitted) continue;
+    mark.emitted = true;
+    emittedAny = true;
+    addRendererPerfSample(state, `startup.${mark.name}_at_ms`, mark.atMs);
+    emitRendererPerfLog(formatStartupMark(mark));
+  }
+  if (emittedAny) {
+    scheduleRendererPerfReport(state);
+  }
 }
 
 export function recordRendererRender(

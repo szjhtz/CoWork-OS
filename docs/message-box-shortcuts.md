@@ -37,6 +37,7 @@ The built-in app command catalog is:
 | `/goal pause` | Pauses the selected task's persistent goal. |
 | `/goal resume` | Resumes the selected task's persistent goal and continues work from the current task state. |
 | `/goal clear` | Clears the selected task's persistent goal metadata. |
+| `/multitask [N] <task>` | Starts a fresh collaborative multitask run. CoWork strips the command prefix, splits the request into `N` lane-specific child tasks (`2-8`, default `4`), runs them through the existing team orchestrator, and synthesizes the result. See [Multitask Command](multitask.md). |
 | `/compact [context]` | Starts a safe continuation-brief workflow that summarizes context, decisions, open questions, constraints, and next actions. |
 | `/doctor [context]` | Starts a diagnostic workflow for workspace/app state, integrations, permissions, skills, commands, and setup issues. It should not make changes unless explicitly asked. |
 | `/undo [context]` | Starts a safe undo-planning workflow. It does not roll back, delete, or modify anything unless the user explicitly approves a follow-up action. |
@@ -61,14 +62,25 @@ Remote channel slash commands use the gateway command registry instead of the de
 
 ## Parameter Behavior
 
-Selecting a skill-backed shortcut follows the same skill parameter rules everywhere:
+Selecting a skill-backed shortcut from the `/` picker inserts the command token into the message box and leaves the cursor after it. This lets the user add natural-language context before launch:
 
-- Skills with **required parameters** open the existing skill parameter modal.
-- Skills with **optional parameters only** insert `/<alias> ` into the message box so the user can add context before sending.
-- Skills with **no parameters** start a task immediately with `/<alias>`.
-- Manually typing `/<alias> ...` works the same as selecting it from autocomplete and then sending.
+```text
+/litigation-legal-demand-intake unpaid invoices acme logistics
+```
+
+Manually typing `/<alias> ...` works the same as selecting it from autocomplete and then sending. App commands also insert the token first, except for immediate UI-only controls such as `/clear` and built-in onboarding launchers.
 
 This keeps skill authoring and enable/disable behavior inside the existing skills and plugin-pack system.
+
+## Claude-for-Legal Workflow Cards
+
+Claude-for-Legal plugin-pack commands use the same slash picker and skills runtime as other workflow shortcuts, with one extra main-view affordance for workflows that need structured matter context:
+
+- `/litigation-legal-demand-intake ...` shows a specialized demand-letter intake card in the task view.
+- Other legal commands that benefit from matter context, such as `/privacy-legal-dpa-review ...` or `/commercial-legal-saas-msa-review ...`, show a generic legal workflow details card.
+- Legal pack management commands, such as `/legal-builder-hub-disable`, do not show matter-intake UI.
+
+Submitting the card sends a follow-up message to the same task; blank fields are preserved so the workflow can flag missing inputs. See [Claude-for-Legal Workflows](claude-for-legal.md).
 
 ## CoWork Shortcuts Pack
 
@@ -147,9 +159,11 @@ Customize remains the authoring and enable/disable surface. There is no separate
 | App command catalog and parser | `src/shared/message-shortcuts.ts` |
 | Renderer picker option builder | `src/renderer/utils/message-slash-options.ts` |
 | Main composer integration | `src/renderer/components/MainContent.tsx` |
+| Claude-for-Legal intake detection and follow-up serialization | `src/renderer/utils/legal-demand-intake.ts` |
 | Safe `/clear` view handling | `src/renderer/App.tsx` |
 | Plugin alias backend resolution | `src/electron/agent/skill-slash-aliases.ts` |
 | Generic skill slash execution | `src/electron/agent/executor.ts` |
+| Multitask command parser and lane planning | `src/shared/multitask-command.ts`, `src/electron/agents/MultitaskLanePlanner.ts` |
 | Bundled shortcut pack | `resources/plugin-packs/cowork-shortcuts/cowork.plugin.json` |
 
 ## Focused Checks
@@ -162,6 +176,10 @@ npx vitest run \
   src/shared/__tests__/skill-slash-commands.test.ts \
   src/electron/agent/__tests__/skill-slash-aliases.test.ts \
   src/electron/agent/__tests__/executor-schedule-slash.test.ts \
+  src/shared/__tests__/multitask-command.test.ts \
+  src/electron/agents/__tests__/MultitaskLanePlanner.test.ts \
+  src/electron/agents/__tests__/AgentTeamOrchestrator.test.ts \
+  src/renderer/utils/__tests__/legal-demand-intake.test.ts \
   src/renderer/utils/__tests__/message-slash-options.test.ts \
   src/renderer/components/__tests__/main-content-working-state.test.ts
 ```

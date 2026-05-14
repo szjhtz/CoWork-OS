@@ -37,6 +37,7 @@ export interface LLMProviderConfig {
   // OpenRouter-specific
   openrouterApiKey?: string;
   openrouterBaseUrl?: string;
+  openrouterParetoMinCodingScore?: number;
   // DeepSeek-specific
   deepseekApiKey?: string;
   deepseekBaseUrl?: string;
@@ -447,6 +448,16 @@ export type GeminiModelKey = keyof typeof GEMINI_MODELS;
  * OpenRouter provides access to many models from different providers
  */
 export const OPENROUTER_MODELS = {
+  "openrouter/pareto-code": {
+    id: "openrouter/pareto-code",
+    displayName: "Pareto Code Router",
+    description: "OpenRouter coding router selected by minimum coding score",
+  },
+  "openrouter/pareto-code:nitro": {
+    id: "openrouter/pareto-code:nitro",
+    displayName: "Pareto Code Router (Nitro)",
+    description: "Pareto coding router optimized for OpenRouter throughput",
+  },
   "anthropic/claude-3.5-sonnet": {
     id: "anthropic/claude-3.5-sonnet",
     displayName: "Claude 3.5 Sonnet",

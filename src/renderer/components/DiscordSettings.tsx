@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { ChannelData, ChannelUserData, SecurityMode } from "../../shared/types";
+import { ChannelSpecializationSettings } from "./ChannelSpecializationSettings";
 
 interface DiscordSettingsProps {
   onStatusChange?: (connected: boolean) => void;
@@ -647,6 +648,8 @@ export function DiscordSettings({ onStatusChange }: DiscordSettingsProps) {
           )}
         </div>
       )}
+
+      <ChannelSpecializationSettings channelId={channel.id} />
 
       <div className="settings-section">
         <h4>Authorized Users</h4>

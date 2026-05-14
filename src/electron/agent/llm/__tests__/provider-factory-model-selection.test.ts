@@ -4,6 +4,7 @@ import { LLMProviderFactory, type LLMSettings } from "../provider-factory";
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("LLMProviderFactory model status", () => {
@@ -297,6 +298,96 @@ describe("LLMProviderFactory model selection persistence", () => {
     );
 
     expect(updated.azure?.reasoningEffort).toBe("high");
+  });
+});
+
+describe("LLMProviderFactory OpenRouter Pareto configuration", () => {
+  it("passes saved Pareto coding score into OpenRouter requests", async () => {
+    let capturedBody: Any = null;
+    vi.spyOn(LLMProviderFactory, "loadSettings").mockReturnValue({
+      providerType: "openrouter",
+      modelKey: "openrouter/pareto-code",
+      openrouter: {
+        apiKey: "openrouter-key",
+        model: "openrouter/pareto-code",
+        paretoMinCodingScore: 0.8,
+      },
+    } as LLMSettings);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        capturedBody = init?.body ? JSON.parse(String(init.body)) : null;
+        return {
+          ok: true,
+          json: vi.fn().mockResolvedValue({
+            choices: [{ message: { content: "ok" }, finish_reason: "stop" }],
+          }),
+        } as unknown as Response;
+      }),
+    );
+
+    const provider = LLMProviderFactory.createProvider();
+    await provider.createMessage({
+      model: "openrouter/pareto-code",
+      maxTokens: 32,
+      system: "",
+      messages: [{ role: "user", content: "write code" }],
+    });
+
+    expect(capturedBody.plugins).toEqual([
+      { id: "pareto-router", min_coding_score: 0.8 },
+    ]);
+  });
+
+  it("uses documented Pareto context length in fallback OpenRouter models", async () => {
+    vi.spyOn(LLMProviderFactory, "loadSettings").mockReturnValue({
+      providerType: "openrouter",
+      modelKey: "openrouter/pareto-code",
+      openrouter: {},
+    } as LLMSettings);
+
+    const models = await LLMProviderFactory.getOpenRouterModels();
+
+    expect(models.find((model) => model.id === "openrouter/pareto-code")).toMatchObject({
+      context_length: 200000,
+    });
+    expect(models.find((model) => model.id === "openrouter/pareto-code:nitro")).toMatchObject({
+      context_length: 200000,
+    });
+  });
+
+  it("keeps live OpenRouter metadata when appending fallback Pareto models", async () => {
+    vi.spyOn(LLMProviderFactory, "loadSettings").mockReturnValue({
+      providerType: "openrouter",
+      modelKey: "openrouter/pareto-code",
+      openrouter: { apiKey: "openrouter-key" },
+    } as LLMSettings);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        ({
+          ok: true,
+          json: vi.fn().mockResolvedValue({
+            data: [
+              {
+                id: "openrouter/pareto-code",
+                name: "Pareto Code Router",
+                context_length: 123456,
+              },
+            ],
+          }),
+        }) as unknown as Response,
+      ),
+    );
+
+    const models = await LLMProviderFactory.getOpenRouterModels();
+
+    expect(models.find((model) => model.id === "openrouter/pareto-code")).toMatchObject({
+      context_length: 123456,
+    });
+    expect(models.find((model) => model.id === "openrouter/pareto-code:nitro")).toMatchObject({
+      context_length: 200000,
+    });
   });
 });
 

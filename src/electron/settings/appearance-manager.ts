@@ -133,6 +133,11 @@ export class AppearanceManager {
         const stored = repository.load<AppearanceSettings>("appearance");
         if (stored) {
           settings = { ...DEFAULT_SETTINGS, ...stored };
+          const recoveredLifecycleSettings = this.recoverLegacyLifecycleSettings(settings);
+          if (recoveredLifecycleSettings) {
+            settings = recoveredLifecycleSettings;
+            needsWrite = true;
+          }
           // Persist defaults for newly added fields when missing/invalid.
           if (
             typeof stored.transparencyEffectsEnabled !== "boolean" ||
@@ -203,6 +208,50 @@ export class AppearanceManager {
 
     console.debug("[AppearanceManager] Loaded settings → uiDensity:", settings.uiDensity);
     return settings;
+  }
+
+  private static recoverLegacyLifecycleSettings(
+    settings: AppearanceSettings,
+  ): AppearanceSettings | null {
+    if (!this.legacySettingsPath || !fs.existsSync(this.legacySettingsPath)) {
+      return null;
+    }
+
+    try {
+      const parsed = JSON.parse(fs.readFileSync(this.legacySettingsPath, "utf-8")) as Partial<
+        AppearanceSettings
+      >;
+      const nextSettings = { ...settings };
+      let recovered = false;
+
+      if (parsed.onboardingCompleted === true && settings.onboardingCompleted !== true) {
+        nextSettings.onboardingCompleted = true;
+        recovered = true;
+      }
+
+      if (
+        typeof parsed.onboardingCompletedAt === "string" &&
+        parsed.onboardingCompletedAt.trim().length > 0 &&
+        !settings.onboardingCompletedAt
+      ) {
+        nextSettings.onboardingCompletedAt = parsed.onboardingCompletedAt;
+        recovered = true;
+      }
+
+      if (parsed.disclaimerAccepted === true && settings.disclaimerAccepted !== true) {
+        nextSettings.disclaimerAccepted = true;
+        recovered = true;
+      }
+
+      if (recovered) {
+        console.log("[AppearanceManager] Recovered onboarding lifecycle state from legacy file");
+      }
+
+      return recovered ? nextSettings : null;
+    } catch (error) {
+      console.warn("[AppearanceManager] Failed to recover legacy onboarding state:", error);
+      return null;
+    }
   }
 
   /**

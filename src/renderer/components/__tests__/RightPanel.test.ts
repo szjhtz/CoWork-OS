@@ -4,10 +4,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   RightPanel,
+} from "../RightPanel";
+import {
   getProgressSectionMaterialSignature,
   getQueueSectionMaterialSignature,
   getVisibleProgressSteps,
-} from "../RightPanel";
+} from "../../utils/right-panel-progress";
 
 describe("RightPanel checklist rendering", () => {
   it("renders task feedback controls in the right panel for completed tasks", () => {

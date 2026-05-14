@@ -43,12 +43,34 @@ const STEP_EVENT_TYPES = new Set([
   "progress_update",
 ]);
 
+const FAILURE_EVENT_TYPES = new Set([
+  "step_failed",
+  "timeline_error",
+  "agent_failed",
+  "workflow_phase_failed",
+  "orchestration_node_failed",
+]);
+
+const STAGE_NAMES = new Set(["DISCOVER", "BUILD", "VERIFY", "FIX", "DELIVER"]);
+
 /** Exclude tool-batch summary events; prefer granular tool steps (grep done, Running glob, etc.) */
 function isToolBatchSummaryEvent(event: TaskEvent): boolean {
   if (event.type === "timeline_group_finished") return true;
   const p = (event.payload || {}) as Record<string, unknown>;
   const msg = String(p?.message || "").trim();
   return /^Tool batch:\s*\d+\s+succeeded/i.test(msg);
+}
+
+function isStageBoundaryEvent(event: TaskEvent): boolean {
+  if (event.type !== "timeline_group_started" && event.type !== "timeline_group_finished") {
+    return false;
+  }
+  const p = (event.payload || {}) as Record<string, unknown>;
+  const stage = String(p?.stage || "").toUpperCase();
+  if (!STAGE_NAMES.has(stage)) return false;
+  const groupId = String(event.groupId || p?.groupId || "").toLowerCase();
+  const message = String(p?.message || p?.groupLabel || "").trim().toUpperCase();
+  return groupId === `stage:${stage.toLowerCase()}` || message === `STARTING ${stage}` || message === stage;
 }
 
 function truncateStatus(s: string, maxLen: number): string {
@@ -86,12 +108,56 @@ function getStepLabelFromEvent(event: TaskEvent): string {
       return formatStepLabel(type, desc) || "Working on your request";
     case "step_completed":
       return formatStepLabel(type, desc) || "Step completed";
-    case "step_failed":
-      return desc ? formatStepLabel(type, desc) : "Step failed";
+    case "step_failed": {
+      if (!desc) return "Step failed";
+      const label = formatStepLabel(type, desc);
+      return /\b(failed|error|issues|stopped)\b/i.test(label) ? label : `Failed: ${label}`;
+    }
+    case "timeline_error":
+    case "agent_failed":
+    case "workflow_phase_failed":
+    case "orchestration_node_failed":
+      return desc ? `Failed: ${desc}` : "Failed";
     case "progress_update":
       return desc || "Working on your request";
     default:
       return "";
+  }
+}
+
+function getFailureLabel(taskId: string, childEvents: TaskEvent[]): string | null {
+  const failure = childEvents
+    .filter((e) => e.taskId === taskId && FAILURE_EVENT_TYPES.has(getEffectiveTaskEventType(e)))
+    .sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0))[0];
+  if (!failure) return null;
+  return getStepLabelFromEvent(failure) || "Failed";
+}
+
+function getTerminalTaskLabel(taskId: string, childEvents: TaskEvent[], task: Task): string | null {
+  switch (task.terminalStatus) {
+    case "partial_success":
+      return "Completed with warnings";
+    case "needs_user_action":
+      return "Needs user action";
+    case "awaiting_approval":
+      return "Awaiting approval";
+    case "resume_available":
+      return "Paused";
+    case "failed":
+      return getFailureLabel(taskId, childEvents) || task.error || "Failed";
+    default:
+      break;
+  }
+
+  switch (task.status) {
+    case "completed":
+      return "Completed";
+    case "failed":
+      return getFailureLabel(taskId, childEvents) || task.error || "Failed";
+    case "cancelled":
+      return "Cancelled";
+    default:
+      return null;
   }
 }
 
@@ -103,12 +169,15 @@ function getLatestStepLabel(
 ): string {
   if (isStreaming) return "Working on your request";
   if (!task) return "Awaiting instruction";
+  const terminalLabel = getTerminalTaskLabel(taskId, childEvents, task);
+  if (terminalLabel) return terminalLabel;
   const taskEvents = childEvents
     .filter(
       (e) =>
         e.taskId === taskId &&
         STEP_EVENT_TYPES.has(getEffectiveTaskEventType(e)) &&
-        !isToolBatchSummaryEvent(e),
+        !isToolBatchSummaryEvent(e) &&
+        !isStageBoundaryEvent(e),
     )
     .sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0));
   const latest = taskEvents[0];
@@ -131,9 +200,17 @@ function getLatestStepLabel(
 }
 
 function getStatusColor(status: string, task: Task | null): string {
-  if (task?.status === "failed" || task?.status === "cancelled") return "var(--color-danger, #ef4444)";
+  if (task?.terminalStatus === "failed" || task?.status === "failed" || task?.status === "cancelled")
+    return "var(--color-danger, #ef4444)";
+  if (
+    task?.terminalStatus === "partial_success" ||
+    task?.terminalStatus === "needs_user_action" ||
+    task?.terminalStatus === "awaiting_approval" ||
+    task?.terminalStatus === "resume_available"
+  )
+    return "var(--color-warning, #f59e0b)";
   if (task?.status === "completed") return "var(--color-success, #10b981)";
-  if (status.startsWith("Step failed")) return "var(--color-danger, #ef4444)";
+  if (status.startsWith("Step failed") || status.startsWith("Failed")) return "var(--color-danger, #ef4444)";
   if (task?.status === "executing" || task?.status === "planning") return "var(--color-warning, #f59e0b)";
   return "var(--color-text-secondary)";
 }

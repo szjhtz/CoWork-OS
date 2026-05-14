@@ -2,12 +2,12 @@
 
 ## Multi-Channel AI Gateway
 
-17 messaging channels with unified operations. See [Channel Integrations](channels.md) for setup details, [Channel User Guides](channel-user-guides.md) for per-channel features and best practices, [Dedicated Channel Guides](channel-guides/) for separate channel pages, [Using CoWork from WhatsApp and Other Channels](gateway-user-guide.md) for end-user workflows, and [Gateway Message Lifecycle](gateway-message-lifecycle.md) for remote command routing, active-task behavior, delivery, and scheduled outputs.
+17 messaging channels with unified operations, plus per-channel, per-chat, and per-topic specialization for workspace, agent role, guidance, tool policy, and shared-memory opt-in. See [Channel Integrations](channels.md) for setup details, [Channel User Guides](channel-user-guides.md) for per-channel features and best practices, [Dedicated Channel Guides](channel-guides/) for separate channel pages, [Using CoWork from WhatsApp and Other Channels](gateway-user-guide.md) for end-user workflows, and [Gateway Message Lifecycle](gateway-message-lifecycle.md) for remote command routing, active-task behavior, delivery, and scheduled outputs.
 
 - **WhatsApp**: QR code pairing, self-chat mode, markdown support, `/new` and `/new temp` task resets, `/stop` cancellation, editable progress delivery, and hidden temporary scratch workspaces
-- **Telegram**: Bot commands, streaming responses, workspace selection, group routing modes, and allowed-group allowlists
-- **Discord**: Slash commands, DM support, guild integration, guild allowlists, embeds/polls/select menus, live message fetch and attachment download
-- **Slack**: Socket Mode, channel mentions, file uploads, multiple workspace installations in one app profile, and optional curated middle-step progress relays
+- **Telegram**: Bot commands, streaming responses, workspace selection, group routing modes, allowed-group allowlists, and group/topic specialization
+- **Discord**: Slash commands, DM support, guild integration, guild allowlists, channel/thread specialization, embeds/polls/select menus, live message fetch and attachment download
+- **Slack**: Socket Mode, channel mentions, file uploads, multiple workspace installations in one app profile, Slack-channel specialization, and optional curated middle-step progress relays
 - **Microsoft Teams**: Bot Framework SDK, DM/channel mentions, adaptive cards
 - **Google Chat**: Service account auth, spaces/DMs, threaded conversations
 - **Feishu / Lark**: Webhook + app credential gateway support for Lark/Feishu tenants
@@ -22,6 +22,7 @@
 - **Email**: IMAP/SMTP, any email provider, threading
 - **X (Twitter)**: Mention-trigger task ingress (`do:` prefix by default) with allowlist controls and idempotent session keys ([guide](x-mention-triggers.md))
 - **Research Channels**: Telegram and WhatsApp groups can be marked as link-research channels that auto-generate a structured findings report from posted URLs
+- **Channel Specialization**: Gateway chats can resolve to admin-configured workspaces, agent roles, prompt guidance, tool restrictions, and shared-memory policy before new task creation
 
 ---
 
@@ -32,16 +33,17 @@
 - **Ideas Panel**: Curated launch panel accessible from the sidebar above Sessions. Pre-written prompts organized by category let you start common workflows in one click. See [Ideas Panel: Supported Capabilities](ideas-capabilities.md) for the full list of tools each prompt uses and their graceful fallbacks.
 - **Personal Agentic OS and Everything App**: CoWork OS is a local-first personal agentic workspace for coding, web design, research, knowledge work, documents, spreadsheets, presentations, automations, channels, devices, and long-running tasks.
 - **Everything Workbench**: Generated documents, spreadsheets, presentations, web pages, PDFs, and previews share one artifact model: compact output card, sidebar open, fullscreen artifact workspace, follow-up composer, and refresh after the agent completes requested edits. This reduces the need to switch into separate office apps for generated review and light editing while keeping external app actions available for advanced native workflows. See [Everything Workbench](everything-workbench.md).
-- **Browser Workbench / Browser V2**: live website and local-app testing opens in a visible right-sidebar/fullscreen browser by default. Browser-use tools target the same webview the user can see through Browser V2, with accessibility snapshot refs, CDP-backed actions, tabs, diagnostics, screenshots, annotation, and visible cursor movement during agent actions. See [Browser Workbench](browser-workbench.md) and [Browser V2 Architecture](browser-v2-architecture.md).
+- **Browser Workbench / Browser V2**: live website and local-app testing opens in a visible right-sidebar/fullscreen browser by default. Browser-use tools target the same webview the user can see through Browser V2, with responsive viewport testing through `browser_emulate`, accessibility snapshot refs, CDP-backed actions, tabs, diagnostics, screenshots, annotation, and visible cursor movement during agent actions. See [Browser Workbench](browser-workbench.md) and [Browser V2 Architecture](browser-v2-architecture.md).
 - **Task-Based Workflow**: Multi-step execution with plan-execute-observe loops
 - **Task Overflow Actions**: task view title menus expose supported task actions in place: pin/unpin, rename, archive, copy working directory, copy task ID, copy `cowork://tasks/<taskId>` deeplink, copy Markdown, fork session, view outputs, and create a scheduled automation from the current task. See [Task Automations](task-automations.md).
-- **Managed Agents**: versioned managed agents, reusable local environments, and durable managed sessions exposed through the control plane, with backing tasks and team runs still visible in the normal app surfaces. See [Managed Agents](managed-agents.md).
+- **Managed Agents**: Agents Hub provides a dedicated surface for creating, inspecting, publishing, suspending, and improving reusable agents. Agent detail screens are configuration-first and single-pane: test, preview, and starter-prompt actions create normal runtime managed sessions and open their backing tasks in the main task window, where questions, responses, approvals, artifacts, and outputs are handled like any other task. See [Managed Agents](managed-agents.md).
 - **Runtime Orchestration**: SessionRuntime owns task-session state, session checklists, resume snapshots, recovery state, and task projection while the turn kernel handles each individual step, follow-up, or text turn; metadata-driven tool scheduling, graph-backed delegation, typed worker roles, verifier verdicts, semantic tool-batch summaries, and terminal-state reconciliation keep delegated work coherent across tasks, follow-ups, teams, and ACP runs.
 - **Prompt-Aware Tooling**: visible tools receive concise prompt-local guidance after policy filtering, and planning plus execution share the same render source for compact tool text and provider-facing tool descriptions.
 - **Composer Mentions**: type `@` in the main composer to choose Agents, configured Integrations, or Files. Integration mentions render as icon+name chips and add soft runtime routing guidance without changing permissions. See [Composer Mentions](composer-mentions.md).
-- **Message Box Shortcuts**: type `/` in the main composer to search deterministic app commands and skill-backed workflow shortcuts in one picker. App commands include `/schedule`, `/clear`, `/plan`, `/cost`, `/compact`, `/doctor`, and `/undo`; plugin-pack aliases resolve to their target skills through the existing skills runtime. See [Message Box Shortcuts](message-box-shortcuts.md).
+- **Message Box Shortcuts**: type `/` in the main composer to search deterministic app commands and skill-backed workflow shortcuts in one picker. App commands include `/schedule`, `/clear`, `/plan`, `/cost`, `/multitask`, `/compact`, `/doctor`, and `/undo`; plugin-pack aliases resolve to their target skills through the existing skills runtime. Skill-backed selections insert the command token so users can add context before sending. See [Message Box Shortcuts](message-box-shortcuts.md) and [Multitask Command](multitask.md).
 - **Sectioned Prompt Stack**: execution and follow-up prompts are built from named session- and turn-scoped sections with explicit budgets, memoization of stable sections, provider-aware prompt caching, and truncation/drop reporting when token pressure rises.
 - **Provider-Aware Prompt Caching**: CoWork keeps stable system blocks cacheable and dynamic turn context uncached, prefers Anthropic automatic caching where supported, uses explicit Claude breakpoints on OpenRouter, and derives stable OpenAI-family cache keys for GPT routes.
+- **OpenRouter Pareto Code Routing**: OpenRouter model selection includes `openrouter/pareto-code` and `openrouter/pareto-code:nitro`. When selected, Settings exposes OpenRouter's optional Pareto minimum coding score as a decimal from `0` to `1` so coding tasks can route by capability tier without pinning one concrete model.
 - **Session Checklist Primitive**: execution-style tasks can create a session-local ordered checklist with `task_list_create`, maintain it with `task_list_update`, inspect it with `task_list_list`, and surface it read-only in the task UI. The runtime can issue a non-blocking verification nudge when implementation items are done but no verification item exists yet.
 - **Structured Delegation Briefs**: `spawn_agent` and `orchestrate_agents` resolve a worker role, package parent-step context plus evidence requirements into a structured brief, and apply the corresponding completion/tool contract to the child.
 - **Permission Engine**: layered tool approvals combine explicit modes, per-tool/path/command-prefix/MCP-server rules, session grants, workspace-local rules, profile rules, and hard guardrails; `dangerous_only` adds a lower-friction mode that still prompts on destructive, privacy-sensitive, side-effecting, or ambiguous actions.
@@ -57,13 +59,14 @@
 - **Spreadsheet Artifact Workbench**: task-created spreadsheet files use compact artifact cards in the task feed. `.xlsx`, `.xls`, `.xlsm`, `.csv`, and `.tsv` open a resizable right-sidebar spreadsheet viewer with sheet tabs, sticky headers, working zoom, cell/range/row/column selection, copy with a short `Copied` flash, inline editing, add row/column, and save back to the file. `.numbers`, `.gsheet`, `.ods`, and `.xlsb` are recognized as spreadsheet artifacts and use external-app/folder actions. Fullscreen mode expands editable sheets across the app and keeps a functional follow-up composer with the main task model picker, voice input, attachments, and send behavior. See [Spreadsheet Artifacts](spreadsheet-artifacts.md).
 - **Presentation Artifact Workbench**: PPTX artifacts render as compact task-feed cards and open by default in the resizable right-sidebar presentation viewer. The viewer includes slide thumbnails, previous/next controls, zoom, a white slide canvas, extracted slide text, speaker notes, fast text-first loading, cached rendered slide images, fullscreen follow-up context, external-app/folder actions, and preview refresh after follow-up edits. Legacy PowerPoint formats are recognized with external actions. See [Presentation Artifacts and PPTX Preview](pptx-generation-and-preview.md).
 - **Web Page Artifact Workbench**: generated `.html` / `.htm` files and built React output entrypoints render as compact task-feed cards and open by default in the resizable right-sidebar web viewer. The viewer uses a sandboxed iframe with local assets inlined where possible, browser/folder/copy actions, fullscreen follow-up context, and preview refresh after matching file/build-output updates. React-style projects without built output show a build-output-needed state instead of auto-starting a dev server. See [Web Page Artifacts](web-page-artifacts.md).
-- **Browser Workbench / Browser V2**: live browser-use prompts such as "go to this site and test it as a normal user" open a shared in-app browser session beside the task. The agent can navigate, snapshot, click, fill, type, scroll, inspect diagnostics, upload/download files, screenshot, and annotate while the user watches the visible cursor and page state. See [Browser Workbench](browser-workbench.md).
+- **Browser Workbench / Browser V2**: live browser-use prompts such as "go to this site and test it as a normal user" open a shared in-app browser session beside the task. The agent can navigate, resize to desktop/tablet/mobile viewports, snapshot, click, fill, type, scroll, inspect diagnostics, upload/download files, screenshot, and annotate while the user watches the visible cursor and page state. See [Browser Workbench](browser-workbench.md).
 - **Persistent Memory**: Cross-session context with curated hot memory, searchable archive recall, session transcript recall, topic packs, privacy-aware observation capture, and an optional Supermemory external provider lane
 - **Chronicle (Desktop Research Preview)**: opt-in local recent-screen context for vague prompts like `this`, `that`, `what is this`, `latest draft`, or `why is this failing`, with Memory Hub controls, pause/resume, promoted `screen_context` evidence, and optional linked background memory generation. See [Chronicle](chronicle.md).
 - **Knowledge Graph**: SQLite-backed entity/relationship memory with FTS5 search, graph traversal, and auto-extraction
 - **Workspace Kit**: `.cowork/` project kit + markdown indexing with context injection
 - **Agent Teams**: Multi-agent collaboration with shared checklists, graph-backed coordinated runs, and team management UI
 - **Collaborative Mode**: Auto-create ephemeral teams where multiple agents work on the same task, sharing thoughts in real-time through the delegated orchestration graph
+- **Multitask Command**: `/multitask [N] <task>` starts a collaborative run from one prompt, auto-splits it into bounded lane-specific child tasks, respects the global queue limit, and synthesizes the lane outputs. See [Multitask Command](multitask.md).
 - **Multi-LLM Mode**: Send the same task to multiple LLM providers/models simultaneously, with a judge agent synthesizing the best result
 - **Workflow Pipeline**: Optional phase-based execution path where decomposed steps run as child tasks with per-phase LLM overrides or capability-based auto-selection
 - **Agent Comparison Mode**: Compare agent or model outputs side by side
@@ -188,7 +191,7 @@ See [Remote Access](remote-access.md) for connection patterns and [Mission Contr
 Automation features are now grouped together in `Settings > Automations`:
 
 - **Routines**: the primary automation abstraction for saved instructions, execution target, triggers, outputs, approval policy, connector policy, and recent runs
-- **Workflow Intelligence**: Memory, Heartbeat, internal Reflection, and reviewable Suggestions form one always-on runtime owned by automation profiles
+- **Workflow Intelligence**: Memory, Heartbeat, internal Reflection, Dreaming, and reviewable Suggestions form one always-on runtime owned by automation profiles
 - **Task Queue**: concurrency, queueing, and background execution policy
 - **Workflow Intelligence settings**: target-scoped evidence, hypotheses, critique, winner selection, suggestion dispatch, feedback learning, and guarded auto-create policy
 - **Scheduled Tasks**: recurring time-based task execution; now also used as a compiled backend for routine schedule triggers and as the backend for task-sourced `Add automation...` flows
@@ -268,6 +271,7 @@ See [Zero-Human Company Operations](zero-human-company.md) for architecture, set
 
 - **Memory as source of truth**: reflection outputs become memory candidates such as preferences, workflow patterns, open loops, corrections, recurring tasks, and ignored noise
 - **Heartbeat as scheduler**: Heartbeat decides when accumulated signals justify reflection
+- **Dreaming as memory curation**: background Dreaming runs after meaningful task completion or memory-specific Heartbeat signals, then proposes reviewable memory candidates instead of silently rewriting memory
 - **Reviewable suggestions first**: useful outcomes appear as Next actions under the welcome message box, in the automation inbox, and in the Suggestions panel
 - **Global coordinator, namespaced targets**: one coordinator ranks work globally while each workflow target keeps its own history, winner, backlog, and dispatch stream
 - **Stable target identities**: supports core-owned targets such as `global`, `workspace`, `agent_role`, `code_workspace`, and `pull_request`
@@ -278,7 +282,7 @@ See [Zero-Human Company Operations](zero-human-company.md) for architecture, set
 - **Recommendation-only success path**: if no executor mapping exists or policy does not allow autonomy, the run still completes with a reviewable suggestion or deferred recommendation
 - **No maintainer-only enrollment gate**: safety remains enforced by the existing executor approval and capability policies
 
-See [Workflow Intelligence](workflow-intelligence.md) for the architecture and operational guidance.
+See [Workflow Intelligence](workflow-intelligence.md) and [Dreaming](dreaming.md) for the architecture and memory-curation guidance.
 
 ### Core Harness
 
@@ -334,6 +338,7 @@ The task creation UI also includes higher-level toggles that change how tasks ar
 |--------|----------|
 | **Autonomous** | Auto-approves all gated actions (shell commands, file deletions, etc.) so the agent runs without pauses. Disables user input prompts. |
 | **Collaborative** | Auto-creates an ephemeral team of agents that analyze the task from multiple perspectives, then a leader synthesizes the results. Phases: dispatch → think → synthesize → complete. |
+| **Multitask command** | Type `/multitask [N] <task>` to create a fresh collaborative run that splits the prompt into lane-specific child tasks before synthesis. Defaults to 4 lanes, bounded to 2-8. |
 | **Multi-LLM** | Sends the same task to multiple LLM providers/models in parallel. A designated judge model synthesizes the best result. Requires 2+ providers configured. |
 | **Think With Me** | Socratic brainstorming mode — agent asks follow-up questions and explores trade-offs without executing tools. Read-only tools only. |
 
@@ -390,17 +395,18 @@ Access from **Mission Control** > **Add Digital Twin**. See [Digital Twins](digi
 
 Role-specific and workflow bundles that group skills, agent roles, connectors, and slash commands into installable packs. Each pack targets a job function or workflow area and can optionally link to a Digital Twin Persona as an optional role preset.
 
-- **19 bundled packs**: Engineering, Engineering Management, Product Management, DevOps, Mobile Development, Game Development, Data Analysis, QA & Testing, Sales CRM, Customer Support, Content & Marketing, Technical Writing, Equity Research, Financial Analysis, Investment Banking, Private Equity, Wealth Management, Geo SEO, and CoWork Shortcuts
+- **35 bundled packs**: Engineering, Engineering Management, Product Management, DevOps, Mobile Development, Game Development, Data Analysis, QA & Testing, Sales CRM, Customer Support, Content & Marketing, Technical Writing, finance packs, Claude-for-Legal practice packs, Geo SEO, and CoWork Shortcuts
 - **100+ pack skills and shortcuts**: Code review prep, sprint health, feature triage, incident response, prospect research, DCF modeling, LBO analysis, `/strategy`, `/batch-rename`, `/gmail-summary-drive`, `/multi-source-report`, and more
 - **Unified Customize panel**: Browse, enable/disable packs, view skills/commands/agents, click "Try asking" prompts
 - **Search & filter**: Real-time sidebar search across pack names, descriptions, categories, and skill names
 - **Per-skill toggles**: Enable or disable individual skills within a pack without toggling the entire pack
 - **Persistent state**: Pack and skill toggle states survive app restarts (stored in `pack-states.json`)
-- **Digital Twin integration**: 7 packs link to persona templates as optional role presets; always-on automation remains a separate core setup step
+- **Digital Twin integration**: selected packs link to persona templates as optional role presets; always-on automation remains a separate core setup step
 - **Recommended connectors**: Packs display clickable connector chips that navigate to connector settings
 - **Update detection**: Background check against the remote registry with orange dot indicators on packs with newer versions
 - **"Try asking" in chat**: Empty chat state shows randomized prompt suggestions from enabled packs for one-click task creation
-- **Message-box slash aliases**: Plugin-pack `slashCommands` appear in the main `/` picker and invoke their mapped skill IDs. Alias enable/disable state follows pack and per-skill toggles.
+- **Message-box slash aliases**: Plugin-pack `slashCommands` appear in the main `/` picker and invoke their mapped skill IDs. Selecting skill-backed aliases inserts the slash token so the user can add context before sending. Alias enable/disable state follows pack and per-skill toggles.
+- **Claude-for-Legal workflow cards**: Legal pack commands are editable from the slash picker and can show structured main-view matter-context cards. `/litigation-legal-demand-intake` gets a dedicated demand-letter intake card; other matter-heavy legal workflows get a generic legal details card. See [Claude-for-Legal Workflows](claude-for-legal.md).
 - **Plugin Store**: In-app marketplace for discovering, installing, and creating packs (from Git repos, URLs, or scaffold)
 - **Managed import scanning**: Git and URL pack installs are staged and scanned before activation, with install results surfaced as installed, installed with warning, or quarantined
 - **Quarantine & report UX**: blocked imported packs move into a dedicated quarantine area with stored reports, retry scan, and removal actions in the Customize panel
@@ -488,6 +494,7 @@ Configure in **Settings** > **Voice**.
 | **Curated Memory Tools** | `memory_curate` adds/replaces/removes curated entries, and `memory_curated_read` inspects the current hot-memory layer with stable entry IDs for deterministic edits |
 | **Archive Memory** | `memory_save` persists observations, decisions, errors, and insights into the larger searchable archive lane for cross-session recall |
 | **Structured Observations** | Archive memories get inspectable sidecar metadata with title, narrative, facts, concepts, files, tools, source events, privacy state, and deterministic migration status |
+| **Dreaming Memory Curation** | Background Dreaming runs review recent session, observation, and curated-memory evidence, then persist reviewable `dreaming_candidates` for stale archives, corrections, open loops, recurring tasks, constraints, ignored-noise patterns, and curated-memory cleanup |
 | **Progressive Recall Tools** | `memory_search_index`, `memory_timeline`, and `memory_details` let agents search compact metadata first, inspect timeline context second, and fetch full details only for selected IDs |
 | **Checkpoint Capture** | Runtime-native checkpoints are written before compaction, on non-trivial task completion, and every 12 meaningful exchanges, each carrying both a structured summary and a verbatim evidence packet |
 | **Session Recall** | `search_sessions` searches recent transcript spans and optional checkpoints when the agent needs to recall what happened in a prior run |
@@ -508,7 +515,7 @@ Configure in **Settings** > **Voice**.
 
 Inline privacy controls are also available during capture: `<no-memory>` disables automatic capture for that task content, and `<private>...</private>` redacts the marked segment from captured memory. Redacted and suppressed observations are excluded from prompt recall, and private/redacted/suppressed entries are not mirrored to Supermemory.
 
-Supermemory is additive, not a replacement for local memory. CoWork still keeps the workspace kit, curated hot memory, archive memory, structured observation metadata, transcript recall, and knowledge graph locally. The current integration mirrors local memory captures only when you opt in; it does not yet stream every chat turn into Supermemory conversations. See [Structured Memory Observations](memory-observations.md) and [Supermemory Integration](supermemory.md).
+Supermemory is additive, not a replacement for local memory. CoWork still keeps the workspace kit, curated hot memory, archive memory, structured observation metadata, Dreaming candidates, transcript recall, and knowledge graph locally. The current integration mirrors local memory captures only when you opt in; it does not yet stream every chat turn into Supermemory conversations. See [Structured Memory Observations](memory-observations.md), [Dreaming](dreaming.md), and [Supermemory Integration](supermemory.md).
 
 Configure in **Settings** > **Memory Hub**.
 
@@ -567,7 +574,7 @@ CoWork OS still keeps a multi-layered learning stack under the reflective loop. 
 - **Retry-aware reuse**: retries can reuse playbook patterns during planning, recent session recall during planning/execution/follow-ups, and pending verification checklist state instead of restarting cold
 - **`/learn` skill**: manually teach the agent insights, corrections, preferences, or rules
 
-These layers feed `Workflow Intelligence` and the normal task runtime. See [Workflow Intelligence](workflow-intelligence.md) for the full architecture guide.
+These layers feed `Workflow Intelligence` and the normal task runtime. Dreaming adds a review-first offline memory-curation pass over the same evidence. See [Workflow Intelligence](workflow-intelligence.md) and [Dreaming](dreaming.md) for the full architecture guide.
 
 ### Evolving Agent Intelligence
 
@@ -730,6 +737,7 @@ Define per-role personality and operating guidelines in `.cowork/agents/<role-id
 | **Shared Checklists** | Agents share checklist items for coordinated task execution |
 | **Run Tracking** | Track team runs with status, progress, and history |
 | **Collaborative Mode** | Ephemeral teams with real-time thought sharing |
+| **Multitask Command** | One-shot ephemeral team runs with auto-planned independent lanes from `/multitask [N] <task>` |
 | **Multi-LLM Mode** | Dispatch same task to multiple providers with judge-based synthesis |
 | **Collaborative Thoughts** | Real-time thought panel shows agent reasoning as it happens |
 
@@ -1182,7 +1190,7 @@ Browser tools first target the active visible browser workbench for the selected
 | `browser_network` | Return recent redacted network requests, responses, and failures |
 | `browser_downloads` | Return recent browser downloads |
 | `browser_storage` | Return redacted local/session storage for the current page |
-| `browser_emulate` | Set viewport/device emulation for responsive testing |
+| `browser_emulate` | Set viewport/device emulation and resize the visible workbench for responsive testing |
 | `browser_trace_start` | Start lightweight browser tracing |
 | `browser_trace_stop` | Stop lightweight browser tracing |
 | `browser_evaluate` | Execute JavaScript in browser context |
@@ -1257,7 +1265,7 @@ See [Chrome Remote Debugging](https://developer.chrome.com/docs/devtools/remote-
 | **State management** | `state save/load` JSON files | Persistent browser profiles (automatic) |
 | **Network interception** | Route, mock, block requests | Network diagnostics exposed; request mutation remains guarded/internal |
 | **Video recording** | `record start/stop` to WebM | Lightweight trace tooling; video capture is not a core Browser V2 tool |
-| **Device emulation** | Presets ("iPhone 14"), geolocation, viewport | Viewport/device metrics through `browser_emulate` |
+| **Device emulation** | Presets ("iPhone 14"), geolocation, viewport | Visible desktop/tablet/mobile viewport checks through `browser_emulate` |
 | **Cookies/storage** | Manual cookie and localStorage management | Workspace profile persistence plus redacted storage diagnostics |
 | **Anti-bot bypass** | None | Scrapling integration (TLS fingerprinting, Cloudflare bypass) |
 | **Consent popups** | None | Auto-dismissal with 40+ pattern detectors |
@@ -1335,7 +1343,9 @@ Configure in **Settings** > **Web Scraping**. Disabled by default — enable to 
 - **Tailscale Serve**: Expose to your private tailnet
 - **Tailscale Funnel**: Public HTTPS endpoint
 - **SSH Tunnels**: Standard SSH port forwarding
-- **WebSocket API**: Programmatic task management with LAN access
+- **WebSocket API**: Programmatic task management over loopback, SSH tunnels, Tailscale, or explicitly configured private LAN access
+
+Headless/managed deployments fail closed on raw public Control Plane binds. `0.0.0.0`/`::` requires Tailscale, a privately published container context, or an explicit break-glass override.
 
 See [Remote Access](remote-access.md) for details.
 
@@ -1366,7 +1376,7 @@ See [Remote Access](remote-access.md) for details.
 | **Okta** | Identity | health, users, groups |
 | **Resend** | Email | send, webhooks |
 | **Discord** | Community | 19 tools: guilds, channels, messages, roles |
-| **Google Workspace** | Productivity (OAuth) | Calendar, Drive, Gmail |
+| **Google Workspace** | Productivity (OAuth) | Gmail, Calendar, Drive, Docs, Sheets, Slides, Tasks, Chat |
 | **Figma** | Design | get file, export |
 | **Vercel** | Deploy | projects, deployments |
 | **Monday** | Work Management | boards, items |
@@ -1423,18 +1433,20 @@ See [Integration Setup, Skill Proposals, and Bootstrap Lifecycle](integration-sk
 
 ---
 
-## Cloud Integrations
+## Cloud Storage And Productivity Integrations
 
-The main composer supports grouped `@` mentions for **Agents**, **Integrations**, and **Files**. The Integrations section only shows configured, locally usable integrations. Google Workspace splits into **Gmail**, **Google Drive**, and **Google Calendar**; gateway channels and MCP connectors appear only when connected/configured. Selecting an integration inserts an icon+name chip, preserves clean prompt text such as `@Gmail`, and sends `integrationMentions` metadata as soft routing guidance without granting permissions or restricting tools. See [Composer Mentions](composer-mentions.md).
+The main composer supports grouped `@` mentions for **Agents**, **Integrations**, and **Files**. The Integrations section only shows configured, locally usable integrations. Google Workspace splits into service-specific options: built-in **Gmail**, **Google Drive**, and **Google Calendar** plus MCP-backed **Google Docs**, **Google Sheets**, **Google Slides**, **Google Tasks**, and **Google Chat** when those tools are available. Selecting an integration inserts an icon+name chip, preserves clean prompt text such as `@Gmail`, and sends `integrationMentions` metadata as soft routing guidance without granting permissions or restricting tools. See [Composer Mentions](composer-mentions.md).
 
 | Service | Tool | Actions |
 |---------|------|---------|
 | **Notion** | `notion_action` | Search, read, create, update, query data sources |
 | **Box** | `box_action` | Search, read, upload, manage files |
 | **OneDrive** | `onedrive_action` | Search, read, upload, manage files |
-| **Google Workspace** | `gmail_action`, `google_drive_action`, `google_calendar_action` | Gmail, Drive, Calendar with shared OAuth |
+| **Google Workspace** | `gmail_action`, `google_drive_action`, `calendar_action`, `google-workspace.*` MCP tools | Gmail, Drive, and Calendar natively; Docs, Sheets, Slides, Tasks, and Chat through the shared Google Workspace MCP connector |
 | **Dropbox** | `dropbox_action` | List, search, upload, manage files |
 | **SharePoint** | `sharepoint_action` | Search sites, manage drive items |
+
+Google Workspace uses one OAuth connection for the built-in tools and MCP connector. The default consent set covers Drive, Gmail read/send/modify, Calendar, Spreadsheets, Documents, Tasks, Presentations, Chat messages, and Chat spaces readonly. Existing users with older tokens may need to reconnect when a release adds required scopes; the status check reports missing scopes when reconnect is needed. Destructive or broad Tasks/Slides operations require explicit confirmation fields before the MCP connector executes them.
 
 Configure by clicking any card in **Settings** > **Integrations**. Enterprise MCP connectors (Salesforce, Jira, HubSpot, Slack, etc.) are also managed from the same tab.
 
@@ -1569,7 +1581,7 @@ Schedule recurring tasks with cron expressions and optional channel delivery.
 
 ## Parallel Task Queue
 
-Run multiple tasks concurrently with configurable limits (1-10, default: 3). Tasks beyond the limit are queued in FIFO order with auto-start and persistence across restarts.
+Run multiple tasks concurrently with configurable limits (1-10, default: 3). Tasks beyond the limit are queued in FIFO order with auto-start and persistence across restarts. `/multitask` child lanes use the same queue and do not bypass the global concurrency limit.
 
 ---
 
@@ -1616,15 +1628,19 @@ See [Architecture: Web Browser Mode](architecture.md#web-browser-mode-planned--s
 Programmatic API for external automation and mobile companion apps.
 
 - Challenge-response token authentication
+- Strong operator/node tokens required for managed/headless deployments
+- WebSocket browser Origin checks with explicit allowed-origin support for reverse proxies
 - Full task API (create, list, get, cancel)
 - Real-time event streaming
 - Approval API for remote approval management
 - Channel management API
 - Web dashboard at `http://127.0.0.1:18789/`
+- Deployment posture in `config.get` reports `ready`, `degraded`, or `blocked` with sanitized reasons
 
 | Mode | Binding | Use Case |
 |------|---------|----------|
 | **Local Only** | `127.0.0.1:18789` | Desktop automation |
-| **LAN Access** | `0.0.0.0:18789` | Mobile companions |
+| **Private LAN / Tailscale** | private interface or Tailscale URL | Mobile companions and remote devices |
+| **Container** | `0.0.0.0:18789` inside container, host port loopback/private | Docker or Kubernetes-style deployment |
 
-Configure in **Settings** > **Control Plane**.
+Configure in **Settings** > **Control Plane**. For reverse proxies, keep the daemon loopback/private when possible, set `COWORK_CONTROL_PLANE_ALLOWED_ORIGINS` to the public HTTPS origin, and only set `COWORK_CONTROL_PLANE_TRUST_PROXY=1` behind a proxy you control.

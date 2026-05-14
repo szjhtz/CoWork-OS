@@ -1,6 +1,6 @@
 # Plugin Packs & Customize
 
-Plugin packs are composable bundles that group skills, agent roles, connectors, and slash commands into a single installable unit. Most packs target a job function — engineering, sales, product management — while workflow packs such as **CoWork Shortcuts** add reusable message-box shortcuts. Packs can optionally link to a [Digital Twin Persona](digital-twins.md) as an optional role preset.
+Plugin packs are composable bundles that group skills, agent roles, connectors, and slash commands into a single installable unit. Most packs target a job function — engineering, sales, product management, legal practice areas — while workflow packs such as **CoWork Shortcuts** add reusable message-box shortcuts. Packs can optionally link to a [Digital Twin Persona](digital-twins.md) as an optional role preset.
 
 Access from **Settings** > **Customize**.
 
@@ -53,12 +53,11 @@ Pack `slashCommands` are skill aliases. They map a visible command token to a ta
 }
 ```
 
-These aliases appear in the main message box `/` picker alongside deterministic app commands such as `/schedule` and `/clear`. Selection and manual typing both route through the existing skills runtime:
+These aliases appear in the main message box `/` picker alongside deterministic app commands such as `/schedule`, `/clear`, and `/multitask`. Selection and manual typing both route through the existing skills runtime:
 
 - aliases resolve to their mapped `skillId`
 - pack and per-skill enable/disable state controls availability
-- aliases with required skill parameters open the parameter modal
-- aliases with optional-only parameters insert the slash token so the user can add context
+- selecting a skill-backed alias inserts the slash token so the user can add context before sending
 - alias collisions are resolved the same way in the picker and backend: enabled plugin aliases win over direct skill IDs
 
 See [Message Box Shortcuts](message-box-shortcuts.md) for the full composer shortcut contract.
@@ -157,7 +156,7 @@ It auto-refreshes every 30 seconds and provides at-a-glance awareness of your ac
 
 ## Bundled Plugin Packs
 
-CoWork OS ships with 19 plugin packs covering common job functions and reusable workflow shortcuts.
+CoWork OS ships with 35 plugin packs covering common job functions, finance workflows, legal workflows, and reusable message-box shortcuts.
 
 ### CoWork Shortcuts
 
@@ -211,6 +210,35 @@ CoWork OS ships with 19 plugin packs covering common job functions and reusable 
 - `/competitive-scan`
 
 See [Message Box Shortcuts](message-box-shortcuts.md#cowork-shortcuts-pack) for the complete current list and runtime behavior.
+
+### Claude-for-Legal Packs
+
+CoWork OS bundles the Claude-for-Legal practice packs from `resources/plugin-packs/*legal*/`. They expose upstream-style legal slash commands through the same plugin-pack alias system used by other packs.
+
+Bundled legal packs include:
+
+- AI Governance Legal
+- Cocounsel Legal
+- Commercial Legal
+- Corporate Legal
+- Employment Legal
+- IP Legal
+- Legal Builder Hub
+- Legal Clinic
+- Litigation Legal
+- Privacy Legal
+- Product Legal
+- Regulatory Legal
+
+Legal commands are picker-first and editable: selecting a command inserts the slash token and leaves the user in the composer so they can add matter context before sending. For example:
+
+```text
+/litigation-legal-demand-intake unpaid invoices acme logistics
+```
+
+Matter-heavy legal workflows can also surface a main-view intake card after the task starts. The demand-letter workflow gets a dedicated demand intake card; other legal workflows that benefit from structured context get a generic legal workflow details card. Operational management commands from Legal Builder Hub, such as disable/uninstall/update commands, skip matter-intake UI.
+
+See [Claude-for-Legal Workflows](claude-for-legal.md) for examples, safety behavior, and focused test commands.
 
 ### Engineering
 

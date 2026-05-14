@@ -85,4 +85,18 @@ describe("DispatchedAgentsPanel compact stream rows", () => {
     expect(markup).not.toContain("stream-event-row");
     expect(markup).toMatchSnapshot();
   });
+
+  it("marks agent chips as sidebar-openable when a sidebar handler is provided", () => {
+    const markup = render(
+      React.createElement(DispatchedAgentsPanel, {
+        parentTaskId: "parent-1",
+        childTasks: [makeTask()],
+        childEvents: [],
+        onOpenChildAgentSidebar: () => undefined,
+      }),
+    );
+
+    expect(markup).toContain("cursor:pointer");
+    expect(markup).toContain("Click to view agent");
+  });
 });

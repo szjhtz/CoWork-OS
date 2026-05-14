@@ -8104,6 +8104,11 @@ ${skillDescriptions}`;
         case "google-workspace": {
           nextEnv.GOOGLE_ACCESS_TOKEN = oauthResult.accessToken;
           if (oauthResult.refreshToken) nextEnv.GOOGLE_REFRESH_TOKEN = oauthResult.refreshToken;
+          if (oauthResult.scopes?.length) {
+            nextEnv.GOOGLE_SCOPES = oauthResult.scopes.join(" ");
+          } else if (oauthRequest.scopes?.length) {
+            nextEnv.GOOGLE_SCOPES = oauthRequest.scopes.join(" ");
+          }
           break;
         }
         default: {

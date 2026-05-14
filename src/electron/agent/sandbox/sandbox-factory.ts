@@ -13,7 +13,7 @@
 import { Workspace } from "../../../shared/types";
 import { MacOSSandbox } from "./macos-sandbox";
 import { DockerSandbox } from "./docker-sandbox";
-import { spawn } from "child_process";
+import { spawn, type ChildProcess } from "child_process";
 import { createSecureTempFile } from "./security-utils";
 
 /**
@@ -39,6 +39,8 @@ export interface SandboxOptions {
   allowedWritePaths?: string[];
   /** Environment variables to pass through */
   envPassthrough?: string[];
+  /** Called with the backing process once the sandbox starts it. */
+  onProcess?: (process: ChildProcess) => void;
 }
 
 /**
@@ -123,7 +125,7 @@ export class NoSandbox implements ISandbox {
           ? spawn(command, args, {
               cwd,
               shell: false,
-              stdio: ["ignore", "pipe", "pipe"],
+              stdio: ["pipe", "pipe", "pipe"],
             })
           : spawn(
               shell,
@@ -131,9 +133,10 @@ export class NoSandbox implements ISandbox {
               {
                 cwd,
                 shell: false,
-                stdio: ["ignore", "pipe", "pipe"],
+                stdio: ["pipe", "pipe", "pipe"],
               },
             );
+      options.onProcess?.(proc);
 
       const timeoutHandle = setTimeout(() => {
         timedOut = true;

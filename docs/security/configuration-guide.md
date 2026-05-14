@@ -76,6 +76,19 @@ Restrict tool groups per context:
 | Network Tools | Browser, web access | Allowed |
 | Destructive Tools | Delete, shell commands | Allowed (with approval) |
 
+## Channel Specialization Policy
+
+For shared gateway spaces, channel specialization adds a routing and policy layer on top of context policies:
+
+1. Go to **Settings > Channels > [Your Channel] > Channel Specialization**
+2. Choose a whole-channel default, a specific chat/group, or a topic/thread ID when the channel supports it
+3. Select the workspace and agent role for new tasks from that scope
+4. Add prompt guidance only when it should apply to every new task from that scope
+5. Apply tool restrictions for broad or semi-trusted groups
+6. Enable shared context memory only when the participants and workflow are trusted
+
+Specialization tool restrictions merge with context-policy restrictions using deny-first behavior. A channel specialization must not contain provider tokens, bot credentials, or connector secrets.
+
 ## Workspace Permissions
 
 ### Basic Permissions
@@ -239,6 +252,8 @@ After configuration, verify:
 
 - [ ] Pairing mode enabled for external channels
 - [ ] Context policies configured for groups
+- [ ] Channel specializations reviewed for shared groups, channels, and threads
+- [ ] Shared-memory opt-in enabled only for trusted specialized groups
 - [ ] Workspace permissions appropriate
 - [ ] Guardrails configured
 - [ ] Permission rules reviewed

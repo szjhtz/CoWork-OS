@@ -5,6 +5,7 @@ Heartbeat v3 is the scheduling and signal-readiness layer inside Workflow Intell
 - `Memory` is the source of truth.
 - `Heartbeat` decides when enough fresh signal exists.
 - `Reflection` evaluates evidence internally.
+- `Dreaming` curates memory evidence when drift signals justify it.
 - `Suggestions` are the default user-facing output.
 
 It replaces the older queue-first heartbeat internals with a two-lane pipeline designed around three goals, in order:
@@ -16,6 +17,8 @@ It replaces the older queue-first heartbeat internals with a two-lane pipeline d
 The key design change is that not every wake is treated as potential task work anymore.
 
 Heartbeat owns the "when should we think?" decision. Reflection no longer runs its own independent interval loop for normal operation; Heartbeat triggers it when Pulse results or accumulated signals justify another evaluation.
+
+Heartbeat can also trigger Dreaming when the signal ledger contains memory-specific pressure such as `memory_drift`, `correction_learning`, or `cross_workspace_patterns`. Dreaming runs as background memory curation and produces reviewable candidates instead of creating tasks or silently rewriting memory.
 
 ## Two-Lane Model
 
@@ -153,6 +156,14 @@ Ambient monitoring is upstream of heartbeat v3. It is not the heartbeat system i
 
 File, git, and other ambient sources emit low-priority mergeable signals that Pulse can review later. Broad-root watch skips and no-project-marker skips are summarized once at startup instead of spamming the log continuously.
 
+## Dreaming Trigger Contract
+
+Dreaming is a side effect of memory-specific Heartbeat pressure, not a Dispatch lane.
+
+When Pulse or workflow reflection exposes memory drift, correction learning, or cross-workspace pattern signals, Heartbeat can ask Dreaming to run for the active workspace. That Dreaming run persists `dreaming_runs` and `dreaming_candidates`, then returns run metadata on the heartbeat result for traceability.
+
+Dreaming should not consume dispatch budget, create heartbeat tasks, or turn general activity signals into memory writes. Its output remains reviewable memory candidates. See [Dreaming](dreaming.md).
+
 ## Default Configuration
 
 Automation-profile-backed operators now use the v3 decision model by default. The main config fields are:
@@ -174,4 +185,4 @@ Legacy `heartbeatIntervalMinutes` may still exist as a compatibility fallback, b
 - Use `operator` or `dispatcher` for automation-profile-backed operators that should actively review and escalate.
 - Keep exact-time or device-routed work in scheduler, trigger, or device surfaces instead of stretching heartbeat into a general control plane.
 
-See also [Workflow Intelligence](workflow-intelligence.md), [Core Automation](core-automation.md), and [Mission Control](mission-control.md).
+See also [Workflow Intelligence](workflow-intelligence.md), [Dreaming](dreaming.md), [Core Automation](core-automation.md), and [Mission Control](mission-control.md).

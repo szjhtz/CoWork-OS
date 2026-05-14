@@ -67,9 +67,12 @@ import {
   shutdownSSHTunnelManager,
 } from "./ssh-tunnel";
 import {
+  getControlPlaneBindContextFromEnv,
   getEnvSettingsImportModeFromArgsOrEnv,
   isHeadlessMode,
+  shouldAllowInsecureControlPlanePublicBindFromEnv,
   shouldImportEnvSettingsFromArgsOrEnv,
+  shouldUseManagedDeploymentModeFromEnv,
 } from "../utils/runtime-mode";
 import { getActiveProfileId, getUserDataDir } from "../utils/user-data-dir";
 import { CanvasManager } from "../canvas/canvas-manager";
@@ -96,6 +99,7 @@ import {
   serializeTaskEventForTransport,
 } from "./task-event-transport";
 import { resolvePathWithinRoot } from "./path-containment";
+import { evaluateControlPlaneDeploymentPosture } from "./deployment-posture";
 
 // Server instance
 let controlPlaneServer: ControlPlaneServer | null = null;
@@ -1683,6 +1687,7 @@ const ManagedEnvironmentConfigSchema = z.object({
   enableComputerUse: z.boolean().optional(),
   allowedMcpServerIds: z.array(z.string().trim().min(1).max(200)).max(100).optional(),
   skillPackIds: z.array(z.string().trim().min(1).max(200)).max(100).optional(),
+  filePaths: z.array(z.string().trim().min(1).max(2000)).max(500).optional(),
   credentialRefs: z.array(z.string().trim().min(1).max(200)).max(100).optional(),
   managedAccountRefs: z.array(z.string().trim().min(1).max(200)).max(100).optional(),
 }).strict();
@@ -1746,7 +1751,7 @@ function sanitizeManagedAgentVersionParams(params: unknown): { agentId: string; 
   return { agentId, version };
 }
 
-function sanitizeManagedEnvironmentCreateParams(params: unknown): Any {
+export function sanitizeManagedEnvironmentCreateParams(params: unknown): Any {
   return validateInput(
     z.object({
       name: z.string().trim().min(1).max(200),
@@ -2268,14 +2273,33 @@ export async function startControlPlaneFromSettings(
       | undefined;
 
     if (settings.enabled) {
+      const posture = evaluateControlPlaneDeploymentPosture({
+        settings,
+        headless: isHeadlessMode(),
+        managedDeployment: shouldUseManagedDeploymentModeFromEnv(),
+        bindContext: getControlPlaneBindContextFromEnv(),
+        allowInsecurePublicBind: shouldAllowInsecureControlPlanePublicBindFromEnv(),
+      });
+      if (posture.status === "blocked") {
+        return {
+          ok: false,
+          error: `Control Plane deployment posture blocked startup: ${posture.reasons.join(" ")}`,
+        };
+      }
+      if (posture.status === "degraded") {
+        console.warn(`[ControlPlane] Deployment posture degraded: ${posture.reasons.join(" ")}`);
+      }
+
       const server = new ControlPlaneServer({
         port: settings.port,
         host: settings.host,
+        trustProxy: settings.trustProxy,
         token: settings.token,
         nodeToken: settings.nodeToken,
         handshakeTimeoutMs: settings.handshakeTimeoutMs,
         heartbeatIntervalMs: settings.heartbeatIntervalMs,
         maxPayloadBytes: settings.maxPayloadBytes,
+        allowedOrigins: settings.allowedOrigins,
         onEvent: (event) => {
           options.onEvent?.(event);
           if (mainWindowRef && !mainWindowRef.isDestroyed()) {
@@ -3444,12 +3468,17 @@ function registerTaskAndWorkspaceMethods(
       activeProfileId: getActiveProfileId(),
       importEnvSettings: envImport,
     };
+    const deploymentPosture = evaluateControlPlaneDeploymentPosture({
+      settings: controlPlane,
+      headless: runtime.headless,
+      managedDeployment: shouldUseManagedDeploymentModeFromEnv(),
+      bindContext: getControlPlaneBindContextFromEnv(),
+      allowInsecurePublicBind: shouldAllowInsecureControlPlanePublicBindFromEnv(),
+    });
 
     const warnings: string[] = [];
-    if (controlPlane.host === "0.0.0.0" || controlPlane.host === "::") {
-      warnings.push(
-        "Control Plane is bound to all interfaces (host=0.0.0.0/::). This is unsafe unless you have strong network controls (prefer loopback + SSH tunnel/Tailscale).",
-      );
+    if (deploymentPosture.status !== "ready") {
+      warnings.push(...deploymentPosture.reasons);
     }
     if (allWorkspaces.length === 0) {
       warnings.push(
@@ -3506,6 +3535,7 @@ function registerTaskAndWorkspaceMethods(
     return {
       runtime,
       controlPlane,
+      deploymentPosture,
       workspaces: { count: allWorkspaces.length, workspaces: workspacesForClient },
       tasks: { total: taskTotal, byStatus: tasksByStatus },
       channels: {
@@ -3639,15 +3669,34 @@ export function setupControlPlaneHandlers(
           return { ok: false, error: "No authentication token configured" };
         }
 
+        const posture = evaluateControlPlaneDeploymentPosture({
+          settings,
+          headless: isHeadlessMode(),
+          managedDeployment: shouldUseManagedDeploymentModeFromEnv(),
+          bindContext: getControlPlaneBindContextFromEnv(),
+          allowInsecurePublicBind: shouldAllowInsecureControlPlanePublicBindFromEnv(),
+        });
+        if (posture.status === "blocked") {
+          return {
+            ok: false,
+            error: `Control Plane deployment posture blocked startup: ${posture.reasons.join(" ")}`,
+          };
+        }
+        if (posture.status === "degraded") {
+          console.warn(`[ControlPlane] Deployment posture degraded: ${posture.reasons.join(" ")}`);
+        }
+
         // Create server instance
         const server = new ControlPlaneServer({
           port: settings.port,
           host: settings.host,
+          trustProxy: settings.trustProxy,
           token: settings.token,
           nodeToken: settings.nodeToken,
           handshakeTimeoutMs: settings.handshakeTimeoutMs,
           heartbeatIntervalMs: settings.heartbeatIntervalMs,
           maxPayloadBytes: settings.maxPayloadBytes,
+          allowedOrigins: settings.allowedOrigins,
           onEvent: (event) => {
             // Forward events to renderer
             if (mainWindowRef && !mainWindowRef.isDestroyed()) {
@@ -3818,11 +3867,13 @@ export function setupControlPlaneHandlers(
           controlPlaneServer = new ControlPlaneServer({
             port: settings.port,
             host: settings.host,
+            trustProxy: settings.trustProxy,
             token: settings.token,
             nodeToken: settings.nodeToken,
             handshakeTimeoutMs: settings.handshakeTimeoutMs,
             heartbeatIntervalMs: settings.heartbeatIntervalMs,
             maxPayloadBytes: settings.maxPayloadBytes,
+            allowedOrigins: settings.allowedOrigins,
             onEvent: (event) => {
               if (mainWindowRef && !mainWindowRef.isDestroyed()) {
                 mainWindowRef.webContents.send(IPC_CHANNELS.CONTROL_PLANE_EVENT, event);
@@ -3896,11 +3947,13 @@ export function setupControlPlaneHandlers(
           controlPlaneServer = new ControlPlaneServer({
             port: settings.port,
             host: settings.host,
+            trustProxy: settings.trustProxy,
             token: settings.token,
             nodeToken: settings.nodeToken,
             handshakeTimeoutMs: settings.handshakeTimeoutMs,
             heartbeatIntervalMs: settings.heartbeatIntervalMs,
             maxPayloadBytes: settings.maxPayloadBytes,
+            allowedOrigins: settings.allowedOrigins,
             onEvent: (event) => {
               if (mainWindowRef && !mainWindowRef.isDestroyed()) {
                 mainWindowRef.webContents.send(IPC_CHANNELS.CONTROL_PLANE_EVENT, event);

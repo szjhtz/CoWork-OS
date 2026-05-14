@@ -29,6 +29,19 @@ const OPENROUTER_KNOWN_TEXT_ONLY_MODEL_PATTERNS = [
 const MODEL_CATALOG_RETRY_COOLDOWN_MS = 5 * 60 * 1000;
 
 export const OPENROUTER_DEFAULT_MODEL = "anthropic/claude-3.5-sonnet";
+export const OPENROUTER_PARETO_CODE_MODEL = "openrouter/pareto-code";
+export const OPENROUTER_PARETO_CODE_NITRO_MODEL = `${OPENROUTER_PARETO_CODE_MODEL}:nitro`;
+
+function normalizeParetoMinCodingScore(value?: number): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  if (value < 0 || value > 1) return undefined;
+  return value;
+}
+
+function isParetoCodeModel(model: string): boolean {
+  const normalized = String(model || "").trim().toLowerCase();
+  return normalized.split(":")[0] === OPENROUTER_PARETO_CODE_MODEL;
+}
 
 /**
  * OpenRouter API provider implementation
@@ -39,6 +52,7 @@ export class OpenRouterProvider implements LLMProvider {
   private apiKey: string;
   private baseUrl: string;
   private defaultModel: string;
+  private paretoMinCodingScore?: number;
   private modelImageSupport = new Map<string, boolean>();
   private modelCatalogLoaded = false;
   private modelCatalogLoadPromise: Promise<void> | null = null;
@@ -55,6 +69,9 @@ export class OpenRouterProvider implements LLMProvider {
     this.apiKey = apiKey;
     this.baseUrl = config.openrouterBaseUrl || "https://openrouter.ai/api/v1";
     this.defaultModel = config.model || OPENROUTER_DEFAULT_MODEL;
+    this.paretoMinCodingScore = normalizeParetoMinCodingScore(
+      config.openrouterParetoMinCodingScore,
+    );
   }
 
   async createMessage(request: LLMRequest): Promise<LLMResponse> {
@@ -125,6 +142,7 @@ export class OpenRouterProvider implements LLMProvider {
           model: this.defaultModel,
           messages: [{ role: "user", content: "Hi" }],
           max_tokens: 10,
+          ...this.getParetoRouterPluginBody(this.defaultModel),
         }),
       });
 
@@ -317,6 +335,7 @@ export class OpenRouterProvider implements LLMProvider {
         model: params.model,
         messages: params.messages,
         max_tokens: params.maxTokens,
+        ...this.getParetoRouterPluginBody(params.model),
         ...(params.tools && params.tools.length > 0
           ? {
               tools: params.tools,
@@ -348,6 +367,28 @@ export class OpenRouterProvider implements LLMProvider {
     }
 
     return (await response.json()) as Any;
+  }
+
+  private getParetoRouterPluginBody(model: string): {
+    plugins?: Array<{ id: "pareto-router"; min_coding_score: number }>;
+  } {
+    if (!isParetoCodeModel(model)) {
+      return {};
+    }
+    const minCodingScore = normalizeParetoMinCodingScore(
+      this.paretoMinCodingScore,
+    );
+    if (typeof minCodingScore !== "number") {
+      return {};
+    }
+    return {
+      plugins: [
+        {
+          id: "pareto-router",
+          min_coding_score: minCodingScore,
+        },
+      ],
+    };
   }
 
   private hasInlineImages(messages: LLMRequest["messages"]): boolean {

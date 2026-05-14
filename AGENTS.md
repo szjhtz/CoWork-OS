@@ -114,6 +114,7 @@ When a user reports a failure, error, or unexpected behavior that likely involve
 - Use `npm run qa:eval:build` to refresh the eval corpus when curating new reliability regressions.
 - Use `npm run qa:eval:run` to replay the eval suite, and `npm run qa:reliability` for the combined eval + battery loop.
 - Use `npm run qa:eval:enforce-regressions` to enforce production-fix-to-eval coverage policy.
+- Use `npx vitest run tests/tools/shell-tools.test.ts src/electron/agent/tools/__tests__/browser-tools.test.ts src/electron/security/__tests__/network-policy.test.ts` for a focused runtime-policy regression pass (shell tools + browser tools + network policy).
 - Use `npm run qa:renderer-perf` to run the renderer performance fixture test (`src/renderer/utils/__tests__/renderer-perf-fixture.test.ts`) when validating virtualization/perf-sensitive renderer changes.
 - Use `npm run qa:timeline:backfill -- --db /absolute/path/to.db` then `npm run qa:timeline:enforce -- --db /absolute/path/to.db` when validating timeline completion telemetry changes.
 - `npm run test` and `npm run test:coverage` both run `npm run skills:check` before executing Vitest; use `npm run test:watch` for a faster local loop without the precheck gate.

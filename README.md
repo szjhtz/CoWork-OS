@@ -27,7 +27,7 @@
   <a href="docs/everything-workbench.md">Everything Workbench</a> &middot;
   <a href="docs/browser-workbench.md">Browser Workbench</a> &middot;
   <a href="docs/showcase.md">Use Cases</a> &middot;
-  <a href="docs/release-notes-0.5.44.md">Release Notes 0.5.44</a> &middot;
+  <a href="docs/release-notes-0.5.45.md">Release Notes 0.5.45</a> &middot;
   <a href="docs/integration-skill-bootstrap-lifecycle.md">Platform Updates</a> &middot;
   <a href="docs/">Documentation</a> &middot;
   <a href="CHANGELOG.md">Changelog</a> &middot;
@@ -104,7 +104,7 @@ See [Workflow Intelligence](docs/workflow-intelligence.md), [Dreaming](docs/drea
 
 ### Latest Release
 
-**`0.5.44`** expands Browser V2 and gateway/channel documentation, improves Browser Use approvals and gateway routing, adds DeepSeek and NanoGPT provider coverage, fixes active-runtime reliability issues found during log review, and hardens the release pipeline for macOS, Windows, Linux server, npm, and GitHub artifacts. Start with [Release Notes 0.5.44](docs/release-notes-0.5.44.md), then [Browser V2 Architecture](docs/browser-v2-architecture.md), [Browser Workbench](docs/browser-workbench.md), [Channel User Guides](docs/channel-user-guides.md), [Gateway User Guide](docs/gateway-user-guide.md), [Features](docs/features.md), [Getting Started](docs/getting-started.md), and the [Changelog](CHANGELOG.md).
+**`0.5.45`** adds Agent Builder, finance and legal workflow packs, channel specialization, Google Workspace Tasks/Slides support, mailbox compose/send upgrades, runtime network/sandbox policy controls, Dreaming memory curation, and `/multitask` lane fan-out. Start with [Release Notes 0.5.45](docs/release-notes-0.5.45.md), then [Managed Agents](docs/managed-agents.md), [Claude-for-Legal Workflows](docs/claude-for-legal.md), [Multitask Command](docs/multitask.md), [Dreaming](docs/dreaming.md), [Features](docs/features.md), [Getting Started](docs/getting-started.md), and the [Changelog](CHANGELOG.md).
 
 ## Quick Start
 
@@ -473,7 +473,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the full history of completed features.
 |-------|-------------|
 | [Getting Started](docs/getting-started.md) | First-time setup and usage |
 | [Beginner's Guide](docs/cowork-school.md) | Practical guide to what CoWork OS is for and which workflows to try first |
-| [Release Notes 0.5.44](docs/release-notes-0.5.44.md) | What is new in the latest release |
+| [Release Notes 0.5.45](docs/release-notes-0.5.45.md) | What is new in the latest release |
 | [Composer Mentions](docs/composer-mentions.md) | `@` autocomplete for agents, configured integrations, files, rich integration chips, and `@Inbox` routing |
 | [Message Box Shortcuts](docs/message-box-shortcuts.md) | `/` picker for deterministic app commands and skill-backed workflow shortcuts |
 | [Claude-for-Legal Workflows](docs/claude-for-legal.md) | Bundled legal practice slash commands, editable picker selection, and main-view matter intake cards |

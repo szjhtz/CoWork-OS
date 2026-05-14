@@ -7,8 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.45] - 2026-05-14
+
+### Added
+- **Release notes for 0.5.45**: see [Release Notes 0.5.45](docs/release-notes-0.5.45.md).
+- **Claude-for-Legal workflows**: documented and registered bundled legal practice plugin packs, slash commands, editable picker flows, demand-letter intake cards, management-command exclusions, and safety behavior.
+- **Finance and legal plugin packs**: added legal practice packs, finance-core packs, fund administration, KYC operations, and expanded equity research, financial analysis, investment banking, private equity, and wealth management packs.
+- **Multitask command**: added `/multitask [N] <task>` for bounded collaborative lane fan-out with lane planning, queue behavior, worktree safety checks, and synthesis through existing team orchestration.
+- **Dreaming memory curation**: added Dreaming documentation and persisted `dreaming_runs` / `dreaming_candidates` support for review-first Workflow Intelligence memory refinement.
+- **Google Workspace MCP expansion**: added Google Tasks and Slides tools, broader Workspace OAuth scopes, scope diagnostics, and destructive-action safeguards.
+- **Agent Builder and managed-agent templates**: added a plan-based managed-agent builder, finance templates, starter prompts, missing-connection reporting, and managed-session panel flows.
+- **Channel specialization**: added per-channel/chat/thread specialization records, routing, workspace/role overrides, tool restrictions, shared-memory opt-in, and settings UI.
+- **Mailbox client upgrades**: added draft attachments, send queue/retry support, Graph send paths, navigation metadata, transient sync backoff, and client settings.
+- **Network and sandbox policy controls**: added admin runtime policies for sandbox types, shell network egress, network domain evaluation, and integration-auth notifications.
+- **Renderer task-surface split**: added lazy task-surface CSS ownership, markdown/code rendering helpers, spawned-agent sidebar surfaces, renderer performance fixtures, and startup marks.
+- **New skills and registry entries**: added autobrowse, AURL, autoresearch report, imagegen frontend web, Kami, LLM Wiki, Manim video, novelist, Playwright QA, and taste-skill registry coverage.
+
 ### Changed
-- **macOS unsigned DMG distribution**: release builds continue to publish unsigned macOS DMG/ZIP artifacts without requiring a personal Developer ID certificate. macOS smoke tests explicitly allow the unsigned fallback, and user-facing docs now explain the **System Settings > Privacy & Security > Open Anyway** flow required by Gatekeeper on first launch.
+- **Managed Agents concept docs**: refreshed Managed Agents, Agents Hub, Mission Control, architecture, getting started, docs home, README, and status documentation so clicked-agent detail is a configuration surface while tests/previews open normal main-window tasks.
+- **Message-box shortcut docs**: clarified skill-backed slash picker insertion behavior, Claude-for-Legal intake cards, and multitask command usage.
+- **Google Workspace OAuth and mentions**: service-specific Google Workspace options now distinguish Gmail, Drive, Calendar, Docs, Sheets, Slides, Tasks, and Chat coverage, with reconnect guidance for missing scopes.
+- **OpenRouter Pareto Code docs and settings**: documented `openrouter/pareto-code`, Nitro routing, the `0..1` Pareto minimum coding score, routed-model usage reporting, and headless control-plane configuration.
+- **Browser Workbench responsive QA docs**: documented visible `browser_emulate` viewport presets and screenshot verification for desktop, tablet, and mobile checks.
+- **Renderer task-surface performance docs**: documented lazy `MainContent` / `RightPanel` boundaries, task-view skeletons, surface-specific CSS ownership, and `npm run qa:renderer-perf`.
+- **macOS unsigned DMG distribution**: release builds continue to publish unsigned macOS DMG/ZIP artifacts without requiring a personal Developer ID certificate, with user-facing Gatekeeper first-launch guidance.
+
+### Fixed
+- **Google Workspace destructive safeguards**: destructive or broad Tasks/Slides MCP tools require explicit confirmation.
+- **Task surface restart styling**: critical welcome/composer chrome remains in startup CSS while heavier task-surface styles lazy-load safely.
+- **Shell sandbox review fixes**: persistent shell commands keep their session lifecycle when sandboxing is not required, `requireSandboxForShell` is honored, and macOS sandbox profiles honor per-command network decisions.
+- **WhatsApp TLS handling**: non-retryable certificate trust failures pause reconnect attempts and surface actionable status errors.
+- **Mailbox resilience**: transient Gmail sync failures back off cleanly, provider action errors include connection context, and draft attachment paths are workspace-scoped.
 
 ## [0.5.44] - 2026-05-05
 
@@ -1446,6 +1475,7 @@ This release is the first recommended Windows install baseline for normal users 
 
 | Version | Date | Highlights |
 |---------|------|------------|
+| 0.5.45 | 2026-05-14 | Agent Builder, finance/legal packs, channel specialization, Google Workspace Tasks/Slides, mailbox queue upgrades, runtime policy controls, Dreaming, and multitask lanes |
 | 0.3.91 | 2026-02-24 | Digital twins, web scraping, AI playbook, build mode, knowledge graph, usage insights, infrastructure tools |
 | 0.3.90 | 2026-02-23 | Collaborative mode, multi-LLM orchestration, git worktree isolation, Anthropic streaming |
 | 0.3.89 | 2026-02-20 | Declarative plugin system, built-in packs, Sonnet 4.6, slash command autocomplete |
@@ -1473,7 +1503,8 @@ This release is the first recommended Windows install baseline for normal users 
 | 0.1.0 | 2025-01-24 | First public release with core features |
 | 0.0.1 | 2025-01-20 | Initial development setup |
 
-[Unreleased]: https://github.com/CoWork-OS/CoWork-OS/compare/v0.5.44...HEAD
+[Unreleased]: https://github.com/CoWork-OS/CoWork-OS/compare/v0.5.45...HEAD
+[0.5.45]: https://github.com/CoWork-OS/CoWork-OS/compare/v0.5.44...v0.5.45
 [0.5.44]: https://github.com/CoWork-OS/CoWork-OS/compare/v0.5.43...v0.5.44
 [0.5.43]: https://github.com/CoWork-OS/CoWork-OS/compare/v0.5.42...v0.5.43
 [0.5.42]: https://github.com/CoWork-OS/CoWork-OS/compare/v0.5.41...v0.5.42

@@ -11,6 +11,13 @@ if (!isMac) {
 
 const packagePath = join(process.cwd(), "native", "healthkit-bridge");
 const buildOutput = join(packagePath, ".build", "release", "HealthKitBridge");
+const swiftCacheRoot =
+  process.env.COWORK_HEALTHKIT_SWIFTPM_CACHE_DIR || join(packagePath, ".build", "swiftpm-cache");
+const swiftHome = process.env.COWORK_HEALTHKIT_SWIFTPM_HOME || join(swiftCacheRoot, "home");
+const swiftSharedCache = join(swiftCacheRoot, "shared-cache");
+const swiftConfigPath = join(swiftCacheRoot, "configuration");
+const swiftSecurityPath = join(swiftCacheRoot, "security");
+const swiftModuleCache = join(swiftCacheRoot, "ModuleCache");
 const destinationDir = join(process.cwd(), "build", "healthkit-bridge");
 const destination = join(destinationDir, "HealthKitBridge");
 const appBundle = join(destinationDir, "HealthKitBridge.app");
@@ -72,6 +79,19 @@ const infoPlist = `<?xml version="1.0" encoding="UTF-8"?>
 </dict>
 </plist>
 `;
+
+mkdirSync(swiftHome, { recursive: true });
+mkdirSync(swiftSharedCache, { recursive: true });
+mkdirSync(swiftConfigPath, { recursive: true });
+mkdirSync(swiftSecurityPath, { recursive: true });
+mkdirSync(swiftModuleCache, { recursive: true });
+const swiftBuildEnv = {
+  ...process.env,
+  HOME: swiftHome,
+  XDG_CACHE_HOME: process.env.XDG_CACHE_HOME || swiftCacheRoot,
+  CLANG_MODULE_CACHE_PATH: process.env.CLANG_MODULE_CACHE_PATH || swiftModuleCache,
+  SWIFT_MODULE_CACHE_PATH: process.env.SWIFT_MODULE_CACHE_PATH || swiftModuleCache,
+};
 
 function readLocalConfig(configPath) {
   if (!existsSync(configPath)) {
@@ -228,9 +248,30 @@ if (existsSync(xcodeProjectPath) && developmentTeam && useXcodeBuild) {
   console.log("[healthkit-bridge] Skipping Xcode app build; set COWORK_HEALTHKIT_USE_XCODE_BUILD=1 to enable it.");
 }
 
-const build = spawnSync("swift", ["build", "--package-path", packagePath, "-c", "release"], {
+const build = spawnSync("swift", [
+  "build",
+  "--disable-sandbox",
+  "--cache-path",
+  swiftSharedCache,
+  "--config-path",
+  swiftConfigPath,
+  "--security-path",
+  swiftSecurityPath,
+  "--manifest-cache",
+  "local",
+  "--package-path",
+  packagePath,
+  "-c",
+  "release",
+  "-Xcc",
+  `-fmodules-cache-path=${swiftModuleCache}`,
+  "-Xswiftc",
+  "-module-cache-path",
+  "-Xswiftc",
+  swiftModuleCache,
+], {
   stdio: "inherit",
-  env: process.env,
+  env: swiftBuildEnv,
 });
 
 if (build.status !== 0) {

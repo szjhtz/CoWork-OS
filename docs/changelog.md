@@ -7,8 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.45] - 2026-05-14
+
 ### Added
+- **Release notes for 0.5.45**: see [Release Notes 0.5.45](release-notes-0.5.45.md).
 - **Claude-for-Legal workflow docs**: documented bundled legal plugin-pack slash commands, editable picker selection, main-view demand/generic legal intake cards, management-command exclusions, safety behavior, and focused validation in the new Claude-for-Legal workflow guide.
+- **Finance and legal plugin packs**: added legal practice packs, finance-core packs, fund administration, KYC operations, and expanded equity research, financial analysis, investment banking, private equity, and wealth management packs.
+- **Agent Builder and finance templates**: added plan-based managed-agent creation, finance-oriented managed-agent templates, starter prompts, missing-connection reporting, and managed-session panel routing.
+- **Channel specialization**: added per-channel/chat/thread specializations with workspace and agent-role overrides, system guidance, tool restrictions, shared-memory opt-in, settings UI, and gateway routing.
+- **Mailbox compose and queue upgrades**: added draft attachments, send queue/retry support, Microsoft Graph send paths, mailbox navigation metadata, transient sync backoff, and mailbox client settings.
+- **Runtime policy controls**: added admin runtime policy fields for sandbox types, permission modes, shell network egress, network domain evaluation, integration-auth notifications, and task-event telemetry export.
 - **Browser Workbench responsive QA docs**: documented visible `browser_emulate` viewport control, desktop/tablet/mobile workbench presets, screenshot expectations, IPC/architecture changes, troubleshooting guidance, and verification steps for responsive browser testing.
 - **Multitask command docs**: documented `/multitask [N] <task>` as a bounded collaborative lane fan-out command, including syntax, lane planning, queue behavior, worktree safety, implementation landmarks, and focused validation.
 - **Google Workspace Tasks and Slides**: added first-class Google Workspace MCP coverage for Google Tasks task-list/task CRUD, completion, move, delete, clear-completed flows, plus Google Slides create/get, slide creation/deletion, text boxes, replace-all-text, and raw `batchUpdate` for advanced edits.
@@ -27,6 +35,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **Google Workspace destructive safeguards**: documented and enforced explicit confirmation for destructive or broad Tasks/Slides MCP tools, including task-list deletion, task deletion, clear completed, slide deletion, replace-all-text, and raw Slides `batchUpdate`.
 - **Task surface restart styling**: kept critical welcome/composer control chrome in startup CSS and heavier task-surface styles in `main-content.css` so the center task view does not restart with unstyled native controls while lazy chunks are still unloaded.
+- **Shell sandbox policy behavior**: persistent shell commands keep their session lifecycle when sandboxing is not required, `requireSandboxForShell` controls no-sandbox fallback, and macOS sandbox profiles honor each command's network decision.
+- **Mailbox resilience**: transient Gmail sync failures back off cleanly, provider action failures include connection context, draft attachment paths are workspace-scoped, and queued send retry behavior is surfaced.
+- **WhatsApp TLS failures**: non-retryable certificate trust failures now pause reconnect attempts and surface an actionable status instead of repeatedly reconnecting.
 
 ## [0.5.44] - 2026-05-05
 
@@ -1062,6 +1073,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 | Version | Date | Highlights |
 |---------|------|------------|
+| 0.5.45 | 2026-05-14 | Agent Builder, finance/legal packs, channel specialization, Google Workspace Tasks/Slides, mailbox queue upgrades, runtime policy controls, Dreaming, and multitask lanes |
 | 0.3.90 | 2026-02-23 | Git worktree isolation, collaborative mode, multi-LLM mode, agent comparison, task pinning, wrap-up, git tools, executor refactoring |
 | 0.3.84 | 2026-02-14 | Fixes CI installability check module resolution so release validation passes and desktop packaging can continue |
 | 0.3.83 | 2026-02-14 | Fixes release workflow shell parsing so installability validation and desktop asset publishing complete successfully |
@@ -1084,7 +1096,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | 0.1.0 | 2025-01-24 | First public release with core features |
 | 0.0.1 | 2025-01-20 | Initial development setup |
 
-[Unreleased]: https://github.com/CoWork-OS/CoWork-OS/compare/v0.5.44...HEAD
+[Unreleased]: https://github.com/CoWork-OS/CoWork-OS/compare/v0.5.45...HEAD
+[0.5.45]: https://github.com/CoWork-OS/CoWork-OS/compare/v0.5.44...v0.5.45
 [0.5.44]: https://github.com/CoWork-OS/CoWork-OS/compare/v0.5.43...v0.5.44
 [0.5.43]: https://github.com/CoWork-OS/CoWork-OS/compare/v0.5.42...v0.5.43
 [0.5.42]: https://github.com/CoWork-OS/CoWork-OS/compare/v0.5.41...v0.5.42

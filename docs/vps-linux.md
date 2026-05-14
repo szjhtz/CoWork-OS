@@ -214,6 +214,8 @@ Defaults in `docker-compose.yml`:
 - Persistent data volume mounted at `/data`
 - A persistent workspace volume mounted at `/workspace` (bootstrapped automatically). You can swap this for a host bind mount if you want CoWork OS to operate on files on the VPS.
 - Control Plane published on host loopback: `127.0.0.1:18789` (safe default)
+- The container binds the Control Plane to `0.0.0.0` only inside the container and sets `COWORK_CONTROL_PLANE_BIND_CONTEXT=container`; keep host port publishing loopback/private.
+- Compose enables `init: true`, drops Linux capabilities, and sets `no-new-privileges`.
 
 2. View the Control Plane token (printed on first startup when it’s generated):
 
@@ -431,6 +433,9 @@ Examples:
 # OpenAI
 node bin/coworkctl.js call llm.configure '{"providerType":"openai","apiKey":"sk-...","model":"gpt-4o-mini"}'
 
+# OpenRouter Pareto Code Router (score is a decimal 0..1, not a percentage)
+node bin/coworkctl.js call llm.configure '{"providerType":"openrouter","apiKey":"sk-or-...","model":"openrouter/pareto-code","settings":{"paretoMinCodingScore":0.8}}'
+
 # Ollama (remote/local URL)
 node bin/coworkctl.js call llm.configure '{"providerType":"ollama","settings":{"baseUrl":"http://127.0.0.1:11434"},"model":"gpt-oss:20b"}'
 
@@ -516,6 +521,14 @@ node bin/coworkd-node.js
 ```
 
 Keep `host=127.0.0.1` unless you *fully* understand the security implications of binding to `0.0.0.0`.
+
+Headless and managed deployments fail closed on unsafe Control Plane exposure. If `COWORK_MANAGED_DEPLOYMENT=1` or the daemon is running headless, `0.0.0.0`/`::` binds are blocked unless one of these is true:
+
+- Tailscale Serve/Funnel is enabled.
+- The runtime is a privately published container with `COWORK_CONTROL_PLANE_BIND_CONTEXT=container`.
+- You intentionally set `COWORK_CONTROL_PLANE_ALLOW_INSECURE_PUBLIC_BIND=1` as a break-glass override.
+
+Reverse-proxy deployments should keep the daemon on loopback where possible. If a trusted proxy must pass browser traffic to the Control Plane, set `COWORK_CONTROL_PLANE_ALLOWED_ORIGINS=https://your-host.example` and only set `COWORK_CONTROL_PLANE_TRUST_PROXY=1` when the proxy controls forwarded headers.
 
 ## Remote Access (SSH Tunnel)
 

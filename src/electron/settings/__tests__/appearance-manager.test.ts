@@ -6,6 +6,7 @@ import type { AppearanceSettings } from "../../../shared/types";
 
 const mocks = vi.hoisted(() => {
   let storedSettings: Partial<AppearanceSettings> | undefined;
+  let userDataDir = "";
 
   return {
     get storedSettings() {
@@ -19,8 +20,18 @@ const mocks = vi.hoisted(() => {
     }),
     repositoryLoad: vi.fn().mockImplementation(() => storedSettings),
     repositoryExists: vi.fn().mockImplementation(() => storedSettings !== undefined),
+    get userDataDir() {
+      return userDataDir;
+    },
+    set userDataDir(value: string) {
+      userDataDir = value;
+    },
   };
 });
+
+vi.mock("../../utils/user-data-dir", () => ({
+  getUserDataDir: () => mocks.userDataDir,
+}));
 
 vi.mock("../../database/SecureSettingsRepository", () => ({
   SecureSettingsRepository: {
@@ -44,10 +55,12 @@ describe("AppearanceManager developer logging settings", () => {
     vi.clearAllMocks();
     mocks.storedSettings = undefined;
     AppearanceManager.clearCache();
+    (AppearanceManager as unknown as { migrationCompleted: boolean }).migrationCompleted = false;
 
     originalCwd = process.cwd();
     originalNodeEnv = process.env.NODE_ENV;
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "cowork-appearance-"));
+    mocks.userDataDir = tempDir;
     process.chdir(tempDir);
     process.env.NODE_ENV = "development";
   });
@@ -106,5 +119,45 @@ describe("AppearanceManager developer logging settings", () => {
     expect(JSON.parse(fs.readFileSync(sidecarPath, "utf-8"))).toMatchObject({
       captureEnabled: true,
     });
+  });
+
+  it("recovers completed onboarding state from the legacy appearance file", () => {
+    fs.writeFileSync(
+      path.join(tempDir, "appearance-settings.json"),
+      JSON.stringify({
+        themeMode: "light",
+        accentColor: "orange",
+        disclaimerAccepted: true,
+        onboardingCompleted: true,
+        onboardingCompletedAt: "2026-02-01T22:32:08.325Z",
+      }),
+      "utf-8",
+    );
+    mocks.storedSettings = {
+      themeMode: "system",
+      visualTheme: "warm",
+      accentColor: "cyan",
+      disclaimerAccepted: false,
+      onboardingCompleted: false,
+    };
+
+    AppearanceManager.initialize();
+    const settings = AppearanceManager.loadSettings();
+
+    expect(settings).toMatchObject({
+      themeMode: "system",
+      accentColor: "cyan",
+      disclaimerAccepted: true,
+      onboardingCompleted: true,
+      onboardingCompletedAt: "2026-02-01T22:32:08.325Z",
+    });
+    expect(mocks.repositorySave).toHaveBeenCalledWith(
+      "appearance",
+      expect.objectContaining({
+        disclaimerAccepted: true,
+        onboardingCompleted: true,
+        onboardingCompletedAt: "2026-02-01T22:32:08.325Z",
+      }),
+    );
   });
 });

@@ -144,7 +144,9 @@ export class OpenAIProvider implements LLMProvider {
       normalized.includes("stream disconnected") ||
       normalized.includes("connection reset") ||
       normalized.includes("unexpected eof") ||
-      normalized.includes("socket hang up")
+      normalized.includes("socket hang up") ||
+      normalized.includes("fetch failed") ||
+      normalized.includes("failed to fetch")
     );
   }
 

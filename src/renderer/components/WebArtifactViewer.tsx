@@ -25,6 +25,7 @@ import { useVoiceInput } from "../hooks/useVoiceInput";
 import { ModelDropdown } from "./MainContent";
 import type { SpreadsheetTurnContext } from "./SpreadsheetArtifactViewer";
 import { WebArtifactCard } from "./WebArtifactCard";
+import "./artifact-viewers.css";
 
 type WebArtifactViewerMode = "sidebar" | "fullscreen";
 type WebSettingsTab = Any;

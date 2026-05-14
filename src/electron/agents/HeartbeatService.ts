@@ -135,6 +135,13 @@ export interface HeartbeatServiceDeps {
     signalCount: number;
     heartbeatRunId: string;
   }) => Promise<{ id?: string; outcome?: string } | null>;
+  runMemoryDreaming?: (params: {
+    workspaceId: string;
+    workspacePath: string;
+    reason: string;
+    signalCount: number;
+    heartbeatRunId: string;
+  }) => Promise<{ id?: string; status?: string; candidateCount?: number } | null>;
   captureMemory?: (
     workspaceId: string,
     taskId: string | undefined,
@@ -634,6 +641,34 @@ export class HeartbeatService extends EventEmitter {
           }
         }
 
+        const dreamingRun = await this.maybeRunMemoryDreaming({
+          workspaceId,
+          workspacePath: workspaceId ? this.deps.getWorkspacePath(workspaceId) : undefined,
+          decision,
+          signals: pulseSignals,
+          heartbeatRunId: pulseRun.id,
+        });
+        if (dreamingRun) {
+          result = {
+            ...result,
+            dreamingRunId: dreamingRun.id,
+            dreamingCandidateCount: dreamingRun.candidateCount,
+          };
+          if (coreTrace) {
+            this.deps.coreTraceService?.appendPhaseEvent(
+              coreTrace.id,
+              "decision",
+              "heartbeat.dreaming_triggered",
+              "Heartbeat triggered Dreaming from memory-drift signals.",
+              {
+                dreamingRunId: dreamingRun.id,
+                dreamingStatus: dreamingRun.status,
+                candidateCount: dreamingRun.candidateCount,
+              },
+            );
+          }
+        }
+
         if (decision.kind === "deferred") {
           if (coreTrace) {
             this.deps.coreTraceService?.appendPhaseEvent(
@@ -990,6 +1025,34 @@ export class HeartbeatService extends EventEmitter {
       });
     } catch (error) {
       console.warn("[HeartbeatService] Workflow reflection failed:", error);
+      return null;
+    }
+  }
+
+  private async maybeRunMemoryDreaming(params: {
+    workspaceId?: string;
+    workspacePath?: string;
+    decision: HeartbeatPulseDecision;
+    signals: HeartbeatSignal[];
+    heartbeatRunId: string;
+  }): Promise<{ id?: string; status?: string; candidateCount?: number } | null> {
+    if (!this.deps.runMemoryDreaming || !params.workspaceId || !params.workspacePath) return null;
+    const memorySignalCount = params.signals.filter((signal) =>
+      signal.signalFamily === "memory_drift" ||
+      signal.signalFamily === "correction_learning" ||
+      signal.signalFamily === "cross_workspace_patterns"
+    ).length;
+    if (memorySignalCount === 0) return null;
+    try {
+      return await this.deps.runMemoryDreaming({
+        workspaceId: params.workspaceId,
+        workspacePath: params.workspacePath,
+        reason: params.decision.reason,
+        signalCount: memorySignalCount,
+        heartbeatRunId: params.heartbeatRunId,
+      });
+    } catch (error) {
+      console.warn("[HeartbeatService] Dreaming failed:", error);
       return null;
     }
   }

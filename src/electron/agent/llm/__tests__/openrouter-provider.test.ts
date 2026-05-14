@@ -71,6 +71,137 @@ describe("OpenRouterProvider attribution headers", () => {
     expect((provider as Any).defaultModel).toBe(OPENROUTER_DEFAULT_MODEL);
   });
 
+  it("sends the Pareto router plugin when a min coding score is configured", async () => {
+    let capturedBody: Any = null;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        capturedBody = init?.body ? JSON.parse(String(init.body)) : null;
+        return {
+          ok: true,
+          json: vi.fn().mockResolvedValue({
+            choices: [{ message: { content: "ok" }, finish_reason: "stop" }],
+          }),
+        } as unknown as Response;
+      }),
+    );
+
+    const provider = new OpenRouterProvider({
+      type: "openrouter",
+      model: "openrouter/pareto-code",
+      openrouterApiKey: "test-key",
+      openrouterParetoMinCodingScore: 0.8,
+    });
+
+    await provider.createMessage({
+      model: "openrouter/pareto-code",
+      maxTokens: 32,
+      system: "",
+      messages: [{ role: "user", content: "write code" }],
+    });
+
+    expect(capturedBody.plugins).toEqual([
+      { id: "pareto-router", min_coding_score: 0.8 },
+    ]);
+  });
+
+  it("applies the Pareto router plugin to the Nitro variant", async () => {
+    let capturedBody: Any = null;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        capturedBody = init?.body ? JSON.parse(String(init.body)) : null;
+        return {
+          ok: true,
+          json: vi.fn().mockResolvedValue({
+            choices: [{ message: { content: "ok" }, finish_reason: "stop" }],
+          }),
+        } as unknown as Response;
+      }),
+    );
+
+    const provider = new OpenRouterProvider({
+      type: "openrouter",
+      model: "openrouter/pareto-code:nitro",
+      openrouterApiKey: "test-key",
+      openrouterParetoMinCodingScore: 0.66,
+    });
+
+    await provider.createMessage({
+      model: "openrouter/pareto-code:nitro",
+      maxTokens: 32,
+      system: "",
+      messages: [{ role: "user", content: "write code quickly" }],
+    });
+
+    expect(capturedBody.plugins).toEqual([
+      { id: "pareto-router", min_coding_score: 0.66 },
+    ]);
+  });
+
+  it("omits the Pareto router plugin when no min coding score is configured", async () => {
+    let capturedBody: Any = null;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        capturedBody = init?.body ? JSON.parse(String(init.body)) : null;
+        return {
+          ok: true,
+          json: vi.fn().mockResolvedValue({
+            choices: [{ message: { content: "ok" }, finish_reason: "stop" }],
+          }),
+        } as unknown as Response;
+      }),
+    );
+
+    const provider = new OpenRouterProvider({
+      type: "openrouter",
+      model: "openrouter/pareto-code",
+      openrouterApiKey: "test-key",
+    });
+
+    await provider.createMessage({
+      model: "openrouter/pareto-code",
+      maxTokens: 32,
+      system: "",
+      messages: [{ role: "user", content: "write code" }],
+    });
+
+    expect(capturedBody.plugins).toBeUndefined();
+  });
+
+  it("does not clamp out-of-range Pareto router scores", async () => {
+    let capturedBody: Any = null;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        capturedBody = init?.body ? JSON.parse(String(init.body)) : null;
+        return {
+          ok: true,
+          json: vi.fn().mockResolvedValue({
+            choices: [{ message: { content: "ok" }, finish_reason: "stop" }],
+          }),
+        } as unknown as Response;
+      }),
+    );
+
+    const provider = new OpenRouterProvider({
+      type: "openrouter",
+      model: "openrouter/pareto-code",
+      openrouterApiKey: "test-key",
+      openrouterParetoMinCodingScore: 80,
+    });
+
+    await provider.createMessage({
+      model: "openrouter/pareto-code",
+      maxTokens: 32,
+      system: "",
+      messages: [{ role: "user", content: "write code" }],
+    });
+
+    expect(capturedBody.plugins).toBeUndefined();
+  });
+
   it("sends attribution headers for model discovery", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,

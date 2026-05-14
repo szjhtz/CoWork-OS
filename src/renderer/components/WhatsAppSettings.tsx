@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { Lightbulb } from "lucide-react";
 import { ChannelData, ChannelUserData, SecurityMode } from "../../shared/types";
 import { ResearchChannelsSettings } from "./ResearchChannelsSettings";
+import { ChannelSpecializationSettings } from "./ChannelSpecializationSettings";
 import QRCode from "qrcode";
 
 interface WhatsAppSettingsProps {
@@ -746,6 +747,8 @@ export function WhatsAppSettings({ onStatusChange }: WhatsAppSettingsProps) {
         }}
         channelType="whatsapp"
       />
+
+      <ChannelSpecializationSettings channelId={channel.id} />
 
       <div className="settings-section">
         <h4>Security Mode</h4>

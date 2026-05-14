@@ -29,9 +29,12 @@ import {
   type UpsertManagedAccountInput,
 } from "../electron/accounts/managed-account-manager";
 import {
+  getControlPlaneBindContextFromEnv,
   getEnvSettingsImportModeFromArgsOrEnv,
   isHeadlessMode,
+  shouldAllowInsecureControlPlanePublicBindFromEnv,
   shouldImportEnvSettingsFromArgsOrEnv,
+  shouldUseManagedDeploymentModeFromEnv,
 } from "../electron/utils/runtime-mode";
 import { getUserDataDir } from "../electron/utils/user-data-dir";
 import { sanitizeTaskMessageParams } from "../electron/control-plane/sanitize";
@@ -39,6 +42,7 @@ import { registerControlPlaneCoreMethods } from "../electron/control-plane/regis
 import { registerStrategicPlannerMethods } from "../electron/control-plane/registerStrategicPlannerMethods";
 import { getStrategicPlannerService } from "../electron/control-plane/StrategicPlannerService";
 import { resolvePathWithinRoot } from "../electron/control-plane/path-containment";
+import { evaluateControlPlaneDeploymentPosture } from "../electron/control-plane/deployment-posture";
 
 export interface ControlPlaneMethodDeps {
   agentDaemon: AgentDaemon;
@@ -1400,12 +1404,17 @@ export function registerControlPlaneMethods(
       userDataDir: getUserDataDir(),
       importEnvSettings: envImport,
     };
+    const deploymentPosture = evaluateControlPlaneDeploymentPosture({
+      settings: controlPlane,
+      headless: runtime.headless,
+      managedDeployment: shouldUseManagedDeploymentModeFromEnv(),
+      bindContext: getControlPlaneBindContextFromEnv(),
+      allowInsecurePublicBind: shouldAllowInsecureControlPlanePublicBindFromEnv(),
+    });
 
     const warnings: string[] = [];
-    if (controlPlane.host === "0.0.0.0" || controlPlane.host === "::") {
-      warnings.push(
-        "Control Plane is bound to all interfaces (host=0.0.0.0/::). This is unsafe unless you have strong network controls (prefer loopback + SSH tunnel/Tailscale).",
-      );
+    if (deploymentPosture.status !== "ready") {
+      warnings.push(...deploymentPosture.reasons);
     }
     if (allWorkspaces.length === 0) {
       warnings.push(
@@ -1462,6 +1471,7 @@ export function registerControlPlaneMethods(
     return {
       runtime,
       controlPlane,
+      deploymentPosture,
       workspaces: { count: allWorkspaces.length, workspaces: workspacesForClient },
       tasks: { total: taskTotal, byStatus: tasksByStatus },
       channels: {

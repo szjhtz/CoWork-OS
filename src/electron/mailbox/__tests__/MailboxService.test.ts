@@ -226,6 +226,212 @@ describeWithSqlite("MailboxService", () => {
     expect(detail?.proposals.some((proposal) => proposal.type === "reply" && proposal.status === "suggested")).toBe(false);
   });
 
+  it("queues compose sends, preserves the undo window, and drains Gmail sends with attachments", async () => {
+    const gmailApi = await import("../../utils/gmail-api");
+    const gmailRequestSpy = vi.spyOn(gmailApi, "gmailRequest").mockImplementation(async (_settings, request) => {
+      if (request.path === "/users/me/drafts") {
+        return { data: { id: "provider-draft-1" } } as never;
+      }
+      if (request.path === "/users/me/drafts/send") {
+        return { data: { id: "provider-message-1" } } as never;
+      }
+      return { data: {} } as never;
+    });
+    const attachmentPath = path.join(tmpDir, "launch-plan.txt");
+    fs.writeFileSync(attachmentPath, "Launch plan attachment");
+    db.prepare(
+      `INSERT INTO workspaces (id, name, path, created_at, last_used_at, permissions)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "workspace-mailbox-attachments",
+      "Mailbox Attachments",
+      tmpDir,
+      now,
+      Date.now() + 1_000_000,
+      JSON.stringify({ read: true, write: true, delete: false, network: true, shell: false }),
+    );
+
+    try {
+      service.updateMailboxClientSettings({ sendDelaySeconds: 3600 });
+      const draft = await service.createMailboxDraft({
+        threadId: "gmail-thread:alpha",
+        mode: "reply",
+        bodyText: "Here is the revised launch plan.",
+      });
+      const draftWithAttachment = await service.addMailboxDraftAttachment(draft.id, {
+        path: attachmentPath,
+      });
+      expect(draftWithAttachment.attachments[0]?.filename).toBe("launch-plan.txt");
+
+      const outgoing = await service.sendMailboxDraft(draft.id);
+      const queuedAction = db
+        .prepare("SELECT id FROM mailbox_queued_actions WHERE draft_id = ? AND action_type = 'send'")
+        .get(draft.id) as { id: string };
+      expect(outgoing.status).toBe("queued");
+
+      db.prepare("UPDATE mailbox_queued_actions SET next_attempt_at = ? WHERE id = ?").run(Date.now() - 1000, queuedAction.id);
+      const result = await service.processMailboxQueue();
+      expect(result.succeeded).toBe(1);
+
+      const sentDraft = db
+        .prepare("SELECT status, provider_draft_id FROM mailbox_compose_drafts WHERE id = ?")
+        .get(draft.id) as { status: string; provider_draft_id: string | null };
+      expect(sentDraft).toEqual({ status: "sent", provider_draft_id: "provider-draft-1" });
+
+      const sentOutgoing = db
+        .prepare("SELECT status, provider_message_id FROM mailbox_outgoing_messages WHERE id = ?")
+        .get(outgoing.id) as { status: string; provider_message_id: string | null };
+      expect(sentOutgoing).toEqual({ status: "sent", provider_message_id: "provider-message-1" });
+
+      const createDraftCall = gmailRequestSpy.mock.calls.find(([, request]) => request.path === "/users/me/drafts");
+      const raw = (createDraftCall?.[1].body as Any)?.message?.raw as string;
+      const decoded = Buffer.from(raw.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
+      expect(decoded).toContain("launch-plan.txt");
+      expect(decoded).toContain(Buffer.from("Launch plan attachment").toString("base64"));
+    } finally {
+      gmailRequestSpy.mockRestore();
+    }
+  });
+
+  it("rejects compose attachments outside the draft workspace, including symlinks", async () => {
+    const draftWorkspace = path.join(tmpDir, "draft-workspace");
+    const otherWorkspace = path.join(tmpDir, "other-workspace");
+    fs.mkdirSync(draftWorkspace);
+    fs.mkdirSync(otherWorkspace);
+    const allowedAttachment = path.join(draftWorkspace, "allowed.txt");
+    const otherAttachment = path.join(otherWorkspace, "secret.txt");
+    const symlinkAttachment = path.join(draftWorkspace, "linked-secret.txt");
+    fs.writeFileSync(allowedAttachment, "ok");
+    fs.writeFileSync(otherAttachment, "secret");
+    fs.symlinkSync(otherAttachment, symlinkAttachment);
+
+    db.prepare(
+      `INSERT INTO workspaces (id, name, path, created_at, last_used_at, permissions)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "workspace-draft-attachments",
+      "Draft Attachments",
+      draftWorkspace,
+      now,
+      Date.now() + 1_000_000,
+      JSON.stringify({ read: true, write: true, delete: false, network: true, shell: false }),
+    );
+    db.prepare(
+      `INSERT INTO workspaces (id, name, path, created_at, last_used_at, permissions)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "workspace-other-attachments",
+      "Other Attachments",
+      otherWorkspace,
+      now,
+      now,
+      JSON.stringify({ read: true, write: true, delete: false, network: true, shell: false }),
+    );
+
+    const draft = await service.createMailboxDraft({
+      threadId: "gmail-thread:alpha",
+      mode: "reply",
+      bodyText: "Attachment boundary test.",
+    });
+
+    await expect(
+      service.addMailboxDraftAttachment(draft.id, { path: otherAttachment }),
+    ).rejects.toThrow(/outside the draft workspace/i);
+    await expect(
+      service.addMailboxDraftAttachment(draft.id, { path: symlinkAttachment }),
+    ).rejects.toThrow(/outside the draft workspace/i);
+
+    const updated = await service.addMailboxDraftAttachment(draft.id, {
+      path: allowedAttachment,
+    });
+    expect(updated.attachments[0]?.filename).toBe("allowed.txt");
+  });
+
+  it("can undo a queued compose send before the external provider send runs", async () => {
+    service.updateMailboxClientSettings({ sendDelaySeconds: 3600 });
+    const draft = await service.createMailboxDraft({
+      threadId: "gmail-thread:alpha",
+      mode: "reply",
+      bodyText: "Hold this send.",
+    });
+    await service.sendMailboxDraft(draft.id);
+    const queuedAction = db
+      .prepare("SELECT id FROM mailbox_queued_actions WHERE draft_id = ? AND action_type = 'send'")
+      .get(draft.id) as { id: string };
+
+    await service.undoMailboxAction(queuedAction.id);
+
+    const cancelledDraft = db
+      .prepare("SELECT status FROM mailbox_compose_drafts WHERE id = ?")
+      .get(draft.id) as { status: string };
+    const cancelledOutgoing = db
+      .prepare("SELECT status FROM mailbox_outgoing_messages WHERE draft_id = ?")
+      .get(draft.id) as { status: string };
+    const cancelledAction = db
+      .prepare("SELECT status FROM mailbox_queued_actions WHERE id = ?")
+      .get(queuedAction.id) as { status: string };
+    expect(cancelledDraft.status).toBe("discarded");
+    expect(cancelledOutgoing.status).toBe("cancelled");
+    expect(cancelledAction.status).toBe("cancelled");
+  });
+
+  it("persists client settings and retries failed queued sends", async () => {
+    const settings = service.updateMailboxClientSettings({
+      remoteContentPolicy: "block",
+      sendDelaySeconds: 0,
+      syncRecentDays: 14,
+      attachmentCache: "never_cache",
+      notifications: "priority",
+    });
+    expect(settings).toMatchObject({
+      remoteContentPolicy: "block",
+      sendDelaySeconds: 0,
+      syncRecentDays: 14,
+      attachmentCache: "never_cache",
+      notifications: "priority",
+    });
+
+    const gmailApi = await import("../../utils/gmail-api");
+    const gmailRequestSpy = vi
+      .spyOn(gmailApi, "gmailRequest")
+      .mockRejectedValueOnce(new Error("temporary provider failure") as never)
+      .mockResolvedValueOnce({ data: { id: "provider-draft-retry" } } as never)
+      .mockResolvedValueOnce({ data: { id: "provider-message-retry" } } as never);
+
+    try {
+      service.updateMailboxClientSettings({ sendDelaySeconds: 3600 });
+      const draft = await service.createMailboxDraft({
+        threadId: "gmail-thread:alpha",
+        mode: "reply",
+        bodyText: "Retry me.",
+      });
+      await service.sendMailboxDraft(draft.id);
+      const queuedAction = db
+        .prepare("SELECT id FROM mailbox_queued_actions WHERE draft_id = ? AND action_type = 'send'")
+        .get(draft.id) as { id: string };
+      db.prepare("UPDATE mailbox_queued_actions SET next_attempt_at = ? WHERE id = ?").run(Date.now() - 1000, queuedAction.id);
+
+      const failed = await service.processMailboxQueue();
+      expect(failed.failed).toBe(1);
+      const failedRow = db
+        .prepare("SELECT status, latest_error FROM mailbox_queued_actions WHERE id = ?")
+        .get(queuedAction.id) as { status: string; latest_error: string | null };
+      expect(failedRow.status).toBe("queued");
+      expect(failedRow.latest_error).toContain("temporary provider failure");
+
+      db.prepare("UPDATE mailbox_queued_actions SET next_attempt_at = ? WHERE id = ?").run(Date.now() - 1000, queuedAction.id);
+      const retried = await service.processMailboxQueue();
+      expect(retried.succeeded).toBe(1);
+      const sentOutgoing = db
+        .prepare("SELECT status, provider_message_id FROM mailbox_outgoing_messages WHERE draft_id = ?")
+        .get(draft.id) as { status: string; provider_message_id: string | null };
+      expect(sentOutgoing.status).toBe("sent");
+      expect(sentOutgoing.provider_message_id).toBe("provider-message-retry");
+    } finally {
+      gmailRequestSpy.mockRestore();
+    }
+  });
+
   it("applies cleanup locally without mutating the mail server and restores the thread when new activity arrives", async () => {
     db.prepare(
       `INSERT INTO mailbox_threads
@@ -1248,24 +1454,9 @@ describeWithSqlite("MailboxService", () => {
         protocol: "imap-smtp",
       },
     } as never);
-    const fetchRecentEmails = vi.fn().mockResolvedValue([
-      {
-        uid: 901,
-        messageId: "legacy-message-id@example.com",
-        from: { name: "Sender", address: "sender@example.com" },
-        to: [{ name: "MSN Mail", address: "user@msn.com" }],
-        cc: [],
-        subject: "Legacy IMAP thread",
-        text: "Please mark this thread as read.",
-        date: new Date(now - 5 * 60 * 1000),
-        isRead: false,
-        headers: new Map(),
-      },
-    ]);
-    const markAsRead = vi.fn().mockResolvedValue(undefined);
+    const markMessageIdAsRead = vi.fn().mockResolvedValue(901);
     const createStandardEmailClientSpy = vi.spyOn(service as Any, "createStandardEmailClient").mockReturnValue({
-      fetchRecentEmails,
-      markAsRead,
+      markMessageIdAsRead,
     } as never);
 
     try {
@@ -1280,8 +1471,7 @@ describeWithSqlite("MailboxService", () => {
         threadId: "imap-thread:legacy-mark-read",
       });
 
-      expect(fetchRecentEmails).toHaveBeenCalled();
-      expect(markAsRead).toHaveBeenCalledWith(901);
+      expect(markMessageIdAsRead).toHaveBeenCalledWith("legacy-message-id@example.com");
 
       const messageRow = db
         .prepare("SELECT is_unread, metadata_json FROM mailbox_messages WHERE id = ?")
@@ -1300,6 +1490,236 @@ describeWithSqlite("MailboxService", () => {
       createStandardEmailClientSpy.mockRestore();
       findByTypeSpy.mockRestore();
     }
+  });
+
+  it("does not mark IMAP thread read locally when the remote Outlook write fails", async () => {
+    db.prepare(
+      `INSERT INTO mailbox_accounts
+        (id, provider, address, display_name, status, capabilities_json, sync_cursor, last_synced_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "imap:user@msn.com",
+      "imap",
+      "user@msn.com",
+      "MSN Mail",
+      "connected",
+      JSON.stringify(["send", "mark_read"]),
+      null,
+      now,
+      now,
+      now,
+    );
+
+    db.prepare(
+      `INSERT INTO mailbox_threads
+        (id, account_id, provider_thread_id, provider, subject, snippet, participants_json, labels_json, category, priority_score, urgency_score, needs_reply, stale_followup, cleanup_candidate, handled, unread_count, message_count, last_message_at, last_synced_at, metadata_json, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "imap-thread:outlook-mark-read-failure",
+      "imap:user@msn.com",
+      "outlook-mark-read-failure",
+      "imap",
+      "Outlook thread",
+      "Unread Outlook message.",
+      JSON.stringify([{ email: "sender@example.com", name: "Sender" }]),
+      JSON.stringify([]),
+      "other",
+      35,
+      22,
+      0,
+      0,
+      0,
+      0,
+      1,
+      1,
+      now - 5 * 60 * 1000,
+      now,
+      JSON.stringify({}),
+      now,
+      now,
+    );
+
+    const messageRowId = randomUUID();
+    db.prepare(
+      `INSERT INTO mailbox_messages
+        (id, thread_id, provider_message_id, direction, from_name, from_email, to_json, cc_json, bcc_json, subject, snippet, body_text, received_at, is_unread, metadata_json, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      messageRowId,
+      "imap-thread:outlook-mark-read-failure",
+      "outlook-message-id@example.com",
+      "incoming",
+      "Sender",
+      "sender@example.com",
+      JSON.stringify([{ email: "user@msn.com", name: "MSN Mail" }]),
+      JSON.stringify([]),
+      JSON.stringify([]),
+      "Outlook thread",
+      "Unread Outlook message.",
+      "Please mark this thread as read.",
+      now - 5 * 60 * 1000,
+      1,
+      JSON.stringify({}),
+      now,
+      now,
+    );
+
+    const findByTypeSpy = vi.spyOn((service as Any).channelRepo, "findByType").mockReturnValue({
+      id: "email-channel",
+      enabled: true,
+      config: { protocol: "imap-smtp" },
+    } as never);
+    const markMessageIdAsRead = vi.fn().mockRejectedValue(new AggregateError([], "Unknown system error -64534"));
+    const createStandardEmailClientSpy = vi.spyOn(service as Any, "createStandardEmailClient").mockReturnValue({
+      markMessageIdAsRead,
+    } as never);
+
+    try {
+      try {
+        await service.applyAction({
+          threadId: "imap-thread:outlook-mark-read-failure",
+          type: "mark_read",
+        });
+        throw new Error("Expected mark_read to fail");
+      } catch (error) {
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error).message).toContain("Mailbox provider connection failed while applying mark_read");
+        expect((error as Any).cause).toBeUndefined();
+      }
+
+      expect(markMessageIdAsRead).toHaveBeenCalledWith("outlook-message-id@example.com");
+
+      const messageRow = db
+        .prepare("SELECT is_unread FROM mailbox_messages WHERE id = ?")
+        .get(messageRowId) as { is_unread: number };
+      expect(messageRow.is_unread).toBe(1);
+
+      const threadRow = db
+        .prepare("SELECT unread_count FROM mailbox_threads WHERE id = ?")
+        .get("imap-thread:outlook-mark-read-failure") as { unread_count: number };
+      expect(threadRow.unread_count).toBe(1);
+    } finally {
+      createStandardEmailClientSpy.mockRestore();
+      findByTypeSpy.mockRestore();
+    }
+  });
+
+  it("preserves local read state for the same IMAP message on later sync", async () => {
+    db.prepare(
+      `INSERT INTO mailbox_accounts
+        (id, provider, address, display_name, status, capabilities_json, sync_cursor, last_synced_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "imap:user@msn.com",
+      "imap",
+      "user@msn.com",
+      "MSN Mail",
+      "connected",
+      JSON.stringify(["send", "mark_read"]),
+      null,
+      now,
+      now,
+      now,
+    );
+
+    db.prepare(
+      `INSERT INTO mailbox_threads
+        (id, account_id, provider_thread_id, provider, subject, snippet, participants_json, labels_json, category, priority_score, urgency_score, needs_reply, stale_followup, cleanup_candidate, handled, unread_count, message_count, last_message_at, last_synced_at, metadata_json, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "imap-thread:local-read-preserved",
+      "imap:user@msn.com",
+      "local-read-preserved",
+      "imap",
+      "Outlook thread",
+      "Already opened locally.",
+      JSON.stringify([{ email: "sender@example.com", name: "Sender" }]),
+      JSON.stringify([]),
+      "other",
+      35,
+      22,
+      0,
+      0,
+      0,
+      1,
+      0,
+      1,
+      now - 5 * 60 * 1000,
+      now,
+      JSON.stringify({}),
+      now,
+      now,
+    );
+
+    db.prepare(
+      `INSERT INTO mailbox_messages
+        (id, thread_id, provider_message_id, direction, from_name, from_email, to_json, cc_json, bcc_json, subject, snippet, body_text, received_at, is_unread, metadata_json, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "imap-message:local-read-preserved",
+      "imap-thread:local-read-preserved",
+      "provider-message-1",
+      "incoming",
+      "Sender",
+      "sender@example.com",
+      JSON.stringify([{ email: "user@msn.com", name: "MSN Mail" }]),
+      JSON.stringify([]),
+      JSON.stringify([]),
+      "Outlook thread",
+      "Already opened locally.",
+      "This has already been opened locally.",
+      now - 5 * 60 * 1000,
+      0,
+      JSON.stringify({}),
+      now,
+      now,
+    );
+
+    (service as Any).upsertThread({
+      id: "imap-thread:local-read-preserved",
+      accountId: "imap:user@msn.com",
+      provider: "imap",
+      providerThreadId: "local-read-preserved",
+      subject: "Outlook thread",
+      snippet: "Server still says unread.",
+      participants: [{ email: "sender@example.com", name: "Sender" }],
+      labels: [],
+      category: "other",
+      priorityScore: 35,
+      urgencyScore: 22,
+      needsReply: false,
+      staleFollowup: false,
+      cleanupCandidate: false,
+      handled: false,
+      unreadCount: 1,
+      lastMessageAt: now - 4 * 60 * 1000,
+      messages: [
+        {
+          id: "imap-message:local-read-preserved",
+          providerMessageId: "provider-message-1",
+          direction: "incoming",
+          from: { email: "sender@example.com", name: "Sender" },
+          to: [{ email: "user@msn.com", name: "MSN Mail" }],
+          cc: [],
+          bcc: [],
+          subject: "Outlook thread",
+          snippet: "Server still says unread.",
+          body: "Server still says unread.",
+          receivedAt: now - 4 * 60 * 1000,
+          unread: true,
+        },
+      ],
+    });
+
+    const threadRow = db
+      .prepare("SELECT unread_count FROM mailbox_threads WHERE id = ?")
+      .get("imap-thread:local-read-preserved") as { unread_count: number };
+    const messageRow = db
+      .prepare("SELECT is_unread FROM mailbox_messages WHERE id = ?")
+      .get("imap-message:local-read-preserved") as { is_unread: number };
+
+    expect(threadRow.unread_count).toBe(0);
+    expect(messageRow.is_unread).toBe(0);
   });
 
   it("does not treat onboarding or automated mail as priority follow-up", async () => {
@@ -1785,6 +2205,67 @@ describeWithSqlite("MailboxService", () => {
     } finally {
       syncImapSpy.mockRestore();
       hasEmailChannelSpy.mockRestore();
+      syncGmailSpy.mockRestore();
+      loadSettingsSpy.mockRestore();
+    }
+  });
+
+  it("downgrades transient Gmail fetch failures without throwing mailbox sync", async () => {
+    const { GoogleWorkspaceSettingsManager } = await import("../../settings/google-workspace-manager");
+    const loadSettingsSpy = vi.spyOn(GoogleWorkspaceSettingsManager, "loadSettings").mockReturnValue({
+      enabled: true,
+      accessToken: "token",
+      refreshToken: "refresh-token",
+      tokenExpiresAt: now + 60_000,
+      timeoutMs: 20_000,
+    } as never);
+    const syncGmailSpy = vi.spyOn(service as Any, "syncGmail").mockRejectedValue(new TypeError("fetch failed"));
+
+    try {
+      const result = await service.sync(25);
+
+      expect(syncGmailSpy).toHaveBeenCalledWith(25);
+      expect(result.syncedThreads).toBe(0);
+      expect(result.accounts).toEqual([
+        expect.objectContaining({
+          id: "gmail:test@example.com",
+          provider: "gmail",
+          status: "degraded",
+        }),
+      ]);
+
+      const status = await service.getSyncStatus();
+      expect(status.statusLabel).toContain("Gmail sync temporarily unavailable");
+      expect(status.accounts[0]?.status).toBe("degraded");
+    } finally {
+      syncGmailSpy.mockRestore();
+      loadSettingsSpy.mockRestore();
+    }
+  });
+
+  it("backs off autosync after a transient Gmail fetch failure", async () => {
+    const { GoogleWorkspaceSettingsManager } = await import("../../settings/google-workspace-manager");
+    const loadSettingsSpy = vi.spyOn(GoogleWorkspaceSettingsManager, "loadSettings").mockReturnValue({
+      enabled: true,
+      accessToken: "token",
+      refreshToken: "refresh-token",
+      tokenExpiresAt: now + 60_000,
+      timeoutMs: 20_000,
+    } as never);
+    const syncGmailSpy = vi.spyOn(service as Any, "syncGmail").mockRejectedValue(new TypeError("fetch failed"));
+
+    try {
+      await expect(service.sync(25, { source: "auto" })).resolves.toMatchObject({
+        syncedThreads: 0,
+        syncedMessages: 0,
+      });
+      await expect(service.sync(25, { source: "auto" })).resolves.toMatchObject({
+        syncedThreads: 0,
+        syncedMessages: 0,
+      });
+
+      expect(syncGmailSpy).toHaveBeenCalledTimes(1);
+    } finally {
       syncGmailSpy.mockRestore();
       loadSettingsSpy.mockRestore();
     }

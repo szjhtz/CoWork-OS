@@ -46,6 +46,8 @@ This must run on Linux x64 so native runtime modules match the target. The packa
 
 The smoke test extracts the tarball, verifies required files/resources/dependencies, checks `better-sqlite3`, confirms the Electron binary exists, starts `coworkd-node` on a temporary Control Plane port, and checks `/health`.
 
+Managed deployment hardening is part of this release path: the daemon reports deployment posture through `config.get`, blocks unsafe public Control Plane binds in headless/managed mode, and the Docker/systemd templates default to loopback/private exposure with hardened process settings.
+
 ## Development Mode
 
 Run the app with hot reload:
@@ -66,6 +68,12 @@ The terminal output is unchanged. Files written under `logs/` are redacted befor
 common bearer/basic auth headers, API keys, tokens, secrets, passwords, and URL credentials are replaced with `[REDACTED]`.
 JSONL events include `timestamp`, `runId`, `process`, `stream`, `level`, `component`, `message`,
 `rawLine`, and optional `taskId`, `workspaceId`, `error`, and `metadata` fields.
+
+When Developer logging is enabled, renderer performance telemetry is sent through the
+`renderer:perfLog` IPC channel and appears in the same dev logs. Startup marks include
+`app_shell_ready`, `sidebar_ready`, `main_view_ready`, `composer_ready`, and
+`first_task_rows_ready`; task-surface logs also summarize render counts, projection timings,
+event append latency, scroll-follow writes, and long-task/frame-gap samples.
 
 Captured dev logs are local-only and cleaned up automatically. Defaults keep logs from the last 14 days,
 always retain the newest 20 runs, and cap retained `dev-*.log`/`dev-*.jsonl` files at 100 MB by deleting
@@ -100,6 +108,7 @@ npm run dev:log
 | `npm run qa:eval:build` | Build regression eval corpus from failed/partial tasks |
 | `npm run qa:eval:run` | Replay eval suite (deterministic or hooks mode) |
 | `npm run qa:eval:enforce-regressions` | Enforce production-fix -> eval-case policy |
+| `npm run qa:renderer-perf` | Replay renderer task-surface performance fixtures, including noisy failure storms |
 | `npm run qa:timeline:backfill` | Recompute timeline completion telemetry for `task_completed` timeline events |
 | `npm run qa:timeline:enforce` | Enforce timeline reliability thresholds from completion telemetry |
 | `npm run qa:reliability` | Reliability loop (`qa:eval:run` + battery script) |
@@ -114,11 +123,21 @@ The renderer startup bundle is intentionally kept separate from secondary produc
 
 Current bundle-splitting rules:
 
-- Keep the primary task workspace (`App`, `Sidebar`, `MainContent`, `RightPanel`) available on initial load.
+- Keep the app shell and `Sidebar` available on initial load. The selected task surface renders
+  `TaskViewSkeleton` immediately while the lazy `MainContent` chunk hydrates; `RightPanel` is also
+  lazy-loaded behind its own lightweight fallback.
 - Lazy-load secondary views from `App.tsx`: Settings, Browser, Home, Devices, Health, Ideas, Inbox Agent, Agents Hub, and Mission Control.
-- Keep the in-app browser workbench renderer-owned. `BrowserWorkbenchView` registers its Electron webview `webContentsId` with the main process, and browser tools route visible actions through `BrowserWorkbenchService` into `BrowserSessionManager`. Browser V2 automation should be CDP-backed through Electron `webContents.debugger` for snapshots, ref-aware actions, dialogs, diagnostics, downloads/uploads, emulation, traces, and screenshots; renderer DOM scripts are compatibility fallback, not the primary control plane. Browser Workbench IPC also carries open requests, status updates, screenshot capture, annotation handoff, diagnostics state, and cursor events for visible agent movement. Do not replace generated web artifact iframes with this live browser path; artifact previews and live website testing are separate surfaces. See [Browser Workbench](browser-workbench.md) and [Browser V2 Architecture](browser-v2-architecture.md).
-- Do not import heavyweight optional renderers at module top level when they are needed only for specific content. Mermaid is loaded from `MainContent.tsx` only when a Mermaid code block is rendered.
-- Do not import the `highlight.js` package root in renderer code. Use `highlight.js/lib/core` and register only the language grammars the UI should support eagerly.
+- Keep the in-app browser workbench renderer-owned. `BrowserWorkbenchView` registers its Electron webview `webContentsId` with the main process, and browser tools route visible actions through `BrowserWorkbenchService` into `BrowserSessionManager`. Browser V2 automation should be CDP-backed through Electron `webContents.debugger` for snapshots, ref-aware actions, dialogs, diagnostics, downloads/uploads, emulation, traces, and screenshots; renderer DOM scripts are compatibility fallback, not the primary control plane. Browser Workbench IPC also carries open requests, status updates, screenshot capture, annotation handoff, diagnostics state, cursor events for visible agent movement, and viewport events so `browser_emulate` can resize the shared webview for responsive QA. Do not replace generated web artifact iframes with this live browser path; artifact previews and live website testing are separate surfaces. See [Browser Workbench](browser-workbench.md) and [Browser V2 Architecture](browser-v2-architecture.md).
+- Keep CSS split by surface. `src/renderer/styles/index.css` is for app-wide tokens/layout plus the
+  small critical composer startup block needed before lazy chunks hydrate. `src/renderer/components/main-content.css`
+  owns the heavier task surface, welcome view, remote file picker, workspace/permission dropdowns, and
+  skills menu. Do not move task composer rules into `right-panel.css`; otherwise the center view can
+  restart with unstyled native controls before the right panel chunk loads.
+- Do not import heavyweight optional renderers at module top level when they are needed only for
+  specific content. Markdown rendering, GFM plugins, syntax highlighting, and Mermaid rendering are
+  loaded behind visible message/code surfaces instead of being eager `MainContent` dependencies.
+- Do not import the `highlight.js` package root in renderer code. Use `highlight.js/lib/core` inside
+  the lazy highlighting component and register only the language grammars the UI should support.
 - Prefer feature-level dynamic imports before adding Rollup `manualChunks`; manual chunks improve cache boundaries, but they do not remove code from startup if imports remain static.
 
 The initial optimization reduced the renderer entry chunk from about `4,842 kB` minified (`1,267 kB` gzip) to about `1,259 kB` minified (`364 kB` gzip) in `npm run build:react`. Large feature code now appears as separate chunks such as `Settings`, `mermaid.core`, PDF, KaTeX, and chart/diagram chunks.
@@ -127,10 +146,14 @@ When changing renderer imports, validate with:
 
 ```bash
 npm run build:react
+npm run qa:renderer-perf
 npm run type-check
 ```
 
-If the entry chunk grows unexpectedly, rebuild with sourcemaps and inspect the generated `dist/renderer/assets/index-*.js.map` to identify newly eager modules.
+Use `npm run build:react` output as a budget check: the main renderer entry should remain below
+`900 kB` minified, the Settings initial chunk below `700 kB` minified, and built global CSS below
+`450 kB`. If the entry chunk grows unexpectedly, rebuild with sourcemaps and inspect the generated
+`dist/renderer/assets/index-*.js.map` to identify newly eager modules.
 
 ## Task Automation UI
 
@@ -503,8 +526,11 @@ The main composer supports a grouped `/` autocomplete for deterministic app comm
 Implementation boundaries:
 
 - `src/shared/message-shortcuts.ts` owns the deterministic app command catalog and parser for `/schedule`, `/clear`, `/plan`, `/cost`, `/compact`, `/doctor`, and `/undo`.
+- `src/shared/multitask-command.ts` owns `/multitask [N] <task>` parsing because it is a task-creation command that strips its prefix before persistence and adds collaborative multitask task metadata.
 - `src/renderer/utils/message-slash-options.ts` owns picker option ordering, filtering, app-vs-skill display, optional/required parameter classification, invalid-token filtering, and keyboard selected-index clamping.
-- `src/renderer/components/MainContent.tsx` owns composer detection, selection behavior, skill parameter modal launch, optional-parameter insertion, app command task creation, and `/schedule` fresh-task precedence.
+- `src/renderer/components/MainContent.tsx` owns composer detection, selection behavior, slash-token insertion, app command task creation, legal workflow intake cards, and `/schedule` fresh-task precedence.
+- `src/renderer/utils/legal-demand-intake.ts` owns Claude-for-Legal slash detection, demand-intake prefill/serialization, generic legal workflow context serialization, and the allow/deny filter for legal commands that should show matter-context UI.
+- `src/electron/agents/MultitaskLanePlanner.ts` plans `/multitask` lanes from explicit list items, LLM JSON output, or deterministic fallback lanes.
 - `src/renderer/App.tsx` owns the safe `/clear` task-view reset. `/clear` must not delete task history or switch workspaces.
 - `src/electron/agent/skill-slash-aliases.ts` resolves plugin-pack `slashCommands` aliases to target skill IDs. Backend precedence must match picker display; enabled plugin aliases win over direct skill IDs when tokens collide.
 - `src/electron/agent/executor.ts` owns generic skill slash execution. The deterministic `/schedule` handler must continue to run before generic skill slash routing.
@@ -518,6 +544,10 @@ npx vitest run \
   src/shared/__tests__/skill-slash-commands.test.ts \
   src/electron/agent/__tests__/skill-slash-aliases.test.ts \
   src/electron/agent/__tests__/executor-schedule-slash.test.ts \
+  src/shared/__tests__/multitask-command.test.ts \
+  src/electron/agents/__tests__/MultitaskLanePlanner.test.ts \
+  src/electron/agents/__tests__/AgentTeamOrchestrator.test.ts \
+  src/renderer/utils/__tests__/legal-demand-intake.test.ts \
   src/renderer/utils/__tests__/message-slash-options.test.ts \
   src/renderer/components/__tests__/main-content-working-state.test.ts
 npm run type-check

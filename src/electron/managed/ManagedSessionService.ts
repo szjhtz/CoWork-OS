@@ -3,6 +3,9 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import type {
   AgentConfig,
+  AgentBuilderCreateRequest,
+  AgentBuilderCreateResult,
+  AgentBuilderConnectionRequirement,
   AgentRole,
   AgentWorkspaceMembership,
   AgentWorkspacePermissionSnapshot,
@@ -10,6 +13,7 @@ import type {
   AgentToolRestrictions,
   ConvertAgentRoleToManagedAgentRequest,
   ConvertAutomationProfileToManagedAgentRequest,
+  CreateAgentRoleRequest,
   CreateManagedAgentRoutineRequest,
   AudioSummaryConfig,
   AudioSummaryResult,
@@ -69,11 +73,12 @@ import {
 } from "../database/repositories";
 import { createMediaPlaybackUrl } from "../media";
 import { MCPSettingsManager } from "../mcp/settings";
+import { getBuiltinRegistryServer } from "../mcp/registry/MCPRegistryManager";
 import { ManagedAccountManager } from "../accounts/managed-account-manager";
 import { getVoiceService } from "../voice/VoiceService";
 import { ImageGenProfileService } from "./ImageGenProfileService";
 import type { RoutineService } from "../routines/service";
-import type { Routine, RoutineTrigger } from "../routines/types";
+import type { Routine, RoutineCreate, RoutineTrigger } from "../routines/types";
 import {
   ManagedAgentRepository,
   ManagedAgentVersionRepository,
@@ -94,6 +99,10 @@ function slugifyName(value: string): string {
   return normalized || "managed-agent";
 }
 
+function managedMirrorRoleBaseName(agentName: string): string {
+  return `managed-${slugifyName(agentName)}`;
+}
+
 function getStudioConfig(version: ManagedAgentVersion): ManagedAgentStudioConfig | undefined {
   const metadata = isRecord(version.metadata) ? version.metadata : undefined;
   const studio = metadata?.studio;
@@ -108,6 +117,21 @@ function roleMirrorsManagedAgent(role: AgentRole | undefined, agentId: string): 
   } catch {
     return false;
   }
+}
+
+function isAgentRoleNameUniqueConstraint(error: unknown): boolean {
+  const code = isRecord(error) && typeof error.code === "string" ? error.code : "";
+  const message =
+    error instanceof Error
+      ? error.message
+      : isRecord(error) && typeof error.message === "string"
+        ? error.message
+        : String(error);
+  return (
+    code === "SQLITE_CONSTRAINT_UNIQUE" ||
+    (code === "SQLITE_CONSTRAINT" && /UNIQUE constraint failed/i.test(message)) ||
+    /UNIQUE constraint failed:\s*agent_roles\.name/i.test(message)
+  );
 }
 
 function setStudioConfigMetadata(
@@ -179,6 +203,9 @@ function toManagedAutonomyPolicy(
 function deriveCapabilities(
   templateId: string | undefined,
 ): import("../../shared/types").AgentCapability[] {
+  if (templateId?.startsWith("finance-")) {
+    return ["analyze", "research", "document"];
+  }
   switch (templateId) {
     case "team-chat-qna":
     case "customer-reply-drafter":
@@ -300,29 +327,89 @@ function normalizeManagedSessionEventPayload(payload: unknown): Record<string, u
 export function resolveManagedAllowedMcpTools(
   environmentConfig: Pick<ManagedEnvironment["config"], "allowedMcpServerIds">,
 ): string[] {
+  return resolveManagedMcpToolAccess(environmentConfig).allowedTools;
+}
+
+export interface ManagedMcpToolAccessResolution {
+  allowedTools: string[];
+  missingConnections: AgentBuilderConnectionRequirement[];
+  hasMcpServerAllowlist: boolean;
+}
+
+function formatMissingMcpServerLabel(serverId: string): string {
+  const label = serverId
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (match) => match.toUpperCase())
+    .trim();
+  return label || serverId;
+}
+
+function buildMissingMcpServerRequirement(
+  serverId: string,
+  reason: string,
+): AgentBuilderConnectionRequirement {
+  return {
+    id: serverId,
+    kind: "mcp_server",
+    label: formatMissingMcpServerLabel(serverId),
+    status: "missing",
+    reason,
+    connectAction: {
+      type: "settings",
+      targetId: serverId,
+      label: "Open MCP settings",
+    },
+  };
+}
+
+export function resolveManagedMcpToolAccess(
+  environmentConfig: Pick<ManagedEnvironment["config"], "allowedMcpServerIds">,
+): ManagedMcpToolAccessResolution {
   const serverIds = environmentConfig.allowedMcpServerIds || [];
-  if (serverIds.length === 0) return [];
+  if (serverIds.length === 0) {
+    return {
+      allowedTools: [],
+      missingConnections: [],
+      hasMcpServerAllowlist: false,
+    };
+  }
   const settings = MCPSettingsManager.loadSettings();
   const prefix = settings.toolNamePrefix || "mcp_";
   const out = new Set<string>();
+  const missingConnections: AgentBuilderConnectionRequirement[] = [];
   for (const serverId of serverIds) {
     const server = MCPSettingsManager.getServer(serverId);
-    if (!server) {
-      throw new Error(`Managed environment references unknown MCP server: ${serverId}`);
-    }
-    if (!Array.isArray(server.tools) || server.tools.length === 0) {
-      throw new Error(
-        `Managed environment requires MCP server "${serverId}" tool metadata, but none is available`,
+    const registryServer = getBuiltinRegistryServer(serverId);
+    const tools = Array.isArray(server?.tools) && server.tools.length > 0
+      ? server.tools
+      : registryServer?.tools;
+    if (!server && !registryServer) {
+      missingConnections.push(
+        buildMissingMcpServerRequirement(
+          serverId,
+          `This managed environment references MCP server "${serverId}", but that server is not installed or available in the built-in registry.`,
+        ),
       );
+      continue;
     }
-    for (const tool of server.tools) {
+    if (!Array.isArray(tools) || tools.length === 0) {
+      missingConnections.push(
+        buildMissingMcpServerRequirement(
+          serverId,
+          `This managed environment references MCP server "${serverId}", but no tool metadata is available yet.`,
+        ),
+      );
+      continue;
+    }
+    for (const tool of tools) {
       if (tool?.name) out.add(`${prefix}${tool.name}`);
     }
   }
-  if (out.size === 0) {
-    throw new Error("Managed environment MCP allowlist resolved to zero tools");
-  }
-  return Array.from(out);
+  return {
+    allowedTools: Array.from(out),
+    missingConnections,
+    hasMcpServerAllowlist: true,
+  };
 }
 
 function cloneWorkspaceForManagedEnvironment(
@@ -424,6 +511,7 @@ function isToolEnabledForManagedEnvironment(
   tool: LLMTool,
   environment: ManagedEnvironment,
   allowedMcpTools: Set<string>,
+  hasMcpServerAllowlist: boolean,
 ): boolean {
   if (environment.config.enableBrowser === false && tool.name.startsWith("browser_")) {
     return false;
@@ -431,7 +519,7 @@ function isToolEnabledForManagedEnvironment(
   if (!environment.config.enableComputerUse && isComputerUseToolName(tool.name)) {
     return false;
   }
-  if (tool.name.startsWith("mcp_") && allowedMcpTools.size > 0 && !allowedMcpTools.has(tool.name)) {
+  if (tool.name.startsWith("mcp_") && hasMcpServerAllowlist && !allowedMcpTools.has(tool.name)) {
     return false;
   }
   const allowedFamilies = environment.config.allowedToolFamilies || [];
@@ -610,6 +698,16 @@ export class ManagedSessionService {
     this.agentRoleRepo = new AgentRoleRepository(db);
     this.automationProfileRepo = new AutomationProfileRepository(db);
     this.imageGenProfileService = new ImageGenProfileService();
+  }
+
+  private buildReviewCheckpoints(studio?: ManagedAgentStudioConfig): string[] {
+    const expected = new Set(studio?.expectedArtifacts || []);
+    const checkpoints = ["source-ledger ready"];
+    if (expected.has("xlsx")) checkpoints.push("model built");
+    if (expected.has("pptx")) checkpoints.push("deck generated");
+    if (expected.has("docx") || expected.has("pdf")) checkpoints.push("report generated");
+    if (expected.has("json")) checkpoints.push("artifact manifest ready");
+    return Array.from(new Set(checkpoints));
   }
 
   private ensureGovernanceSchema(): void {
@@ -1004,6 +1102,114 @@ export class ManagedSessionService {
     };
   }
 
+  private toManagedRoutinePayload(
+    input: {
+      name?: string;
+      description?: string;
+      enabled?: boolean;
+      workspaceId: string;
+      environmentId: string;
+      trigger: ManagedAgentRoutineTriggerConfig;
+      instructions: string;
+    },
+    agentId: string,
+  ): RoutineCreate {
+    const triggerId = input.trigger.id || `managed:${input.trigger.type}:${Date.now()}`;
+    let trigger: RoutineTrigger;
+    switch (input.trigger.type) {
+      case "schedule":
+        trigger = {
+          id: triggerId,
+          type: "schedule",
+          enabled: input.trigger.enabled !== false,
+          schedule: {
+            kind: "every",
+            everyMs: Math.max(15, input.trigger.cadenceMinutes || 60) * 60_000,
+          },
+        };
+        break;
+      case "api":
+        trigger = {
+          id: triggerId,
+          type: "api",
+          enabled: input.trigger.enabled !== false,
+          path: input.trigger.path || `/agents/${agentId}`,
+        };
+        break;
+      case "channel_event":
+        trigger = {
+          id: triggerId,
+          type: "channel_event",
+          enabled: input.trigger.enabled !== false,
+          channelType: input.trigger.channelType,
+          chatId: input.trigger.chatId,
+          textContains: input.trigger.textContains,
+          senderContains: input.trigger.senderContains,
+        };
+        break;
+      case "mailbox_event":
+        trigger = {
+          id: triggerId,
+          type: "mailbox_event",
+          enabled: input.trigger.enabled !== false,
+          eventType: input.trigger.eventType,
+          subjectContains: input.trigger.subjectContains,
+          provider: input.trigger.provider,
+          labelContains: input.trigger.labelContains,
+        };
+        break;
+      case "github_event":
+        trigger = {
+          id: triggerId,
+          type: "github_event",
+          enabled: input.trigger.enabled !== false,
+          eventName: input.trigger.eventName,
+          repository: input.trigger.repository,
+          action: input.trigger.action,
+          ref: input.trigger.ref,
+        };
+        break;
+      case "connector_event":
+        trigger = {
+          id: triggerId,
+          type: "connector_event",
+          enabled: input.trigger.enabled !== false,
+          connectorId: input.trigger.connectorId || "connector",
+          changeType: input.trigger.changeType,
+          resourceUriContains: input.trigger.resourceUriContains,
+        };
+        break;
+      case "manual":
+      default:
+        trigger = {
+          id: triggerId,
+          type: "manual",
+          enabled: input.trigger.enabled !== false,
+        };
+        break;
+    }
+    return {
+      name: input.name || "Managed agent routine",
+      description: input.description,
+      enabled: input.enabled ?? true,
+      workspaceId: input.workspaceId,
+      instructions: input.instructions,
+      executionTarget: {
+        kind: "managed_environment",
+        managedEnvironmentId: input.environmentId,
+      },
+      contextBindings: {
+        metadata: {
+          managedAgentId: agentId,
+        },
+      },
+      triggers: [trigger],
+      outputs: [{ kind: "task_only" }],
+      approvalPolicy: { mode: "inherit" },
+      connectorPolicy: { mode: "prefer", connectorIds: [] },
+    };
+  }
+
   private updateCurrentStudioConfig(
     agentId: string,
     mutate: (studio: ManagedAgentStudioConfig, version: ManagedAgentVersion) => ManagedAgentStudioConfig,
@@ -1107,7 +1313,8 @@ export class ManagedSessionService {
     const autoApproveTypes = new Set<ApprovalType>(
       (agentConfig.autoApproveTypes || []).filter((entry): entry is ApprovalType => Boolean(entry)),
     );
-    const allowedMcpTools = new Set<string>(this.resolveAllowedMcpTools(environment));
+    const mcpToolAccess = this.resolveMcpToolAccess(environment);
+    const allowedMcpTools = new Set<string>(mcpToolAccess.allowedTools);
     const buildSurfaceCatalog = (gatewayContext?: GatewayContextType) => {
       const registry = new ToolRegistry(
         managedWorkspace,
@@ -1118,7 +1325,14 @@ export class ManagedSessionService {
       );
       const tools = registry
         .getTools()
-        .filter((tool) => isToolEnabledForManagedEnvironment(tool, environment, allowedMcpTools));
+        .filter((tool) =>
+          isToolEnabledForManagedEnvironment(
+            tool,
+            environment,
+            allowedMcpTools,
+            mcpToolAccess.hasMcpServerAllowlist,
+          )
+        );
       return tools.map((tool) =>
         mapRuntimeToolCatalogEntry(
           tool,
@@ -1134,6 +1348,9 @@ export class ManagedSessionService {
       environmentId,
       chatgpt: buildSurfaceCatalog(),
       slack: buildSurfaceCatalog("group"),
+      ...(mcpToolAccess.missingConnections.length
+        ? { missingConnections: mcpToolAccess.missingConnections }
+        : {}),
     };
   }
 
@@ -1185,6 +1402,165 @@ export class ManagedSessionService {
       });
     }
     return { agent, version: syncedVersion };
+  }
+
+  async createAgentFromBuilderPlan(
+    request: AgentBuilderCreateRequest,
+  ): Promise<AgentBuilderCreateResult> {
+    const plan = request.plan;
+    if (!plan?.name || !plan.instructions) {
+      throw new Error("A valid builder plan is required");
+    }
+    const unresolvedRequirement = (plan.selectionRequirements || []).find(
+      (requirement) => requirement.required && !requirement.selectedOptionId,
+    );
+    if (unresolvedRequirement) {
+      throw new Error(`${unresolvedRequirement.title || "Builder choice"} must be selected before creating an agent`);
+    }
+    const workspace = request.workspaceId
+      ? this.workspaceRepo.findById(request.workspaceId)
+      : this.workspaceRepo.findAll()[0];
+    if (!workspace) {
+      throw new Error("At least one workspace is required before creating an agent");
+    }
+
+    const enabledMcpServers = new Set(
+      MCPSettingsManager.getSettingsForDisplay()
+        .servers.filter((server) => server.enabled)
+        .map((server) => server.id),
+    );
+    const selectedMcpServers = Array.from(
+      new Set((plan.selectedMcpServers || []).filter((serverId) => enabledMcpServers.has(serverId))),
+    );
+    const selectedToolFamilies = Array.from(new Set(plan.selectedToolFamilies || []));
+    const missingConnections =
+      plan.missingConnections?.length > 0
+        ? plan.missingConnections
+        : plan.recommendedMissingIntegrations || [];
+    const approvalPolicy: ManagedAgentApprovalPolicy = {
+      ...plan.approvalPolicy,
+      autoApproveReadOnly: true,
+      requireApprovalFor:
+        plan.approvalPolicy?.requireApprovalFor?.length
+          ? plan.approvalPolicy.requireApprovalFor
+          : [
+              "send email",
+              "post message",
+              "edit spreadsheet",
+              "create calendar event",
+              "file external ticket",
+            ],
+    };
+    const scheduleConfig: ManagedAgentScheduleConfig =
+      plan.scheduleConfig || { enabled: false, mode: "manual" };
+
+    const environment = this.createEnvironment({
+      name: `${plan.name} Environment`,
+      config: {
+        workspaceId: workspace.id,
+        enableShell: plan.enableShell,
+        enableBrowser: plan.enableBrowser !== false,
+        enableComputerUse: plan.enableComputerUse,
+        allowedMcpServerIds: selectedMcpServers,
+        skillPackIds: plan.selectedSkills || [],
+        allowedToolFamilies: selectedToolFamilies,
+      },
+    });
+    const studio: ManagedAgentStudioConfig = {
+      templateId: plan.templateId,
+      workflowBrief: plan.workflowBrief || plan.sourcePrompt,
+      appearance: {
+        icon: plan.icon,
+        color: plan.color,
+      },
+      subtitle: plan.subtitle || "Private in CoWork OS",
+      instructions: {
+        operatingNotes: plan.operatingNotes,
+      },
+      starterPrompts: plan.starterPrompts || [],
+      builderPlan: plan,
+      missingConnections,
+      skills: plan.selectedSkills || [],
+      apps: {
+        mcpServers: selectedMcpServers,
+        allowedToolFamilies: selectedToolFamilies,
+      },
+      memoryConfig: plan.memoryConfig || { mode: "default", sources: ["workspace"] },
+      channelTargets: [],
+      scheduleConfig,
+      approvalPolicy,
+      sharing: {
+        visibility: "private",
+        ownerLabel: "You",
+      },
+      deployment: {
+        surfaces: ["chatgpt"],
+      },
+      defaultEnvironmentId: environment.id,
+      requiredConnectorIds: missingConnections
+        .filter((connection) => connection.kind !== "channel")
+        .map((connection) => connection.id),
+    };
+
+    const created = this.createAgent({
+      name: plan.name,
+      description: plan.description,
+      systemPrompt: plan.instructions,
+      executionMode: "solo",
+      skills: plan.selectedSkills || [],
+      mcpServers: selectedMcpServers,
+      runtimeDefaults: {
+        autonomousMode: true,
+        allowUserInput: true,
+        webSearchMode: "live",
+      },
+      metadata: { studio },
+    });
+
+    const routinePlans =
+      plan.routines?.length > 0
+        ? plan.routines
+        : [
+            {
+              name: `${plan.name} manual run`,
+              description: plan.workflowBrief || plan.sourcePrompt,
+              enabled: true,
+              trigger: { type: "manual" as const, enabled: true },
+            },
+          ];
+    const routineDrafts: CreateManagedAgentRoutineRequest[] = routinePlans
+      .filter((routine) => routine.trigger.type !== "schedule" || scheduleConfig.enabled)
+      .map((routine) => ({
+        agentId: created.agent.id,
+        name: routine.name,
+        description: routine.description,
+        enabled: routine.enabled,
+        trigger: routine.trigger,
+      }));
+
+    const routineService = this.options.getRoutineService?.() || null;
+    if (routineService) {
+      for (const draft of routineDrafts) {
+        const prepared = this.buildManagedAgentRoutineDefinition(draft);
+        await routineService.create(this.toManagedRoutinePayload(prepared, draft.agentId));
+      }
+      this.syncManagedAgentRoutineRefs(created.agent.id);
+    }
+
+    if (request.activate !== false) {
+      await this.publishAgent(created.agent.id);
+    }
+
+    const detail = this.getAgent(created.agent.id);
+    if (!detail?.currentVersion) {
+      throw new Error(`Managed agent version missing: ${created.agent.id}@${created.agent.currentVersion}`);
+    }
+    return {
+      agent: detail.agent,
+      version: detail.currentVersion,
+      environment,
+      routines: this.listManagedAgentRoutines(created.agent.id),
+    };
   }
 
   updateAgent(
@@ -1408,9 +1784,28 @@ export class ManagedSessionService {
     this.assertWorkspacePermission(environment.config.workspaceId, "canRunAgents");
 
     const now = Date.now();
+    const surface = input.surface || "runtime";
+    const backingTaskSource: Task["source"] =
+      surface === "agent_panel" ? "managed_agent_panel" : "manual";
     const userPrompt = this.materializeContent(input.initialEvent?.content || []);
-    const effectivePrompt = this.composeRootPrompt(version, userPrompt);
     const baseAgentConfig = this.buildAgentConfig(environment, version);
+    const missingConnections = this.resolveMcpToolAccess(environment).missingConnections;
+    const effectivePrompt = this.composeRootPrompt(version, userPrompt, missingConnections);
+    const studio = getStudioConfig(version);
+    const sessionTemplatePayload = {
+      selectedTemplate: studio?.templateId,
+      requiredPackIds: studio?.requiredPackIds || [],
+      requiredConnectorIds: studio?.requiredConnectorIds || [],
+      artifactManifest: {
+        expectedArtifacts: studio?.expectedArtifacts || [],
+      },
+      reviewCheckpoints: this.buildReviewCheckpoints(studio),
+      approvalPauses: studio?.approvalPolicy?.requireApprovalFor || [],
+      missingConnections: [
+        ...(studio?.missingConnections || []),
+        ...missingConnections,
+      ],
+    };
 
     if (version.executionMode === "team") {
       const task = this.taskRepo.create({
@@ -1419,6 +1814,7 @@ export class ManagedSessionService {
         rawPrompt: effectivePrompt,
         userPrompt: userPrompt || effectivePrompt,
         status: "pending",
+        source: backingTaskSource,
         workspaceId: environment.config.workspaceId,
         agentConfig: baseAgentConfig,
       });
@@ -1431,6 +1827,7 @@ export class ManagedSessionService {
         environmentId: environment.id,
         title: input.title,
         status: "running",
+        surface,
         workspaceId: environment.config.workspaceId,
         backingTaskId: task.id,
         backingTeamRunId: teamRunId,
@@ -1447,6 +1844,8 @@ export class ManagedSessionService {
           environmentId: environment.id,
           backingTaskId: task.id,
           backingTeamRunId: teamRunId,
+          surface,
+          ...sessionTemplatePayload,
         },
       });
       if (input.initialEvent?.type === "user.message") {
@@ -1487,6 +1886,7 @@ export class ManagedSessionService {
       rawPrompt: effectivePrompt,
       userPrompt: userPrompt || effectivePrompt,
       status: "pending",
+      source: backingTaskSource,
       workspaceId: environment.config.workspaceId,
       agentConfig: baseAgentConfig,
     });
@@ -1498,6 +1898,7 @@ export class ManagedSessionService {
       environmentId: environment.id,
       title: input.title,
       status: "pending",
+      surface,
       workspaceId: environment.config.workspaceId,
       backingTaskId: task.id,
       latestSummary: undefined,
@@ -1511,6 +1912,8 @@ export class ManagedSessionService {
         agentVersion: version.version,
         environmentId: environment.id,
         backingTaskId: task.id,
+        surface,
+        ...sessionTemplatePayload,
       },
     });
     if (input.initialEvent?.type === "user.message") {
@@ -1529,8 +1932,10 @@ export class ManagedSessionService {
   listSessions(params?: {
     limit?: number;
     offset?: number;
+    agentId?: string;
     workspaceId?: string;
     status?: ManagedSession["status"];
+    surface?: ManagedSession["surface"];
   }): ManagedSession[] {
     return this.managedSessionRepo.list(params).map((session) => {
       if (
@@ -1585,6 +1990,13 @@ export class ManagedSessionService {
     const resumed = await this.agentDaemon.resumeTask(session.backingTaskId);
     const refreshed = this.refreshSession(sessionId);
     return { resumed, session: refreshed };
+  }
+
+  async sendUserMessage(
+    sessionId: string,
+    content: ManagedSessionInputContent[],
+  ): Promise<ManagedSession | undefined> {
+    return this.sendEvent(sessionId, { type: "user.message", content });
   }
 
   async sendEvent(
@@ -1723,7 +2135,13 @@ export class ManagedSessionService {
   getAgentInsights(agentId: string): ManagedAgentInsights {
     const workspaceId = this.resolveWorkspaceIdForAgent(agentId);
     if (workspaceId) this.assertWorkspacePermission(workspaceId, "canViewAgents");
-    const sessions = this.listSessions({ limit: 500 }).filter((session) => session.agentId === agentId);
+    const sessions: ManagedSession[] = [];
+    const pageSize = 500;
+    for (let offset = 0; ; offset += pageSize) {
+      const page = this.listSessions({ limit: pageSize, offset });
+      sessions.push(...page.filter((session) => session.agentId === agentId));
+      if (page.length < pageSize) break;
+    }
     const completedDurations = sessions
       .filter((session) => session.completedAt && session.startedAt && session.completedAt >= session.startedAt)
       .map((session) => (session.completedAt || 0) - (session.startedAt || 0));
@@ -1797,7 +2215,7 @@ export class ManagedSessionService {
     return {
       agentId,
       totalRuns: sessions.length,
-      uniqueUsers: userKeys.size > 0 ? userKeys.size : sessions.length > 0 ? 1 : 0,
+      uniqueUsers: userKeys.size,
       successCount: sessions.filter((session) => session.status === "completed").length,
       failureCount: sessions.filter((session) => session.status === "failed").length,
       cancelledCount: sessions.filter((session) => session.status === "cancelled").length,
@@ -2203,7 +2621,11 @@ export class ManagedSessionService {
     }
   }
 
-  private composeRootPrompt(version: ManagedAgentVersion, userPrompt: string): string {
+  private composeRootPrompt(
+    version: ManagedAgentVersion,
+    userPrompt: string,
+    missingConnections: AgentBuilderConnectionRequirement[] = [],
+  ): string {
     const promptParts = [version.systemPrompt.trim()];
     const studio = getStudioConfig(version);
     if (studio?.instructions?.operatingNotes?.trim()) {
@@ -2217,6 +2639,18 @@ export class ManagedSessionService {
       promptParts.push("", "Memory policy:", "Avoid relying on long-term memory tools unless the user re-enables them.");
     } else if (studio?.memoryConfig?.sources?.length) {
       promptParts.push("", "Preferred memory sources:", ...studio.memoryConfig.sources.map((source) => `- ${source}`));
+    }
+    const allMissingConnections = [
+      ...(studio?.missingConnections || []),
+      ...missingConnections,
+    ];
+    if (allMissingConnections.length > 0) {
+      promptParts.push(
+        "",
+        "Unavailable integrations:",
+        ...allMissingConnections.map((connection) => `- ${connection.label}: ${connection.reason}`),
+        "Continue with available context and clearly state when one of these unavailable integrations blocks a requested step.",
+      );
     }
     if (userPrompt.trim()) {
       promptParts.push("", "User request:", userPrompt.trim());
@@ -2286,9 +2720,9 @@ export class ManagedSessionService {
     }
 
     const allowedTools = new Set<string>(runtimeDefaults.allowedTools || []);
-    const allowedMcpTools = this.resolveAllowedMcpTools(environment);
-    for (const tool of allowedMcpTools) allowedTools.add(tool);
-    if (allowedTools.size > 0) {
+    const mcpToolAccess = this.resolveMcpToolAccess(environment);
+    for (const tool of mcpToolAccess.allowedTools) allowedTools.add(tool);
+    if (allowedTools.size > 0 || mcpToolAccess.hasMcpServerAllowlist) {
       agentConfig.allowedTools = Array.from(allowedTools);
     }
     if (version.executionMode === "team") {
@@ -2300,8 +2734,8 @@ export class ManagedSessionService {
     return agentConfig;
   }
 
-  private resolveAllowedMcpTools(environment: ManagedEnvironment): string[] {
-    return resolveManagedAllowedMcpTools(environment.config);
+  private resolveMcpToolAccess(environment: ManagedEnvironment): ManagedMcpToolAccessResolution {
+    return resolveManagedMcpToolAccess(environment.config);
   }
 
   private validateManagedAccountRefs(managedAccountRefs?: string[]): void {
@@ -2421,7 +2855,7 @@ export class ManagedSessionService {
       (roleId ? this.agentRoleRepo.findById(roleId) : undefined) ||
       this.agentRoleRepo.findAll(true).find((role) => roleMirrorsManagedAgent(role, agent.id)) ||
       (() => {
-        const namedRole = this.agentRoleRepo.findByName(`managed-${slugifyName(agent.name)}`);
+        const namedRole = this.agentRoleRepo.findByName(managedMirrorRoleBaseName(agent.name));
         return roleMirrorsManagedAgent(namedRole, agent.id) ? namedRole : undefined;
       })();
     const heartbeatPolicy =
@@ -2460,8 +2894,8 @@ export class ManagedSessionService {
         }),
       });
     } else {
-      mirroredRole = this.agentRoleRepo.create({
-        name: `managed-${slugifyName(agent.name)}`,
+      mirroredRole = this.createLegacyMirrorRole(agent, {
+        name: managedMirrorRoleBaseName(agent.name),
         displayName: agent.name,
         description: agent.description,
         roleKind: "custom",
@@ -2531,6 +2965,76 @@ export class ManagedSessionService {
         setStudioConfigMetadata(version.metadata, nextStudio),
       ) || version
     );
+  }
+
+  private createLegacyMirrorRole(
+    agent: ManagedAgent,
+    request: CreateAgentRoleRequest,
+  ): AgentRole {
+    const reservedNames = new Set<string>();
+    let lastConstraintError: unknown;
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const name = this.allocateManagedMirrorRoleName(agent, reservedNames);
+      try {
+        return this.agentRoleRepo.create({
+          ...request,
+          name,
+        });
+      } catch (error) {
+        if (!isAgentRoleNameUniqueConstraint(error)) {
+          throw error;
+        }
+        const existingRole = this.agentRoleRepo.findByName(name);
+        if (existingRole && roleMirrorsManagedAgent(existingRole, agent.id)) {
+          return existingRole;
+        }
+        reservedNames.add(name);
+        lastConstraintError = error;
+      }
+    }
+
+    const detail =
+      lastConstraintError instanceof Error ? `: ${lastConstraintError.message}` : "";
+    throw new Error(
+      `Unable to allocate legacy mirror role name for managed agent: ${agent.name}${detail}`,
+    );
+  }
+
+  private allocateManagedMirrorRoleName(
+    agent: ManagedAgent,
+    reservedNames: Set<string> = new Set(),
+  ): string {
+    const baseName = managedMirrorRoleBaseName(agent.name);
+    const existingBase = this.agentRoleRepo.findByName(baseName);
+    if (
+      !reservedNames.has(baseName) &&
+      (!existingBase || roleMirrorsManagedAgent(existingBase, agent.id))
+    ) {
+      return baseName;
+    }
+
+    const suffix = agent.id.replace(/[^a-zA-Z0-9]/g, "").slice(0, 8) || "mirror";
+    const candidate = `${baseName}-${suffix}`;
+    const existingCandidate = this.agentRoleRepo.findByName(candidate);
+    if (
+      !reservedNames.has(candidate) &&
+      (!existingCandidate || roleMirrorsManagedAgent(existingCandidate, agent.id))
+    ) {
+      return candidate;
+    }
+
+    for (let index = 2; index < 1000; index += 1) {
+      const indexedCandidate = `${candidate}-${index}`;
+      const existing = this.agentRoleRepo.findByName(indexedCandidate);
+      if (
+        !reservedNames.has(indexedCandidate) &&
+        (!existing || roleMirrorsManagedAgent(existing, agent.id))
+      ) {
+        return indexedCandidate;
+      }
+    }
+    throw new Error(`Unable to allocate legacy mirror role name for managed agent: ${agent.name}`);
   }
 
   private syncSlackTargets(

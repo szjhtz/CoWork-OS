@@ -16,6 +16,7 @@ Discord is best for team, community, and engineering workflows where native slas
 - DMs and server channel messages.
 - Guild allowlists.
 - Thread-aware routing where available.
+- Channel and thread specialization for workspace, agent role, guidance, and tool policy.
 - Buttons, select menus, embeds, and approval controls.
 - Live Discord message fetch and attachment download tools.
 - Optional supervisor mode.
@@ -37,6 +38,7 @@ Use `/task prompt:...` when you want Discord's native slash command UI to start 
 ## Best Practices
 
 - Use threads for focused task discussions.
+- Use thread specialization for incident, launch, or project threads that should route to a dedicated workspace or role.
 - Restrict guild IDs when the bot is installed in multiple servers.
 - Use DMs for private approvals.
 - Keep supervisor mode in dedicated coordination channels.
@@ -53,5 +55,6 @@ Use `/task prompt:...` when you want Discord's native slash command UI to start 
 ## Related Docs
 
 - [Channel Integrations](../channels.md#discord)
+- [Channel Specialization](../channels.md#channel-specialization)
 - [Supervisor Mode on Discord](../supervisor-mode-discord.md)
 - [Gateway User Guide](../gateway-user-guide.md)

@@ -51,6 +51,7 @@ import { AgentMailAdminService } from "../agentmail/AgentMailAdminService";
 import { AgentMailRealtimeService } from "../agentmail/AgentMailRealtimeService";
 import { ManagedSessionService } from "../managed/ManagedSessionService";
 import { AgentTemplateService } from "../managed/AgentTemplateService";
+import { AgentBuilderService, type AgentBuilderInventory } from "../managed/AgentBuilderService";
 import { ImageGenProfileService } from "../managed/ImageGenProfileService";
 import type { RoutineService } from "../routines/service";
 import type { RoutineCreate, RoutineTrigger } from "../routines/types";
@@ -65,6 +66,7 @@ import {
   SkillRepository,
   LLMModelRepository,
   WorkspacePermissionRuleRepository,
+  ChannelSpecializationRepository,
 } from "../database/repositories";
 import { AgentRoleRepository } from "../agents/AgentRoleRepository";
 import { ActivityRepository } from "../activity/ActivityRepository";
@@ -76,6 +78,7 @@ import { AgentTeamRunRepository } from "../agents/AgentTeamRunRepository";
 import { AgentTeamItemRepository } from "../agents/AgentTeamItemRepository";
 import { AgentTeamThoughtRepository } from "../agents/AgentTeamThoughtRepository";
 import { AgentTeamOrchestrator } from "../agents/AgentTeamOrchestrator";
+import { MultitaskLanePlanner } from "../agents/MultitaskLanePlanner";
 import { formatAgentRoleDisplay } from "../agents/agent-role-display";
 import { selectAgentsForTask } from "../agents/capabilityMatcher";
 import { TaskLabelRepository } from "../database/TaskLabelRepository";
@@ -189,6 +192,9 @@ import {
   GrantAccessSchema,
   RevokeAccessSchema,
   GeneratePairingSchema,
+  ChannelSpecializationCreateSchema,
+  ChannelSpecializationUpdateSchema,
+  ChannelSpecializationResolveSchema,
   GuardrailSettingsSchema,
   InfraSettingsSchema,
   EmailChannelConfigSchema,
@@ -277,6 +283,7 @@ import {
   NotificationOverlayManager,
   NativeNotificationCenter,
 } from "../notifications";
+import { setIntegrationAuthNotificationServiceProvider } from "../notifications/integration-auth";
 import type {
   NotificationType,
   HooksSettingsData,
@@ -448,6 +455,14 @@ const MemoryObservationRebuildSchema = z.object({
   force: z.boolean().optional(),
 }).strict();
 const logger = createLogger("IPC");
+function stringifyRendererPerfPayload(payload: unknown): string {
+  if (typeof payload === "string") return payload;
+  try {
+    return JSON.stringify(payload);
+  } catch {
+    return String(payload);
+  }
+}
 const ProfileNameSchema = z.string().trim().min(1).max(80);
 const VIDEO_PREVIEW_CACHE_DIR = path.join(
   os.tmpdir(),
@@ -1091,6 +1106,35 @@ function assertTrustedMailboxSender(event: Any): void {
   }
 }
 
+function looksLikeCodeMultitaskRequest(text: string): boolean {
+  const codeCue = new RegExp(
+    "\\b(code|repo|repository|bug|fix|implement|refactor|test|build|lint|" +
+      "typescript|javascript|react|electron|api|database|migration)\\b",
+    "i",
+  );
+  return codeCue.test(text);
+}
+
+async function planMultitaskLanes(prompt: string, laneCount: number) {
+  try {
+    const selection = LLMProviderFactory.resolveTaskModelSelection(undefined, {
+      forceProfile: "cheap",
+    });
+    const provider = LLMProviderFactory.createProvider({
+      type: selection.providerType,
+      model: selection.modelId,
+    });
+    return await MultitaskLanePlanner.plan(prompt, {
+      requestedLaneCount: laneCount,
+      provider,
+      modelId: selection.modelId,
+    });
+  } catch (error) {
+    logger.warn("[TASK_CREATE] Multitask lane LLM planning unavailable, using fallback:", error);
+    return await MultitaskLanePlanner.plan(prompt, { requestedLaneCount: laneCount });
+  }
+}
+
 export async function setupIpcHandlers(
   dbManager: DatabaseManager,
   agentDaemon: AgentDaemon,
@@ -1149,11 +1193,13 @@ export async function setupIpcHandlers(
   );
   agentMailRealtimeService.start();
   const contextPolicyManager = new ContextPolicyManager(db);
+  const channelSpecializationRepo = new ChannelSpecializationRepository(db);
   const getRoutineService = () => options?.getRoutineService?.() || null;
   const managedSessionService = new ManagedSessionService(db, agentDaemon, {
     getRoutineService,
   });
   const agentTemplateService = new AgentTemplateService();
+  const agentBuilderService = new AgentBuilderService();
   const imageGenProfileService = new ImageGenProfileService();
   const emitTaskStatusEvent = (
     taskId: string,
@@ -1710,6 +1756,11 @@ export async function setupIpcHandlers(
 
     return workspace;
   };
+
+  ipcMain.handle(IPC_CHANNELS.RENDERER_PERF_LOG, async (_event, payload: unknown) => {
+    logger.info(`[RendererPerf] ${stringifyRendererPerfPayload(payload)}`);
+    return { success: true };
+  });
 
   // File handlers - open files and show in Finder
   ipcMain.handle(
@@ -3130,6 +3181,27 @@ export async function setupIpcHandlers(
     });
   });
 
+  ipcMain.handle(IPC_CHANNELS.MAILBOX_ADD_DRAFT_ATTACHMENT, async (event, data?: Any) => {
+    assertTrustedMailboxSender(event);
+    const draftId = typeof data?.draftId === "string" ? data.draftId : "";
+    if (!draftId) throw new Error("Missing mailbox draft id");
+    const input = data?.input || {};
+    return mailboxService.addMailboxDraftAttachment(draftId, {
+      path: typeof input?.path === "string" ? input.path : "",
+      filename: typeof input?.filename === "string" ? input.filename : undefined,
+      mimeType: typeof input?.mimeType === "string" ? input.mimeType : undefined,
+    });
+  });
+
+  ipcMain.handle(IPC_CHANNELS.MAILBOX_REMOVE_DRAFT_ATTACHMENT, async (event, data?: Any) => {
+    assertTrustedMailboxSender(event);
+    const draftId = typeof data?.draftId === "string" ? data.draftId : "";
+    const attachmentId = typeof data?.attachmentId === "string" ? data.attachmentId : "";
+    if (!draftId) throw new Error("Missing mailbox draft id");
+    if (!attachmentId) throw new Error("Missing mailbox draft attachment id");
+    return mailboxService.removeMailboxDraftAttachment(draftId, attachmentId);
+  });
+
   ipcMain.handle(IPC_CHANNELS.MAILBOX_SEND_DRAFT, async (event, data?: Any) => {
     assertTrustedMailboxSender(event);
     const draftId = typeof data?.draftId === "string" ? data.draftId : "";
@@ -3143,6 +3215,38 @@ export async function setupIpcHandlers(
     const scheduledAt = typeof data?.scheduledAt === "number" ? data.scheduledAt : 0;
     if (!draftId) throw new Error("Missing mailbox draft id");
     return mailboxService.scheduleMailboxSend(draftId, scheduledAt);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.MAILBOX_UPDATE_CLIENT_SETTINGS, async (event, data?: Any) => {
+    assertTrustedMailboxSender(event);
+    return mailboxService.updateMailboxClientSettings({
+      remoteContentPolicy:
+        data?.remoteContentPolicy === "load" || data?.remoteContentPolicy === "block" || data?.remoteContentPolicy === "ask"
+          ? data.remoteContentPolicy
+          : undefined,
+      sendDelaySeconds: typeof data?.sendDelaySeconds === "number" ? data.sendDelaySeconds : undefined,
+      syncRecentDays: typeof data?.syncRecentDays === "number" ? data.syncRecentDays : undefined,
+      attachmentCache:
+        data?.attachmentCache === "metadata_on_demand" ||
+        data?.attachmentCache === "recent_cache" ||
+        data?.attachmentCache === "never_cache"
+          ? data.attachmentCache
+          : undefined,
+      notifications:
+        data?.notifications === "all" ||
+        data?.notifications === "priority" ||
+        data?.notifications === "needs_reply" ||
+        data?.notifications === "off"
+          ? data.notifications
+          : undefined,
+    });
+  });
+
+  ipcMain.handle(IPC_CHANNELS.MAILBOX_RETRY_ACTION, async (event, data?: Any) => {
+    assertTrustedMailboxSender(event);
+    const actionId = typeof data?.actionId === "string" ? data.actionId : "";
+    if (!actionId) throw new Error("Missing mailbox action id");
+    return mailboxService.retryMailboxAction(actionId);
   });
 
   ipcMain.handle(IPC_CHANNELS.MAILBOX_DISCARD_COMPOSE_DRAFT, async (event, data?: Any) => {
@@ -3906,19 +4010,41 @@ export async function setupIpcHandlers(
           const activeRoles = agentRoleRepo.findAll(false);
           const fullText = `${title}\n${prompt}`;
           const requestedCount = parseSpawnAgentCount(fullText);
+          const isMultitask = normalizedAgentConfig?.multitaskMode === true;
+          const multitaskLaneCount =
+            typeof normalizedAgentConfig?.multitaskLaneCount === "number"
+              ? normalizedAgentConfig.multitaskLaneCount
+              : undefined;
           const { members, leader } = await selectAgentsForTask(
             fullText,
             activeRoles,
-            requestedCount ?? undefined,
+            isMultitask ? multitaskLaneCount : requestedCount ?? undefined,
           );
+
+          if (isMultitask && looksLikeCodeMultitaskRequest(fullText)) {
+            const workspace = workspaceRepo.findById(workspaceId);
+            if (workspace) {
+              const canUseWorktree = await agentDaemon
+                .getWorktreeManager()
+                .shouldUseWorktree(workspace.path, workspace.isTemp, false);
+              if (!canUseWorktree) {
+                agentDaemon.logEvent(task.id, "log", {
+                  message:
+                    "Multitask code work is running without git worktree isolation. Enable Git Worktree Isolation for safer parallel edits.",
+                });
+              }
+            }
+          }
 
           // Create ephemeral team
           const team = teamRepo.create({
             workspaceId,
-            name: `Collab-${Date.now()}`,
-            description: `Auto-collaborative team for: ${title}`,
+            name: `${isMultitask ? "Multitask" : "Collab"}-${Date.now()}`,
+            description: `${isMultitask ? "Multitask" : "Auto-collaborative"} team for: ${title}`,
             leadAgentRoleId: leader.id,
-            maxParallelAgents: members.length,
+            maxParallelAgents: isMultitask
+              ? Math.max(2, Math.min(8, multitaskLaneCount || members.length))
+              : members.length,
           });
 
           // Add members
@@ -3939,20 +4065,38 @@ export async function setupIpcHandlers(
             collaborativeMode: true,
           });
 
-          // One item per agent — each gets the full prompt (Grok model).
-          // Exclude "Synthesis" role from initial items — it is created only after all
-          // sub-agents complete, in the synthesis phase.
-          for (let i = 0; i < members.length; i++) {
-            const m = members[i];
-            if (m.displayName === "Synthesis") continue;
-            teamItemRepo.create({
-              teamRunId: run.id,
-              title: formatAgentRoleDisplay(m.displayName, m.icon),
-              description: prompt,
-              ownerAgentRoleId: m.id,
-              status: "todo",
-              sortOrder: (i + 1) * 10,
-            });
+          if (isMultitask) {
+            const lanes = await planMultitaskLanes(
+              prompt,
+              multitaskLaneCount || members.length,
+            );
+            for (let i = 0; i < lanes.length; i++) {
+              const owner = members[i % members.length];
+              teamItemRepo.create({
+                teamRunId: run.id,
+                title: lanes[i].title,
+                description: lanes[i].description,
+                ownerAgentRoleId: owner?.id,
+                status: "todo",
+                sortOrder: (i + 1) * 10,
+              });
+            }
+          } else {
+            // One item per agent — each gets the full prompt (Grok model).
+            // Exclude "Synthesis" role from initial items — it is created only after all
+            // sub-agents complete, in the synthesis phase.
+            for (let i = 0; i < members.length; i++) {
+              const m = members[i];
+              if (m.displayName === "Synthesis") continue;
+              teamItemRepo.create({
+                teamRunId: run.id,
+                title: formatAgentRoleDisplay(m.displayName, m.icon),
+                description: prompt,
+                ownerAgentRoleId: m.id,
+                status: "todo",
+                sortOrder: (i + 1) * 10,
+              });
+            }
           }
 
           // Emit for UI — this triggers the collaborative thoughts panel to appear
@@ -4080,13 +4224,22 @@ export async function setupIpcHandlers(
 
   ipcMain.handle(
     IPC_CHANNELS.TASK_LIST,
-    async (_, opts?: { limit?: number; offset?: number; prioritizeSidebar?: boolean }) => {
+    async (
+      _,
+      opts?: {
+        limit?: number;
+        offset?: number;
+        prioritizeSidebar?: boolean;
+        excludeSources?: Array<NonNullable<Task["source"]>>;
+      },
+    ) => {
       const limit =
         typeof opts?.limit === "number" && opts.limit > 0 ? opts.limit : 100;
       const offset =
         typeof opts?.offset === "number" && opts.offset >= 0 ? opts.offset : 0;
       return taskRepo.findAll(limit, offset, {
         prioritizeSidebar: opts?.prioritizeSidebar === true,
+        excludeSources: opts?.excludeSources,
       });
     },
   );
@@ -4891,6 +5044,10 @@ export async function setupIpcHandlers(
   ipcMain.handle(IPC_CHANNELS.MANAGED_SESSION_CREATE_IPC, async (_, request: Any) => {
     return managedSessionService.createSession(request);
   });
+  ipcMain.handle(IPC_CHANNELS.MANAGED_SESSION_SEND_USER_MESSAGE_IPC, async (_, request: Any) => {
+    if (!request?.sessionId) throw new Error("sessionId is required");
+    return managedSessionService.sendUserMessage(request.sessionId, request.content || []);
+  });
   ipcMain.handle(IPC_CHANNELS.MANAGED_SESSION_RESUME_IPC, async (_, sessionId: string) => {
     return managedSessionService.resumeSession(sessionId);
   });
@@ -5220,6 +5377,60 @@ export async function setupIpcHandlers(
     await import("../security/capability-bundle-security");
   const capabilitySecurityService = getCapabilityBundleSecurityService();
   const { getPluginRegistry } = await import("../extensions/registry");
+
+  const buildAgentBuilderInventory = async (): Promise<AgentBuilderInventory> => {
+    await ensureCustomSkillLoaderInitialized();
+    const pluginRegistry = getPluginRegistry();
+    try {
+      await pluginRegistry.initialize();
+    } catch (error) {
+      logger.warn("[AgentsHub] Failed to initialize plugin registry for builder inventory:", error);
+    }
+    return {
+      templates: agentTemplateService.list(),
+      skills: customSkillLoader.listSkills(),
+      pluginPacks:
+        typeof pluginRegistry.getPluginsByType === "function"
+          ? pluginRegistry.getPluginsByType("pack")
+          : [],
+      mcpServers: MCPSettingsManager.getSettingsForDisplay().servers,
+      channels: gateway ? gateway.getChannels().map((channel) => toPublicChannel(channel)) : [],
+      workspaces: workspaceRepo.findAll(),
+      agentRoles: agentRoleRepo.findAll(false),
+      runtimeToolFamilies: [
+        "communication",
+        "search",
+        "files",
+        "documents",
+        "memory",
+        "browser",
+        "shell",
+        "images",
+        "computer-use",
+      ],
+    };
+  };
+
+  ipcMain.handle(IPC_CHANNELS.MANAGED_AGENT_GENERATE_PLAN_IPC, async (_, request: Any) => {
+    const prompt = typeof request?.prompt === "string" ? request.prompt.trim() : "";
+    if (!prompt) throw new Error("Prompt is required");
+    return agentBuilderService.generatePlan(
+      {
+        prompt,
+        workspaceId: typeof request?.workspaceId === "string" ? request.workspaceId : undefined,
+      },
+      await buildAgentBuilderInventory(),
+    );
+  });
+
+  ipcMain.handle(IPC_CHANNELS.MANAGED_AGENT_CREATE_FROM_PLAN_IPC, async (_, request: Any) => {
+    if (!request?.plan) throw new Error("Builder plan is required");
+    return managedSessionService.createAgentFromBuilderPlan({
+      plan: request.plan,
+      workspaceId: typeof request.workspaceId === "string" ? request.workspaceId : undefined,
+      activate: request.activate !== false,
+    });
+  });
 
   ipcMain.handle(IPC_CHANNELS.IMPORT_SECURITY_LIST_QUARANTINED, async () => {
     return capabilitySecurityService.listQuarantinedImports();
@@ -6183,6 +6394,7 @@ export async function setupIpcHandlers(
       connected: result.success,
       name: result.name,
       error: result.success ? undefined : result.error,
+      missingScopes: result.missingScopes,
     };
   });
 
@@ -9151,6 +9363,86 @@ export async function setupIpcHandlers(
     },
   );
 
+  ipcMain.handle(
+    IPC_CHANNELS.CHANNEL_SPECIALIZATION_LIST,
+    async (_, channelId: string) => {
+      const validatedChannelId = validateInput(
+        UUIDSchema,
+        channelId,
+        "channel specialization list",
+      );
+      return channelSpecializationRepo.listByChannel(validatedChannelId);
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.CHANNEL_SPECIALIZATION_CREATE,
+    async (_, data: unknown) => {
+      checkRateLimit(IPC_CHANNELS.CHANNEL_SPECIALIZATION_CREATE);
+      const validated = validateInput(
+        ChannelSpecializationCreateSchema,
+        data,
+        "channel specialization create",
+      );
+      if (!gateway?.getChannel(validated.channelId)) {
+        throw new Error("Channel not found");
+      }
+      if (validated.workspaceId && !workspaceRepo.findById(validated.workspaceId)) {
+        throw new Error("Workspace not found");
+      }
+      if (validated.agentRoleId && !agentRoleRepo.findById(validated.agentRoleId)) {
+        throw new Error("Agent role not found");
+      }
+      return channelSpecializationRepo.upsert(validated);
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.CHANNEL_SPECIALIZATION_UPDATE,
+    async (_, data: unknown) => {
+      checkRateLimit(IPC_CHANNELS.CHANNEL_SPECIALIZATION_UPDATE);
+      const validated = validateInput(
+        ChannelSpecializationUpdateSchema,
+        data,
+        "channel specialization update",
+      );
+      if (validated.workspaceId && !workspaceRepo.findById(validated.workspaceId)) {
+        throw new Error("Workspace not found");
+      }
+      if (validated.agentRoleId && !agentRoleRepo.findById(validated.agentRoleId)) {
+        throw new Error("Agent role not found");
+      }
+      const updated = channelSpecializationRepo.update(validated);
+      if (!updated) throw new Error("Channel specialization not found");
+      return updated;
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.CHANNEL_SPECIALIZATION_DELETE,
+    async (_, id: string) => {
+      checkRateLimit(IPC_CHANNELS.CHANNEL_SPECIALIZATION_DELETE);
+      const validatedId = validateInput(
+        UUIDSchema,
+        id,
+        "channel specialization delete",
+      );
+      return { success: channelSpecializationRepo.delete(validatedId) };
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.CHANNEL_SPECIALIZATION_RESOLVE,
+    async (_, data: unknown) => {
+      const validated = validateInput(
+        ChannelSpecializationResolveSchema,
+        data,
+        "channel specialization resolve",
+      );
+      return channelSpecializationRepo.resolve(validated) || null;
+    },
+  );
+
   // Queue handlers
   ipcMain.handle(IPC_CHANNELS.QUEUE_GET_STATUS, async () => {
     return agentDaemon.getQueueStatus();
@@ -10439,6 +10731,7 @@ function setupNotificationHandlers(): void {
       }
     },
   });
+  setIntegrationAuthNotificationServiceProvider(() => notificationService);
 
   logger.debug("[Notifications] Service initialized");
 

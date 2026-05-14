@@ -23,6 +23,7 @@ interface DispatchedAgentsPanelProps {
   childTasks: Task[];
   childEvents: TaskEvent[];
   onSelectChildTask?: (taskId: string) => void;
+  onOpenChildAgentSidebar?: (taskId: string) => void;
 }
 
 const SAFE_LINK_PROTOCOL_REGEX = /^(https?:|mailto:|tel:)/i;
@@ -292,6 +293,7 @@ export function DispatchedAgentsPanel({
   childTasks,
   childEvents,
   onSelectChildTask,
+  onOpenChildAgentSidebar,
 }: DispatchedAgentsPanelProps) {
   const [agentRoles, setAgentRoles] = useState<Map<string, AgentRoleInfo>>(new Map());
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -394,6 +396,7 @@ export function DispatchedAgentsPanel({
   const workingCount = childTasks.filter(
     (t) => t.status === "executing" || t.status === "planning" || t.status === "interrupted",
   ).length;
+  const openChildAgent = onOpenChildAgentSidebar ?? onSelectChildTask;
 
   return (
     <div className="dispatched-agents-panel" ref={scrollRef}>
@@ -413,9 +416,9 @@ export function DispatchedAgentsPanel({
               className="team-member-chip"
               style={{
                 borderColor: info.role?.color || "#6366f1",
-                cursor: onSelectChildTask ? "pointer" : undefined,
+                cursor: openChildAgent ? "pointer" : undefined,
               }}
-              onClick={() => onSelectChildTask?.(info.task.id)}
+              onClick={() => openChildAgent?.(info.task.id)}
               title={`Click to view ${info.role?.displayName || "agent"}'s task`}
             >
               <span className="team-member-icon">

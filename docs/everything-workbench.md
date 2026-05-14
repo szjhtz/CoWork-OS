@@ -38,7 +38,7 @@ This keeps the agent next to the work product. A spreadsheet can be selected and
 - **Spreadsheets**: Excel workbooks and CSV/TSV files open in an editable sheet workbench with selection, row/column selection, copy, zoom, add row/column, save, and follow-up context. Native/app-owned spreadsheet formats keep card and external actions. See [Spreadsheet Artifacts](spreadsheet-artifacts.md).
 - **Presentations**: PPTX decks open in a slide viewer with thumbnails, navigation, zoom, speaker notes, text-first loading, cached slide images, and follow-up refresh after requested edits. Legacy PowerPoint formats keep external actions. See [Presentation Artifacts and PPTX Preview](pptx-generation-and-preview.md).
 - **Web pages**: Generated HTML/HTM files and built React output open in a sandboxed iframe preview with browser/folder/copy actions. Fullscreen mode supports follow-up edits and defers refresh until the updated output is ready. See [Web Page Artifacts](web-page-artifacts.md).
-- **Live websites**: Browser-use tasks open a visible in-app Browser Workbench by default. The agent and user share the same right-sidebar/fullscreen Browser V2 webview, with navigation controls, snapshot refs, diagnostics, downloads/uploads, screenshots, annotation, and visible cursor movement during actions. See [Browser Workbench](browser-workbench.md) and [Browser V2 Architecture](browser-v2-architecture.md).
+- **Live websites**: Browser-use tasks open a visible in-app Browser Workbench by default. The agent and user share the same right-sidebar/fullscreen Browser V2 webview, with navigation controls, desktop/tablet/mobile viewport testing, snapshot refs, diagnostics, downloads/uploads, screenshots, annotation, and visible cursor movement during actions. See [Browser Workbench](browser-workbench.md) and [Browser V2 Architecture](browser-v2-architecture.md).
 - **PDF and LaTeX**: Source-first LaTeX workflows preserve the editable `.tex` file and pair it with the compiled PDF in one artifact workbench when a local TeX engine is available.
 - **Uploaded PDFs**: PDF attachments are imported into `.cowork/uploads/...`, summarized into a compact attachment block, and read more deeply on demand with `parse_document`. The attachment block preserves the workspace-relative path, page count, extraction status, OCR/scan signals, and a short excerpt without inlining the full PDF into every prompt. Visual/layout PDF questions use `read_pdf_visual` instead.
 - **General previews**: The format-aware file preview popup remains available for files that do not have a dedicated artifact workbench.
@@ -51,7 +51,7 @@ Use CoWork OS as the first stop for generated knowledge work:
 - create and adjust spreadsheets, CSVs, tables, and lightweight workbook outputs
 - review generated decks and request slide changes through follow-up prompts
 - inspect generated HTML pages and built React output without leaving the task
-- test live websites and local web apps in the in-app browser while watching the agent click, type, scroll, and inspect the page
+- test live websites and local web apps in the in-app browser while watching the agent click, type, scroll, inspect the page, and validate responsive breakpoints
 - keep the task timeline, artifact, and follow-up request in one context
 
 Use external apps when the work needs advanced native behavior:

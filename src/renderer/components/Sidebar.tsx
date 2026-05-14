@@ -7,6 +7,7 @@ import type { MailboxDigestSnapshot, MailboxSyncStatus } from "../../shared/mail
 import { isAutomatedTaskLike } from "../../shared/automated-task-detection";
 import { VirtualList } from "./VirtualList";
 import { isPretextEnabled } from "../utils/pretext-adapter";
+import { capitalizeSidebarSessionTitle } from "../utils/sidebar-title";
 
 const SIDEBAR_ITEM_HEIGHT = 26;
 const SIDEBAR_LOAD_MORE_THRESHOLD_PX = 320;
@@ -74,6 +75,7 @@ export type SessionMode =
   | "standard"
   | "autonomous"
   | "collab"
+  | "multitask"
   | "multi-llm"
   | "scheduled"
   | "think"
@@ -85,6 +87,7 @@ const SESSION_MODE_META: Record<SessionMode, { label: string; shortLabel: string
     standard: { label: "Standard", shortLabel: "STD", color: "standard" },
     autonomous: { label: "Autonomous", shortLabel: "AUTO", color: "autonomous" },
     collab: { label: "Collaborative", shortLabel: "COLLAB", color: "collab" },
+    multitask: { label: "Multitask", shortLabel: "MULTI", color: "collab" },
     "multi-llm": { label: "Multi-LLM", shortLabel: "MULTI", color: "multi-llm" },
     scheduled: { label: "Scheduled", shortLabel: "SCHED", color: "scheduled" },
     think: { label: "Think", shortLabel: "THINK", color: "think" },
@@ -95,6 +98,7 @@ const SESSION_MODE_META: Record<SessionMode, { label: string; shortLabel: string
 /** Derive the primary session mode from task metadata */
 export function getSessionMode(task: Task): SessionMode {
   if (task.agentConfig?.videoGenerationMode || task.agentConfig?.taskDomain === "media") return "video";
+  if (task.agentConfig?.multitaskMode) return "multitask";
   if (task.agentConfig?.collaborativeMode) return "collab";
   if (task.agentConfig?.multiLlmMode) return "multi-llm";
   if (task.agentConfig?.autonomousMode) return "autonomous";
@@ -139,6 +143,7 @@ export function isAwaitingSessionStatus(status: Task["status"]): boolean {
 }
 
 export function shouldShowTaskInSidebarSessions(task: Task): boolean {
+  if (task.source === "managed_agent_panel") return false;
   return !task.targetNodeId;
 }
 
@@ -251,17 +256,6 @@ function normalizeSidebarTitleCandidate(value?: string | null): string {
 
 function isGenericSidebarTitle(value: string): boolean {
   return GENERIC_SESSION_TITLES.has(normalizeSidebarSessionSearch(value));
-}
-
-export function capitalizeSidebarSessionTitle(value: string): string {
-  const firstLowercaseLetterIndex = value.search(/\p{Ll}/u);
-  if (firstLowercaseLetterIndex < 0) return value;
-
-  const prefix = value.slice(0, firstLowercaseLetterIndex);
-  if (/\p{L}/u.test(prefix)) return value;
-
-  const letter = value[firstLowercaseLetterIndex];
-  return `${prefix}${letter.toLocaleUpperCase()}${value.slice(firstLowercaseLetterIndex + 1)}`;
 }
 
 export function getSidebarSessionTitle(node: Pick<TaskTreeNode, "displayTitle" | "task">): string {
@@ -1540,26 +1534,22 @@ export function Sidebar({
             ) : (
               <div className={`cli-task-title-row ${isAwaitingSession ? "cli-task-title-row-awaiting" : ""}`}>
                 {isSubAgent && task.assignedAgentRoleId ? (
-                  <span className="cli-task-title cli-task-title-with-agent" title={sessionTitle}>
+                  <span
+                    className="cli-task-title cli-task-title-with-agent cli-task-title-subagent-role"
+                    title={sessionTitle}
+                  >
                     {(() => {
                       const role = agentRoles.get(task.assignedAgentRoleId!);
-                      const fullNoEmoji = stripAllEmojis(sessionTitle);
+                      const label = role
+                        ? stripAllEmojis(role.displayName)
+                        : stripAllEmojis(sessionTitle);
                       return (
-                        <>
-                          <SidebarWordBoundaryTitle
-                            text={fullNoEmoji}
-                            className="cli-task-title-truncated"
-                            title={sessionTitle}
-                          />
-                          {role && (
-                            <span
-                              className="cli-task-agent-name"
-                              style={{ color: role.color }}
-                            >
-                              {stripAllEmojis(role.displayName)}
-                            </span>
-                          )}
-                        </>
+                        <span
+                          className="cli-task-agent-name"
+                          style={role ? { color: role.color } : undefined}
+                        >
+                          {label}
+                        </span>
                       );
                     })()}
                   </span>

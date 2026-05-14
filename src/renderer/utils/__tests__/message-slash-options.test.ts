@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { CustomSkill } from "../../../shared/types";
-import { buildMessageSlashOptions, resolveSlashSelectedIndex } from "../message-slash-options";
+import {
+  applySlashCommandSelection,
+  buildMessageSlashOptions,
+  resolveSlashSelectedIndex,
+} from "../message-slash-options";
 
 function skill(overrides: Partial<CustomSkill>): CustomSkill {
   return {
@@ -137,5 +141,31 @@ describe("buildMessageSlashOptions", () => {
     expect(resolveSlashSelectedIndex(3, -1)).toBe(0);
     expect(resolveSlashSelectedIndex(3, 1)).toBe(1);
     expect(resolveSlashSelectedIndex(3, 9)).toBe(2);
+  });
+});
+
+describe("applySlashCommandSelection", () => {
+  it("replaces the active slash query and leaves the cursor after the inserted command", () => {
+    const result = applySlashCommandSelection({
+      value: "/lega",
+      target: { start: 0, end: 5 },
+      commandName: "litigation-legal-demand-intake",
+    });
+
+    expect(result).toEqual({
+      nextValue: "/litigation-legal-demand-intake ",
+      cursorPosition: "/litigation-legal-demand-intake ".length,
+    });
+  });
+
+  it("preserves surrounding text when selecting a slash command", () => {
+    const result = applySlashCommandSelection({
+      value: "first line\n/lega unpaid invoices",
+      target: { start: "first line\n".length, end: "first line\n/lega".length },
+      commandName: "litigation-legal-demand-intake",
+    });
+
+    expect(result.nextValue).toBe("first line\n/litigation-legal-demand-intake unpaid invoices");
+    expect(result.cursorPosition).toBe("first line\n/litigation-legal-demand-intake ".length);
   });
 });

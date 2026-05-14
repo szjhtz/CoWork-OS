@@ -1,7 +1,10 @@
 import http from "http";
 import { randomBytes, createHash } from "crypto";
 import { URL } from "url";
-import { GOOGLE_WORKSPACE_DEFAULT_SCOPES } from "../../shared/google-workspace";
+import {
+  getMissingGoogleWorkspaceScopes,
+  mergeGoogleWorkspaceScopes,
+} from "../../shared/google-workspace";
 
 export interface GoogleWorkspaceOAuthRequest {
   clientId: string;
@@ -200,10 +203,7 @@ export async function startGoogleWorkspaceOAuthGetLink(
     throw new Error("Google Workspace OAuth requires a client ID");
   }
 
-  const scopes =
-    request.scopes && request.scopes.length > 0
-      ? request.scopes
-      : GOOGLE_WORKSPACE_DEFAULT_SCOPES;
+  const scopes = mergeGoogleWorkspaceScopes(request.scopes);
 
   const { redirectUri, waitForCode, state } = await startOAuthCallbackServer();
   const codeVerifier = createCodeVerifier();
@@ -261,12 +261,22 @@ export async function startGoogleWorkspaceOAuthGetLink(
       const expiresIn =
         typeof tokenData?.expires_in === "number" ? tokenData.expires_in : undefined;
       const scopesGranted = parseScopeList(tokenData?.scope);
+      const effectiveScopes = scopesGranted || scopes;
+      const missingScopes = getMissingGoogleWorkspaceScopes(effectiveScopes);
+      if (missingScopes.length > 0) {
+        onError(
+          new Error(
+            `Google Workspace OAuth did not grant required scopes: ${missingScopes.join(", ")}`,
+          ),
+        );
+        return;
+      }
       onComplete({
         accessToken,
         refreshToken: tokenData?.refresh_token,
         expiresIn,
         tokenType: tokenData?.token_type,
-        scopes: scopesGranted,
+        scopes: effectiveScopes,
       });
     })
     .catch((err: Error) => onError(err))
@@ -284,10 +294,7 @@ export async function startGoogleWorkspaceOAuth(
     throw new Error("Google Workspace OAuth requires a client ID");
   }
 
-  const scopes =
-    request.scopes && request.scopes.length > 0
-      ? request.scopes
-      : GOOGLE_WORKSPACE_DEFAULT_SCOPES;
+  const scopes = mergeGoogleWorkspaceScopes(request.scopes);
 
   const { redirectUri, waitForCode, state } = await startOAuthCallbackServer();
   const codeVerifier = createCodeVerifier();
@@ -348,12 +355,19 @@ export async function startGoogleWorkspaceOAuth(
 
   const expiresIn = typeof tokenData?.expires_in === "number" ? tokenData.expires_in : undefined;
   const scopesGranted = parseScopeList(tokenData?.scope);
+  const effectiveScopes = scopesGranted || scopes;
+  const missingScopes = getMissingGoogleWorkspaceScopes(effectiveScopes);
+  if (missingScopes.length > 0) {
+    throw new Error(
+      `Google Workspace OAuth did not grant required scopes: ${missingScopes.join(", ")}`,
+    );
+  }
 
   return {
     accessToken,
     refreshToken: tokenData?.refresh_token,
     expiresIn,
     tokenType: tokenData?.token_type,
-    scopes: scopesGranted,
+    scopes: effectiveScopes,
   };
 }

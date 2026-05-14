@@ -48,6 +48,10 @@ export interface ControlPlaneSettings {
   heartbeatIntervalMs: number;
   /** Maximum payload size in bytes */
   maxPayloadBytes: number;
+  /** Trust reverse proxy headers such as X-Forwarded-For */
+  trustProxy: boolean;
+  /** Explicit browser origins allowed to open Control Plane WebSocket connections */
+  allowedOrigins: string[];
   /** Tailscale exposure settings */
   tailscale: {
     mode: TailscaleMode;
@@ -79,6 +83,8 @@ export const DEFAULT_CONTROL_PLANE_SETTINGS: ControlPlaneSettings = {
   handshakeTimeoutMs: 10000,
   heartbeatIntervalMs: 30000,
   maxPayloadBytes: 10 * 1024 * 1024, // 10MB
+  trustProxy: false,
+  allowedOrigins: [],
   tailscale: {
     mode: "off",
     resetOnExit: true,
@@ -325,6 +331,9 @@ export class ControlPlaneSettingsManager {
               ...stored.remote,
             };
           }
+          merged.allowedOrigins = Array.isArray(stored.allowedOrigins)
+            ? stored.allowedOrigins.filter((origin): origin is string => typeof origin === "string")
+            : [];
           merged.savedRemoteDevices = Array.isArray(stored.savedRemoteDevices)
             ? stored.savedRemoteDevices.map((device) => ({
                 ...device,

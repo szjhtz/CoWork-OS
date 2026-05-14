@@ -1,10 +1,11 @@
 import type { ReactElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { autolinkBareDomains } from "../../utils/markdown-autolink";
 import {
-  autolinkBareDomains,
   buildMarkdownComponents,
   createQuotedAssistantMessage,
   autolinkUrlsInBrackets,
+  isXComLink,
   normalizeCodeBlockTextForDisplay,
   normalizeSourcesSection,
   resolveSafeCollapsedBubbleHeight,
@@ -51,6 +52,48 @@ describe("MainContent markdown normalization helpers", () => {
     await getMarkdownLinkClickHandler()(clickEvent);
 
     expect(openExternal).toHaveBeenCalledWith("https://example.com/product");
+  });
+
+  it("renders X.com links with the inline X treatment", () => {
+    const components = buildMarkdownComponents({});
+    const link = components.a({
+      href: "https://x.com/kylejeong/status/123",
+      children: "Kyle Jeong post",
+    }) as ReactElement<{
+      className: string;
+      title: string;
+      children: Array<ReactElement<{ className: string; children?: unknown }>>;
+    }>;
+
+    expect(link.props.className).toBe("x-social-link");
+    expect(link.props.title).toBe("https://x.com/kylejeong/status/123");
+    expect(link.props.children[0].props.className).toBe("x-social-link-icon");
+    expect(link.props.children[1].props.className).toBe("x-social-link-label");
+    expect(link.props.children[1].props.children).toBe("Kyle Jeong post");
+  });
+
+  it("treats protocol-less X.com links as external links", async () => {
+    const onOpenWebLinkInSidebar = vi.fn();
+    const components = buildMarkdownComponents({ onOpenWebLinkInSidebar });
+    const link = components.a({
+      href: "x.com/kylejeong/status/123",
+      children: "post",
+    }) as ReactElement<{
+      href: string;
+      onClick: (event: { preventDefault: () => void; stopPropagation: () => void }) => Promise<void>;
+    }>;
+    const clickEvent = { preventDefault: vi.fn(), stopPropagation: vi.fn() };
+
+    expect(link.props.href).toBe("https://x.com/kylejeong/status/123");
+    await link.props.onClick(clickEvent);
+
+    expect(onOpenWebLinkInSidebar).toHaveBeenCalledWith("https://x.com/kylejeong/status/123");
+  });
+
+  it("detects supported X link hosts without matching unrelated x domains", () => {
+    expect(isXComLink("https://x.com/user/status/1")).toBe(true);
+    expect(isXComLink("https://mobile.twitter.com/user/status/1")).toBe(true);
+    expect(isXComLink("https://x.ai")).toBe(false);
   });
 
   it("does not rewrite non-citation sources text that only contains pipes", () => {

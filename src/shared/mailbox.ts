@@ -25,7 +25,14 @@ export type MailboxProviderCapability =
 
 export type MailboxProviderBackend = "gmail_api" | "microsoft_graph" | "imap_smtp" | "agentmail";
 
-export type MailboxQueuedActionStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
+export type MailboxQueuedActionStatus =
+  | "queued"
+  | "running"
+  | "sending"
+  | "succeeded"
+  | "sent"
+  | "failed"
+  | "cancelled";
 
 export type MailboxQueuedActionType =
   | "send"
@@ -918,6 +925,7 @@ export interface MailboxRecipientInput {
 export interface MailboxComposeDraft {
   id: string;
   accountId: string;
+  workspaceId?: string;
   mode: MailboxComposeMode;
   status: MailboxComposeDraftStatus;
   threadId?: string;
@@ -935,12 +943,22 @@ export interface MailboxComposeDraft {
     filename: string;
     mimeType?: string;
     size?: number;
+    localPath?: string;
+    providerAttachmentId?: string;
+    uploadStatus?: "local" | "uploaded" | "failed";
+    latestError?: string;
   }>;
   scheduledAt?: number;
   sendAfter?: number;
   latestError?: string;
   createdAt: number;
   updatedAt: number;
+}
+
+export interface MailboxDraftAttachmentInput {
+  path: string;
+  filename?: string;
+  mimeType?: string;
 }
 
 export interface MailboxComposeDraftInput {
@@ -955,6 +973,14 @@ export interface MailboxComposeDraftInput {
   bcc?: MailboxRecipientInput[];
   identityId?: string;
   signatureId?: string;
+}
+
+export interface MailboxClientSettingsPatch {
+  remoteContentPolicy?: MailboxRemoteContentPolicy;
+  sendDelaySeconds?: number;
+  syncRecentDays?: number;
+  attachmentCache?: "metadata_on_demand" | "recent_cache" | "never_cache";
+  notifications?: MailboxClientState["settings"]["notifications"];
 }
 
 export interface MailboxComposeDraftPatch {

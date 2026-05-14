@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { ChannelData, ChannelUserData, SecurityMode } from "../../shared/types";
+import { ChannelSpecializationSettings } from "./ChannelSpecializationSettings";
 
 interface SlackSettingsProps {
   onStatusChange?: (connected: boolean) => void;
@@ -422,6 +423,8 @@ export function SlackSettings({ onStatusChange }: SlackSettingsProps) {
               Curated mode relays short planning and step updates back into Slack while the task is running.
             </p>
           </div>
+
+          <ChannelSpecializationSettings channelId={selectedChannel.id} />
 
           {selectedChannel.securityMode === "pairing" && (
             <div className="settings-section">

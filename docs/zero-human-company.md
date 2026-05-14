@@ -21,7 +21,7 @@ The zero-human-company workflow is a composition of existing CoWork OS subsystem
 - `Heartbeat v3` gives those operators cheap Pulse review plus selective Dispatch escalation
 - `Strategic Planner` turns goals and stalled work into managed issues
 - `Mission Control` lets you monitor agents, issues, runs, and tasks
-- `Workflow Intelligence` can continuously reflect across company workflows, then surface reviewable suggestions or trusted low-risk tasks
+- `Workflow Intelligence` can continuously reflect across company workflows, run Dreaming over memory drift and corrections, then surface reviewable suggestions, memory candidates, or trusted low-risk tasks
 - `Devices` can route execution to dedicated remote machines while the company graph and planner stay on the primary control surface
 
 Together, these create an operating loop where company goals become planner-managed issues, issues become tasks, and tasks are executed by role-specific agents with configurable autonomy.
@@ -177,6 +177,7 @@ If your operator tasks need to run on another machine, use the Devices tab along
 It works especially well when:
 
 - the company loop already has stable briefs, schedules, or operator cadence
+- Dreaming can use recurring company evidence to propose memory cleanup, durable constraints, open loops, and ignored-noise patterns
 - you want explicit hypotheses, critique, a winner, and a next-step backlog instead of ad hoc background suggestions
 - code-change dispatch can run in git-backed workspaces with worktrees available
 
@@ -582,3 +583,4 @@ That produces the clearest "company operating system" demo.
 - [Getting Started](getting-started.md)
 - [Use Cases](use-cases.md)
 - [Workflow Intelligence](workflow-intelligence.md)
+- [Dreaming](dreaming.md)

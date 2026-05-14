@@ -13,7 +13,7 @@ import { GoogleWorkspaceSettingsManager } from "../settings/google-workspace-man
 import { AgentMailSettingsManager } from "../settings/agentmail-manager";
 import { gmailRequest } from "../utils/gmail-api";
 import { googleCalendarRequest } from "../utils/google-calendar-api";
-import { EmailClient, type EmailMessage } from "../gateway/channels/email-client";
+import { EmailClient, type EmailAttachment } from "../gateway/channels/email-client";
 import { LoomEmailClient } from "../gateway/channels/loom-client";
 import { assertSafeLoomMailboxFolder } from "../utils/loom";
 import { refreshMicrosoftEmailAccessToken } from "../utils/microsoft-email-oauth";
@@ -64,10 +64,12 @@ import {
   MailboxComposeDraft,
   MailboxComposeDraftInput,
   MailboxComposeDraftPatch,
+  MailboxClientSettingsPatch,
   MailboxDomainCategory,
   MailboxDigest,
   MailboxDigestSnapshot,
   MailboxDraftOptions,
+  MailboxDraftAttachmentInput,
   MailboxDraftSuggestion,
   MailboxEvent,
   MailboxEventType,
@@ -128,7 +130,11 @@ import {
   normalizeMailboxEmailAddress,
   stripMailboxSummaryHtmlArtifacts,
 } from "../../shared/mailbox";
-import { MICROSOFT_EMAIL_DEFAULT_TENANT } from "../../shared/microsoft-email";
+import {
+  MICROSOFT_EMAIL_DEFAULT_TENANT,
+  MICROSOFT_EMAIL_OAUTH_DEFAULT_SCOPES,
+} from "../../shared/microsoft-email";
+import { isMicrosoftConsumerEmailAddress } from "../../shared/email-provider-support";
 import type { AgentRole, CompanyEvidenceRef, CompanyOutputContract, Issue, Task } from "../../shared/types";
 import { isTempWorkspaceId } from "../../shared/types";
 
@@ -210,6 +216,7 @@ type MailboxComposeDraftRow = {
   scheduled_at: number | null;
   send_after: number | null;
   latest_error: string | null;
+  metadata_json: string | null;
   created_at: number;
   updated_at: number;
 };
@@ -297,6 +304,7 @@ type MailboxMessageRow = {
 
 type MailboxMessageMetadata = {
   imapUid?: number;
+  microsoftGraphMessageId?: string;
   rfcMessageId?: string;
 };
 
@@ -548,10 +556,67 @@ const MAILBOX_AUTO_SYNC_INITIAL_DELAY_MS = 30 * 1000;
 const MAILBOX_AUTO_SYNC_LIMIT = 25;
 const MAILBOX_SENT_FOLLOWUP_DEFAULT_THRESHOLD_HOURS = 24;
 const MAILBOX_SENT_FOLLOWUP_MAX_LIMIT = 20;
+const MICROSOFT_GRAPH_API_BASE = "https://graph.microsoft.com/v1.0";
+const MICROSOFT_GRAPH_MESSAGE_SELECT =
+  "id,conversationId,subject,bodyPreview,body,from,toRecipients,ccRecipients,bccRecipients,receivedDateTime,isRead,hasAttachments,internetMessageId";
 
 let mailboxCipherState: MailboxCipherState | null = null;
 
 const mailboxLogger = createLogger("MailboxService");
+
+const MAILBOX_CONNECTION_ERROR_RE =
+  /\b(connect|connection|network|timeout|timed out|socket|dns|fetch failed|failed to fetch|enotfound|eai_again|econnrefused|econnreset|econnaborted|enotconn|etimedout|enetunreach|ehostunreach|err_internet_disconnected|unknown system error)\b/i;
+const GMAIL_TRANSIENT_SYNC_BACKOFF_MS = 15 * 60 * 1000;
+
+function flattenMailboxError(error: unknown): Error[] {
+  const errors = (error as Any)?.errors;
+  if (Array.isArray(errors) && errors.length > 0) {
+    return errors.flatMap((entry) => flattenMailboxError(entry));
+  }
+  if (error instanceof Error) return [error];
+  return [new Error(String(error))];
+}
+
+function isMailboxConnectionError(error: unknown): boolean {
+  const flattened = flattenMailboxError(error);
+  return flattened.some((entry) => {
+    const code = String((entry as Any)?.code || "");
+    const message = String(entry.message || "");
+    return MAILBOX_CONNECTION_ERROR_RE.test(code) || MAILBOX_CONNECTION_ERROR_RE.test(message);
+  });
+}
+
+function summarizeMailboxConnectionError(error: unknown): string {
+  const flattened = flattenMailboxError(error);
+  const code = flattened.map((entry) => String((entry as Any)?.code || "")).find(Boolean);
+  const message = flattened.map((entry) => entry.message.trim()).find(Boolean);
+  const port = flattened
+    .map((entry) => Number((entry as Any)?.port))
+    .find((value) => Number.isFinite(value));
+  const parts: string[] = [];
+  if (port) parts.push(`port ${port}`);
+  if (code && code !== message) parts.push(code);
+  if (message) parts.push(message);
+  return parts.length ? parts.join(": ") : "connection failed";
+}
+
+function escapeODataString(value: string): string {
+  return value.replace(/'/g, "''");
+}
+
+function toMailboxActionError(
+  action: MailboxApplyActionInput["type"],
+  provider: MailboxProvider,
+  error: unknown,
+): Error {
+  const originalMessage = error instanceof Error ? error.message : String(error);
+  if (isMailboxConnectionError(error)) {
+    return new Error(
+      `Mailbox provider connection failed while applying ${action}. CoWork could not reach the ${provider} mail server (${summarizeMailboxConnectionError(error)}). Check your network/VPN/firewall and mailbox integration settings, then retry.`,
+    );
+  }
+  return new Error(`Mailbox action ${action} failed: ${originalMessage}`, { cause: error });
+}
 
 function ensureMailboxCipherState(): MailboxCipherState {
   if (mailboxCipherState) return mailboxCipherState;
@@ -745,6 +810,7 @@ function parseMailboxMessageMetadata(value: string | null | undefined): MailboxM
     const parsed = asObject(JSON.parse(value));
     return {
       imapUid: asNumber(parsed?.imapUid) ?? undefined,
+      microsoftGraphMessageId: asString(parsed?.microsoftGraphMessageId) ?? undefined,
       rfcMessageId: asString(parsed?.rfcMessageId) ?? undefined,
     };
   } catch {
@@ -1387,6 +1453,9 @@ const MAILBOX_CLASSIFIER_MAX_TOKENS = 1400;
 const MAILBOX_CLASSIFIER_MIN_CONFIDENCE = 0.45;
 const MAILBOX_ATTACHMENT_TEXT_MAX_BYTES = 12 * 1024 * 1024;
 const MAILBOX_ATTACHMENT_TEXT_MAX_CHARS = 24000;
+const MAILBOX_COMPOSE_ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
+const MAILBOX_OUTBOX_POLL_INTERVAL_MS = 30_000;
+const MAILBOX_OUTBOX_MAX_ATTEMPTS = 5;
 const MAILBOX_ASK_MAX_TOKENS = 900;
 
 function sha256(value: string): string {
@@ -1652,6 +1721,25 @@ function parseDueAt(text: string): number | undefined {
   return undefined;
 }
 
+function guessMimeType(filename: string): string {
+  const ext = path.extname(filename).toLowerCase();
+  if (ext === ".pdf") return "application/pdf";
+  if (ext === ".txt" || ext === ".md" || ext === ".csv") return "text/plain";
+  if (ext === ".html" || ext === ".htm") return "text/html";
+  if (ext === ".png") return "image/png";
+  if (ext === ".jpg" || ext === ".jpeg") return "image/jpeg";
+  if (ext === ".gif") return "image/gif";
+  if (ext === ".webp") return "image/webp";
+  if (ext === ".docx") return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  if (ext === ".xlsx") return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+  if (ext === ".pptx") return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+  return "application/octet-stream";
+}
+
+function isPathInsideRoot(targetPath: string, rootPath: string): boolean {
+  return targetPath === rootPath || targetPath.startsWith(`${rootPath}${path.sep}`);
+}
+
 export class MailboxService {
   private channelRepo: ChannelRepository;
   private taskRepo: TaskRepository;
@@ -1663,7 +1751,14 @@ export class MailboxService {
   private syncProgress: MailboxSyncProgress | null = null;
   private autoSyncTimer: ReturnType<typeof setInterval> | null = null;
   private autoSyncInitialTimer: ReturnType<typeof setTimeout> | null = null;
+  private outboxTimer: ReturnType<typeof setInterval> | null = null;
+  private outboxDrainInFlight = false;
   private lastAutoSyncAttemptAt = 0;
+  private googleWorkspaceAutoSyncAuthNoticeKey: string | null = null;
+  private gmailTransientSyncBackoffUntil = 0;
+  private gmailTransientSyncNoticeKey: string | null = null;
+  private gmailTransientSyncLabel: string | null = null;
+  private gmailTransientSyncSuppressedCount = 0;
   private mailboxSearchIndexBackfillAttempted = false;
   private mailboxAgentSearchService: MailboxAgentSearchService | null = null;
 
@@ -1677,6 +1772,7 @@ export class MailboxService {
     setMailboxServiceInstance(this);
     if (options.autoSync === true && process.env.NODE_ENV !== "test") {
       this.startAutoSyncLoop();
+      this.startOutboxLoop();
     }
   }
 
@@ -1724,6 +1820,16 @@ export class MailboxService {
     this.autoSyncTimer.unref?.();
   }
 
+  private startOutboxLoop(): void {
+    if (this.outboxTimer) return;
+    const run = () => {
+      void this.processMailboxQueue();
+    };
+    this.outboxTimer = setInterval(run, MAILBOX_OUTBOX_POLL_INTERVAL_MS);
+    this.outboxTimer.unref?.();
+    run();
+  }
+
   private async runAutoSyncIfDue(): Promise<void> {
     const now = Date.now();
     if (this.syncInFlight) return;
@@ -1731,6 +1837,33 @@ export class MailboxService {
     if (!this.isAvailable()) return;
 
     const status = await this.getSyncStatus();
+    const googleWorkspaceAuthIssue = this.getGoogleWorkspaceAuthIssue();
+    const hasOtherMailboxProvider = this.agentMailEnabled() || this.hasEmailChannel();
+    if (googleWorkspaceAuthIssue && !hasOtherMailboxProvider) {
+      this.lastAutoSyncAttemptAt = now;
+      this.updateSyncProgress({
+        phase: "error",
+        totalThreads: 0,
+        processedThreads: 0,
+        totalMessages: 0,
+        processedMessages: 0,
+        newThreads: 0,
+        classifiedThreads: 0,
+        skippedThreads: 0,
+        label: googleWorkspaceAuthIssue.statusLabel,
+      });
+      if (this.googleWorkspaceAutoSyncAuthNoticeKey !== googleWorkspaceAuthIssue.key) {
+        this.googleWorkspaceAutoSyncAuthNoticeKey = googleWorkspaceAuthIssue.key;
+        mailboxLogger.warn(googleWorkspaceAuthIssue.logMessage);
+      }
+      return;
+    }
+    if (!googleWorkspaceAuthIssue) {
+      this.googleWorkspaceAutoSyncAuthNoticeKey = null;
+    } else if (this.googleWorkspaceAutoSyncAuthNoticeKey !== googleWorkspaceAuthIssue.key) {
+      this.googleWorkspaceAutoSyncAuthNoticeKey = googleWorkspaceAuthIssue.key;
+      mailboxLogger.warn(googleWorkspaceAuthIssue.logMessage);
+    }
     if (
       status.connected &&
       status.lastSyncedAt &&
@@ -1745,7 +1878,7 @@ export class MailboxService {
         accountCount: status.accounts.length,
         lastSyncedAt: status.lastSyncedAt || null,
       });
-      const result = await this.sync(MAILBOX_AUTO_SYNC_LIMIT);
+      const result = await this.sync(MAILBOX_AUTO_SYNC_LIMIT, { source: "auto" });
       mailboxLogger.info("Mailbox autosync complete", {
         accountCount: result.accounts.length,
         syncedThreads: result.syncedThreads,
@@ -1765,6 +1898,91 @@ export class MailboxService {
     return Boolean(settings.enabled && settings.apiKey);
   }
 
+  private getGoogleWorkspaceAuthIssue(): {
+    key: string;
+    statusLabel: string;
+    logMessage: string;
+  } | null {
+    const settings = GoogleWorkspaceSettingsManager.loadSettings();
+    if (!settings.enabled) return null;
+    if (!settings.accessToken && !settings.refreshToken) {
+      return {
+        key: "google-workspace-token-missing",
+        statusLabel: "Google Workspace needs reconnect; Gmail autosync paused",
+        logMessage:
+          "Gmail autosync paused: Google Workspace access token is not configured. Reconnect in Settings > Integrations > Google Workspace.",
+      };
+    }
+    if (
+      settings.accessToken &&
+      settings.tokenExpiresAt &&
+      settings.tokenExpiresAt <= Date.now() &&
+      !settings.refreshToken
+    ) {
+      return {
+        key: "google-workspace-token-expired",
+        statusLabel: "Google Workspace token expired; Gmail autosync paused",
+        logMessage:
+          "Gmail autosync paused: Google Workspace access token expired and no refresh token is available. Reconnect in Settings > Integrations > Google Workspace.",
+      };
+    }
+    return null;
+  }
+
+  private getExistingMailboxAccounts(provider: MailboxProvider, status?: MailboxAccount["status"]): MailboxAccount[] {
+    const rows = this.db
+      .prepare(
+        `SELECT id, provider, address, display_name, status, capabilities_json, sync_cursor, classification_initial_batch_at, last_synced_at
+         FROM mailbox_accounts
+         WHERE provider = ?
+         ORDER BY updated_at DESC`,
+      )
+      .all(provider) as MailboxAccountRow[];
+    return rows.map((row) => {
+      const account = this.mapAccountRow(row);
+      return status ? { ...account, status } : account;
+    });
+  }
+
+  private noteGmailTransientSyncFailure(error: unknown): string {
+    const detail = summarizeMailboxConnectionError(error);
+    const label = `Gmail sync temporarily unavailable; retrying later (${detail})`;
+    const noticeKey = detail || "gmail-transient-sync";
+    this.gmailTransientSyncBackoffUntil = Date.now() + GMAIL_TRANSIENT_SYNC_BACKOFF_MS;
+    this.gmailTransientSyncLabel = label;
+    if (this.gmailTransientSyncNoticeKey !== noticeKey) {
+      this.gmailTransientSyncNoticeKey = noticeKey;
+      this.gmailTransientSyncSuppressedCount = 0;
+      mailboxLogger.warn(`${label}.`);
+    } else {
+      this.gmailTransientSyncSuppressedCount += 1;
+      if (this.gmailTransientSyncSuppressedCount % 5 === 0) {
+        mailboxLogger.warn(
+          `Gmail sync is still temporarily unavailable (${detail}); suppressed ${this.gmailTransientSyncSuppressedCount} repeated autosync notice${this.gmailTransientSyncSuppressedCount === 1 ? "" : "s"}.`,
+        );
+      }
+    }
+    return label;
+  }
+
+  private noteGmailTransientSyncBackoff(): string {
+    const label = this.gmailTransientSyncLabel || "Gmail sync temporarily unavailable; retrying later";
+    this.gmailTransientSyncSuppressedCount += 1;
+    if (this.gmailTransientSyncSuppressedCount % 5 === 0) {
+      mailboxLogger.warn(
+        `Gmail sync autosync is still in transient network backoff; suppressed ${this.gmailTransientSyncSuppressedCount} repeated autosync notice${this.gmailTransientSyncSuppressedCount === 1 ? "" : "s"}.`,
+      );
+    }
+    return label;
+  }
+
+  private resetGmailTransientSyncFailure(): void {
+    this.gmailTransientSyncBackoffUntil = 0;
+    this.gmailTransientSyncNoticeKey = null;
+    this.gmailTransientSyncLabel = null;
+    this.gmailTransientSyncSuppressedCount = 0;
+  }
+
   private isLoomEmailChannel(): boolean {
     const channel = this.channelRepo.findByType("email");
     const cfg = (channel?.config as Any) || {};
@@ -1780,7 +1998,14 @@ export class MailboxService {
       )
       .all() as MailboxAccountRow[];
 
-    const accounts = accountRows.map((row) => this.mapAccountRow(row));
+    const googleWorkspaceAuthIssue = this.getGoogleWorkspaceAuthIssue();
+    const gmailTransientSyncActive = this.gmailTransientSyncBackoffUntil > Date.now();
+    const accounts = accountRows.map((row) => {
+      const account = this.mapAccountRow(row);
+      return (googleWorkspaceAuthIssue || gmailTransientSyncActive) && account.provider === "gmail"
+        ? { ...account, status: "degraded" as const }
+        : account;
+    });
     const inboxVisibleFilter = this.buildInboxVisibleThreadFilter();
     const joinedInboxVisibleFilter = this.buildInboxVisibleThreadFilter("mt");
     const countsRow = this.db
@@ -1841,15 +2066,19 @@ export class MailboxService {
       commitmentCount: commitmentCountRow.count || 0,
       classificationPendingCount: countsRow.classification_pending_count || 0,
       statusLabel:
-        accounts.length === 0
-          ? "Connect AgentMail, Gmail, or the Email channel"
-          : `${accounts.length} account${accounts.length === 1 ? "" : "s"} synced${
-              this.syncInFlight && this.syncProgress?.label
-                ? ` · ${this.syncProgress.label}`
-                : countsRow.classification_pending_count
-                  ? ` · ${countsRow.classification_pending_count} awaiting AI classification`
-                  : ""
-        }`,
+        googleWorkspaceAuthIssue
+          ? googleWorkspaceAuthIssue.statusLabel
+          : this.syncProgress?.phase === "error" && this.syncProgress.label
+            ? this.syncProgress.label
+            : accounts.length === 0
+              ? "Connect AgentMail, Gmail, or the Email channel"
+              : `${accounts.length} account${accounts.length === 1 ? "" : "s"} synced${
+                  this.syncInFlight && this.syncProgress?.label
+                    ? ` · ${this.syncProgress.label}`
+                    : countsRow.classification_pending_count
+                      ? ` · ${countsRow.classification_pending_count} awaiting AI classification`
+                      : ""
+                }`,
     };
   }
 
@@ -1886,6 +2115,7 @@ export class MailboxService {
           : this.prefixMailboxSubject(seedThread.subject, "Re:")
         : "");
     const id = randomUUID();
+    const workspaceId = this.resolveComposeDraftWorkspaceIdForCreate(accountId, input.threadId);
     this.db
       .prepare(
         `INSERT INTO mailbox_compose_drafts
@@ -1906,7 +2136,10 @@ export class MailboxService {
         input.identityId || null,
         input.signatureId || null,
         JSON.stringify([]),
-        JSON.stringify({ source: "mailbox_compose" }),
+        JSON.stringify({
+          source: "mailbox_compose",
+          ...(workspaceId ? { workspaceId } : {}),
+        }),
         now,
         now,
       );
@@ -1950,6 +2183,84 @@ export class MailboxService {
     return this.getMailboxComposeDraft(draftId)!;
   }
 
+  async addMailboxDraftAttachment(
+    draftId: string,
+    input: MailboxDraftAttachmentInput,
+  ): Promise<MailboxComposeDraft> {
+    const draft = this.getMailboxComposeDraft(draftId);
+    if (!draft) throw new Error("Mailbox compose draft not found");
+    const attachment = this.normalizeComposeAttachmentInput(
+      input,
+      this.resolveComposeDraftWorkspaceId(draft),
+    );
+    const attachments = [...draft.attachments, attachment];
+    this.db
+      .prepare(
+        `UPDATE mailbox_compose_drafts
+         SET attachments_json = ?, updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(JSON.stringify(attachments), Date.now(), draftId);
+    return this.getMailboxComposeDraft(draftId)!;
+  }
+
+  async removeMailboxDraftAttachment(draftId: string, attachmentId: string): Promise<MailboxComposeDraft> {
+    const draft = this.getMailboxComposeDraft(draftId);
+    if (!draft) throw new Error("Mailbox compose draft not found");
+    const attachments = draft.attachments.filter((attachment) => attachment.id !== attachmentId);
+    this.db
+      .prepare(
+        `UPDATE mailbox_compose_drafts
+         SET attachments_json = ?, updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(JSON.stringify(attachments), Date.now(), draftId);
+    return this.getMailboxComposeDraft(draftId)!;
+  }
+
+  updateMailboxClientSettings(patch: MailboxClientSettingsPatch): MailboxClientState["settings"] {
+    const current = this.getMailboxClientSettings();
+    const next: MailboxClientState["settings"] = {
+      remoteContentPolicy: ["load", "block", "ask"].includes(String(patch.remoteContentPolicy))
+        ? patch.remoteContentPolicy!
+        : current.remoteContentPolicy,
+      sendDelaySeconds: Number.isFinite(patch.sendDelaySeconds)
+        ? Math.min(Math.max(Math.floor(patch.sendDelaySeconds!), 0), 24 * 60 * 60)
+        : current.sendDelaySeconds,
+      syncRecentDays: Number.isFinite(patch.syncRecentDays)
+        ? Math.min(Math.max(Math.floor(patch.syncRecentDays!), 1), 365)
+        : current.syncRecentDays,
+      attachmentCache: ["metadata_on_demand", "recent_cache", "never_cache"].includes(String(patch.attachmentCache))
+        ? patch.attachmentCache!
+        : current.attachmentCache,
+      notifications: ["all", "priority", "needs_reply", "off"].includes(String(patch.notifications))
+        ? patch.notifications!
+        : current.notifications,
+    };
+    this.db
+      .prepare(
+        `INSERT INTO mailbox_client_settings
+          (id, remote_content_policy, send_delay_seconds, sync_recent_days, attachment_cache, notifications, updated_at)
+         VALUES ('default', ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           remote_content_policy = excluded.remote_content_policy,
+           send_delay_seconds = excluded.send_delay_seconds,
+           sync_recent_days = excluded.sync_recent_days,
+           attachment_cache = excluded.attachment_cache,
+           notifications = excluded.notifications,
+           updated_at = excluded.updated_at`,
+      )
+      .run(
+        next.remoteContentPolicy,
+        next.sendDelaySeconds,
+        next.syncRecentDays,
+        next.attachmentCache,
+        next.notifications,
+        Date.now(),
+      );
+    return this.getMailboxClientSettings();
+  }
+
   async sendMailboxDraft(draftId: string): Promise<MailboxOutgoingMessage> {
     const draft = this.getMailboxComposeDraft(draftId);
     if (!draft) throw new Error("Mailbox compose draft not found");
@@ -1978,6 +2289,7 @@ export class MailboxService {
       payload: { outgoingId, sendAfter },
       nextAttemptAt: sendAfter,
     });
+    void this.processMailboxQueue();
     return this.getMailboxOutgoingMessage(outgoingId)!;
   }
 
@@ -2020,6 +2332,57 @@ export class MailboxService {
       payload: { actionId, actionType: existing.type },
       undoOfActionId: actionId,
     });
+  }
+
+  async retryMailboxAction(actionId: string): Promise<MailboxQueuedAction> {
+    const existing = this.getMailboxQueuedAction(actionId);
+    if (!existing) throw new Error("Mailbox action not found");
+    if (existing.status !== "failed") {
+      return existing;
+    }
+    this.db
+      .prepare(
+        `UPDATE mailbox_queued_actions
+         SET status = 'queued', next_attempt_at = ?, latest_error = NULL, updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(Date.now(), Date.now(), actionId);
+    void this.processMailboxQueue();
+    return this.getMailboxQueuedAction(actionId)!;
+  }
+
+  async processMailboxQueue(limit = 25): Promise<{ processed: number; succeeded: number; failed: number }> {
+    if (this.outboxDrainInFlight) return { processed: 0, succeeded: 0, failed: 0 };
+    this.outboxDrainInFlight = true;
+    let processed = 0;
+    let succeeded = 0;
+    let failed = 0;
+    try {
+      const rows = this.db
+        .prepare(
+          `SELECT id, account_id, thread_id, draft_id, action_type, status, payload_json, attempts, next_attempt_at,
+                  latest_error, undo_of_action_id, created_at, updated_at
+           FROM mailbox_queued_actions
+           WHERE status = 'queued'
+             AND COALESCE(next_attempt_at, 0) <= ?
+           ORDER BY next_attempt_at ASC, created_at ASC
+           LIMIT ?`,
+        )
+        .all(Date.now(), Math.min(Math.max(limit, 1), 100)) as MailboxQueuedActionRow[];
+      for (const row of rows) {
+        processed += 1;
+        try {
+          await this.processMailboxQueuedAction(this.mapMailboxQueuedActionRow(row));
+          succeeded += 1;
+        } catch (error) {
+          failed += 1;
+          this.markMailboxQueuedActionFailed(row, error);
+        }
+      }
+    } finally {
+      this.outboxDrainInFlight = false;
+    }
+    return { processed, succeeded, failed };
   }
 
   async listMailboxEvents(
@@ -3077,28 +3440,23 @@ export class MailboxService {
       lastSyncedAt: Date.now(),
     });
 
-    const token = await this.getEmailOAuthAccessToken(channel.id);
     const seen = new Set<string>();
     const normalizedThreads: NormalizedThreadInput[] = [];
     for (const rawQuery of plan.providerQueries) {
       const searchQuery = normalizeWhitespace(rawQuery.replace(/\bhas:attachment\b/gi, "attachment"), 160);
       if (!searchQuery) continue;
-      const params = new URLSearchParams();
-      params.set("$search", `"${searchQuery.replace(/"/g, '\\"')}"`);
-      params.set("$top", String(Math.min(Math.max(limit, 5), 10)));
-      params.set(
-        "$select",
-        "id,conversationId,subject,bodyPreview,body,from,toRecipients,ccRecipients,bccRecipients,receivedDateTime,isRead,hasAttachments",
-      );
-      const response = await fetch(`https://graph.microsoft.com/v1.0/me/messages?${params.toString()}`, {
+      const data = await this.microsoftGraphRequest(channel.id, {
         method: "GET",
+        path: "/me/messages",
+        query: {
+          $search: `"${searchQuery.replace(/"/g, '\\"')}"`,
+          $top: String(Math.min(Math.max(limit, 5), 10)),
+          $select: MICROSOFT_GRAPH_MESSAGE_SELECT,
+        },
         headers: {
-          Authorization: `Bearer ${token}`,
           ConsistencyLevel: "eventual",
         },
       });
-      if (!response.ok) continue;
-      const data = (await response.json()) as Any;
       const messages = Array.isArray(data?.value) ? data.value : [];
       for (const message of messages) {
         const normalized = this.normalizeMicrosoftGraphMessage(accountId, address, message);
@@ -3881,7 +4239,10 @@ export class MailboxService {
     return record.event;
   }
 
-  async sync(limit = 25): Promise<MailboxSyncResult> {
+  async sync(
+    limit = 25,
+    options: { source?: "auto" | "manual" } = {},
+  ): Promise<MailboxSyncResult> {
     if (this.syncInFlight) {
       const status = await this.getSyncStatus();
       return {
@@ -3905,33 +4266,59 @@ export class MailboxService {
     });
     try {
       const accounts: MailboxAccount[] = [];
-      const syncErrors: string[] = [];
+      const syncErrors: Array<{ message: string; transient: boolean }> = [];
       let syncedThreads = 0;
       let syncedMessages = 0;
+      let successfulProviderCount = 0;
 
-      if (GoogleWorkspaceSettingsManager.loadSettings().enabled) {
-        try {
-          const result = await this.syncGmail(limit);
-          if (result) {
-            accounts.push(result.account);
-            syncedThreads += result.syncedThreads;
-            syncedMessages += result.syncedMessages;
+      const googleWorkspaceSettings = GoogleWorkspaceSettingsManager.loadSettings();
+      const googleWorkspaceAuthIssue = this.getGoogleWorkspaceAuthIssue();
+      if (googleWorkspaceSettings.enabled && !googleWorkspaceAuthIssue) {
+        if (options.source === "auto" && this.gmailTransientSyncBackoffUntil > Date.now()) {
+          const label = this.noteGmailTransientSyncBackoff();
+          syncErrors.push({ message: label, transient: true });
+          accounts.push(...this.getExistingMailboxAccounts("gmail", "degraded"));
+        } else {
+          try {
+            const result = await this.syncGmail(limit);
+            if (result) {
+              this.resetGmailTransientSyncFailure();
+              successfulProviderCount += 1;
+              accounts.push(result.account);
+              syncedThreads += result.syncedThreads;
+              syncedMessages += result.syncedMessages;
+            }
+          } catch (error) {
+            if (isMailboxConnectionError(error)) {
+              const label = this.noteGmailTransientSyncFailure(error);
+              syncErrors.push({ message: label, transient: true });
+              accounts.push(...this.getExistingMailboxAccounts("gmail", "degraded"));
+            } else {
+              syncErrors.push({
+                message: `Gmail sync failed: ${error instanceof Error ? error.message : String(error)}`,
+                transient: false,
+              });
+            }
           }
-        } catch (error) {
-          syncErrors.push(`Gmail sync failed: ${error instanceof Error ? error.message : String(error)}`);
         }
+      } else if (googleWorkspaceAuthIssue) {
+        syncErrors.push({ message: googleWorkspaceAuthIssue.statusLabel, transient: true });
       }
 
       if (this.agentMailEnabled()) {
         try {
           const result = await this.syncAgentMail(limit);
           if (result) {
+            successfulProviderCount += 1;
             accounts.push(...result.accounts);
             syncedThreads += result.syncedThreads;
             syncedMessages += result.syncedMessages;
           }
         } catch (error) {
-          syncErrors.push(`AgentMail sync failed: ${error instanceof Error ? error.message : String(error)}`);
+          syncErrors.push({
+            message: `AgentMail sync failed: ${error instanceof Error ? error.message : String(error)}`,
+            transient: false,
+          });
         }
       }
 
@@ -3939,18 +4326,47 @@ export class MailboxService {
         try {
           const result = await this.syncImap(limit);
           if (result) {
+            successfulProviderCount += 1;
             accounts.push(result.account);
             syncedThreads += result.syncedThreads;
             syncedMessages += result.syncedMessages;
           }
         } catch (error) {
-          syncErrors.push(`Email channel sync failed: ${error instanceof Error ? error.message : String(error)}`);
+          syncErrors.push({
+            message: `Email channel sync failed: ${error instanceof Error ? error.message : String(error)}`,
+            transient: isMailboxConnectionError(error),
+          });
+          if (isMailboxConnectionError(error)) {
+            accounts.push(...this.getExistingMailboxAccounts("imap", "degraded"));
+          }
         }
+      }
+
+      const onlyTransientErrors = syncErrors.length > 0 && syncErrors.every((entry) => entry.transient);
+      if (onlyTransientErrors && successfulProviderCount === 0) {
+        const label = syncErrors[0]?.message || "Mailbox sync temporarily unavailable; retrying later";
+        this.updateSyncProgress({
+          phase: "error",
+          totalThreads: 0,
+          processedThreads: 0,
+          totalMessages: 0,
+          processedMessages: 0,
+          newThreads: 0,
+          classifiedThreads: 0,
+          skippedThreads: 0,
+          label,
+        });
+        return {
+          accounts,
+          syncedThreads: 0,
+          syncedMessages: 0,
+          lastSyncedAt: Date.now(),
+        };
       }
 
       if (accounts.length === 0) {
         throw new Error(
-          syncErrors[0] ||
+          syncErrors[0]?.message ||
             "No connected mailbox was found. Enable AgentMail, Google Workspace, or configure the Email channel.",
         );
       }
@@ -4048,7 +4464,7 @@ export class MailboxService {
       address: address || inboxId,
       displayName,
       status: "connected",
-      capabilities: ["archive", "trash", "mark_read", "mark_unread", "labels", "send", "provider_drafts", "sync", "realtime"],
+      capabilities: ["archive", "trash", "mark_read", "mark_unread", "labels", "send", "reply_all", "sync", "realtime"],
       backend: "agentmail",
       lastSyncedAt: Date.now(),
     };
@@ -5638,97 +6054,101 @@ export class MailboxService {
     }
     const primaryContact = thread.participants[0];
 
-    switch (input.type) {
-      case "cleanup_local":
-        this.applyLocalCleanup(thread);
-        break;
-      case "mark_done":
-        await this.applyMarkDone(thread);
-        break;
-      case "archive":
-        await this.applyArchive(thread);
-        break;
-      case "trash":
-        await this.applyTrash(thread);
-        break;
-      case "mark_read":
-        await this.applyMarkRead(thread);
-        break;
-      case "mark_unread":
-        await this.applyMarkUnread(thread);
-        break;
-      case "move":
-        if (!input.folderId) throw new Error("Missing folder for move action");
-        this.enqueueMailboxAction({
-          accountId: thread.accountId,
-          threadId: thread.id,
-          type: "move",
-          payload: { folderId: input.folderId },
-        });
-        break;
-      case "label":
-        if (!input.label) throw new Error("Missing label for label action");
-        await this.applyLabel(thread, input.label);
-        break;
-      case "remove_label":
-        if (!input.label && !input.labelId) throw new Error("Missing label for remove label action");
-        this.enqueueMailboxAction({
-          accountId: thread.accountId,
-          threadId: thread.id,
-          type: "remove_label",
-          payload: { label: input.label, labelId: input.labelId },
-        });
-        break;
-      case "snooze":
-        if (!input.snoozeUntil) throw new Error("Missing snooze time");
-        this.enqueueMailboxAction({
-          accountId: thread.accountId,
-          threadId: thread.id,
-          type: "snooze",
-          payload: { snoozeUntil: input.snoozeUntil },
-          nextAttemptAt: input.snoozeUntil,
-        });
-        this.db.prepare("UPDATE mailbox_threads SET handled = 1, updated_at = ? WHERE id = ?").run(Date.now(), thread.id);
-        break;
-      case "waiting_on":
-        this.enqueueMailboxAction({
-          accountId: thread.accountId,
-          threadId: thread.id,
-          type: "waiting_on",
-          payload: { commitmentId: input.commitmentId },
-        });
-        this.db
-          .prepare("UPDATE mailbox_threads SET needs_reply = 0, handled = 1, today_bucket = 'good_to_know', updated_at = ? WHERE id = ?")
-          .run(Date.now(), thread.id);
-        break;
-      case "undo":
-        if (!input.actionId) throw new Error("Missing action id for undo");
-        await this.undoMailboxAction(input.actionId);
-        break;
-      case "send_message":
-        await this.applySendMessage(thread, {
-          mode: input.messageMode || "reply",
-          to: input.messageTo || [],
-          cc: input.messageCc || [],
-          bcc: input.messageBcc || [],
-          subject: input.messageSubject,
-          body: input.messageBody,
-        });
-        break;
-      case "send_draft":
-        await this.applySendDraft(thread, input.draftId, {
-          subject: input.draftSubject,
-          body: input.draftBody,
-        });
-        break;
-      case "discard_draft":
-        await this.applyDiscardDraft(thread, input.draftId);
-        break;
-      case "schedule_event":
-        await this.applyScheduleEvent(thread, input.proposalId);
-        break;
-      default:
-        throw new Error(`Unsupported mailbox action: ${input.type}`);
+    try {
+      switch (input.type) {
+        case "cleanup_local":
+          this.applyLocalCleanup(thread);
+          break;
+        case "mark_done":
+          await this.applyMarkDone(thread);
+          break;
+        case "archive":
+          await this.applyArchive(thread);
+          break;
+        case "trash":
+          await this.applyTrash(thread);
+          break;
+        case "mark_read":
+          await this.applyMarkRead(thread);
+          break;
+        case "mark_unread":
+          await this.applyMarkUnread(thread);
+          break;
+        case "move":
+          if (!input.folderId) throw new Error("Missing folder for move action");
+          this.enqueueMailboxAction({
+            accountId: thread.accountId,
+            threadId: thread.id,
+            type: "move",
+            payload: { folderId: input.folderId },
+          });
+          break;
+        case "label":
+          if (!input.label) throw new Error("Missing label for label action");
+          await this.applyLabel(thread, input.label);
+          break;
+        case "remove_label":
+          if (!input.label && !input.labelId) throw new Error("Missing label for remove label action");
+          this.enqueueMailboxAction({
+            accountId: thread.accountId,
+            threadId: thread.id,
+            type: "remove_label",
+            payload: { label: input.label, labelId: input.labelId },
+          });
+          break;
+        case "snooze":
+          if (!input.snoozeUntil) throw new Error("Missing snooze time");
+          this.enqueueMailboxAction({
+            accountId: thread.accountId,
+            threadId: thread.id,
+            type: "snooze",
+            payload: { snoozeUntil: input.snoozeUntil },
+            nextAttemptAt: input.snoozeUntil,
+          });
+          this.db.prepare("UPDATE mailbox_threads SET handled = 1, updated_at = ? WHERE id = ?").run(Date.now(), thread.id);
+          break;
+        case "waiting_on":
+          this.enqueueMailboxAction({
+            accountId: thread.accountId,
+            threadId: thread.id,
+            type: "waiting_on",
+            payload: { commitmentId: input.commitmentId },
+          });
+          this.db
+            .prepare("UPDATE mailbox_threads SET needs_reply = 0, handled = 1, today_bucket = 'good_to_know', updated_at = ? WHERE id = ?")
+            .run(Date.now(), thread.id);
+          break;
+        case "undo":
+          if (!input.actionId) throw new Error("Missing action id for undo");
+          await this.undoMailboxAction(input.actionId);
+          break;
+        case "send_message":
+          await this.applySendMessage(thread, {
+            mode: input.messageMode || "reply",
+            to: input.messageTo || [],
+            cc: input.messageCc || [],
+            bcc: input.messageBcc || [],
+            subject: input.messageSubject,
+            body: input.messageBody,
+          });
+          break;
+        case "send_draft":
+          await this.applySendDraft(thread, input.draftId, {
+            subject: input.draftSubject,
+            body: input.draftBody,
+          });
+          break;
+        case "discard_draft":
+          await this.applyDiscardDraft(thread, input.draftId);
+          break;
+        case "schedule_event":
+          await this.applyScheduleEvent(thread, input.proposalId);
+          break;
+        default:
+          throw new Error(`Unsupported mailbox action: ${input.type}`);
+      }
+    } catch (error) {
+      throw toMailboxActionError(input.type, thread.provider, error);
     }
 
     if (input.proposalId) {
@@ -5814,6 +6234,7 @@ export class MailboxService {
       backend: "gmail_api",
       lastSyncedAt: now,
     });
+    await this.refreshGmailNavigation(accountId);
 
     const listResult = await gmailRequest(settings, {
       method: "GET",
@@ -6103,6 +6524,10 @@ export class MailboxService {
     const normalizedMessage: NormalizedMailboxMessage = {
       id: `outlook-graph-message:${messageId}`,
       providerMessageId: messageId,
+      metadata: {
+        microsoftGraphMessageId: messageId,
+        rfcMessageId: asString(message?.internetMessageId) || undefined,
+      },
       direction,
       from,
       to: graphRecipientsToParticipants(message?.toRecipients),
@@ -6143,6 +6568,140 @@ export class MailboxService {
     };
   }
 
+  private async syncMicrosoftGraphEmailChannel(
+    channelId: string,
+    config: Any,
+    limit: number,
+  ): Promise<{
+    account: MailboxAccount;
+    syncedThreads: number;
+    syncedMessages: number;
+  } | null> {
+    const address = (asString(config.email) || asString(config.displayName) || "outlook").toLowerCase();
+    if (!address) return null;
+
+    const accountId = `outlook-graph:${address}`;
+    const now = Date.now();
+    const existingAccount = this.db
+      .prepare(
+        `SELECT classification_initial_batch_at
+         FROM mailbox_accounts
+         WHERE id = ?`,
+      )
+      .get(accountId) as { classification_initial_batch_at: number | null } | undefined;
+    const initialClassificationNeeded = !existingAccount?.classification_initial_batch_at;
+    this.upsertAccount({
+      id: accountId,
+      provider: "outlook_graph",
+      address,
+      displayName: asString(config.displayName) || address,
+      status: "connected",
+      capabilities: mergeMailboxCapabilities(
+        ["sync", "provider_search", "send", "reply_all", "forward", "attachments_download", "mark_read", "mark_unread"],
+        "microsoft_graph",
+      ),
+      backend: "microsoft_graph",
+      lastSyncedAt: now,
+    });
+    await this.refreshMicrosoftGraphNavigation(channelId, accountId);
+
+    const data = await this.microsoftGraphRequest(channelId, {
+      method: "GET",
+      path: "/me/messages",
+      query: {
+        $top: String(Math.min(Math.max(limit, 5), 50)),
+        $orderby: "receivedDateTime desc",
+        $select: MICROSOFT_GRAPH_MESSAGE_SELECT,
+      },
+    });
+    const messages = Array.isArray(data?.value) ? data.value : [];
+    const threads = messages
+      .map((message: Any) => this.normalizeMicrosoftGraphMessage(accountId, address, message))
+      .filter((thread: NormalizedThreadInput | null): thread is NormalizedThreadInput => Boolean(thread));
+
+    const classificationCandidates: string[] = [];
+    let processedThreads = 0;
+    let processedMessages = 0;
+    this.updateSyncProgress({
+      phase: "ingesting",
+      accountId,
+      totalThreads: threads.length,
+      processedThreads: 0,
+      totalMessages: messages.length,
+      processedMessages: 0,
+      newThreads: 0,
+      classifiedThreads: 0,
+      skippedThreads: 0,
+      label:
+        threads.length > 0
+          ? `Syncing 0/${threads.length} Outlook thread${threads.length === 1 ? "" : "s"}...`
+          : "No new Outlook messages found",
+    });
+
+    for (const thread of threads) {
+      const upsertResult = this.upsertThread(thread);
+      if (upsertResult.shouldClassify) {
+        classificationCandidates.push(thread.id);
+      }
+      processedThreads += 1;
+      processedMessages += thread.messages.length;
+      this.updateSyncProgress({
+        phase: "ingesting",
+        accountId,
+        totalThreads: threads.length,
+        processedThreads,
+        totalMessages: messages.length,
+        processedMessages,
+        newThreads: classificationCandidates.length,
+        classifiedThreads: 0,
+        skippedThreads: Math.max(0, threads.length - processedThreads),
+        label:
+          threads.length > 0
+            ? `Syncing ${processedThreads}/${threads.length} Outlook thread${threads.length === 1 ? "" : "s"} · ${processedMessages} message${processedMessages === 1 ? "" : "s"}`
+            : "No new Outlook messages found",
+      });
+    }
+
+    if (initialClassificationNeeded) {
+      await this.classifyMailboxThreadsForAccount(accountId, {
+        limit: MAILBOX_CLASSIFIER_MAX_BATCH,
+      });
+    } else {
+      for (const candidateThreadId of classificationCandidates) {
+        await this.classifyThreadById(candidateThreadId);
+      }
+    }
+
+    this.updateSyncProgress({
+      phase: "done",
+      accountId,
+      totalThreads: threads.length,
+      processedThreads,
+      totalMessages: messages.length,
+      processedMessages,
+      newThreads: classificationCandidates.length,
+      classifiedThreads: classificationCandidates.length,
+      skippedThreads: 0,
+      label:
+        threads.length > 0
+          ? `Synced ${threads.length} Outlook thread${threads.length === 1 ? "" : "s"} and ${messages.length} message${messages.length === 1 ? "" : "s"}`
+          : "Outlook mailbox sync complete",
+    });
+
+    return {
+      account: this.mapAccountRow(
+        this.db
+          .prepare(
+            `SELECT id, provider, address, display_name, status, capabilities_json, classification_initial_batch_at, last_synced_at
+             FROM mailbox_accounts WHERE id = ?`,
+          )
+          .get(accountId) as MailboxAccountRow,
+      ),
+      syncedThreads: threads.length,
+      syncedMessages: messages.length,
+    };
+  }
+
   private async syncImap(limit: number): Promise<{
     account: MailboxAccount;
     syncedThreads: number;
@@ -6151,6 +6710,9 @@ export class MailboxService {
     const channel = this.channelRepo.findByType("email");
     if (!channel || !channel.enabled) return null;
     const cfg = (channel.config as Any) || {};
+    if (this.isMicrosoftEmailOAuthConfig(cfg)) {
+      return this.syncMicrosoftGraphEmailChannel(channel.id, cfg, limit);
+    }
     const protocol = asString(cfg.protocol) === "loom" ? "loom" : "imap-smtp";
     const now = Date.now();
 
@@ -6699,7 +7261,9 @@ export class MailboxService {
            cleanup_candidate,
            handled,
            local_inbox_hidden,
+           unread_count,
            last_message_at,
+           message_count,
            classification_state,
            classification_fingerprint,
            classification_model_key,
@@ -6725,7 +7289,9 @@ export class MailboxService {
           cleanup_candidate: number;
           handled: number;
           local_inbox_hidden: number;
+          unread_count: number;
           last_message_at: number;
+          message_count: number;
           classification_state: MailboxClassificationState;
           classification_fingerprint: string | null;
           classification_model_key: string | null;
@@ -6755,6 +7321,18 @@ export class MailboxService {
     const shouldClassify = !existing || existing.classification_state !== "classified";
     const preserveLocalInboxHidden =
       existing?.local_inbox_hidden === 1 && thread.lastMessageAt <= existing.last_message_at;
+    const localMessageRows = this.db
+      .prepare("SELECT id, is_unread FROM mailbox_messages WHERE thread_id = ?")
+      .all(thread.id) as Array<{ id: string; is_unread: number }>;
+    const locallyReadMessageIds = new Set(
+      localMessageRows.filter((message) => message.is_unread === 0).map((message) => message.id),
+    );
+    const preserveThreadReadState =
+      existing?.unread_count === 0 &&
+      thread.unreadCount > 0 &&
+      thread.messages.length <= (existing.message_count || 0);
+    const isMessageUnreadAfterLocalState = (message: NormalizedMailboxMessage): boolean =>
+      preserveThreadReadState || locallyReadMessageIds.has(message.id) ? false : message.unread;
     const sensitiveContent = this.createThreadSensitiveContent([
       thread.subject,
       thread.snippet,
@@ -6762,6 +7340,13 @@ export class MailboxService {
     ]);
     const baseText = `${thread.subject} ${thread.snippet} ${thread.messages.map((message) => message.body).join(" ")}`;
     const fallbackDomainCategory = deriveDomainCategoryFromText(baseText, classificationValues?.category || thread.category);
+    const nextUnreadCount = thread.messages.filter(isMessageUnreadAfterLocalState).length;
+    const nextHandled =
+      nextUnreadCount === 0 && !(classificationValues?.needs_reply ?? thread.needsReply)
+        ? 1
+        : nextUnreadCount > 0
+          ? 0
+          : classificationValues?.handled ?? (thread.handled ? 1 : 0);
     const fallbackTodayBucket = deriveTodayBucket({
       category: classificationValues?.category || thread.category,
       domainCategory: fallbackDomainCategory,
@@ -6769,7 +7354,7 @@ export class MailboxService {
       priorityScore: classificationValues?.priority_score ?? thread.priorityScore,
       urgencyScore: classificationValues?.urgency_score ?? thread.urgencyScore,
       cleanupCandidate: Boolean(classificationValues?.cleanup_candidate ?? thread.cleanupCandidate),
-      handled: Boolean(classificationValues?.handled ?? thread.handled),
+      handled: Boolean(nextHandled),
       text: baseText,
     });
 
@@ -6831,9 +7416,9 @@ export class MailboxService {
         classificationValues?.needs_reply ?? (thread.needsReply ? 1 : 0),
         classificationValues?.stale_followup ?? (thread.staleFollowup ? 1 : 0),
         classificationValues?.cleanup_candidate ?? (thread.cleanupCandidate ? 1 : 0),
-        classificationValues?.handled ?? (thread.handled ? 1 : 0),
+        nextHandled,
         preserveLocalInboxHidden ? 1 : 0,
-        thread.unreadCount,
+        nextUnreadCount,
         thread.messages.length,
         thread.lastMessageAt,
         now,
@@ -6901,7 +7486,7 @@ export class MailboxService {
           encryptMailboxValue(message.body),
           encryptMailboxValue(message.bodyHtml || null),
           message.receivedAt,
-          message.unread ? 1 : 0,
+          isMessageUnreadAfterLocalState(message) ? 1 : 0,
           JSON.stringify(message.metadata || {}),
           now,
           now,
@@ -6930,7 +7515,7 @@ export class MailboxService {
       });
     } else {
       this.db
-      .prepare(
+        .prepare(
           `DELETE FROM mailbox_action_proposals
            WHERE thread_id = ?
              AND status = 'suggested'
@@ -8487,6 +9072,19 @@ export class MailboxService {
         addLabels: ["archived"],
         removeLabels: ["inbox"],
       });
+    } else if (thread.provider === "outlook_graph") {
+      const archiveFolder = this.listMailboxFolders().find(
+        (folder) => folder.accountId === thread.accountId && folder.role === "archive",
+      );
+      const latestMessage = [...thread.messages].sort((a, b) => b.receivedAt - a.receivedAt)[0];
+      if (!latestMessage || !archiveFolder) {
+        throw new Error("Unable to resolve Outlook archive target.");
+      }
+      await this.microsoftGraphRequest(this.resolveMicrosoftGraphChannelId(), {
+        method: "POST",
+        path: `/me/messages/${encodeURIComponent(latestMessage.providerMessageId)}/move`,
+        body: { destinationId: archiveFolder.providerFolderId },
+      });
     } else {
       throw new Error("Archive is not supported for the current IMAP adapter.");
     }
@@ -8548,6 +9146,13 @@ export class MailboxService {
       await this.getAgentMailClient().updateMessage(account.inboxId, latestMessage.providerMessageId, {
         addLabels: ["trash"],
       });
+    } else if (thread.provider === "outlook_graph") {
+      const latestMessage = [...thread.messages].sort((a, b) => b.receivedAt - a.receivedAt)[0];
+      if (!latestMessage) throw new Error("Unable to resolve Outlook message for trash.");
+      await this.microsoftGraphRequest(this.resolveMicrosoftGraphChannelId(), {
+        method: "DELETE",
+        path: `/me/messages/${encodeURIComponent(latestMessage.providerMessageId)}`,
+      });
     } else {
       throw new Error("Trash is not supported for the current IMAP adapter.");
     }
@@ -8583,7 +9188,9 @@ export class MailboxService {
       const channel = this.channelRepo.findByType("email");
       if (!channel) throw new Error("Email channel is not configured");
       const cfg = (channel.config as Any) || {};
-      if (asString(cfg.protocol) === "loom") {
+      if (thread.provider === "outlook_graph" || this.isMicrosoftEmailOAuthConfig(cfg)) {
+        await this.applyMicrosoftGraphReadState(channel.id, thread.id, true);
+      } else if (asString(cfg.protocol) === "loom") {
         const loomBaseUrl = asString(cfg.loomBaseUrl);
         const accessToken = asString(cfg.loomAccessToken);
         const identity = asString(cfg.loomIdentity) || loomBaseUrl;
@@ -8606,19 +9213,21 @@ export class MailboxService {
         }
         await client.markAsRead(uid);
       } else {
-        const client = this.createStandardEmailClient(channel.id, cfg);
-        const uid = await this.resolveImapUidForMarkRead(thread.id, client);
-        if (uid === null || !Number.isFinite(uid)) {
-          throw new Error("Unable to resolve IMAP UID for mark_read");
-        }
-        await client.markAsRead(uid);
+        await this.applyStandardImapReadState(thread.id, this.createStandardEmailClient(channel.id, cfg), true);
       }
     }
 
-    this.db.prepare("UPDATE mailbox_messages SET is_unread = 0 WHERE thread_id = ?").run(thread.id);
+    this.markThreadReadLocally(thread.id);
+  }
+
+  private markThreadReadLocally(threadId: string): void {
+    const now = Date.now();
+    this.db
+      .prepare("UPDATE mailbox_messages SET is_unread = 0, updated_at = ? WHERE thread_id = ?")
+      .run(now, threadId);
     this.db
       .prepare("UPDATE mailbox_threads SET unread_count = 0, handled = CASE WHEN needs_reply = 0 THEN 1 ELSE handled END, updated_at = ? WHERE id = ?")
-      .run(Date.now(), thread.id);
+      .run(now, threadId);
   }
 
   private async applyMarkUnread(thread: MailboxThreadDetail | (MailboxThreadListItem & { messages: MailboxMessage[] })): Promise<void> {
@@ -8645,7 +9254,9 @@ export class MailboxService {
       const channel = this.channelRepo.findByType("email");
       if (!channel) throw new Error("Email channel is not configured");
       const cfg = (channel.config as Any) || {};
-      if (asString(cfg.protocol) === "loom") {
+      if (thread.provider === "outlook_graph" || this.isMicrosoftEmailOAuthConfig(cfg)) {
+        await this.applyMicrosoftGraphReadState(channel.id, thread.id, false);
+      } else if (asString(cfg.protocol) === "loom") {
         const loomBaseUrl = asString(cfg.loomBaseUrl);
         const accessToken = asString(cfg.loomAccessToken);
         const identity = asString(cfg.loomIdentity) || loomBaseUrl;
@@ -8667,12 +9278,7 @@ export class MailboxService {
         }
         await client.markAsUnread(uid);
       } else {
-        const client = this.createStandardEmailClient(channel.id, cfg);
-        const uid = await this.resolveImapUidForMarkRead(thread.id, client);
-        if (uid === null || !Number.isFinite(uid)) {
-          throw new Error("Unable to resolve IMAP UID for mark_unread");
-        }
-        await client.markAsUnread(uid);
+        await this.applyStandardImapReadState(thread.id, this.createStandardEmailClient(channel.id, cfg), false);
       }
     }
 
@@ -8687,6 +9293,151 @@ export class MailboxService {
       .run(Date.now(), thread.id);
   }
 
+  private async applyMicrosoftGraphReadState(channelId: string, threadId: string, read: boolean): Promise<void> {
+    const rows = this.db
+      .prepare(
+        `SELECT
+           id,
+           provider_message_id,
+           metadata_json
+         FROM mailbox_messages
+         WHERE thread_id = ?
+         ORDER BY is_unread DESC, received_at DESC`,
+      )
+      .all(threadId) as Array<Pick<MailboxMessageRow, "id" | "provider_message_id" | "metadata_json">>;
+
+    for (const row of rows) {
+      const metadata = parseMailboxMessageMetadata(row.metadata_json);
+      const graphMessageId =
+        metadata.microsoftGraphMessageId ||
+        (row.id.startsWith("outlook-graph-message:") ? row.provider_message_id : null);
+      if (!graphMessageId) continue;
+      await this.updateMicrosoftGraphMessageReadState(channelId, graphMessageId, read);
+      return;
+    }
+
+    for (const row of rows) {
+      const metadata = parseMailboxMessageMetadata(row.metadata_json);
+      const candidateIds = [metadata.rfcMessageId, row.provider_message_id]
+        .filter((value): value is string => Boolean(value))
+        .filter((value) => value.includes("@") || value.startsWith("<"));
+      for (const messageId of candidateIds) {
+        const graphMessageId = await this.resolveMicrosoftGraphMessageIdByInternetMessageId(channelId, messageId);
+        if (!graphMessageId) continue;
+        await this.updateMicrosoftGraphMessageReadState(channelId, graphMessageId, read);
+        this.persistResolvedMicrosoftGraphMessageId(row, graphMessageId, messageId);
+        mailboxLogger.warn("Recovered Microsoft Graph message id for mailbox read-state update", {
+          threadId,
+          mailboxMessageId: row.id,
+          messageId,
+          graphMessageId,
+        });
+        return;
+      }
+    }
+
+    throw new Error(`Unable to resolve Microsoft Graph message for ${read ? "mark_read" : "mark_unread"}`);
+  }
+
+  private async resolveMicrosoftGraphMessageIdByInternetMessageId(
+    channelId: string,
+    internetMessageId: string,
+  ): Promise<string | null> {
+    const data = await this.microsoftGraphRequest(channelId, {
+      method: "GET",
+      path: "/me/messages",
+      query: {
+        $top: "1",
+        $select: "id,internetMessageId",
+        $filter: `internetMessageId eq '${escapeODataString(internetMessageId)}'`,
+      },
+    });
+    const message = Array.isArray(data?.value) ? data.value[0] : null;
+    return asString(message?.id);
+  }
+
+  private async updateMicrosoftGraphMessageReadState(
+    channelId: string,
+    graphMessageId: string,
+    read: boolean,
+  ): Promise<void> {
+    await this.microsoftGraphRequest(channelId, {
+      method: "PATCH",
+      path: `/me/messages/${encodeURIComponent(graphMessageId)}`,
+      body: {
+        isRead: read,
+      },
+    });
+  }
+
+  private persistResolvedMicrosoftGraphMessageId(
+    row: Pick<MailboxMessageRow, "id" | "metadata_json">,
+    microsoftGraphMessageId: string,
+    rfcMessageId?: string,
+  ): void {
+    const previous = parseMailboxMessageMetadata(row.metadata_json);
+    this.db
+      .prepare("UPDATE mailbox_messages SET metadata_json = ?, updated_at = ? WHERE id = ?")
+      .run(
+        JSON.stringify({
+          ...previous,
+          microsoftGraphMessageId,
+          rfcMessageId: rfcMessageId || previous.rfcMessageId,
+        }),
+        Date.now(),
+        row.id,
+      );
+  }
+
+  private async applyStandardImapReadState(threadId: string, client: EmailClient, read: boolean): Promise<void> {
+    const rows = this.db
+      .prepare(
+        `SELECT
+           id,
+           provider_message_id,
+           metadata_json
+         FROM mailbox_messages
+         WHERE thread_id = ?
+         ORDER BY is_unread DESC, received_at DESC`,
+      )
+      .all(threadId) as Array<Pick<MailboxMessageRow, "id" | "provider_message_id" | "metadata_json">>;
+
+    for (const row of rows) {
+      const uid = this.extractStoredImapUid(row);
+      if (uid !== null && Number.isFinite(uid)) {
+        if (read) {
+          await client.markAsRead(uid);
+        } else {
+          await client.markAsUnread(uid);
+        }
+        return;
+      }
+    }
+
+    for (const row of rows) {
+      const metadata = parseMailboxMessageMetadata(row.metadata_json);
+      const candidateIds = [metadata.rfcMessageId, row.provider_message_id]
+        .filter((value): value is string => Boolean(value))
+        .filter((value) => !Number.isFinite(Number(value)));
+      for (const messageId of candidateIds) {
+        const uid = read
+          ? await client.markMessageIdAsRead(messageId)
+          : await client.markMessageIdAsUnread(messageId);
+        if (uid === null || !Number.isFinite(uid)) continue;
+        this.persistResolvedImapMessageUid(row, uid, messageId);
+        mailboxLogger.warn("Recovered legacy IMAP UID for mailbox read-state update", {
+          threadId,
+          mailboxMessageId: row.id,
+          messageId,
+          uid,
+        });
+        return;
+      }
+    }
+
+    throw new Error(`Unable to resolve IMAP UID for ${read ? "mark_read" : "mark_unread"}`);
+  }
+
   private extractStoredImapUid(row: Pick<MailboxMessageRow, "provider_message_id" | "metadata_json">): number | null {
     const providerUid = Number(row.provider_message_id);
     if (Number.isFinite(providerUid)) {
@@ -8696,27 +9447,10 @@ export class MailboxService {
     return Number.isFinite(metadata.imapUid) ? metadata.imapUid || null : null;
   }
 
-  private mailboxRowMatchesImapMessage(
-    row: Pick<MailboxMessageRow, "subject" | "from_email" | "received_at">,
-    message: EmailMessage,
-  ): boolean {
-    const rowSubject = normalizeWhitespace(row.subject || "", 160).toLowerCase();
-    const messageSubject = normalizeWhitespace(message.subject || "", 160).toLowerCase();
-    const rowFrom = normalizeEmailAddress(row.from_email || "");
-    const messageFrom = normalizeEmailAddress(message.from?.address || "");
-    return (
-      rowSubject.length > 0 &&
-      rowSubject === messageSubject &&
-      rowFrom !== null &&
-      rowFrom.length > 0 &&
-      rowFrom === messageFrom &&
-      Math.abs(message.date.getTime() - row.received_at) <= 5 * 60 * 1000
-    );
-  }
-
-  private persistResolvedImapMessageMetadata(
+  private persistResolvedImapMessageUid(
     row: Pick<MailboxMessageRow, "id" | "metadata_json">,
-    message: EmailMessage,
+    uid: number,
+    rfcMessageId?: string,
   ): void {
     const previous = parseMailboxMessageMetadata(row.metadata_json);
     this.db
@@ -8724,70 +9458,12 @@ export class MailboxService {
       .run(
         JSON.stringify({
           ...previous,
-          imapUid: message.uid,
-          rfcMessageId: message.messageId,
+          imapUid: uid,
+          rfcMessageId: rfcMessageId || previous.rfcMessageId,
         }),
         Date.now(),
         row.id,
       );
-  }
-
-  private async resolveImapUidForMarkRead(threadId: string, client: EmailClient): Promise<number | null> {
-    const rows = this.db
-      .prepare(
-        `SELECT
-           id,
-           provider_message_id,
-           subject,
-           from_email,
-           received_at,
-           is_unread,
-           metadata_json
-         FROM mailbox_messages
-         WHERE thread_id = ?
-         ORDER BY is_unread DESC, received_at DESC`,
-      )
-      .all(threadId) as Array<
-      Pick<
-        MailboxMessageRow,
-        "id" | "provider_message_id" | "subject" | "from_email" | "received_at" | "is_unread" | "metadata_json"
-      >
-    >;
-
-    for (const row of rows) {
-      const uid = this.extractStoredImapUid(row);
-      if (Number.isFinite(uid)) {
-        return uid;
-      }
-    }
-
-    const remoteMessages = await client.fetchRecentEmails(Math.min(Math.max(rows.length * 10, 25), 200));
-    const priorityRows = rows.some((row) => Boolean(row.is_unread))
-      ? rows.filter((row) => Boolean(row.is_unread))
-      : rows;
-
-    for (const row of priorityRows) {
-      const metadata = parseMailboxMessageMetadata(row.metadata_json);
-      const candidateIds = new Set(
-        [row.provider_message_id, metadata.rfcMessageId].filter((value): value is string => Boolean(value)),
-      );
-      const match =
-        remoteMessages.find((message) => candidateIds.has(message.messageId)) ||
-        remoteMessages.find((message) => this.mailboxRowMatchesImapMessage(row, message));
-      if (!match || !Number.isFinite(match.uid)) {
-        continue;
-      }
-      this.persistResolvedImapMessageMetadata(row, match);
-      mailboxLogger.warn("Recovered legacy IMAP UID for mailbox mark_read", {
-        threadId,
-        mailboxMessageId: row.id,
-        messageId: match.messageId,
-        uid: match.uid,
-      });
-      return match.uid;
-    }
-
-    return null;
   }
 
   private async applyLabel(
@@ -8820,6 +9496,68 @@ export class MailboxService {
     this.db
       .prepare("UPDATE mailbox_threads SET labels_json = ?, updated_at = ? WHERE id = ?")
       .run(JSON.stringify(labels), Date.now(), thread.id);
+  }
+
+  private async applyRemoveLabel(
+    thread: MailboxThreadDetail | (MailboxThreadListItem & { messages: MailboxMessage[] }),
+    label: string,
+  ): Promise<void> {
+    if (!label) throw new Error("Missing label for remove label action");
+    if (thread.provider === "agentmail") {
+      const account = this.parseAgentMailAccountId(thread.accountId);
+      const latestMessage = [...thread.messages].sort((a, b) => b.receivedAt - a.receivedAt)[0];
+      if (!account || !latestMessage) {
+        throw new Error("Unable to resolve AgentMail message for label update.");
+      }
+      await this.getAgentMailClient().updateMessage(account.inboxId, latestMessage.providerMessageId, {
+        removeLabels: [label],
+      });
+    } else if (thread.provider === "gmail") {
+      await gmailRequest(GoogleWorkspaceSettingsManager.loadSettings(), {
+        method: "POST",
+        path: `/users/me/threads/${encodeURIComponent(thread.providerThreadId)}/modify`,
+        body: {
+          removeLabelIds: [label],
+        },
+      });
+    } else {
+      throw new Error("Remove label is only supported for Gmail- or AgentMail-backed threads.");
+    }
+    const labels = thread.labels.filter((entry) => entry !== label);
+    this.db
+      .prepare("UPDATE mailbox_threads SET labels_json = ?, updated_at = ? WHERE id = ?")
+      .run(JSON.stringify(labels), Date.now(), thread.id);
+  }
+
+  private async applyMove(
+    thread: MailboxThreadDetail | (MailboxThreadListItem & { messages: MailboxMessage[] }),
+    folderId: string,
+  ): Promise<void> {
+    if (!folderId) throw new Error("Missing folder for move action");
+    const folder = this.listMailboxFolders().find((entry) => entry.id === folderId || entry.providerFolderId === folderId);
+    const target = folder?.providerFolderId || folderId;
+    if (thread.provider === "gmail") {
+      const addLabelIds = target === "archive" ? [] : [target];
+      const removeLabelIds = target === "inbox" ? [] : ["INBOX"];
+      await gmailRequest(GoogleWorkspaceSettingsManager.loadSettings(), {
+        method: "POST",
+        path: `/users/me/threads/${encodeURIComponent(thread.providerThreadId)}/modify`,
+        body: { addLabelIds, removeLabelIds },
+      });
+    } else if (thread.provider === "outlook_graph") {
+      const message = [...thread.messages].sort((a, b) => b.receivedAt - a.receivedAt)[0];
+      if (!message) throw new Error("Unable to resolve Outlook message for move.");
+      await this.microsoftGraphRequest(this.resolveMicrosoftGraphChannelId(), {
+        method: "POST",
+        path: `/me/messages/${encodeURIComponent(message.providerMessageId)}/move`,
+        body: { destinationId: target },
+      });
+    } else {
+      throw new Error("Move is only supported for Gmail and Microsoft Graph mailboxes.");
+    }
+    this.db
+      .prepare("UPDATE mailbox_threads SET handled = 1, updated_at = ? WHERE id = ?")
+      .run(Date.now(), thread.id);
   }
 
   private async applySendDraft(
@@ -9169,6 +9907,99 @@ export class MailboxService {
     return Boolean(channel?.enabled);
   }
 
+  private isMicrosoftEmailOAuthConfig(config: Any): boolean {
+    if (asString(config.authMethod) !== "oauth") return false;
+    if (asString(config.oauthProvider) === "microsoft") return true;
+    return Boolean(asString(config.oauthClientId) && asString(config.refreshToken) && isMicrosoftConsumerEmailAddress(asString(config.email) || undefined));
+  }
+
+  private async microsoftGraphRequest(
+    channelId: string,
+    options: {
+      method: "GET" | "POST" | "PATCH" | "DELETE";
+      path: string;
+      query?: Record<string, string | number | boolean | undefined>;
+      body?: unknown;
+      headers?: Record<string, string>;
+    },
+  ): Promise<Any> {
+    const token = await this.getMicrosoftGraphAccessToken(channelId);
+    const url = new URL(options.path.replace(/^\/+/, ""), `${MICROSOFT_GRAPH_API_BASE}/`);
+    for (const [key, value] of Object.entries(options.query || {})) {
+      if (value === undefined) continue;
+      url.searchParams.set(key, String(value));
+    }
+
+    const response = await fetch(url.toString(), {
+      method: options.method,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        ...(options.body === undefined ? {} : { "Content-Type": "application/json" }),
+        ...(options.headers || {}),
+      },
+      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+    });
+    const rawText = typeof response.text === "function" ? await response.text() : "";
+    const data = rawText ? parseJsonObject(rawText) : undefined;
+    if (!response.ok) {
+      const graphMessage =
+        asString((data as Any)?.error?.message) ||
+        asString((data as Any)?.message) ||
+        response.statusText ||
+        "Microsoft Graph request failed";
+      if (response.status === 401 || response.status === 403) {
+        throw new Error(
+          `Microsoft Outlook permission failed (${response.status}): ${graphMessage}. Reconnect the Outlook email channel so CoWork can request Microsoft Graph Mail.ReadWrite access.`,
+        );
+      }
+      throw new Error(`Microsoft Graph error ${response.status}: ${graphMessage}`);
+    }
+    return data || {};
+  }
+
+  private async getMicrosoftGraphAccessToken(channelId: string): Promise<string> {
+    const channel = this.channelRepo.findById(channelId);
+    if (!channel || channel.type !== "email") {
+      throw new Error("Email channel not found");
+    }
+
+    const config = (channel.config as Any) || {};
+    if (!this.isMicrosoftEmailOAuthConfig(config)) {
+      throw new Error("Email channel is not configured for Microsoft Outlook OAuth");
+    }
+
+    const accessToken = asString(config.microsoftGraphAccessToken);
+    const tokenExpiresAt = asNumber(config.microsoftGraphTokenExpiresAt);
+    const now = Date.now();
+    if (accessToken && (!tokenExpiresAt || now < tokenExpiresAt - 2 * 60 * 1000)) {
+      return accessToken;
+    }
+
+    const oauthClientId = asString(config.oauthClientId);
+    const refreshToken = asString(config.refreshToken);
+    if (!oauthClientId || !refreshToken) {
+      throw new Error("Reconnect the Outlook email channel so CoWork can sync Outlook read state.");
+    }
+
+    const refreshed = await refreshMicrosoftEmailAccessToken({
+      clientId: oauthClientId,
+      clientSecret: asString(config.oauthClientSecret) || undefined,
+      refreshToken,
+      tenant: asString(config.oauthTenant) || MICROSOFT_EMAIL_DEFAULT_TENANT,
+      scopes: [...MICROSOFT_EMAIL_OAUTH_DEFAULT_SCOPES],
+    });
+
+    const nextConfig = {
+      ...config,
+      microsoftGraphAccessToken: refreshed.accessToken,
+      microsoftGraphTokenExpiresAt: refreshed.expiresIn ? Date.now() + refreshed.expiresIn * 1000 : tokenExpiresAt,
+      refreshToken: refreshed.refreshToken || refreshToken,
+      scopes: refreshed.scopes || (config.scopes as string[] | undefined),
+    };
+    this.channelRepo.update(channelId, { config: nextConfig });
+    return refreshed.accessToken;
+  }
+
   private async getEmailOAuthAccessToken(channelId: string): Promise<string> {
     const channel = this.channelRepo.findById(channelId);
     if (!channel || channel.type !== "email") {
@@ -9388,7 +10219,7 @@ export class MailboxService {
       .prepare(
         `SELECT id, account_id, thread_id, provider_draft_id, mode, status, subject, body_text, body_html,
                 to_json, cc_json, bcc_json, identity_id, signature_id, attachments_json, scheduled_at,
-                send_after, latest_error, created_at, updated_at
+                send_after, latest_error, metadata_json, created_at, updated_at
          FROM mailbox_compose_drafts
          WHERE status != 'discarded'
          ORDER BY updated_at DESC
@@ -9417,7 +10248,7 @@ export class MailboxService {
       .prepare(
         `SELECT id, draft_id, account_id, status, provider_message_id, scheduled_at, send_after, latest_error, created_at, updated_at
          FROM mailbox_outgoing_messages
-         WHERE status IN ('queued', 'running', 'failed')
+         WHERE status IN ('queued', 'sending', 'running', 'failed')
          ORDER BY updated_at DESC
          LIMIT 100`,
       )
@@ -9455,7 +10286,7 @@ export class MailboxService {
       .prepare(
         `SELECT id, account_id, thread_id, provider_draft_id, mode, status, subject, body_text, body_html,
                 to_json, cc_json, bcc_json, identity_id, signature_id, attachments_json, scheduled_at,
-                send_after, latest_error, created_at, updated_at
+                send_after, latest_error, metadata_json, created_at, updated_at
          FROM mailbox_compose_drafts
          WHERE id = ?`,
       )
@@ -9516,6 +10347,591 @@ export class MailboxService {
         now,
       );
     return this.getMailboxQueuedAction(id)!;
+  }
+
+  private async processMailboxQueuedAction(action: MailboxQueuedAction): Promise<void> {
+    const now = Date.now();
+    this.db
+      .prepare("UPDATE mailbox_queued_actions SET status = 'running', attempts = attempts + 1, updated_at = ? WHERE id = ? AND status = 'queued'")
+      .run(now, action.id);
+
+    if (action.type === "send") {
+      await this.executeQueuedDraftSend(action);
+    } else if (action.type === "undo") {
+      this.db
+        .prepare("UPDATE mailbox_queued_actions SET status = 'succeeded', latest_error = NULL, updated_at = ? WHERE id = ?")
+        .run(Date.now(), action.id);
+    } else if (action.threadId) {
+      await this.executeQueuedThreadAction(action);
+    } else {
+      throw new Error(`Mailbox queued action ${action.type} is missing required target data.`);
+    }
+  }
+
+  private markMailboxQueuedActionFailed(row: MailboxQueuedActionRow, error: unknown): void {
+    const attempts = row.attempts + 1;
+    const terminal = attempts >= MAILBOX_OUTBOX_MAX_ATTEMPTS;
+    const message = error instanceof Error ? error.message : String(error);
+    const nextAttemptAt = terminal ? null : Date.now() + Math.min(60_000 * 2 ** Math.max(attempts - 1, 0), 30 * 60_000);
+    this.db
+      .prepare(
+        `UPDATE mailbox_queued_actions
+         SET status = ?, attempts = ?, next_attempt_at = ?, latest_error = ?, updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(terminal ? "failed" : "queued", attempts, nextAttemptAt, message, Date.now(), row.id);
+    if (row.draft_id) {
+      this.db
+        .prepare(
+          `UPDATE mailbox_compose_drafts
+           SET status = 'failed', latest_error = ?, updated_at = ?
+           WHERE id = ?`,
+        )
+        .run(message, Date.now(), row.draft_id);
+      this.db
+        .prepare(
+          `UPDATE mailbox_outgoing_messages
+           SET status = 'failed', latest_error = ?, updated_at = ?
+           WHERE draft_id = ?
+             AND status IN ('queued', 'sending', 'running', 'failed')`,
+        )
+        .run(message, Date.now(), row.draft_id);
+    }
+  }
+
+  private async executeQueuedDraftSend(action: MailboxQueuedAction): Promise<void> {
+    if (!action.draftId) throw new Error("Queued send is missing draft id.");
+    const draft = this.getMailboxComposeDraft(action.draftId);
+    if (!draft) throw new Error("Mailbox compose draft not found");
+    const outgoingId = asString(action.payload.outgoingId);
+    const now = Date.now();
+    this.db
+      .prepare("UPDATE mailbox_compose_drafts SET status = 'sending', latest_error = NULL, updated_at = ? WHERE id = ?")
+      .run(now, draft.id);
+    if (outgoingId) {
+      this.db
+        .prepare("UPDATE mailbox_outgoing_messages SET status = 'sending', latest_error = NULL, updated_at = ? WHERE id = ?")
+        .run(now, outgoingId);
+    }
+
+    const result = await this.sendComposeDraftThroughProvider(draft);
+    this.db
+      .prepare(
+        `UPDATE mailbox_compose_drafts
+         SET status = 'sent', provider_draft_id = COALESCE(?, provider_draft_id), latest_error = NULL, updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(result.providerDraftId || null, Date.now(), draft.id);
+    if (outgoingId) {
+      this.db
+        .prepare(
+          `UPDATE mailbox_outgoing_messages
+           SET status = 'sent', provider_message_id = ?, latest_error = NULL, updated_at = ?
+           WHERE id = ?`,
+        )
+        .run(result.providerMessageId || null, Date.now(), outgoingId);
+    }
+    this.db
+      .prepare("UPDATE mailbox_queued_actions SET status = 'succeeded', latest_error = NULL, updated_at = ? WHERE id = ?")
+      .run(Date.now(), action.id);
+    this.applyPostSendLocalState(draft, result.providerMessageId);
+  }
+
+  private async executeQueuedThreadAction(action: MailboxQueuedAction): Promise<void> {
+    const thread = await this.getThread(action.threadId!);
+    if (!thread) throw new Error("Mailbox thread not found");
+    switch (action.type) {
+      case "move":
+        await this.applyMove(thread, asString(action.payload.folderId) || "");
+        break;
+      case "remove_label":
+        await this.applyRemoveLabel(thread, asString(action.payload.labelId) || asString(action.payload.label) || "");
+        break;
+      case "snooze":
+      case "waiting_on":
+        break;
+      default:
+        throw new Error(`Unsupported queued mailbox action: ${action.type}`);
+    }
+    this.db
+      .prepare("UPDATE mailbox_queued_actions SET status = 'succeeded', latest_error = NULL, updated_at = ? WHERE id = ?")
+      .run(Date.now(), action.id);
+  }
+
+  private async sendComposeDraftThroughProvider(
+    draft: MailboxComposeDraft,
+  ): Promise<{ providerMessageId?: string; providerDraftId?: string }> {
+    const account = this.getMailboxAccount(draft.accountId);
+    if (!account) throw new Error("Mailbox account not found");
+    const providerThreadId = draft.threadId ? this.getProviderThreadId(draft.threadId) : undefined;
+    const attachments = this.readComposeDraftAttachments(draft);
+    if (account.provider === "gmail") {
+      const raw = this.buildRawMimeMessage(draft, attachments);
+      const draftResult = await gmailRequest(GoogleWorkspaceSettingsManager.loadSettings(), {
+        method: "POST",
+        path: "/users/me/drafts",
+        body: {
+          message: {
+            raw,
+            threadId: draft.mode === "forward" ? undefined : providerThreadId,
+          },
+        },
+      });
+      const providerDraftId = asString(draftResult.data?.id) || undefined;
+      const sendResult = await gmailRequest(GoogleWorkspaceSettingsManager.loadSettings(), {
+        method: "POST",
+        path: "/users/me/drafts/send",
+        body: { id: providerDraftId },
+      });
+      return {
+        providerDraftId,
+        providerMessageId: asString(sendResult.data?.id) || undefined,
+      };
+    }
+    if (account.provider === "outlook_graph" || account.backend === "microsoft_graph") {
+      const graphDraft = await this.microsoftGraphCreateDraft(draft, attachments);
+      const graphDraftId = asString(graphDraft?.id);
+      if (!graphDraftId) throw new Error("Microsoft Graph did not return a draft id.");
+      await this.microsoftGraphRequest(this.resolveMicrosoftGraphChannelId(), {
+        method: "POST",
+        path: `/me/messages/${encodeURIComponent(graphDraftId)}/send`,
+      });
+      return { providerDraftId: graphDraftId, providerMessageId: graphDraftId };
+    }
+    if (account.provider === "agentmail") {
+      return this.sendAgentMailDraft(draft);
+    }
+    const channel = this.channelRepo.findByType("email");
+    if (!channel) throw new Error("Email channel is not configured");
+    const client = this.createStandardEmailClient(channel.id, (channel.config as Any) || {});
+    const providerMessageId = await client.sendEmail({
+      to: draft.to.map((recipient) => recipient.email),
+      cc: draft.cc.map((recipient) => recipient.email),
+      bcc: draft.bcc.map((recipient) => recipient.email),
+      subject: draft.subject,
+      text: draft.bodyText,
+      html: draft.bodyHtml,
+      attachments,
+    });
+    return { providerMessageId };
+  }
+
+  private async microsoftGraphCreateDraft(
+    draft: MailboxComposeDraft,
+    attachments: EmailAttachment[],
+  ): Promise<Any> {
+    const toRecipients = draft.to.map((recipient) => this.toGraphRecipient(recipient));
+    const ccRecipients = draft.cc.map((recipient) => this.toGraphRecipient(recipient));
+    const bccRecipients = draft.bcc.map((recipient) => this.toGraphRecipient(recipient));
+    return this.microsoftGraphRequest(this.resolveMicrosoftGraphChannelId(), {
+      method: "POST",
+      path: "/me/messages",
+      body: {
+        subject: draft.subject,
+        body: {
+          contentType: draft.bodyHtml ? "HTML" : "Text",
+          content: draft.bodyHtml || draft.bodyText,
+        },
+        toRecipients,
+        ccRecipients,
+        bccRecipients,
+        attachments: attachments.map((attachment) => ({
+          "@odata.type": "#microsoft.graph.fileAttachment",
+          name: attachment.filename,
+          contentType: attachment.contentType || "application/octet-stream",
+          contentBytes: (attachment.content || Buffer.alloc(0)).toString("base64"),
+        })),
+      },
+    });
+  }
+
+  private toGraphRecipient(recipient: MailboxRecipientInput): Record<string, unknown> {
+    return {
+      emailAddress: {
+        address: recipient.email,
+        name: recipient.name || recipient.email,
+      },
+    };
+  }
+
+  private async sendAgentMailDraft(draft: MailboxComposeDraft): Promise<{ providerMessageId?: string }> {
+    if (!draft.threadId || draft.mode === "new" || draft.mode === "forward") {
+      throw new Error("AgentMail supports reply-all from an existing thread only.");
+    }
+    const thread = await this.getThread(draft.threadId);
+    const account = this.parseAgentMailAccountId(draft.accountId);
+    const latestInbound = thread?.messages
+      .filter((message) => message.direction === "incoming")
+      .sort((a, b) => b.receivedAt - a.receivedAt)[0];
+    if (!account || !latestInbound) {
+      throw new Error("Unable to resolve AgentMail reply target.");
+    }
+    const result = await this.getAgentMailClient().replyAllMessage(account.inboxId, latestInbound.providerMessageId, {
+      text: draft.bodyText,
+      html: draft.bodyHtml,
+      subject: draft.subject,
+    });
+    return { providerMessageId: asString(result?.id) || latestInbound.providerMessageId };
+  }
+
+  private normalizeComposeAttachmentInput(
+    input: MailboxDraftAttachmentInput,
+    workspaceId?: string,
+  ): MailboxComposeDraft["attachments"][number] {
+    const rawPath = asString(input.path);
+    if (!rawPath || !path.isAbsolute(rawPath)) {
+      throw new Error("Mailbox draft attachments must use an absolute local file path.");
+    }
+    const realPath = fs.realpathSync(rawPath);
+    const stat = fs.statSync(realPath);
+    if (!stat.isFile()) {
+      throw new Error("Mailbox draft attachment must be a file.");
+    }
+    this.assertMailboxAttachmentPathAllowed(realPath, workspaceId);
+    if (stat.size > MAILBOX_COMPOSE_ATTACHMENT_MAX_BYTES) {
+      throw new Error(`Mailbox draft attachment exceeds ${MAILBOX_COMPOSE_ATTACHMENT_MAX_BYTES} bytes.`);
+    }
+    const filename = asString(input.filename) || path.basename(realPath);
+    return {
+      id: randomUUID(),
+      filename,
+      mimeType: asString(input.mimeType) || guessMimeType(filename),
+      size: stat.size,
+      localPath: realPath,
+      uploadStatus: "local",
+    };
+  }
+
+  private resolveComposeDraftWorkspaceId(draft: MailboxComposeDraft): string | undefined {
+    if (draft.workspaceId) return draft.workspaceId;
+    if (draft.threadId) {
+      const row = this.db
+        .prepare("SELECT account_id FROM mailbox_threads WHERE id = ?")
+        .get(draft.threadId) as { account_id: string } | undefined;
+      const workspaceId = row ? this.resolveThreadWorkspaceId(row.account_id) : undefined;
+      if (workspaceId) return workspaceId;
+    }
+    const accountWorkspaceId = this.resolveThreadWorkspaceId(draft.accountId);
+    return accountWorkspaceId || this.resolveDefaultWorkspaceId();
+  }
+
+  private resolveComposeDraftWorkspaceIdForCreate(
+    accountId: string,
+    threadId?: string,
+  ): string | undefined {
+    if (threadId) {
+      const row = this.db
+        .prepare("SELECT account_id FROM mailbox_threads WHERE id = ?")
+        .get(threadId) as { account_id: string } | undefined;
+      const workspaceId = row ? this.resolveThreadWorkspaceId(row.account_id) : undefined;
+      if (workspaceId) return workspaceId;
+    }
+    return this.resolveThreadWorkspaceId(accountId) || this.resolveDefaultWorkspaceId();
+  }
+
+  private assertMailboxAttachmentPathAllowed(realPath: string, workspaceId?: string): void {
+    const workspace = workspaceId ? this.workspaceRepo.findById(workspaceId) : undefined;
+    if (!workspace) {
+      throw new Error("Mailbox draft attachment workspace could not be resolved.");
+    }
+
+    const roots = new Set<string>();
+    const workspacePath = asString(workspace.path);
+    if (workspacePath) {
+      roots.add(fs.existsSync(workspacePath) ? fs.realpathSync(workspacePath) : path.resolve(workspacePath));
+    }
+    const allowedPaths = Array.isArray(workspace.permissions?.allowedPaths) ? workspace.permissions.allowedPaths : [];
+    for (const allowedPath of allowedPaths) {
+      const normalized = asString(allowedPath);
+      if (!normalized) continue;
+      roots.add(fs.existsSync(normalized) ? fs.realpathSync(normalized) : path.resolve(normalized));
+    }
+    if (roots.size === 0 || !Array.from(roots).some((root) => isPathInsideRoot(realPath, root))) {
+      throw new Error("Mailbox draft attachment path is outside the draft workspace or allowed paths.");
+    }
+  }
+
+  private readComposeDraftAttachments(draft: MailboxComposeDraft): EmailAttachment[] {
+    return draft.attachments
+      .filter((attachment) => attachment.localPath)
+      .map((attachment) => {
+        const localPath = attachment.localPath!;
+        this.assertMailboxAttachmentPathAllowed(
+          fs.realpathSync(localPath),
+          this.resolveComposeDraftWorkspaceId(draft),
+        );
+        const stat = fs.statSync(localPath);
+        if (!stat.isFile()) throw new Error(`Draft attachment is not a file: ${attachment.filename}`);
+        if (stat.size > MAILBOX_COMPOSE_ATTACHMENT_MAX_BYTES) {
+          throw new Error(`Draft attachment is too large: ${attachment.filename}`);
+        }
+        return {
+          filename: attachment.filename,
+          contentType: attachment.mimeType || guessMimeType(attachment.filename),
+          size: stat.size,
+          content: fs.readFileSync(localPath),
+        };
+      });
+  }
+
+  private buildRawMimeMessage(draft: MailboxComposeDraft, attachments: EmailAttachment[]): string {
+    const strip = (value: string) => value.replace(/[\r\n]/g, "");
+    const boundary = `cowork-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const headers = [
+      draft.to.length ? `To: ${draft.to.map((recipient) => strip(recipient.email)).join(", ")}` : null,
+      draft.cc.length ? `Cc: ${draft.cc.map((recipient) => strip(recipient.email)).join(", ")}` : null,
+      draft.bcc.length ? `Bcc: ${draft.bcc.map((recipient) => strip(recipient.email)).join(", ")}` : null,
+      `Subject: ${strip(draft.subject)}`,
+      "MIME-Version: 1.0",
+      attachments.length
+        ? `Content-Type: multipart/mixed; boundary="${boundary}"`
+        : 'Content-Type: text/plain; charset="UTF-8"',
+    ].filter((entry): entry is string => Boolean(entry));
+    const body = attachments.length
+      ? [
+          `--${boundary}`,
+          'Content-Type: text/plain; charset="UTF-8"',
+          "Content-Transfer-Encoding: 7bit",
+          "",
+          draft.bodyText,
+          ...attachments.flatMap((attachment) => [
+            `--${boundary}`,
+            `Content-Type: ${strip(attachment.contentType || "application/octet-stream")}; name="${strip(attachment.filename)}"`,
+            "Content-Transfer-Encoding: base64",
+            `Content-Disposition: attachment; filename="${strip(attachment.filename)}"`,
+            "",
+            (attachment.content || Buffer.alloc(0)).toString("base64").replace(/(.{76})/g, "$1\r\n"),
+          ]),
+          `--${boundary}--`,
+          "",
+        ].join("\r\n")
+      : draft.bodyText;
+    return Buffer.from([...headers, "", body].join("\r\n"))
+      .toString("base64")
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/, "");
+  }
+
+  private getMailboxAccount(accountId: string): MailboxAccount | null {
+    const row = this.db
+      .prepare(
+        `SELECT id, provider, address, display_name, status, capabilities_json, sync_cursor, classification_initial_batch_at, last_synced_at
+         FROM mailbox_accounts
+         WHERE id = ?`,
+      )
+      .get(accountId) as MailboxAccountRow | undefined;
+    return row ? this.mapAccountRow(row) : null;
+  }
+
+  private getProviderThreadId(threadId: string): string | undefined {
+    const row = this.db
+      .prepare("SELECT provider_thread_id FROM mailbox_threads WHERE id = ?")
+      .get(threadId) as { provider_thread_id: string } | undefined;
+    return row?.provider_thread_id;
+  }
+
+  private async refreshGmailNavigation(accountId: string): Promise<void> {
+    const result = await gmailRequest(GoogleWorkspaceSettingsManager.loadSettings(), {
+      method: "GET",
+      path: "/users/me/labels",
+    });
+    const labels = Array.isArray(result.data?.labels) ? result.data.labels : [];
+    const now = Date.now();
+    for (const label of labels) {
+      const providerLabelId = asString(label?.id);
+      const name = asString(label?.name);
+      if (!providerLabelId || !name) continue;
+      const role = this.gmailLabelRole(providerLabelId, name);
+      if (role) {
+        this.upsertMailboxFolder({
+          accountId,
+          providerFolderId: providerLabelId,
+          name,
+          role,
+          unreadCount: asNumber(label?.messagesUnread) ?? undefined,
+          totalCount: asNumber(label?.messagesTotal) ?? undefined,
+          now,
+        });
+      } else {
+        this.upsertMailboxLabel({
+          accountId,
+          providerLabelId,
+          name,
+          unreadCount: asNumber(label?.messagesUnread) ?? undefined,
+          totalCount: asNumber(label?.messagesTotal) ?? undefined,
+          now,
+        });
+      }
+    }
+  }
+
+  private async refreshMicrosoftGraphNavigation(channelId: string, accountId: string): Promise<void> {
+    const result = await this.microsoftGraphRequest(channelId, {
+      method: "GET",
+      path: "/me/mailFolders",
+      query: { $top: 100 },
+    });
+    const folders = Array.isArray(result?.value) ? result.value : [];
+    const now = Date.now();
+    for (const folder of folders) {
+      const providerFolderId = asString(folder?.id);
+      const name = asString(folder?.displayName);
+      if (!providerFolderId || !name) continue;
+      this.upsertMailboxFolder({
+        accountId,
+        providerFolderId,
+        name,
+        role: this.microsoftFolderRole(name),
+        unreadCount: asNumber(folder?.unreadItemCount) ?? undefined,
+        totalCount: asNumber(folder?.totalItemCount) ?? undefined,
+        now,
+      });
+    }
+  }
+
+  private upsertMailboxFolder(input: {
+    accountId: string;
+    providerFolderId: string;
+    name: string;
+    role: MailboxFolder["role"];
+    unreadCount?: number;
+    totalCount?: number;
+    now: number;
+  }): void {
+    const id = `${input.accountId}:folder:${input.providerFolderId}`;
+    this.db
+      .prepare(
+        `INSERT INTO mailbox_folders
+          (id, account_id, provider_folder_id, name, role, unread_count, total_count, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(account_id, provider_folder_id) DO UPDATE SET
+           name = excluded.name,
+           role = excluded.role,
+           unread_count = excluded.unread_count,
+           total_count = excluded.total_count,
+           updated_at = excluded.updated_at`,
+      )
+      .run(
+        id,
+        input.accountId,
+        input.providerFolderId,
+        input.name,
+        input.role,
+        input.unreadCount ?? null,
+        input.totalCount ?? null,
+        input.now,
+        input.now,
+      );
+  }
+
+  private upsertMailboxLabel(input: {
+    accountId: string;
+    providerLabelId: string;
+    name: string;
+    unreadCount?: number;
+    totalCount?: number;
+    now: number;
+  }): void {
+    const id = `${input.accountId}:label:${input.providerLabelId}`;
+    this.db
+      .prepare(
+        `INSERT INTO mailbox_labels
+          (id, account_id, provider_label_id, name, color, unread_count, total_count, created_at, updated_at)
+         VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?)
+         ON CONFLICT(account_id, provider_label_id) DO UPDATE SET
+           name = excluded.name,
+           unread_count = excluded.unread_count,
+           total_count = excluded.total_count,
+           updated_at = excluded.updated_at`,
+      )
+      .run(
+        id,
+        input.accountId,
+        input.providerLabelId,
+        input.name,
+        input.unreadCount ?? null,
+        input.totalCount ?? null,
+        input.now,
+        input.now,
+      );
+  }
+
+  private gmailLabelRole(id: string, name: string): MailboxFolder["role"] | null {
+    const normalized = `${id} ${name}`.toLowerCase();
+    if (normalized.includes("inbox")) return "inbox";
+    if (normalized.includes("sent")) return "sent";
+    if (normalized.includes("draft")) return "drafts";
+    if (normalized.includes("trash")) return "trash";
+    if (normalized.includes("spam")) return "spam";
+    if (normalized.includes("all_mail") || normalized.includes("all mail")) return "archive";
+    return null;
+  }
+
+  private microsoftFolderRole(name: string): MailboxFolder["role"] {
+    const normalized = name.toLowerCase();
+    if (normalized.includes("inbox")) return "inbox";
+    if (normalized.includes("sent")) return "sent";
+    if (normalized.includes("draft")) return "drafts";
+    if (normalized.includes("archive")) return "archive";
+    if (normalized.includes("deleted") || normalized.includes("trash")) return "trash";
+    if (normalized.includes("junk") || normalized.includes("spam")) return "spam";
+    return "custom";
+  }
+
+  private resolveMicrosoftGraphChannelId(): string {
+    const channel = this.channelRepo.findByType("email");
+    if (!channel || !this.isMicrosoftEmailOAuthConfig((channel.config as Any) || {})) {
+      throw new Error("Microsoft Graph mailbox requires an Outlook email channel connected with OAuth.");
+    }
+    return channel.id;
+  }
+
+  private applyPostSendLocalState(draft: MailboxComposeDraft, providerMessageId?: string): void {
+    const now = Date.now();
+    if (draft.threadId) {
+      this.db
+        .prepare(
+          `INSERT INTO mailbox_messages
+            (id, thread_id, provider_message_id, direction, from_name, from_email, to_json, cc_json, bcc_json, subject, snippet, body_text, received_at, is_unread, metadata_json, created_at, updated_at)
+           VALUES (?, ?, ?, 'outgoing', NULL, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
+        )
+        .run(
+          randomUUID(),
+          draft.threadId,
+          providerMessageId || `local-outgoing-${now}`,
+          this.getMailboxAccount(draft.accountId)?.address || "",
+          JSON.stringify(draft.to),
+          JSON.stringify(draft.cc),
+          JSON.stringify(draft.bcc),
+          draft.subject,
+          normalizeWhitespace(draft.bodyText, 180),
+          encryptMailboxValue(draft.bodyText),
+          now,
+          JSON.stringify({ source: "mailbox_outbox", draftId: draft.id }),
+          now,
+          now,
+        );
+      this.db
+        .prepare(
+          `UPDATE mailbox_threads
+           SET message_count = message_count + 1,
+               last_message_at = ?,
+               updated_at = ?,
+               needs_reply = CASE WHEN ? = 1 THEN needs_reply ELSE 0 END,
+               handled = CASE WHEN ? = 1 THEN handled ELSE 1 END,
+               today_bucket = CASE
+                 WHEN ? = 1 THEN today_bucket
+                 WHEN today_bucket = 'needs_action' THEN 'good_to_know'
+                 ELSE today_bucket
+               END
+           WHERE id = ?`,
+        )
+        .run(now, now, draft.mode === "forward" ? 1 : 0, draft.mode === "forward" ? 1 : 0, draft.mode === "forward" ? 1 : 0, draft.threadId);
+      if (draft.mode !== "forward") {
+        this.updateProposalStatusByThreadAndType(draft.threadId, "reply", "applied");
+      }
+    }
   }
 
   private resolveComposeAccountId(accountId?: string, threadId?: string): string {
@@ -9632,9 +11048,12 @@ export class MailboxService {
   }
 
   private mapMailboxComposeDraftRow(row: MailboxComposeDraftRow): MailboxComposeDraft {
+    const metadata = parseJsonObject(row.metadata_json);
+    const workspaceId = asString(metadata.workspaceId) || undefined;
     return {
       id: row.id,
       accountId: row.account_id,
+      workspaceId,
       mode: row.mode,
       status: row.status,
       threadId: row.thread_id || undefined,

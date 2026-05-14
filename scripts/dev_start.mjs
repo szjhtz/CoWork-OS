@@ -64,27 +64,59 @@ function getElectronBinaryStatus() {
     const electronPkgJson = cwdRequire.resolve("electron/package.json");
     const electronDir = path.dirname(electronPkgJson);
     if (!fs.existsSync(electronDir)) {
-      return { installed: false, ready: false };
+      return { installed: false, ready: false, binaryPath: null };
     }
   } catch {
-    return { installed: false, ready: false };
+    return { installed: false, ready: false, binaryPath: null };
   }
 
   try {
     const electronBinary = cwdRequire("electron");
+    const hasBinaryPath = typeof electronBinary === "string" && electronBinary.length > 0;
     return {
       installed: true,
-      ready: typeof electronBinary === "string" && electronBinary.length > 0 && fs.existsSync(electronBinary),
+      ready: hasBinaryPath && fs.existsSync(electronBinary),
+      binaryPath: hasBinaryPath ? electronBinary : null,
     };
   } catch {
-    return { installed: true, ready: false };
+    return { installed: true, ready: false, binaryPath: null };
   }
 }
 
-function repairElectronInstall(env) {
-  process.stdout.write(
-    "[dev-start] Electron package is present but its binary is missing. Running native setup repair.\n",
+function getNativeSqliteStatus(env) {
+  const electronStatus = getElectronBinaryStatus();
+  if (!electronStatus.ready || !electronStatus.binaryPath) {
+    return { ready: false, reason: "Electron binary is missing." };
+  }
+
+  const result = spawnSync(
+    electronStatus.binaryPath,
+    [
+      "-e",
+      "const Database=require('better-sqlite3');const db=new Database(':memory:');db.close();",
+    ],
+    {
+      cwd: process.cwd(),
+      env: { ...env, ELECTRON_RUN_AS_NODE: "1" },
+      encoding: "utf8",
+    },
   );
+
+  if ((result.status ?? 1) === 0) {
+    return { ready: true, reason: null };
+  }
+
+  const output = `${result.stderr || ""}${result.stdout || ""}`.trim();
+  const firstLine = output.split(/\r?\n/).find(Boolean);
+  return {
+    ready: false,
+    reason:
+      firstLine || `better-sqlite3 failed to load in Electron (exit ${result.status ?? 1}).`,
+  };
+}
+
+function repairNativeInstall(env, reason) {
+  process.stdout.write(`[dev-start] ${reason} Running native setup repair.\n`);
 
   const result = spawnSync(process.execPath, ["scripts/setup_native_driver.mjs"], {
     cwd: process.cwd(),
@@ -100,6 +132,13 @@ function repairElectronInstall(env) {
   if (!repairedStatus.ready) {
     throw new Error(
       "Electron repair finished but the Electron binary is still missing. Run `npm run setup` and retry.",
+    );
+  }
+
+  const sqliteStatus = getNativeSqliteStatus(env);
+  if (!sqliteStatus.ready) {
+    throw new Error(
+      `Native setup repair finished but better-sqlite3 still does not load in Electron: ${sqliteStatus.reason}`,
     );
   }
 }
@@ -138,10 +177,28 @@ delete childEnv.ELECTRON_RUN_AS_NODE;
 const electronStatus = getElectronBinaryStatus();
 if (electronStatus.installed && !electronStatus.ready) {
   try {
-    repairElectronInstall(childEnv);
+    repairNativeInstall(
+      childEnv,
+      "Electron package is present but its binary is missing.",
+    );
   } catch (error) {
     process.stderr.write(`[dev-start] ${error instanceof Error ? error.message : String(error)}\n`);
     process.exit(1);
+  }
+}
+
+if (electronStatus.installed && electronStatus.ready) {
+  const sqliteStatus = getNativeSqliteStatus(childEnv);
+  if (!sqliteStatus.ready) {
+    try {
+      repairNativeInstall(
+        childEnv,
+        `better-sqlite3 is not usable in Electron: ${sqliteStatus.reason}`,
+      );
+    } catch (error) {
+      process.stderr.write(`[dev-start] ${error instanceof Error ? error.message : String(error)}\n`);
+      process.exit(1);
+    }
   }
 }
 

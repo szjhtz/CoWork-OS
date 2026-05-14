@@ -27,7 +27,7 @@ This will:
 2. Choose your LLM provider:
    - **Claude** - Claude API key or Claude subscription token
    - **Google Gemini** - Gemini models (requires API key from [aistudio.google.com](https://aistudio.google.com/apikey))
-   - **OpenRouter** - Multiple models (requires API key from [openrouter.ai](https://openrouter.ai/keys))
+   - **OpenRouter** - Multiple models, including the Pareto Code coding router (requires API key from [openrouter.ai](https://openrouter.ai/keys))
    - **OpenAI** - GPT-4o, o1 models (requires API key from [platform.openai.com](https://platform.openai.com/api-keys))
    - **AWS Bedrock** - Enterprise AWS (requires AWS credentials)
    - **Ollama** - Local models (free, requires [Ollama](https://ollama.ai) installed)
@@ -35,6 +35,7 @@ This will:
    - **Claude API**: paste an API key from [console.anthropic.com](https://console.anthropic.com/)
    - **Claude Subscription**: install the provider's terminal app, run its token setup flow, and paste the generated `sk-ant-oat...` token
 4. Click **Refresh Models** to load the live models available to your credential, then choose a model
+   - For OpenRouter coding work, choose `openrouter/pareto-code` or `openrouter/pareto-code:nitro`. The optional Pareto score is a decimal from `0` to `1`, not a percentage.
 5. Click **Test Connection** to verify
 6. Save settings
 
@@ -62,7 +63,7 @@ Before you start relying on long-term context, open **Settings > Memory Hub** an
 - **Memory Inspector** lets you search observation metadata, inspect details and timelines, edit titles/narratives, promote useful entries to curated memory, mark entries private, suppress prompt recall, redact content, soft-delete entries, and rebuild deterministic metadata when needed.
 - **Supermemory** is optional. If you want an external memory provider, enable it here, paste your API key, keep the default `cowork:{workspaceId}` container template unless you need something else, save, and click **Test Connection**.
 
-Supermemory does not replace CoWork's local memory system. It adds an external profile/search layer, explicit `supermemory_*` tools, optional prompt-time profile injection, and optional mirroring of non-private local memory captures. Local structured observations remain authoritative for privacy controls; private, redacted, and suppressed entries stay local. See [Structured Memory Observations](memory-observations.md) and [Supermemory Integration](supermemory.md).
+Supermemory does not replace CoWork's local memory system. It adds an external profile/search layer, explicit `supermemory_*` tools, optional prompt-time profile injection, and optional mirroring of non-private local memory captures. Local structured observations remain authoritative for privacy controls; private, redacted, and suppressed entries stay local. Dreaming also stays local and review-first by proposing memory curation candidates instead of sending memory maintenance to an external provider. See [Structured Memory Observations](memory-observations.md), [Dreaming](dreaming.md), and [Supermemory Integration](supermemory.md).
 
 ## Troubleshooting
 
@@ -98,8 +99,9 @@ After the app is configured, try tasks that produce or use visible work surfaces
 - `create a two-slide presentation`
 - `create a simple HTML landing page`
 - `go to example.com and test the website as a normal user`
+- `open my local app and test the main flow at desktop, tablet, and mobile sizes`
 
-Generated documents, spreadsheets, presentations, and web pages appear as artifact cards and open in the right sidebar or fullscreen workbench. Live website testing opens the [Browser Workbench](browser-workbench.md), where the agent and user share the same Browser V2 in-app browser, with visible cursor movement, accessibility snapshot refs, diagnostics, screenshots, annotation, and follow-up controls.
+Generated documents, spreadsheets, presentations, and web pages appear as artifact cards and open in the right sidebar or fullscreen workbench. Live website testing opens the [Browser Workbench](browser-workbench.md), where the agent and user share the same Browser V2 in-app browser, with visible cursor movement, responsive viewport testing, accessibility snapshot refs, diagnostics, screenshots, annotation, and follow-up controls.
    - Changes to tracked kit files keep revision snapshots under `.cowork/**/.history/`
    - You can validate kit health, freshness, and secret/missing-file warnings locally with `npm run kit:lint`
 
@@ -122,15 +124,16 @@ Once the app opens, the most important places to know are:
 - **Home**: quick launch plus recent sessions and recent automation activity
 - **Everything Workbench**: generated documents, spreadsheets, decks, web pages, PDFs, and previews open from task output cards into resizable sidebar or fullscreen artifact workspaces. Use this as the first stop for generated knowledge work: review or lightly edit the file, then ask the agent for changes without switching to a separate office app. See [Everything Workbench](everything-workbench.md).
 - **Uploaded PDFs**: attach a PDF to a task or chat turn when you want CoWork to summarize it, answer questions from it, extract clauses, or transform it. The first prompt includes only a compact PDF excerpt plus page/extraction metadata and the workspace-relative path; CoWork reads the full PDF on demand with the document parser. PDF excerpts are treated as untrusted document data, and visual layout questions use the visual PDF reader instead.
-- **Message box shortcuts**: type `/` in the main message box to search app commands and skill-backed workflow shortcuts in one menu. Use `/schedule` for scheduled tasks, `/clear` to clear the current task view without deleting history, `/plan <task>` for Plan mode, `/cost <task>` for estimates, or shortcuts such as `/strategy`, `/batch-rename`, and `/gmail-summary-drive` from the bundled CoWork Shortcuts pack. See [Message Box Shortcuts](message-box-shortcuts.md).
+- **Message box shortcuts**: type `/` in the main message box to search app commands and skill-backed workflow shortcuts in one menu. Use `/schedule` for scheduled tasks, `/clear` to clear the current task view without deleting history, `/plan <task>` for Plan mode, `/cost <task>` for estimates, `/multitask [N] <task>` for bounded parallel lane work, or shortcuts such as `/strategy`, `/batch-rename`, and `/gmail-summary-drive` from the bundled CoWork Shortcuts pack. Skill-backed selections insert the slash token first so you can add context before sending; Claude-for-Legal workflows can then show structured matter-context cards in the task view. See [Message Box Shortcuts](message-box-shortcuts.md), [Multitask Command](multitask.md), and [Claude-for-Legal Workflows](claude-for-legal.md).
 - **Task menu**: open a task and use the three-dot menu beside the title for pin/rename/archive, copy working directory/task ID/deeplink/Markdown, fork session, view outputs, or turn the current task into a scheduled automation. See [Task Automations](task-automations.md).
+- **Agents Hub**: create and inspect reusable managed agents from **Agents**. The clicked-agent detail page is for configuration and actions, not a separate chat. **Test this agent**, **Preview**, and starter prompts start a normal managed-session task and open it in the main task window, where follow-ups, approvals, responses, and outputs work like any other task. See [Managed Agents](managed-agents.md).
 - **Devices**: manage the local machine and saved remote CoWork nodes, run remote tasks, and inspect remote task history
 - **Settings > Automations**: Task Queue, Workflow Intelligence, Scheduled Tasks, Webhooks, Event Triggers, and Daily Briefing
 - **Settings > Profiles**: create, switch, export, and import isolated app profiles
 - **Settings > Companies**: company shell setup, goals, projects, issues, planner state, and linked operators
 - **Mission Control**: company and operator monitoring, Kanban board, feed, and Ops view
 - **Settings > Skills**: Skill Store imports plus optional external read-only skill directories
-- **Settings > Channels**: Slack multi-workspace setup, Telegram group routing, Discord guild allowlists, and enterprise channels such as Feishu/Lark and WeCom
+- **Settings > Channels**: Slack multi-workspace setup, Telegram group routing, Discord guild allowlists, channel/chat/thread specialization, and enterprise channels such as Feishu/Lark and WeCom
 - **Settings → Tools → Computer use** (macOS): Accessibility + Screen Recording onboarding, built-in tool toggles, and context for [desktop automation](computer-use.md)
 - **Settings → Memory Hub → Chronicle**: primary Chronicle setup for consent-gated recent-screen context, pause/resume, capture scope, OCR status, and linked memory behavior. The dedicated `chronicle` tool category still lives in **Settings → Tools → Built-in tools**. See [Chronicle](chronicle.md).
 - **Spreadsheet artifacts**: when a task creates a spreadsheet, use the output card's **Open** action. Excel workbooks and CSV/TSV files open in the right sidebar; native Numbers, Google Sheets shortcut, ODS, and XLSB files use external-app/folder actions. Use fullscreen mode for editable spreadsheets with copy/save/zoom, row/column selection, attachments, voice input, and follow-up prompts. See [Spreadsheet Artifacts](spreadsheet-artifacts.md).
@@ -170,6 +173,7 @@ Use this when you want CoWork OS to run tasks on another machine, such as a Mac 
    - same LAN
    - SSH tunnel
    - Tailscale
+   - reverse proxy only when the Control Plane stays loopback/private and `COWORK_CONTROL_PLANE_ALLOWED_ORIGINS` is set
 3. On your main machine, open the **Devices** tab.
 4. Click **Add new device**.
 5. Enter the gateway URL, token, display name, and purpose.
@@ -177,6 +181,8 @@ Use this when you want CoWork OS to run tasks on another machine, such as a Mac 
 7. Select that device and run a small test task.
 
 After connection, you can browse remote workspaces, attach files from the remote machine, and inspect remote task history from the same Devices surface.
+
+For VPS/headless deployments, prefer SSH tunnels or Tailscale. Direct `0.0.0.0`/`::` Control Plane binds fail closed unless Tailscale, private container context, or an explicit break-glass override is configured.
 
 ## Optional: Set Up Profiles
 
@@ -202,7 +208,7 @@ Recommended order:
 2. **Routines**: create one safe routine with a manual or schedule trigger.
 3. **Daily Briefing**: enable a daily summary if you want background context generation.
 4. **Webhooks / Event Triggers**: connect inbound automation only after you have a stable workspace and provider setup, and only when you need the lower-level surfaces directly.
-5. **Workflow Intelligence**: enable reviewable Next actions once you have at least one stable workflow target. Code-change auto-create works best on trusted git-backed workspaces where worktrees are available.
+5. **Workflow Intelligence**: enable reviewable Next actions once you have at least one stable workflow target. Dreaming can then curate memory candidates from completed work and memory-specific Heartbeat signals. Code-change auto-create works best on trusted git-backed workspaces where worktrees are available.
 
 Rule of thumb:
 
@@ -278,7 +284,7 @@ Title: Screenshot a webpage
 Description: Navigate to https://example.com and take a screenshot. Save it as example-screenshot.png.
 ```
 
-Interactive browser tasks use the visible Browser Workbench by default. For form testing or JavaScript-heavy apps, the agent should navigate, call `browser_snapshot`, and then use refs for click/fill/type/read actions. Real signed-in Chrome/Edge control is explicit opt-in through `browser_attach`; the default workspace browser profile does not reuse system Chrome cookies.
+Interactive browser tasks use the visible Browser Workbench by default. For form testing or JavaScript-heavy apps, the agent should navigate, call `browser_snapshot`, and then use refs for click/fill/type/read actions. For responsive checks, use `browser_emulate` before screenshots or snapshots so the shared workbench and saved captures reflect the tested desktop/tablet/mobile viewport. Real signed-in Chrome/Edge control is explicit opt-in through `browser_attach`; the default workspace browser profile does not reuse system Chrome cookies.
 
 ## Understanding the UI
 
@@ -328,7 +334,7 @@ Open **Settings** > **LLM**:
 |----------|-------|
 | Claude | Use **Claude API** with a key from [console.anthropic.com](https://console.anthropic.com), or use **Claude Subscription** with a token from `claude setup-token` |
 | Google Gemini | Enter API key from [aistudio.google.com](https://aistudio.google.com/apikey) |
-| OpenRouter | Enter API key from [openrouter.ai](https://openrouter.ai/keys) |
+| OpenRouter | Enter API key from [openrouter.ai](https://openrouter.ai/keys); select `openrouter/pareto-code` or `openrouter/pareto-code:nitro` for coding-score-based routing |
 | OpenAI (API Key) | Enter API key from [platform.openai.com](https://platform.openai.com/api-keys) |
 | OpenAI (ChatGPT) | Click "Sign in with ChatGPT" to use your subscription |
 | AWS Bedrock | Enter AWS Access Key, Secret Key, and Region |
@@ -394,6 +400,8 @@ Web search works immediately via the built-in DuckDuckGo provider (free, no API 
 
 After connection, WhatsApp uses the shared gateway message lifecycle: send normal text to start or follow up on a task, `/new` for a fresh next task, `/new temp` for a scratch temporary session, `/stop` to cancel, and `/commands` for the current remote command catalog. See [Using CoWork from WhatsApp and Other Channels](gateway-user-guide.md) for examples and best practices.
 
+For shared groups or dedicated operational channels, use **Channel Specialization** in the channel settings to default a channel, group, or topic/thread to a workspace, agent role, prompt guidance, tool restrictions, and optional shared-memory policy.
+
 #### Telegram Bot
 1. Create bot with [@BotFather](https://t.me/BotFather)
 2. Open **Settings** > **Channels** > **Telegram**
@@ -440,13 +448,15 @@ Open **Settings** > **Integrations** and click any card to configure productivit
 - **Notion** — search and manage pages
 - **Box** — search and manage files
 - **OneDrive** — search and manage files
-- **Google Workspace** (Gmail, Calendar, Drive) — shared OAuth
+- **Google Workspace** (Gmail, Calendar, Drive, Docs, Sheets, Slides, Tasks, Chat) — shared OAuth
 - **Dropbox** — list, search, and manage files
 - **SharePoint** — search sites and manage drive items
 
-After an integration is configured, type `@` in the main message box to pick it from the grouped **Agents**, **Integrations**, and **Files** menu. Google Workspace appears as Gmail, Google Drive, and Google Calendar. Selecting an integration inserts an icon+name chip and sends soft routing metadata with the prompt. See [Composer Mentions](composer-mentions.md).
+After an integration is configured, type `@` in the main message box to pick it from the grouped **Agents**, **Integrations**, and **Files** menu. Google Workspace appears as service-specific options such as Gmail, Google Drive, Google Calendar, Google Docs, Google Sheets, Google Slides, Google Tasks, and Google Chat when those tools are available. Selecting an integration inserts an icon+name chip and sends soft routing metadata with the prompt. See [Composer Mentions](composer-mentions.md).
 
-For slash-searchable app commands and workflow shortcuts, type `/` in the same message box. The `/` picker is separate from `@` mentions and uses the skills/plugin-pack system for workflow aliases. See [Message Box Shortcuts](message-box-shortcuts.md).
+Google Workspace uses one shared OAuth connection for built-in tools and the Google Workspace MCP connector. If an existing connection is missing newer scopes for services such as Tasks or Slides, reconnect from **Settings > Integrations > Google Workspace** and leave the default scope set enabled.
+
+For slash-searchable app commands and workflow shortcuts, type `/` in the same message box. The `/` picker is separate from `@` mentions and uses the skills/plugin-pack system for workflow aliases. Selecting a skill-backed workflow inserts the command into the composer so you can add more text before sending. Legal practice workflows can also ask for structured matter details in the main task view. See [Message Box Shortcuts](message-box-shortcuts.md) and [Claude-for-Legal Workflows](claude-for-legal.md).
 
 ### Enterprise MCP Connectors (Optional)
 
@@ -463,7 +473,7 @@ Install enterprise connectors from **Settings** > **Integrations** > **Browse Re
 | **Asana** | Work Management | Personal access token |
 | **Okta** | Identity | API token + domain |
 | **Discord** | Community | Bot token + application ID |
-| **Google Workspace** | Productivity | OAuth in-app flow |
+| **Google Workspace** | Productivity | Shared OAuth in-app flow; reconnect when newer required scopes are missing |
 
 Each connector provides tools like `search`, `get`, `create`, and `update` for its respective service. **44 connectors** are available in total, including Stripe, Tavily, Grafana, Metabase, Socket, and more. See [Enterprise Connectors](enterprise-connectors.md) for the full catalog.
 
@@ -615,7 +625,7 @@ Don't use system folders like `/System` or `/Applications`.
 6. **Custom Skills**: Create reusable workflows with custom prompts in Settings > Custom Skills
 7. **MCP Servers**: Connect to external tools via MCP in Settings > MCP Servers
 8. **Enterprise Connectors**: Install from 44 connectors (Salesforce, Jira, HubSpot, Stripe, Tavily, Grafana, and more) via Settings > Connectors
-9. **Cloud Storage**: Connect Notion, Box, OneDrive, Google Workspace (Gmail/Calendar/Drive), Dropbox, or SharePoint — click their cards in Settings > Integrations
+9. **Cloud Storage/Productivity**: Connect Notion, Box, OneDrive, Google Workspace (Gmail/Calendar/Drive/Docs/Sheets/Slides/Tasks/Chat), Dropbox, or SharePoint — click their cards in Settings > Integrations
 10. **Parallel Tasks**: Run multiple tasks concurrently (configure in Settings > Task Queue)
 11. **Guardrails**: Set token/cost budgets and blocked commands in Settings > Guardrails
 

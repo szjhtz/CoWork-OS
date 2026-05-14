@@ -8,6 +8,7 @@ import type { AppNotification, NotificationType, NotificationStoreFile } from ".
 import {
   loadNotificationStore as _loadNotificationStore,
   loadNotificationStoreSync,
+  saveNotificationStoreSync,
   saveNotificationStore,
   getNotificationStorePath,
 } from "./store";
@@ -25,6 +26,53 @@ export interface NotificationServiceConfig {
   onEvent?: (event: NotificationEvent) => void;
 }
 
+type AddNotificationParams = {
+  type: NotificationType;
+  title: string;
+  message: string;
+  taskId?: string;
+  cronJobId?: string;
+  workspaceId?: string;
+  suggestionId?: string;
+  recommendedDelivery?: "briefing" | "inbox" | "nudge";
+  companionStyle?: "email" | "note";
+};
+
+function collapseDuplicateInputRequiredNotifications(notifications: AppNotification[]): {
+  notifications: AppNotification[];
+  changed: boolean;
+} {
+  const newestInputRequiredByTask = new Map<string, AppNotification>();
+
+  for (const notification of notifications) {
+    if (notification.type !== "input_required" || !notification.taskId) continue;
+    const existing = newestInputRequiredByTask.get(notification.taskId);
+    if (!existing || notification.createdAt > existing.createdAt) {
+      newestInputRequiredByTask.set(notification.taskId, notification);
+    }
+  }
+
+  if (newestInputRequiredByTask.size === 0) {
+    return { notifications, changed: false };
+  }
+
+  const keptInputRequiredIds = new Set(
+    [...newestInputRequiredByTask.values()].map((notification) => notification.id),
+  );
+  const collapsed = notifications.filter((notification) => {
+    return (
+      notification.type !== "input_required" ||
+      !notification.taskId ||
+      keptInputRequiredIds.has(notification.id)
+    );
+  });
+
+  return {
+    notifications: collapsed,
+    changed: collapsed.length !== notifications.length,
+  };
+}
+
 export class NotificationService {
   private notifications: AppNotification[] = [];
   private storePath: string;
@@ -36,7 +84,18 @@ export class NotificationService {
 
     // Load notifications synchronously on startup
     const store = loadNotificationStoreSync(this.storePath);
-    this.notifications = store.notifications;
+    const collapsed = collapseDuplicateInputRequiredNotifications(store.notifications);
+    this.notifications = collapsed.notifications;
+    if (collapsed.changed) {
+      try {
+        saveNotificationStoreSync(
+          { version: store.version, notifications: this.notifications },
+          this.storePath,
+        );
+      } catch (error) {
+        console.warn("[Notifications] Failed to save deduplicated notification store:", error);
+      }
+    }
     console.log(`[Notifications] Loaded ${this.notifications.length} notifications from store`);
   }
 
@@ -57,17 +116,12 @@ export class NotificationService {
   /**
    * Add a new notification
    */
-  async add(params: {
-    type: NotificationType;
-    title: string;
-    message: string;
-    taskId?: string;
-    cronJobId?: string;
-    workspaceId?: string;
-    suggestionId?: string;
-    recommendedDelivery?: "briefing" | "inbox" | "nudge";
-    companionStyle?: "email" | "note";
-  }): Promise<AppNotification> {
+  async add(params: AddNotificationParams): Promise<AppNotification> {
+    const existingInputRequired = this.findExistingInputRequiredNotification(params);
+    if (existingInputRequired) {
+      return existingInputRequired;
+    }
+
     const notification: AppNotification = {
       id: randomUUID(),
       type: params.type,
@@ -88,6 +142,21 @@ export class NotificationService {
 
     this.emit({ type: "added", notification });
     return notification;
+  }
+
+  private findExistingInputRequiredNotification(
+    params: AddNotificationParams,
+  ): AppNotification | null {
+    if (params.type !== "input_required" || !params.taskId) {
+      return null;
+    }
+    return (
+      this.notifications
+        .filter((notification) => {
+          return notification.type === "input_required" && notification.taskId === params.taskId;
+        })
+        .sort((a, b) => b.createdAt - a.createdAt)[0] || null
+    );
   }
 
   /**

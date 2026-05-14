@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generatedAt": "2026-03-18T15:14:50.886Z",
+  "generatedAt": "2026-05-11T09:59:23.757Z",
   "skills": [
     {
       "id": "1password",
@@ -13,7 +13,7 @@
       ],
       "icon": "🔐",
       "category": "Tools",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/1password.json"
     },
     {
@@ -27,7 +27,7 @@
       ],
       "icon": "📚",
       "category": "Development",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/add-documentation.json"
     },
     {
@@ -41,8 +41,64 @@
       ],
       "icon": "🧩",
       "category": "Tools",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/agentic-image-loop.json"
+    },
+    {
+      "id": "analyze-csv",
+      "name": "Analyze CSV",
+      "description": "Load a CSV and provide insights",
+      "version": "1.0.0",
+      "author": "CoWork OS",
+      "tags": [
+        "Data"
+      ],
+      "icon": "📊",
+      "category": "Data",
+      "updatedAt": "2026-05-11",
+      "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/analyze-csv.json"
+    },
+    {
+      "id": "android-development",
+      "name": "Android Development",
+      "description": "Android/Kotlin development: Jetpack Compose, Room database, Gradle builds, emulator management, and Play Store submission.",
+      "version": "1.0.0",
+      "author": "CoWork OS",
+      "tags": [
+        "Engineering"
+      ],
+      "icon": "🤖",
+      "category": "Engineering",
+      "updatedAt": "2026-05-11",
+      "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/android-development.json"
+    },
+    {
+      "id": "apple-notes",
+      "name": "Apple-notes",
+      "description": "Manage Apple Notes via the `memo` CLI on macOS (create, view, edit, delete, search, move, and export notes). Use when a user asks CoWork-OSS to add a note, list notes, search notes, or manage note folders.",
+      "version": "1.0.0",
+      "author": "CoWork OS",
+      "tags": [
+        "Tools"
+      ],
+      "icon": "📝",
+      "category": "Tools",
+      "updatedAt": "2026-05-11",
+      "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/apple-notes.json"
+    },
+    {
+      "id": "apple-reminders",
+      "name": "Apple-reminders",
+      "description": "Manage Apple Reminders via the `remindctl` CLI on macOS (list, add, edit, complete, delete). Supports lists, date filters, and JSON/plain output.",
+      "version": "1.0.0",
+      "author": "CoWork OS",
+      "tags": [
+        "Tools"
+      ],
+      "icon": "⏰",
+      "category": "Tools",
+      "updatedAt": "2026-05-11",
+      "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/apple-reminders.json"
     },
     {
       "id": "architecture-diagram",
@@ -62,64 +118,64 @@
       ],
       "icon": "🏗️",
       "category": "Engineering",
-      "updatedAt": "2026-04-15",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/architecture-diagram.json"
     },
     {
-      "id": "analyze-csv",
-      "name": "Analyze CSV",
-      "description": "Load a CSV and provide insights",
+      "id": "aurl",
+      "name": "aurl",
+      "description": "Turn any API into a CLI command. Register OpenAPI or GraphQL endpoints by name, then explore and invoke them. Built for AI agents to use APIs like tool calls.",
       "version": "1.0.0",
       "author": "CoWork OS",
       "tags": [
-        "Data"
+        "api",
+        "openapi",
+        "graphql",
+        "rest",
+        "curl"
       ],
-      "icon": "📊",
-      "category": "Data",
-      "updatedAt": "2026-03-18",
-      "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/analyze-csv.json"
-    },
-    {
-      "id": "android-development",
-      "name": "Android Development",
-      "description": "Android/Kotlin development: Jetpack Compose, Room database, Gradle builds, emulator management, and Play Store submission.",
-      "version": "1.0.0",
-      "author": "CoWork OS",
-      "tags": [
-        "Engineering"
-      ],
-      "icon": "🤖",
-      "category": "Engineering",
-      "updatedAt": "2026-03-18",
-      "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/android-development.json"
-    },
-    {
-      "id": "apple-notes",
-      "name": "Apple-notes",
-      "description": "Manage Apple Notes via the `memo` CLI on macOS (create, view, edit, delete, search, move, and export notes). Use when a user asks CoWork-OSS to add a note, list notes, search notes, or manage note folders.",
-      "version": "1.0.0",
-      "author": "CoWork OS",
-      "tags": [
-        "Tools"
-      ],
-      "icon": "📝",
+      "icon": "🔗",
       "category": "Tools",
-      "updatedAt": "2026-03-18",
-      "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/apple-notes.json"
+      "updatedAt": "2026-05-11",
+      "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/aurl.json"
     },
     {
-      "id": "apple-reminders",
-      "name": "Apple-reminders",
-      "description": "Manage Apple Reminders via the `remindctl` CLI on macOS (list, add, edit, complete, delete). Supports lists, date filters, and JSON/plain output.",
+      "id": "autobrowse",
+      "name": "Autobrowse",
+      "description": "Learn a reliable browser workflow by iterating on a real web task, recording strategy, and proposing a reusable skill.",
+      "version": "1.0.0",
+      "author": "cowork-os",
+      "tags": [
+        "browser",
+        "automation",
+        "skills",
+        "learning"
+      ],
+      "icon": "🌐",
+      "category": "Automation",
+      "updatedAt": "2026-05-11",
+      "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/autobrowse.json"
+    },
+    {
+      "id": "autoresearch-report",
+      "name": "AutoResearch Report",
+      "description": "Run an autonomous scientific research pipeline that scopes a question, retrieves evidence, constructs a source ledger, and produces a cited report.",
       "version": "1.0.0",
       "author": "CoWork OS",
       "tags": [
-        "Tools"
+        "research",
+        "science",
+        "literature-review",
+        "evidence-synthesis",
+        "papers",
+        "citations",
+        "reports",
+        "multi-agent"
       ],
-      "icon": "⏰",
-      "category": "Tools",
-      "updatedAt": "2026-03-18",
-      "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/apple-reminders.json"
+      "icon": "🔬",
+      "category": "Research",
+      "updatedAt": "2026-05-11",
+      "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/autoresearch-report.json"
     },
     {
       "id": "batch",
@@ -135,7 +191,7 @@
       ],
       "icon": "🧺",
       "category": "Use Cases",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/batch.json"
     },
     {
@@ -151,7 +207,7 @@
       ],
       "icon": "🐦",
       "category": "Tools",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/bird.json"
     },
     {
@@ -165,7 +221,7 @@
       ],
       "icon": "📰",
       "category": "Tools",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/blogwatcher.json"
     },
     {
@@ -179,7 +235,7 @@
       ],
       "icon": "📅",
       "category": "Use Cases",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/usecase-booking-options.json"
     },
     {
@@ -192,7 +248,7 @@
         "development"
       ],
       "category": "development",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/build-mode.json"
     },
     {
@@ -211,7 +267,7 @@
       ],
       "icon": "📅",
       "category": "Tools",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/calendly.json"
     },
     {
@@ -225,7 +281,7 @@
       ],
       "icon": "🧭",
       "category": "Use Cases",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/usecase-chief-of-staff-briefing.json"
     },
     {
@@ -239,7 +295,7 @@
       ],
       "icon": "🧹",
       "category": "Utilities",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/clean-imports.json"
     },
     {
@@ -253,7 +309,7 @@
       ],
       "icon": "☁️",
       "category": "DevOps",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/cloud-migration.json"
     },
     {
@@ -267,7 +323,7 @@
       ],
       "icon": "🔍",
       "category": "Development",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/code-review.json"
     },
     {
@@ -281,7 +337,7 @@
       ],
       "icon": "🧪",
       "category": "Development",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/code-reviewer.json"
     },
     {
@@ -295,7 +351,7 @@
       ],
       "icon": "⚡",
       "category": "Development",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/codex-cli.json"
     },
     {
@@ -309,7 +365,7 @@
       ],
       "icon": "🧩",
       "category": "Tools",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/coding-agent.json"
     },
     {
@@ -323,7 +379,7 @@
       ],
       "icon": "⚖️",
       "category": "Data",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/compare-files.json"
     },
     {
@@ -337,7 +393,7 @@
       ],
       "icon": "🔍",
       "category": "Research",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/competitive-research.json"
     },
     {
@@ -351,7 +407,7 @@
       ],
       "icon": "👁️",
       "category": "Data",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/content-monitor.json"
     },
     {
@@ -365,7 +421,7 @@
       ],
       "icon": "🔄",
       "category": "Development",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/convert-code.json"
     },
     {
@@ -379,7 +435,7 @@
       ],
       "icon": "🔬",
       "category": "Research",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/cowork-multi-agent-research.json"
     },
     {
@@ -393,7 +449,7 @@
       ],
       "icon": "📈",
       "category": "Finance",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/crypto-trading.json"
     },
     {
@@ -407,7 +463,7 @@
       ],
       "icon": "🧮",
       "category": "Finance",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/dcf-valuation.json"
     },
     {
@@ -421,7 +477,7 @@
       ],
       "icon": "🐛",
       "category": "Development",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/debug-error.json"
     },
     {
@@ -438,7 +494,7 @@
       ],
       "icon": "⚖️",
       "category": "Digital Twin",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/twin-decision-prep.json"
     },
     {
@@ -452,7 +508,7 @@
       ],
       "icon": "📦",
       "category": "Project",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/dependency-check.json"
     },
     {
@@ -466,7 +522,7 @@
       ],
       "icon": "🛠️",
       "category": "Use Cases",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/usecase-dev-task-queue.json"
     },
     {
@@ -480,7 +536,7 @@
       ],
       "icon": "📈",
       "category": "Development",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/developer-growth-analysis.json"
     },
     {
@@ -494,7 +550,7 @@
       ],
       "icon": "🐳",
       "category": "DevOps",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/docker-compose-ops.json"
     },
     {
@@ -508,7 +564,7 @@
       ],
       "icon": "💬",
       "category": "Use Cases",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/usecase-draft-reply.json"
     },
     {
@@ -522,7 +578,7 @@
       ],
       "icon": "📋",
       "category": "Finance",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/earnings-analyzer.json"
     },
     {
@@ -543,7 +599,7 @@
       ],
       "icon": "📧",
       "category": "Marketing",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/email-marketing-bible.json"
     },
     {
@@ -557,7 +613,7 @@
       ],
       "icon": "🌱",
       "category": "Finance",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/esg-scorer.json"
     },
     {
@@ -571,7 +627,7 @@
       ],
       "icon": "📖",
       "category": "Learning",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/explain-code.json"
     },
     {
@@ -585,7 +641,7 @@
       ],
       "icon": "📌",
       "category": "Utilities",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/extract-todos.json"
     },
     {
@@ -599,7 +655,7 @@
       ],
       "icon": "👨‍👩‍👧‍👦",
       "category": "Use Cases",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/usecase-family-digest.json"
     },
     {
@@ -613,7 +669,7 @@
       ],
       "icon": "🧩",
       "category": "Use Cases",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/usecase-figure-it-out-agent.json"
     },
     {
@@ -627,7 +683,7 @@
       ],
       "icon": "📐",
       "category": "Finance",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/financial-modeling.json"
     },
     {
@@ -641,7 +697,7 @@
       ],
       "icon": "🖥️",
       "category": "Development",
-      "updatedAt": "2026-03-28",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/frontend.json"
     },
     {
@@ -655,7 +711,7 @@
       ],
       "icon": "🎨",
       "category": "Development",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/frontend-design.json"
     },
     {
@@ -669,7 +725,7 @@
       ],
       "icon": "⚡",
       "category": "Engineering",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/game-performance.json"
     },
     {
@@ -683,7 +739,7 @@
       ],
       "icon": "♊️",
       "category": "Tools",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/gemini.json"
     },
     {
@@ -697,7 +753,7 @@
       ],
       "icon": "📄",
       "category": "Project",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/generate-readme.json"
     },
     {
@@ -711,7 +767,7 @@
       ],
       "icon": "📝",
       "category": "Development",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/git-commit.json"
     },
     {
@@ -725,13 +781,13 @@
       ],
       "icon": "🐙",
       "category": "Tools",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/github.json"
     },
     {
       "id": "gog",
       "name": "Gog",
-      "description": "Google Workspace CLI for Gmail, Calendar, Drive, Contacts, Sheets, and Docs.",
+      "description": "Google Workspace CLI for Gmail, Calendar, Drive, Contacts, Tasks, Sheets, Docs, and Slides.",
       "version": "1.0.0",
       "author": "CoWork OS",
       "tags": [
@@ -739,7 +795,7 @@
       ],
       "icon": "🎮",
       "category": "Tools",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/gog.json"
     },
     {
@@ -753,7 +809,7 @@
       ],
       "icon": "📍",
       "category": "Tools",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/goplaces.json"
     },
     {
@@ -772,7 +828,7 @@
       ],
       "icon": "✨",
       "category": "Creative",
-      "updatedAt": "2026-04-17",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/gsap.json"
     },
     {
@@ -786,7 +842,7 @@
       ],
       "icon": "📧",
       "category": "Tools",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/himalaya.json"
     },
     {
@@ -800,7 +856,7 @@
       ],
       "icon": "🏠",
       "category": "Use Cases",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/usecase-household-capture.json"
     },
     {
@@ -819,7 +875,7 @@
       ],
       "icon": "✍️",
       "category": "Creative",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/humanizer.json"
     },
     {
@@ -839,7 +895,7 @@
       ],
       "icon": "🎥",
       "category": "Creative",
-      "updatedAt": "2026-04-17",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/hyperframes.json"
     },
     {
@@ -858,7 +914,7 @@
       ],
       "icon": "🛠️",
       "category": "Tools",
-      "updatedAt": "2026-04-17",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/hyperframes-cli.json"
     },
     {
@@ -877,7 +933,7 @@
       ],
       "icon": "🧩",
       "category": "Creative",
-      "updatedAt": "2026-04-17",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/hyperframes-registry.json"
     },
     {
@@ -891,8 +947,26 @@
       ],
       "icon": "💡",
       "category": "Research",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/idea-validation.json"
+    },
+    {
+      "id": "imagegen-frontend-web",
+      "name": "Imagegen Frontend Web",
+      "description": "Generate premium, conversion-aware frontend website design reference images with one separate horizontal image per section. Use for landing pages, marketing sites, product comps, and Awwwards-level web section art direction.",
+      "version": "1.0.0",
+      "author": "Leonxlnx",
+      "tags": [
+        "image-generation",
+        "frontend",
+        "web-design",
+        "landing-pages",
+        "art-direction"
+      ],
+      "icon": "IMG",
+      "category": "Creative",
+      "updatedAt": "2026-05-11",
+      "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/imagegen-frontend-web.json"
     },
     {
       "id": "imsg",
@@ -905,13 +979,13 @@
       ],
       "icon": "📨",
       "category": "Tools",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/imsg.json"
     },
     {
       "id": "usecase-inbox-manager",
       "name": "Inbox Manager",
-      "description": "Triage inbox, draft replies, and suggest cleanup automations with strict confirmation gates.",
+      "description": "Triage Inbox Agent Today lanes, search mailbox evidence, prepare manual or AI-assisted replies, and suggest cleanup automations with strict confirmation gates.",
       "version": "1.0.0",
       "author": "CoWork OS",
       "tags": [
@@ -919,7 +993,7 @@
       ],
       "icon": "📥",
       "category": "Use Cases",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/usecase-inbox-manager.json"
     },
     {
@@ -933,8 +1007,24 @@
       ],
       "icon": "🍎",
       "category": "Engineering",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/ios-development.json"
+    },
+    {
+      "id": "kami",
+      "name": "Kami",
+      "description": "Typeset documents with the Kami editorial design system only when the user explicitly asks for Kami.",
+      "version": "1.0.0",
+      "author": "Tw93, ported by CoWork OS",
+      "tags": [
+        "kami",
+        "kami-skill",
+        "kami-editorial-design"
+      ],
+      "icon": "📄",
+      "category": "Writing",
+      "updatedAt": "2026-05-11",
+      "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/kami.json"
     },
     {
       "id": "kubernetes-ops",
@@ -947,7 +1037,7 @@
       ],
       "icon": "☸️",
       "category": "DevOps",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/kubernetes-ops.json"
     },
     {
@@ -961,7 +1051,7 @@
       ],
       "icon": "🔬",
       "category": "Research",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/research-last-days.json"
     },
     {
@@ -975,7 +1065,7 @@
       ],
       "icon": "📇",
       "category": "Data",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/lead-scraper.json"
     },
     {
@@ -989,7 +1079,7 @@
       ],
       "icon": "🧠",
       "category": "Productivity",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/learn.json"
     },
     {
@@ -1003,7 +1093,7 @@
       ],
       "icon": "⚖️",
       "category": "Legal",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/legal-contract-negotiation-review.json"
     },
     {
@@ -1017,7 +1107,7 @@
       ],
       "icon": "✉️",
       "category": "Legal",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/legal-demand-letter-response-draft.json"
     },
     {
@@ -1031,7 +1121,7 @@
       ],
       "icon": "📚",
       "category": "Legal",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/legal-verified-research-memo.json"
     },
     {
@@ -1045,8 +1135,28 @@
       ],
       "icon": "🔬",
       "category": "Research",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/link-research.json"
+    },
+    {
+      "id": "llm-wiki",
+      "name": "LLM Wiki",
+      "description": "Build and maintain a workspace-local, Obsidian-friendly research vault using Karpathy's LLM Wiki pattern. Creates a persistent markdown knowledge base with raw-source capture, linked notes, vault search, filed-back outputs, and maintenance logs.",
+      "version": "1.1.0",
+      "author": "CoWork OS",
+      "tags": [
+        "llm-wiki",
+        "knowledge-base",
+        "obsidian",
+        "research-vault",
+        "markdown",
+        "wiki",
+        "knowledge-management"
+      ],
+      "icon": "🧠",
+      "category": "Research",
+      "updatedAt": "2026-05-11",
+      "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/llm-wiki.json"
     },
     {
       "id": "local-places",
@@ -1059,7 +1169,7 @@
       ],
       "icon": "📍",
       "category": "Tools",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/local-places.json"
     },
     {
@@ -1073,8 +1183,28 @@
       ],
       "icon": "🔍",
       "category": "Tools",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/local-websearch.json"
+    },
+    {
+      "id": "manim-video",
+      "name": "Manim Video",
+      "description": "Plan, scaffold, and render Manim Community Edition explainer videos for math, algorithms, technical concepts, and data stories.",
+      "version": "1.0.0",
+      "author": "CoWork OS",
+      "tags": [
+        "manim",
+        "video",
+        "animation",
+        "math",
+        "explainer",
+        "creative",
+        "technical-communication"
+      ],
+      "icon": "🎬",
+      "category": "Creative",
+      "updatedAt": "2026-05-11",
+      "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/manim-video.json"
     },
     {
       "id": "market-screener",
@@ -1087,7 +1217,7 @@
       ],
       "icon": "🔎",
       "category": "Finance",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/market-screener.json"
     },
     {
@@ -1110,7 +1240,7 @@
       ],
       "icon": "📣",
       "category": "Marketing",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/marketing-strategist.json"
     },
     {
@@ -1124,7 +1254,7 @@
       ],
       "icon": "📦",
       "category": "Tools",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/mcporter.json"
     },
     {
@@ -1141,7 +1271,7 @@
       ],
       "icon": "📅",
       "category": "Digital Twin",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/twin-meeting-prep.json"
     },
     {
@@ -1155,7 +1285,7 @@
       ],
       "icon": "🧠",
       "category": "Tools",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/memory-kit.json"
     },
     {
@@ -1169,7 +1299,7 @@
       ],
       "icon": "📊",
       "category": "Tools",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/model-usage.json"
     },
     {
@@ -1188,7 +1318,7 @@
       ],
       "icon": "🤖",
       "category": "Tools",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/moltbook.json"
     },
     {
@@ -1202,7 +1332,7 @@
       ],
       "icon": "🔎",
       "category": "Development",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/multi-pr-review.json"
     },
     {
@@ -1216,7 +1346,7 @@
       ],
       "icon": "📄",
       "category": "Tools",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/nano-pdf.json"
     },
     {
@@ -1230,7 +1360,7 @@
       ],
       "icon": "📰",
       "category": "Use Cases",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/usecase-newsletter-digest.json"
     },
     {
@@ -1244,8 +1374,22 @@
       ],
       "icon": "📝",
       "category": "Tools",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/notion.json"
+    },
+    {
+      "id": "novelist",
+      "name": "Novelist",
+      "description": "Draft, revise, and package a novel with a mostly autonomous workflow and durable artifacts.",
+      "version": "1.0.0",
+      "author": "CoWork OS",
+      "tags": [
+        "Writing"
+      ],
+      "icon": "📚",
+      "category": "Writing",
+      "updatedAt": "2026-05-11",
+      "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/novelist.json"
     },
     {
       "id": "openai-image-gen",
@@ -1258,7 +1402,7 @@
       ],
       "icon": "🖼️",
       "category": "Tools",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/openai-image-gen.json"
     },
     {
@@ -1272,7 +1416,7 @@
       ],
       "icon": "🎙️",
       "category": "Tools",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/openai-whisper.json"
     },
     {
@@ -1286,7 +1430,7 @@
       ],
       "icon": "☁️",
       "category": "Tools",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/openai-whisper-api.json"
     },
     {
@@ -1300,7 +1444,7 @@
       ],
       "icon": "🛵",
       "category": "Tools",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/ordercli.json"
     },
     {
@@ -1314,7 +1458,7 @@
       ],
       "icon": "👀",
       "category": "Tools",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/peekaboo.json"
     },
     {
@@ -1331,7 +1475,7 @@
       ],
       "icon": "🧵",
       "category": "Tools",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/pi-context-pipeline.json"
     },
     {
@@ -1348,7 +1492,7 @@
       ],
       "icon": "🧭",
       "category": "Tools",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/pi-finder-subagent.json"
     },
     {
@@ -1365,8 +1509,22 @@
       ],
       "icon": "📚",
       "category": "Tools",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/pi-librarian.json"
+    },
+    {
+      "id": "playwright-qa",
+      "name": "Playwright QA",
+      "description": "Automated visual QA testing using Playwright — navigate web apps like a real user, capture screenshots, find bugs, and fix them.",
+      "version": "1.0.0",
+      "author": "CoWork OS",
+      "tags": [
+        "Development"
+      ],
+      "icon": "🎭",
+      "category": "Development",
+      "updatedAt": "2026-05-11",
+      "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/playwright-qa.json"
     },
     {
       "id": "polymarket",
@@ -1384,7 +1542,7 @@
       ],
       "icon": "📊",
       "category": "Tools",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/polymarket.json"
     },
     {
@@ -1398,7 +1556,7 @@
       ],
       "icon": "⚖️",
       "category": "Finance",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/portfolio-optimizer.json"
     },
     {
@@ -1416,7 +1574,7 @@
       ],
       "icon": "🔍",
       "category": "Digital Twin",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/twin-pr-triage.json"
     },
     {
@@ -1430,7 +1588,7 @@
       ],
       "icon": "📋",
       "category": "Product",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/prd.json"
     },
     {
@@ -1444,7 +1602,7 @@
       ],
       "icon": "💰",
       "category": "Data",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/price-tracker.json"
     },
     {
@@ -1458,7 +1616,7 @@
       ],
       "icon": "🏗️",
       "category": "Project",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/project-structure.json"
     },
     {
@@ -1472,7 +1630,7 @@
       ],
       "icon": "✏️",
       "category": "Writing",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/proofread.json"
     },
     {
@@ -1490,7 +1648,7 @@
       ],
       "icon": "⚛️",
       "category": "Development",
-      "updatedAt": "2026-05-02",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/react-best-practices.json"
     },
     {
@@ -1504,7 +1662,7 @@
       ],
       "icon": "📱",
       "category": "Development",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/react-native-skills.json"
     },
     {
@@ -1518,7 +1676,7 @@
       ],
       "icon": "🔧",
       "category": "Development",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/refactor-code.json"
     },
     {
@@ -1532,7 +1690,7 @@
       ],
       "icon": "🏷️",
       "category": "Utilities",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/rename-symbol.json"
     },
     {
@@ -1546,7 +1704,7 @@
       ],
       "icon": "🛡️",
       "category": "Finance",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/risk-analyzer.json"
     },
     {
@@ -1560,22 +1718,8 @@
       ],
       "icon": "🗣️",
       "category": "Tools",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/sag.json"
-    },
-    {
-      "id": "security-audit",
-      "name": "Security Audit",
-      "description": "Check code for common security vulnerabilities",
-      "version": "1.0.0",
-      "author": "CoWork OS",
-      "tags": [
-        "Development"
-      ],
-      "icon": "🔒",
-      "category": "Development",
-      "updatedAt": "2026-03-18",
-      "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/security-audit.json"
     },
     {
       "id": "screenshot-capture",
@@ -1588,8 +1732,22 @@
       ],
       "icon": "📸",
       "category": "Tools",
-      "updatedAt": "2026-03-28",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/screenshot-capture.json"
+    },
+    {
+      "id": "security-audit",
+      "name": "Security Audit",
+      "description": "Check code for common security vulnerabilities",
+      "version": "1.0.0",
+      "author": "CoWork OS",
+      "tags": [
+        "Development"
+      ],
+      "icon": "🔒",
+      "category": "Development",
+      "updatedAt": "2026-05-11",
+      "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/security-audit.json"
     },
     {
       "id": "session-logs",
@@ -1602,7 +1760,7 @@
       ],
       "icon": "📜",
       "category": "Tools",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/session-logs.json"
     },
     {
@@ -1619,7 +1777,7 @@
       ],
       "icon": "🧹",
       "category": "Use Cases",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/simplify.json"
     },
     {
@@ -1633,7 +1791,7 @@
       ],
       "icon": "🗺️",
       "category": "Data",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/site-mapper.json"
     },
     {
@@ -1649,7 +1807,7 @@
       ],
       "icon": "✨",
       "category": "Tools",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/skill-creator.json"
     },
     {
@@ -1665,7 +1823,7 @@
       ],
       "icon": "🔧",
       "category": "Tools",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/skill-hub.json"
     },
     {
@@ -1679,7 +1837,7 @@
       ],
       "icon": "💬",
       "category": "Tools",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/slack.json"
     },
     {
@@ -1693,7 +1851,7 @@
       ],
       "icon": "🏠",
       "category": "Use Cases",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/usecase-smart-home-brain.json"
     },
     {
@@ -1707,7 +1865,7 @@
       ],
       "icon": "🎵",
       "category": "Tools",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/spotify-player.json"
     },
     {
@@ -1721,7 +1879,7 @@
       ],
       "icon": "💰",
       "category": "Finance",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/startup-cfo.json"
     },
     {
@@ -1738,7 +1896,7 @@
       ],
       "icon": "📋",
       "category": "Digital Twin",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/twin-status-report.json"
     },
     {
@@ -1759,7 +1917,7 @@
       ],
       "icon": "📈",
       "category": "Tools",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/stock-analysis.json"
     },
     {
@@ -1773,7 +1931,7 @@
       ],
       "icon": "🧾",
       "category": "Tools",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/summarize.json"
     },
     {
@@ -1787,7 +1945,7 @@
       ],
       "icon": "📋",
       "category": "Documentation",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/summarize-folder.json"
     },
     {
@@ -1801,13 +1959,13 @@
       ],
       "icon": "🗄️",
       "category": "Development",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/supabase-sdk-patterns.json"
     },
     {
       "id": "karpathy-guidelines",
       "name": "Task Guidelines",
-      "description": "Best practices for high-quality task execution",
+      "description": "Surgical execution guardrails for coding, debugging, review, and refactor tasks",
       "version": "1.0.0",
       "author": "CoWork OS",
       "tags": [
@@ -1815,8 +1973,28 @@
       ],
       "icon": "🧠",
       "category": "Guidelines",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/karpathy-guidelines.json"
+    },
+    {
+      "id": "taste-skill",
+      "name": "Taste Skill",
+      "description": "Apply the Taste Skill methodology for high-agency frontend work with stricter anti-slop layout, typography, motion, and implementation rules.",
+      "version": "1.0.0",
+      "author": "Leonxlnx",
+      "tags": [
+        "frontend",
+        "design",
+        "react",
+        "nextjs",
+        "tailwind",
+        "motion",
+        "ui"
+      ],
+      "icon": "🎚️",
+      "category": "Development",
+      "updatedAt": "2026-05-11",
+      "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/taste-skill.json"
     },
     {
       "id": "tax-optimizer",
@@ -1829,7 +2007,7 @@
       ],
       "icon": "🏛️",
       "category": "Finance",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/tax-optimizer.json"
     },
     {
@@ -1843,7 +2021,7 @@
       ],
       "icon": "🏗️",
       "category": "DevOps",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/terraform-ops.json"
     },
     {
@@ -1857,7 +2035,7 @@
       ],
       "icon": "✅",
       "category": "Tools",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/things-mac.json"
     },
     {
@@ -1871,7 +2049,7 @@
       ],
       "icon": "🧵",
       "category": "Tools",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/tmux.json"
     },
     {
@@ -1885,7 +2063,7 @@
       ],
       "icon": "💳",
       "category": "Use Cases",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/usecase-transaction-scan.json"
     },
     {
@@ -1899,7 +2077,7 @@
       ],
       "icon": "🌐",
       "category": "Writing",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/translate.json"
     },
     {
@@ -1913,7 +2091,7 @@
       ],
       "icon": "📋",
       "category": "Tools",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/trello.json"
     },
     {
@@ -1927,7 +2105,7 @@
       ],
       "icon": "𝕏",
       "category": "Marketing",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/twitter.json"
     },
     {
@@ -1941,7 +2119,7 @@
       ],
       "icon": "🔲",
       "category": "Engineering",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/unity-development.json"
     },
     {
@@ -1955,7 +2133,7 @@
       ],
       "icon": "🔷",
       "category": "Engineering",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/unreal-development.json"
     },
     {
@@ -1969,7 +2147,7 @@
       ],
       "icon": "🎞️",
       "category": "Tools",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/video-frames.json"
     },
     {
@@ -1983,7 +2161,7 @@
       ],
       "icon": "📞",
       "category": "Tools",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/voice-call.json"
     },
     {
@@ -1997,7 +2175,7 @@
       ],
       "icon": "📱",
       "category": "Tools",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/wacli.json"
     },
     {
@@ -2011,7 +2189,7 @@
       ],
       "icon": "🌤️",
       "category": "Tools",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/weather.json"
     },
     {
@@ -2025,7 +2203,7 @@
       ],
       "icon": "🕸️",
       "category": "Data",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/web-scraper.json"
     },
     {
@@ -2039,7 +2217,7 @@
       ],
       "icon": "🌐",
       "category": "Tools",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/webmcp.json"
     },
     {
@@ -2053,7 +2231,7 @@
       ],
       "icon": "🧪",
       "category": "Development",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/write-tests.json"
     },
     {
@@ -2072,7 +2250,7 @@
       ],
       "icon": "📺",
       "category": "Tools",
-      "updatedAt": "2026-03-18",
+      "updatedAt": "2026-05-11",
       "homepage": "https://github.com/CoWork-OS/CoWork-OS/blob/main/resources/skills/youtube.json"
     }
   ]

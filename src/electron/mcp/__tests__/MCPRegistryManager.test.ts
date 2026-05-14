@@ -92,14 +92,52 @@ describe("MCPRegistryManager install defaults", () => {
   it("only exposes shipped local connectors and the consolidated google-workspace connector", async () => {
     const registry = await MCPRegistryManager.fetchRegistry();
     const ids = registry.servers.map((server) => server.id);
+    const googleWorkspace = registry.servers.find((server) => server.id === "google-workspace");
+    const googleWorkspaceTools = googleWorkspace?.tools.map((tool) => tool.name) ?? [];
 
     expect(ids).toContain("google-workspace");
+    expect(ids).toContain("factset");
+    expect(ids).toContain("daloopa");
+    expect(ids).toContain("egnyte");
+    expect(googleWorkspaceTools).toEqual(
+      expect.arrayContaining([
+        "google-workspace.tasks_create",
+        "google-workspace.tasks_complete",
+        "google-workspace.slides_create",
+        "google-workspace.slides_batch_update",
+      ]),
+    );
     expect(ids).not.toContain("google-calendar");
     expect(ids).not.toContain("google-drive");
     expect(ids).not.toContain("gmail");
     expect(ids).not.toContain("slack");
     expect(ids).not.toContain("docusign");
     expect(ids).not.toContain("outreach");
+  });
+
+  it("installs finance presets through the shared finance-data connector", async () => {
+    const config = await MCPRegistryManager.installServer("pitchbook");
+
+    expect(config.enabled).toBe(false);
+    expect(config.args?.some((arg) => arg.includes("finance-data-mcp"))).toBe(true);
+    expect(config.args).toEqual(expect.arrayContaining(["--provider", "pitchbook"]));
+    expect(config.env).toMatchObject({
+      PITCHBOOK_API_KEY: "",
+      PITCHBOOK_BASE_URL: "",
+    });
+  });
+
+  it("exposes only read-only tools for finance connector presets", async () => {
+    const registry = await MCPRegistryManager.fetchRegistry();
+    const financeServers = registry.servers.filter((server) =>
+      ["daloopa", "morningstar", "spglobal", "factset", "moodys", "mtnewswires", "aiera", "lseg", "pitchbook", "chronograph", "egnyte"].includes(server.id),
+    );
+
+    expect(financeServers).toHaveLength(11);
+    for (const server of financeServers) {
+      expect(server.category).toBe("finance");
+      expect(server.tools.every((tool) => !/^(create|update|delete|post|send|approve|trade|execute)/i.test(tool.name))).toBe(true);
+    }
   });
 
   it("verifies npm packages with fixed argv instead of a shell command", async () => {

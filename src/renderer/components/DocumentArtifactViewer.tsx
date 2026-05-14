@@ -39,6 +39,7 @@ import { ModelDropdown } from "./MainContent";
 import type { SpreadsheetTurnContext } from "./SpreadsheetArtifactViewer";
 import { DocumentArtifactCard } from "./DocumentArtifactCard";
 import { ChevronDown } from "lucide-react";
+import "./artifact-viewers.css";
 
 type DocumentArtifactViewerMode = "sidebar" | "fullscreen";
 type DocumentSettingsTab = Any;

@@ -8,7 +8,7 @@
   "keywords": ["wealth-management", "portfolio", "asset-allocation", "tax", "risk", "client-reporting"],
   "icon": "💎",
   "category": "Finance",
-  "recommendedConnectors": ["factset-mcp", "msci-mcp", "lseg-mcp"],
+  "recommendedConnectors": ["factset", "morningstar", "lseg", "spglobal"],
   "tryAsking": [
     "Construct a balanced portfolio for a moderate-risk client with $2M investable assets",
     "Recommend a tactical asset allocation shift given the current macro environment",
@@ -87,7 +87,42 @@
         { "name": "taxBracket", "type": "string", "description": "Client's federal marginal tax bracket (e.g., 37%, 32%, 24%)", "required": false }
       ],
       "enabled": true
+    },
+    {
+      "id": "wm-client-review",
+      "name": "Client Review",
+      "description": "Prepare a client review packet for advisor approval.",
+      "icon": "👥",
+      "category": "Finance",
+      "prompt": "Prepare a client review packet. Include portfolio summary, performance, allocation drift, risk issues, planning topics, tax items, open questions, and source support. Do not send to the client or provide final advice.",
+      "enabled": true
+    },
+    {
+      "id": "wm-financial-plan",
+      "name": "Financial Plan",
+      "description": "Draft a planning analysis with assumptions and review caveats.",
+      "icon": "🧭",
+      "category": "Finance",
+      "prompt": "Draft a financial planning analysis. Include goals, assumptions, cash flows, assets, liabilities, scenarios, risks, and advisor review caveats. Do not present legal, tax, or investment advice as final.",
+      "enabled": true
+    },
+    {
+      "id": "wm-proposal",
+      "name": "Proposal",
+      "description": "Draft an advisor-reviewed portfolio or planning proposal.",
+      "icon": "📄",
+      "category": "Finance",
+      "prompt": "Draft a wealth proposal. Include client context, objective, recommended draft approach, tradeoffs, risks, implementation steps, and review requirements. Do not send externally.",
+      "enabled": true
     }
+  ],
+  "slashCommands": [
+    { "name": "client-review", "description": "Prepare a client review packet", "skillId": "wm-client-review" },
+    { "name": "financial-plan", "description": "Draft a financial plan analysis", "skillId": "wm-financial-plan" },
+    { "name": "rebalance", "description": "Draft a portfolio rebalance", "skillId": "wm-asset-allocation" },
+    { "name": "client-report", "description": "Prepare a client report", "skillId": "wm-client-reporting" },
+    { "name": "proposal", "description": "Draft a wealth proposal", "skillId": "wm-proposal" },
+    { "name": "tlh", "description": "Analyze tax-loss harvesting", "skillId": "wm-tax-optimization" }
   ],
   "agentRoles": [
     {

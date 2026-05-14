@@ -545,6 +545,103 @@ describe("AgentTeamOrchestrator", () => {
     expect(call.agentConfig.modelKey).toBeUndefined();
   });
 
+  it("includes lane-specific instructions for multitask collaborative subagents", async () => {
+    mockProfileRouting(true);
+
+    const now = Date.now();
+    const team: AgentTeam = {
+      id: "team-mt",
+      workspaceId: "ws-mt",
+      name: "Multitask Team",
+      description: undefined,
+      leadAgentRoleId: "role-lead-mt",
+      maxParallelAgents: 2,
+      defaultModelPreference: "same",
+      defaultPersonality: "same",
+      isActive: true,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const run: AgentTeamRun = {
+      id: "run-mt",
+      teamId: team.id,
+      rootTaskId: "task-root-mt",
+      status: "running",
+      startedAt: now,
+      collaborativeMode: true,
+    };
+    const item: AgentTeamItem = {
+      id: "item-mt",
+      teamRunId: run.id,
+      parentItemId: undefined,
+      title: "Verification",
+      description: "Verify the flow and report regressions.",
+      ownerAgentRoleId: undefined,
+      sourceTaskId: undefined,
+      status: "todo",
+      resultSummary: undefined,
+      sortOrder: 1,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const rootTask: Task = {
+      id: run.rootTaskId,
+      title: "Fix onboarding",
+      prompt: "Fix the onboarding bugs",
+      status: "executing",
+      workspaceId: team.workspaceId,
+      createdAt: now,
+      updatedAt: now,
+      agentType: "main",
+      depth: 0,
+      agentConfig: {
+        collaborativeMode: true,
+        multitaskMode: true,
+        multitaskLaneCount: 2,
+        multitaskAssignmentMode: "auto_split",
+      },
+    };
+
+    const tasksById = new Map<string, Task>([[rootTask.id, rootTask]]);
+    const createChildTask = vi.fn(async (params: Any) => {
+      const child: Task = {
+        id: "task-child-mt",
+        title: params.title,
+        prompt: params.prompt,
+        status: "pending",
+        workspaceId: params.workspaceId,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        parentTaskId: params.parentTaskId,
+        agentType: params.agentType,
+        agentConfig: params.agentConfig,
+        depth: params.depth,
+      };
+      tasksById.set(child.id, child);
+      return child;
+    });
+
+    const { teamRepo, runRepo, itemRepo } = makeRepos({ team, run, items: [item] });
+    const { AgentTeamOrchestrator } = await import("../AgentTeamOrchestrator");
+    const orch = new AgentTeamOrchestrator(
+      {
+        getDatabase: () => ({}) as Any,
+        getTaskById: async (taskId: string) => tasksById.get(taskId),
+        createChildTask,
+        cancelTask: async () => {},
+      },
+      { teamRepo, runRepo, itemRepo },
+    );
+
+    await orch.tickRun(run.id, "test");
+
+    const call = createChildTask.mock.calls[0][0];
+    expect(call.prompt).toContain("YOUR MULTITASK LANE:");
+    expect(call.prompt).toContain("Verification");
+    expect(call.prompt).toContain("Verify the flow and report regressions.");
+    expect(call.prompt).toContain("Work only on this lane.");
+  });
+
   it("keeps explicit team model override for collab subagents when profile routing is disabled", async () => {
     mockProfileRouting(false);
 

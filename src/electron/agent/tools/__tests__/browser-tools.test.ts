@@ -262,6 +262,59 @@ describe("BrowserTools browser_navigate", () => {
     expect((tools as Any).browserService.init).not.toHaveBeenCalled();
   });
 
+  it("applies viewport emulation to the visible workbench and returns dimensions", async () => {
+    const browserWorkbenchService = {
+      getSession: vi.fn().mockReturnValue({
+        taskId: "task-1",
+        sessionId: "default",
+        webContentsId: 123,
+      }),
+      emulate: vi.fn().mockResolvedValue({
+        success: true,
+        width: 390,
+        height: 844,
+        deviceScaleFactor: 2,
+        mobile: true,
+      }),
+    };
+    const { tools, daemon } = makeTools(browserWorkbenchService);
+
+    const result = await tools.executeTool("browser_emulate", {
+      width: 390,
+      height: 844,
+      device_scale_factor: 2,
+      mobile: true,
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      width: 390,
+      height: 844,
+      deviceScaleFactor: 2,
+      mobile: true,
+      visible: true,
+    });
+    expect(browserWorkbenchService.emulate).toHaveBeenCalledWith({
+      taskId: "task-1",
+      sessionId: undefined,
+      width: 390,
+      height: 844,
+      deviceScaleFactor: 2,
+      mobile: true,
+    });
+    expect(daemon.logEvent).toHaveBeenCalledWith(
+      "task-1",
+      "browser_action",
+      expect.objectContaining({
+        action: "emulate",
+        width: 390,
+        height: 844,
+        mobile: true,
+        visible: true,
+      }),
+    );
+  });
+
   it("enforces guardrails before visible workbench navigation", async () => {
     const browserWorkbenchService = {
       getSession: vi.fn().mockReturnValue(null),

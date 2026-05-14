@@ -62,7 +62,7 @@ describe("ChannelRegistry", () => {
 
     expect(result.valid).toBe(false);
     expect(result.errors).toContain(
-      "Outlook.com, Hotmail, Live, and MSN accounts require OAuth2/Modern Auth for IMAP/SMTP. Use the Outlook.com provider and connect with Microsoft OAuth instead of a password. Before connecting, create a Microsoft Entra app registration for personal Microsoft accounts, add the Mobile and desktop redirect URI http://localhost, and grant delegated IMAP.AccessAsUser.All plus SMTP.Send permissions.",
+      "Outlook.com, Hotmail, Live, and MSN accounts require OAuth2/Modern Auth. Use the Outlook.com provider and connect with Microsoft OAuth instead of a password. Before connecting, create a Microsoft Entra app registration for personal Microsoft accounts, add the Mobile and desktop redirect URI http://localhost, and grant delegated Microsoft Graph Mail.ReadWrite plus Mail.Send permissions.",
     );
   });
 

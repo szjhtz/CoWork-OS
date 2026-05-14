@@ -58,6 +58,8 @@ export interface ControlPlaneConfig {
   cleanupIntervalMs?: number;
   /** Maximum payload size in bytes (default: 10MB) */
   maxPayloadBytes?: number;
+  /** Explicit browser origins allowed to connect over WebSocket */
+  allowedOrigins?: string[];
   /** Maximum failed auth attempts before temporary ban (default: 5) */
   maxAuthAttempts?: number;
   /** Auth ban duration in milliseconds (default: 300000 = 5 minutes) */
@@ -117,6 +119,7 @@ export class ControlPlaneServer {
       heartbeatIntervalMs: config.heartbeatIntervalMs ?? 30000,
       cleanupIntervalMs: config.cleanupIntervalMs ?? 60000,
       maxPayloadBytes: config.maxPayloadBytes ?? 10 * 1024 * 1024,
+      allowedOrigins: config.allowedOrigins ?? [],
       maxAuthAttempts: config.maxAuthAttempts ?? 5,
       authBanDurationMs: config.authBanDurationMs ?? 5 * 60 * 1000, // 5 minutes
       onEvent: config.onEvent ?? (() => {}),
@@ -370,6 +373,14 @@ export class ControlPlaneServer {
    * Handle a new WebSocket connection
    */
   private handleConnection(socket: WebSocket, request: http.IncomingMessage): void {
+    const origin = request.headers["origin"];
+    const originValue = typeof origin === "string" ? origin : Array.isArray(origin) ? origin[0] : undefined;
+    if (!this.isOriginAllowed(originValue, request.headers.host)) {
+      console.warn(`[ControlPlane] Rejected WebSocket origin: ${originValue || "none"}`);
+      socket.close(1008, "Origin not allowed");
+      return;
+    }
+
     const remoteAddress = (() => {
       if (this.config.trustProxy) {
         const xff = request.headers["x-forwarded-for"];
@@ -380,9 +391,8 @@ export class ControlPlaneServer {
       return request.socket.remoteAddress || "unknown";
     })();
     const userAgent = request.headers["user-agent"];
-    const origin = request.headers["origin"];
 
-    const client = new ControlPlaneClient(socket, remoteAddress, userAgent, origin);
+    const client = new ControlPlaneClient(socket, remoteAddress, userAgent, originValue);
     this.clients.add(client);
 
     console.info(`[ControlPlane] Client connected: ${client.id} from ${remoteAddress}`);
@@ -482,6 +492,33 @@ export class ControlPlaneServer {
 
     // Route to method handler
     await this.handleRequest(client, request);
+  }
+
+  private isOriginAllowed(origin: string | undefined, hostHeader: string | undefined): boolean {
+    if (!origin) return true;
+    let parsedOrigin: URL;
+    try {
+      parsedOrigin = new URL(origin);
+    } catch {
+      return false;
+    }
+
+    const normalizedOrigin = `${parsedOrigin.protocol}//${parsedOrigin.host}`;
+    const configured = this.config.allowedOrigins
+      .map((entry) => {
+        try {
+          const parsed = new URL(entry);
+          return `${parsed.protocol}//${parsed.host}`;
+        } catch {
+          return "";
+        }
+      })
+      .filter(Boolean);
+    if (configured.includes(normalizedOrigin)) return true;
+
+    const normalizedHost = String(hostHeader || "").trim().toLowerCase();
+    if (!normalizedHost) return false;
+    return parsedOrigin.host.toLowerCase() === normalizedHost;
   }
 
   /**

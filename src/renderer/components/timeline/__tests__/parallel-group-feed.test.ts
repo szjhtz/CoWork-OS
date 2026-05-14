@@ -205,6 +205,23 @@ describe("ParallelGroupFeed", () => {
     expect(markup).not.toContain("2 parallel tasks completed");
   });
 
+  it("hides empty generic tool groups instead of reporting zero completed tasks", () => {
+    const markup = render(
+      React.createElement(ParallelGroupFeed, {
+        group: makeGroup({
+          label: "Tool batch",
+          status: "failed",
+          lanes: [],
+        }),
+        timeLabel: "12:03",
+        formatTime: () => "12:03",
+      }),
+    );
+
+    expect(markup).toBe("");
+    expect(markup).not.toContain("0 parallel tasks completed");
+  });
+
   it("uses the single lane title instead of a stored semantic label", () => {
     const markup = render(
       React.createElement(ParallelGroupFeed, {

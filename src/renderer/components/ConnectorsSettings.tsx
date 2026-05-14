@@ -95,6 +95,17 @@ const SHIPPED_CONNECTOR_IDS = new Set([
   "drafts",
   "fantastical",
   "tomba",
+  "daloopa",
+  "morningstar",
+  "spglobal",
+  "factset",
+  "moodys",
+  "mtnewswires",
+  "aiera",
+  "lseg",
+  "pitchbook",
+  "chronograph",
+  "egnyte",
 ]);
 
 const CONNECTORS: ConnectorDefinition[] = [
@@ -190,7 +201,7 @@ const CONNECTORS: ConnectorDefinition[] = [
     key: "google-workspace",
     name: "Google Workspace",
     registryId: "google-workspace",
-    description: "Single Google MCP connector for Workspace APIs when a connector deployment is needed.",
+    description: "Single Google MCP connector for Gmail, Calendar, Drive, Docs, Sheets, Slides, Tasks, and Chat.",
     supportsOAuth: true,
     provider: "google-workspace",
   },
@@ -539,6 +550,127 @@ const CONNECTORS: ConnectorDefinition[] = [
       { key: "TOMBA_SECRET_KEY", label: "Secret Key", type: "password" },
     ],
   },
+  {
+    key: "daloopa",
+    name: "Daloopa",
+    registryId: "daloopa",
+    description: "Read-only normalized financial data and filings.",
+    supportsOAuth: false,
+    envFields: [
+      { key: "DALOOPA_API_KEY", label: "API Key", type: "password" },
+      { key: "DALOOPA_BASE_URL", label: "Base URL" },
+    ],
+  },
+  {
+    key: "morningstar",
+    name: "Morningstar",
+    registryId: "morningstar",
+    description: "Read-only company, fund, and market data.",
+    supportsOAuth: false,
+    envFields: [
+      { key: "MORNINGSTAR_API_KEY", label: "API Key", type: "password" },
+      { key: "MORNINGSTAR_BASE_URL", label: "Base URL" },
+    ],
+  },
+  {
+    key: "spglobal",
+    name: "S&P Global",
+    registryId: "spglobal",
+    description: "Read-only financial intelligence, ratings, and market data.",
+    supportsOAuth: false,
+    envFields: [
+      { key: "SPGLOBAL_API_KEY", label: "API Key", type: "password" },
+      { key: "SPGLOBAL_BASE_URL", label: "Base URL" },
+    ],
+  },
+  {
+    key: "factset",
+    name: "FactSet",
+    registryId: "factset",
+    description: "Read-only financials, market data, and research context.",
+    supportsOAuth: false,
+    envFields: [
+      { key: "FACTSET_API_KEY", label: "API Key", type: "password" },
+      { key: "FACTSET_BASE_URL", label: "Base URL" },
+    ],
+  },
+  {
+    key: "moodys",
+    name: "Moody's",
+    registryId: "moodys",
+    description: "Read-only ratings, entity, and risk documents.",
+    supportsOAuth: false,
+    envFields: [
+      { key: "MOODYS_API_KEY", label: "API Key", type: "password" },
+      { key: "MOODYS_BASE_URL", label: "Base URL" },
+    ],
+  },
+  {
+    key: "mtnewswires",
+    name: "MT Newswires",
+    registryId: "mtnewswires",
+    description: "Read-only market news.",
+    supportsOAuth: false,
+    envFields: [
+      { key: "MTNEWSWIRES_API_KEY", label: "API Key", type: "password" },
+      { key: "MTNEWSWIRES_BASE_URL", label: "Base URL" },
+    ],
+  },
+  {
+    key: "aiera",
+    name: "Aiera",
+    registryId: "aiera",
+    description: "Read-only events, transcripts, and filings.",
+    supportsOAuth: false,
+    envFields: [
+      { key: "AIERA_API_KEY", label: "API Key", type: "password" },
+      { key: "AIERA_BASE_URL", label: "Base URL" },
+    ],
+  },
+  {
+    key: "lseg",
+    name: "LSEG",
+    registryId: "lseg",
+    description: "Read-only market data, news, and financial analytics.",
+    supportsOAuth: false,
+    envFields: [
+      { key: "LSEG_API_KEY", label: "API Key", type: "password" },
+      { key: "LSEG_BASE_URL", label: "Base URL" },
+    ],
+  },
+  {
+    key: "pitchbook",
+    name: "PitchBook",
+    registryId: "pitchbook",
+    description: "Read-only private market company and deal data.",
+    supportsOAuth: false,
+    envFields: [
+      { key: "PITCHBOOK_API_KEY", label: "API Key", type: "password" },
+      { key: "PITCHBOOK_BASE_URL", label: "Base URL" },
+    ],
+  },
+  {
+    key: "chronograph",
+    name: "Chronograph",
+    registryId: "chronograph",
+    description: "Read-only portfolio monitoring and fund data.",
+    supportsOAuth: false,
+    envFields: [
+      { key: "CHRONOGRAPH_API_KEY", label: "API Key", type: "password" },
+      { key: "CHRONOGRAPH_BASE_URL", label: "Base URL" },
+    ],
+  },
+  {
+    key: "egnyte",
+    name: "Egnyte",
+    registryId: "egnyte",
+    description: "Read-only finance document search and retrieval.",
+    supportsOAuth: false,
+    envFields: [
+      { key: "EGNYTE_API_KEY", label: "API Key", type: "password" },
+      { key: "EGNYTE_BASE_URL", label: "Base URL" },
+    ],
+  },
 ];
 
 interface IntegrationDefinition {
@@ -570,7 +702,7 @@ const INTEGRATIONS: IntegrationDefinition[] = [
   {
     key: "googleworkspace",
     name: "Google Workspace",
-    description: "Access Drive, Gmail, and Calendar with OAuth.",
+    description: "Access Gmail, Calendar, Drive, Docs, Sheets, Slides, Tasks, and Chat with OAuth.",
     component: <GoogleWorkspaceSettings />,
   },
   {
@@ -703,6 +835,23 @@ function getConnectorCategory(connector: ConnectorDefinition): Exclude<Connector
   }
   if (["paypal", "stripe", "square", "attio"].includes(connector.key)) {
     return "crm";
+  }
+  if (
+    [
+      "daloopa",
+      "morningstar",
+      "spglobal",
+      "factset",
+      "moodys",
+      "mtnewswires",
+      "aiera",
+      "lseg",
+      "pitchbook",
+      "chronograph",
+      "egnyte",
+    ].includes(connector.key)
+  ) {
+    return "finance";
   }
   if (["ahrefs", "cloudflare"].includes(connector.key)) {
     return "devtools";

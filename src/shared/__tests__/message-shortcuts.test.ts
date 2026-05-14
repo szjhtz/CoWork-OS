@@ -12,6 +12,9 @@ describe("message shortcuts", () => {
     expect(result.shortcut?.name).toBe("plan");
     expect(result.args).toBe("migrate the docs");
     expect(parseLeadingMessageAppShortcut("/goal ship the release").shortcut?.name).toBe("goal");
+    expect(parseLeadingMessageAppShortcut("/multitask 6 audit performance").shortcut?.name).toBe(
+      "multitask",
+    );
   });
 
   it("does not match unknown slash commands", () => {

@@ -4,7 +4,7 @@
 # Note: CoWork OS currently runs in the Electron main process (even in headless mode),
 # so we install Electron runtime deps. A future "coworkd" (Node-only) daemon would simplify this.
 
-FROM node:22-bookworm-slim
+FROM node:24-bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -65,6 +65,7 @@ ENV COWORK_USER_DATA_DIR=/data
 # on the host to 127.0.0.1 (or use a private network) to avoid exposing it publicly.
 ENV COWORK_CONTROL_PLANE_HOST=0.0.0.0
 ENV COWORK_CONTROL_PLANE_PORT=18789
+ENV COWORK_CONTROL_PLANE_BIND_CONTEXT=container
 
 RUN mkdir -p /data /workspace && chown -R node:node /data /workspace
 

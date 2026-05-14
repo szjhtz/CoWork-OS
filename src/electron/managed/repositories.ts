@@ -341,6 +341,7 @@ export class ManagedSessionRepository {
     const now = Date.now();
     const session: ManagedSession = {
       ...input,
+      surface: input.surface || "runtime",
       createdAt: now,
       updatedAt: now,
     };
@@ -348,10 +349,10 @@ export class ManagedSessionRepository {
       .prepare(
         `
         INSERT INTO managed_sessions (
-          id, agent_id, agent_version, environment_id, title, status, workspace_id,
+          id, agent_id, agent_version, environment_id, title, status, surface, workspace_id,
           backing_task_id, backing_team_run_id, resumed_from_session_id, latest_summary,
           created_at, updated_at, started_at, completed_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       )
       .run(
@@ -361,6 +362,7 @@ export class ManagedSessionRepository {
         session.environmentId,
         session.title,
         session.status,
+        session.surface || "runtime",
         session.workspaceId,
         session.backingTaskId || null,
         session.backingTeamRunId || null,
@@ -387,6 +389,7 @@ export class ManagedSessionRepository {
         | "startedAt"
         | "completedAt"
         | "title"
+        | "surface"
       >
     >,
   ): ManagedSession | undefined {
@@ -422,8 +425,10 @@ export class ManagedSessionRepository {
   list(params?: {
     limit?: number;
     offset?: number;
+    agentId?: string;
     workspaceId?: string;
     status?: ManagedSession["status"];
+    surface?: ManagedSession["surface"];
   }): ManagedSession[] {
     const limit =
       typeof params?.limit === "number" && Number.isFinite(params.limit) ? Math.max(1, Math.floor(params.limit)) : 100;
@@ -431,6 +436,10 @@ export class ManagedSessionRepository {
       typeof params?.offset === "number" && Number.isFinite(params.offset) ? Math.max(0, Math.floor(params.offset)) : 0;
     const where: string[] = [];
     const values: Any[] = [];
+    if (params?.agentId) {
+      where.push("agent_id = ?");
+      values.push(params.agentId);
+    }
     if (params?.workspaceId) {
       where.push("workspace_id = ?");
       values.push(params.workspaceId);
@@ -438,6 +447,10 @@ export class ManagedSessionRepository {
     if (params?.status) {
       where.push("status = ?");
       values.push(params.status);
+    }
+    if (params?.surface) {
+      where.push("COALESCE(surface, 'runtime') = ?");
+      values.push(params.surface);
     }
     const sql = `
       SELECT * FROM managed_sessions
@@ -457,6 +470,7 @@ export class ManagedSessionRepository {
       environmentId: String(row.environment_id ?? ""),
       title: String(row.title ?? ""),
       status: String(row.status ?? "pending") as ManagedSession["status"],
+      surface: String(row.surface ?? "runtime") as ManagedSession["surface"],
       workspaceId: String(row.workspace_id ?? ""),
       backingTaskId: row.backing_task_id ? String(row.backing_task_id) : undefined,
       backingTeamRunId: row.backing_team_run_id ? String(row.backing_team_run_id) : undefined,

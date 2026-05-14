@@ -11,6 +11,7 @@ CoWork OS supports 17 messaging channels. All channels share these common featur
 - **Ambient mode**: Passively ingest all messages without responding; enable per-channel in settings
 - **Self-message capture**: Capture your own outgoing messages as context (`captureSelfMessages` on WhatsApp, iMessage, BlueBubbles)
 - **Per-channel routing policy**: Channels can restrict who can talk to the agent, which workspaces/roles they route into, how group/server traffic is filtered, and how much mid-task progress is relayed back into the channel
+- **Channel specialization**: Route a whole channel, one chat/group, or one topic/thread to a specific workspace, agent role, prompt guidance, tool restrictions, and optional shared-memory policy
 
 See [Gateway Message Lifecycle](gateway-message-lifecycle.md) for the shared routing, command, active-task, skill-slash, delivery, and scheduled-output behavior. For day-to-day usage examples, see [Using CoWork from WhatsApp and Other Channels](gateway-user-guide.md). For per-channel feature and best-practice guides, see [Channel User Guides](channel-user-guides.md) and the [dedicated channel guide index](channel-guides/).
 
@@ -55,6 +56,27 @@ Recognized slash commands are handled by the gateway and are never forwarded as 
 
 See [Universal `/simplify` and `/batch`](simplify-batch.md) and [LLM Wiki](llm-wiki.md) for full syntax and behavior.
 
+## Channel Specialization
+
+Channel specialization lets one connected gateway channel host multiple workflows without creating separate bot runtimes. In **Settings > Channels > [channel] > Channel Specialization**, admins can create durable records for:
+
+- a whole-channel default when no chat/group is selected
+- a specific chat/group
+- a specific topic/thread when the provider supplies `threadId` context
+
+Each specialization can set a display name, workspace, agent role, prompt guidance, tool restrictions, whether shared context memory is allowed, and whether the record is enabled.
+
+Resolution order is:
+
+1. exact `channelId + chatId + threadId`
+2. exact `channelId + chatId`
+3. channel-level specialization
+4. existing channel config, session preference, or workspace default behavior
+
+New tasks use the resolved specialization for workspace, agent role, prompt guidance, gateway context, tool restrictions, and shared-memory opt-in. Follow-ups to an active task keep that task's existing workspace and role so a conversation does not switch identity mid-run. After a task completes, fails, cancels, or the chat is reset with `/new`, the next ordinary message re-resolves specialization before a new task starts.
+
+Workspace-local router rules still run per message and can override specialization for that message. Tool restrictions are additive with context policies and channel restrictions, with deny rules taking priority. Shared memory remains off for group/public contexts unless the specialization explicitly enables it.
+
 ---
 
 ## WhatsApp
@@ -83,6 +105,10 @@ WhatsApp supports typing indicators and editable task-progress messages. CoWork 
 
 Designate specific groups as link-research channels. Post URLs there and the agent builds a findings report with classification. See [Research Channels](research-channels.md).
 
+### Group Specialization
+
+WhatsApp group chats can be specialized from channel settings. Use this for trusted groups that should always route into a particular workspace and role, such as a customer-support group, research-link group, or personal operations group.
+
 ---
 
 ## Telegram
@@ -105,6 +131,10 @@ Telegram group behavior can now be tightened without writing custom bot logic:
 - **Routing mode**: choose `all`, `mentionsOnly`, `mentionsOrCommands`, or `commandsOnly`
 - **Allowed group chat IDs**: optionally restrict routing to a known set of Telegram groups
 - **Research channels**: keep using dedicated research groups separately from normal task-routing groups
+
+### Group and Topic Specialization
+
+Telegram groups can be specialized by chat ID, and Telegram forum topics can be specialized further when topic/thread context is available. Topic-level records win over the broader group record, so one group can host separate workspaces or agent roles for engineering, support, and research topics.
 
 ### Additional Commands
 
@@ -135,6 +165,10 @@ Discord uses the shared gateway lifecycle through native slash commands and text
 ### Guild Filtering
 
 If you only want the bot active in certain Discord servers, add allowed **Guild IDs** in the channel settings. Incoming messages and interactions from other guilds are ignored even if the bot is installed there.
+
+### Channel and Thread Specialization
+
+Discord channel settings support specialization for server channels and thread-aware contexts where Discord supplies thread identity. Use channel-level records for broad team spaces and thread-level records for focused project or incident workflows.
 
 ### Additional Commands
 
@@ -186,6 +220,10 @@ CoWork can now keep more than one Slack installation active in the same profile:
 - add each Slack workspace as its own Slack channel entry
 - select the workspace inside Slack settings to test, toggle, revoke, or remove it
 - reply routing stays pinned to the originating Slack workspace so follow-ups go back to the correct installation
+
+### Slack Channel Specialization
+
+Slack channels can be specialized per Slack installation. This lets a `#support`, `#launch`, or `#engineering-reviews` channel route into its expected CoWork workspace, agent role, guidance, and tool policy without relying on every user to pick the right workspace first.
 
 ### Progress Relay Modes
 
@@ -522,16 +560,17 @@ Access CoWork OS from mobile devices via local network.
 ### Setup
 
 1. Enable Control Plane in **Settings** > **Control Plane**
-2. Check **Allow LAN Connections (Mobile Companions)**
-3. Enter server URL on mobile: `ws://<your-mac-ip>:18789`
-4. Enter authentication token
+2. Prefer Tailscale or an SSH tunnel for remote access. Use **Allow LAN Connections (Mobile Companions)** only on a trusted private network.
+3. Enter server URL on mobile: `ws://<your-mac-ip>:18789` for private LAN, or the Tailscale `wss://...ts.net` URL.
+4. Enter authentication token. CoWork generates separate operator and node tokens; mobile companion/node clients use read-scoped node access.
 
 ### Security
 
-- LAN only (not exposed to internet)
+- LAN/Tailscale only (not exposed to the public internet)
 - Token-based authentication
 - Ensure firewall allows port 18789
 - Both devices must be on the same network
+- Headless/managed deployments fail closed on raw public Control Plane binds unless Tailscale, private container context, or an explicit break-glass override is configured
 
 ---
 

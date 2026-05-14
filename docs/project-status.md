@@ -9,11 +9,11 @@ CoWork OS is a **security-first personal AI assistant platform** with multi-chan
 - **Personal AI Gateway**: Connect your AI assistant to WhatsApp, Telegram, Discord, Slack, and iMessage
 - **Everything Workbench**: Create, open, review, lightly edit, and revise generated documents, spreadsheets, presentations, web pages, PDFs, and previews from the same local-first task workspace
 - **Managed Devices**: Operate local and remote CoWork machines from a dedicated Devices tab
-- **Automations Surface**: One settings group for queueing, scheduling, triggers, briefing, and Workflow Intelligence suggestions/reflection; task view can also create cron scheduled tasks from the current task menu
+- **Automations Surface**: One settings group for queueing, scheduling, triggers, briefing, and Workflow Intelligence suggestions/reflection/Dreaming; task view can also create cron scheduled tasks from the current task menu
 - **Renderer Performance**: Sidebar and timeline virtualization in the `CoWork-OS/CoWork-OS` repo use `@chenglou/pretext` for text measurement and keep long task feeds responsive
 - **Security-First Design**: 4,932 automated tests across 390 test files, configurable guardrails, layered permission rules, workspace-local policy files, and approval workflows
 - **Imported Capability Security**: managed skill and pack imports are staged, scanned, reported, and quarantined when blocked instead of being activated directly
-- **Multi-Provider Support**: 30+ LLM providers including free local models via Ollama
+- **Multi-Provider Support**: 30+ LLM providers including free local models via Ollama and OpenRouter coding routers
 - **Local-First Architecture**: Your data stays on your machine, BYOK model
 
 ## What's Built and Working
@@ -65,7 +65,7 @@ CoWork OS is a **security-first personal AI assistant platform** with multi-chan
 #### Multi-Provider LLM Support
 - [x] Anthropic (Claude models)
 - [x] Google Gemini
-- [x] OpenRouter (multi-model access)
+- [x] OpenRouter (multi-model access, including Pareto Code and Pareto Code Nitro coding routers)
 - [x] OpenAI (API Key: GPT-4o, o1 models)
 - [x] OpenAI (ChatGPT OAuth: Use your ChatGPT subscription)
 - [x] Prompt caching defaults for Anthropic, Azure Anthropic, OpenAI, Azure OpenAI, and OpenRouter GPT/Claude routes
@@ -85,13 +85,14 @@ CoWork OS is a **security-first personal AI assistant platform** with multi-chan
 - [x] Located: `src/electron/agent/search/`
 
 #### Browser Automation
-- [x] Browser V2 session manager with visible workbench default
+- [x] Browser V2 session manager with visible workbench default and responsive viewport testing
 - [x] Electron Workbench CDP control through renderer-owned webview
 - [x] Playwright local fallback for forced headless/background runs
 - [x] External CDP attach path gated by explicit real-browser consent
 - [x] Right-sidebar/fullscreen workbench routing with persistent workspace browser profile
 - [x] Accessibility snapshots with short-lived refs and stale-ref validation
 - [x] Visible cursor movement for agent browser actions
+- [x] Agent-driven and manual desktop/tablet/mobile viewport controls
 - [x] Screenshot capture and screenshot annotation
 - [x] Console, network, downloads, storage, dialog, emulation, and trace diagnostics
 - [x] Navigation, screenshots, PDF export
@@ -111,13 +112,20 @@ CoWork OS is a **security-first personal AI assistant platform** with multi-chan
 
 #### Composer Routing
 - [x] Grouped `@` autocomplete for Agents, Integrations, and Files
-- [x] Configured integration mention resolver with Google Workspace split into Gmail, Google Drive, and Google Calendar
+- [x] Configured integration mention resolver with Google Workspace split into built-in Gmail, Google Drive, and Google Calendar plus MCP-backed Google Docs, Google Sheets, Google Slides, Google Tasks, and Google Chat when available
 - [x] Rich inline integration chips in the composer, sent user bubbles, and restored task/session history
 - [x] Soft `integrationMentions` runtime guidance without changing `allowedTools`
 - [x] `@Inbox` routing from the main composer into Inbox Agent Ask Inbox
 - [x] Ask Inbox right-sidebar chat with run-scoped live step events and matched evidence
 - [x] Hybrid mailbox search architecture for Ask Inbox: local FTS, semantic mailbox index, provider-native search, attachment text, shortlist/read/rerank
 - [x] Located: `src/renderer/components/PromptComposerInput.tsx`, `src/electron/integrations/`
+
+#### Managed Agents
+- [x] Agents Hub for managed-agent discovery, template-backed creation, draft editing, governance, channels, skills, runtime tools, memory, files, schedules, and deployment posture
+- [x] Single-pane clicked-agent detail view with no local assistant sidebar or bottom ask box
+- [x] Test, preview, and starter-prompt actions create runtime managed sessions and open their backing tasks in the main task window
+- [x] Add advanced logic and Optimize this agent route to the agent draft/editor surface
+- [x] Located: `src/renderer/components/AgentsHubPanel.tsx`, `src/electron/managed/`
 
 ### 2. Tools & Skills
 
@@ -453,9 +461,10 @@ Operations Requiring Approval:
   - Network egress controls
 
 ### Sub-Agents / Multi-Agent Collaboration
-- **Status**: Implemented (Collaborative Mode, Multi-LLM Mode, Agent Comparison)
+- **Status**: Implemented (Collaborative Mode, `/multitask`, Multi-LLM Mode, Agent Comparison)
 - **What's built**:
   - Collaborative Mode: ephemeral multi-agent teams with real-time thought sharing
+  - `/multitask`: one-shot collaborative runs with bounded lane planning, lane-specific child tasks, queue-respecting dispatch, and synthesis
   - Multi-LLM Mode: same task dispatched to multiple providers with judge synthesis
   - Agent Comparison Mode: side-by-side output comparison across agents/models
   - Capability Matcher: auto-select agents based on task requirements
@@ -484,11 +493,12 @@ Operations Requiring Approval:
 18. Customize agent personality via Settings or conversation prompts
 19. Run tasks in isolated git worktrees with auto-commit and merge
 20. Use collaborative mode for multi-agent team reasoning
-21. Use multi-LLM mode to compare outputs across providers
-22. Compare agent outputs side by side
-23. Pin tasks for quick access
-24. Gracefully wrap up running tasks
-25. Use git tools (commit, diff, branch) within tasks
+21. Use `/multitask [N] <task>` for bounded parallel lane work
+22. Use multi-LLM mode to compare outputs across providers
+23. Compare agent outputs side by side
+24. Pin tasks for quick access
+25. Gracefully wrap up running tasks
+26. Use git tools (commit, diff, branch) within tasks
 
 ### You Cannot (Yet):
 1. Execute arbitrary code in a VM sandbox
@@ -564,7 +574,7 @@ Expected behavior:
 ### Core Strengths
 - **Security**: 4,932 automated tests across 390 test files, configurable guardrails, layered permission rules, approval workflows, and brute-force protection
 - **Multi-Channel**: WhatsApp, Telegram, Discord, Slack, iMessage integration
-- **Multi-Provider**: 30+ LLM providers and compatible gateways, including Claude, GPT, Gemini, Bedrock, OpenRouter, and Ollama
+- **Multi-Provider**: 30+ LLM providers and compatible gateways, including Claude, GPT, Gemini, Bedrock, OpenRouter Pareto Code routing, and Ollama
 - **Local-First**: Your data stays on your machine, BYOK model
 - **Extensible**: MCP support (Client, Host, Registry), 147 built-in skills, and plugin packs
 

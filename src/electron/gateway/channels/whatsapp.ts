@@ -170,6 +170,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
   private currentQr?: string;
   private shouldReconnect = true;
   private selfChatIgnoreLogAt = 0;
+  private fatalConnectionError?: Error;
 
   // Connection flap detection
   private recentDisconnects: number[] = [];
@@ -196,6 +197,8 @@ export class WhatsAppAdapter implements ChannelAdapter {
   private readonly MESSAGE_SEND_RETRY_JITTER = 0.25;
   private readonly TRANSIENT_NETWORK_ERROR_RE =
     /(ECONNRESET|ETIMEDOUT|EPIPE|ENOTFOUND|ENETUNREACH|EHOSTUNREACH|socket hang up|Timed Out|Connection Closed)/i;
+  private readonly CERTIFICATE_TRUST_ERROR_RE =
+    /(UNABLE_TO_GET_ISSUER_CERT_LOCALLY|SELF_SIGNED_CERT_IN_CHAIN|DEPTH_ZERO_SELF_SIGNED_CERT|CERT_HAS_EXPIRED|ERR_TLS_CERT_ALTNAME_INVALID|unable to get local issuer certificate|self[- ]signed certificate|certificate has expired|Hostname\/IP does not match certificate)/i;
   private readonly CREDENTIAL_STATE_ERROR_RE =
     /Unsupported state or unable to authenticate data|Failed to decrypt|bad decrypt/i;
 
@@ -269,6 +272,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
     }
 
     this.shouldReconnect = true;
+    this.fatalConnectionError = undefined;
     this.setStatus("connecting");
     // Only reset the backoff counter when there is no active reconnection in progress.
     // attemptReconnection() increments backoffAttempt before calling connect(), so
@@ -317,6 +321,10 @@ export class WhatsAppAdapter implements ChannelAdapter {
       // Guard websocket-level errors so transient network blips do not surface as uncaught exceptions.
       this.sock.ws?.on("error", (error: unknown) => {
         const err = error instanceof Error ? error : new Error(String(error));
+        if (this.isCertificateTrustError(err)) {
+          this.failNonRetryableConnection(err, "websocket");
+          return;
+        }
         const level = this.isTransientNetworkError(err) ? "warn" : "error";
         console[level]("[WhatsApp] WebSocket error:", err.message);
         this.handleError(err, "websocket");
@@ -380,6 +388,14 @@ export class WhatsAppAdapter implements ChannelAdapter {
     const { connection, lastDisconnect, qr } = update;
 
     if (!this.shouldReconnect) {
+      if (this.fatalConnectionError) {
+        if (connection === "open") {
+          // If a fatal error was detected mid-handshake, close immediately.
+          this.sock?.ws?.close();
+        }
+        this.setStatus("error", this.fatalConnectionError);
+        return;
+      }
       if (connection === "open") {
         // If a manual disconnect happened mid-handshake, close immediately.
         this.sock?.ws?.close();
@@ -408,6 +424,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
     // Handle connection open
     if (connection === "open") {
       this.currentQr = undefined;
+      this.fatalConnectionError = undefined;
 
       // Check if previous connection was stable before resetting backoff
       const prevConnectedAt = this.connectedAtMs;
@@ -438,6 +455,11 @@ export class WhatsAppAdapter implements ChannelAdapter {
     if (connection === "close") {
       this.currentQr = undefined;
       this.trackDisconnect();
+      const nonRetryableError = this.getNonRetryableConnectionError(lastDisconnect?.error);
+      if (nonRetryableError) {
+        this.failNonRetryableConnection(nonRetryableError, "connectionClose");
+        return;
+      }
       const statusCode = this.getStatusCode(lastDisconnect?.error);
 
       if (statusCode === DisconnectReason.loggedOut) {
@@ -749,6 +771,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
    */
   async disconnect(): Promise<void> {
     this.shouldReconnect = false;
+    this.fatalConnectionError = undefined;
     this.resetBackoff();
 
     // Clear timers
@@ -1443,6 +1466,29 @@ export class WhatsAppAdapter implements ChannelAdapter {
     }
   }
 
+  private failNonRetryableConnection(error: Error, context: string): void {
+    const statusError = new Error(
+      `WhatsApp TLS certificate verification failed. Check the system certificate store or any network proxy/TLS inspection, then reconnect WhatsApp. Original error: ${error.message}`,
+    );
+    (statusError as Any).cause = error;
+    this.fatalConnectionError = statusError;
+    this.shouldReconnect = false;
+    this.currentQr = undefined;
+    this.resetBackoff();
+    try {
+      this.sock?.ws?.close();
+    } catch {
+      // Ignore close errors after a failed TLS handshake.
+    }
+    this.sock = null;
+    console.error(
+      "[WhatsApp] TLS certificate verification failed; pausing reconnect until certificate trust is fixed:",
+      error.message,
+    );
+    this.setStatus("error", statusError);
+    this.handleError(statusError, context);
+  }
+
   /**
    * Track a disconnect event for flap detection
    */
@@ -1950,36 +1996,43 @@ export class WhatsAppAdapter implements ChannelAdapter {
     return asAny?.output?.statusCode || asAny?.status || undefined;
   }
 
+  private getNonRetryableConnectionError(err: unknown): Error | undefined {
+    if (!err) return undefined;
+    if (this.isCertificateTrustError(err)) {
+      return err instanceof Error ? err : new Error(this.stringifyError(err));
+    }
+    const nestedError = (err as Any)?.error || (err as Any)?.cause || (err as Any)?.output?.payload;
+    if (nestedError && this.isCertificateTrustError(nestedError)) {
+      return nestedError instanceof Error ? nestedError : new Error(this.stringifyError(nestedError));
+    }
+    return undefined;
+  }
+
+  private stringifyError(err: unknown): string {
+    if (err instanceof Error) {
+      const code = typeof (err as Any).code === "string" ? ` ${String((err as Any).code)}` : "";
+      return `${err.name}${code}: ${err.message}`;
+    }
+    if (typeof err === "string") {
+      return err;
+    }
+    try {
+      return JSON.stringify(err);
+    } catch {
+      return String(err);
+    }
+  }
+
+  private isCertificateTrustError(err: unknown): boolean {
+    return this.CERTIFICATE_TRUST_ERROR_RE.test(this.stringifyError(err));
+  }
+
   private isTransientNetworkError(err: unknown): boolean {
-    const message =
-      err instanceof Error
-        ? err.message
-        : typeof err === "string"
-          ? err
-          : (() => {
-              try {
-                return JSON.stringify(err);
-              } catch {
-                return String(err);
-              }
-            })();
-    return this.TRANSIENT_NETWORK_ERROR_RE.test(message);
+    return this.TRANSIENT_NETWORK_ERROR_RE.test(this.stringifyError(err));
   }
 
   private isCredentialStateError(err: unknown): boolean {
-    const message =
-      err instanceof Error
-        ? err.message
-        : typeof err === "string"
-          ? err
-          : (() => {
-              try {
-                return JSON.stringify(err);
-              } catch {
-                return String(err);
-              }
-            })();
-    return this.CREDENTIAL_STATE_ERROR_RE.test(message);
+    return this.CREDENTIAL_STATE_ERROR_RE.test(this.stringifyError(err));
   }
 
   private async invalidateCredentials(error: Error): Promise<void> {
